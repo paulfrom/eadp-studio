@@ -30,8 +30,13 @@
   },
   "acceptance": {
     "sourceArchiveVerified": true,
-    "fullSourceExtractionVerified": false,
-    "sourceExtractionBlocker": "Current Windows account cannot create source symlinks (Node EPERM; Windows tar Invalid argument), including CLAUDE.md -> AGENTS.md.",
+    "fullSourceExtractionVerified": true,
+    "fullSourceExtractionPlatforms": [
+      "linux"
+    ],
+    "sourceExtractionBlockers": {
+      "windows": "Current Windows account cannot create source symlinks (Node EPERM; Windows tar Invalid argument), including CLAUDE.md -> AGENTS.md."
+    },
     "targetReleasePocVerified": false,
     "dependencyInstallVerified": false,
     "nativeBuildVerified": false,

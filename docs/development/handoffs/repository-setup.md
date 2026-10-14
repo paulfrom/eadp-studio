@@ -40,4 +40,12 @@
 
 以上历史实测版本、固定 DSH 归档和上游工具声明保留。后续构建与发行验收记录每次实际使用的工具版本，DSH 工作副本与模板分别遵守自己的契约。
 
-本轮主工作区的 Linux 验证：实际 Node `22.22.3`、pnpm `11.28.5` 下仓库检查通过；`pnpm install --frozen-lockfile --ignore-scripts` 完成根 workspace 安装，锁文件未变。Linux 准备脚本的 9 项受控命令测试通过，版本范围用例覆盖接受 Node `22.0`、`22.22.3`、`24` 及 pnpm `11.0`、`11.5.1`、`11.28.5`，拒绝 Node `21` 和 pnpm `10`、`12`。这些版本门槛用例使用命令模拟，不是逐版本原生安装实测；未执行 DSH 获取、模板或 DSH 依赖安装，也不作为 G0 验收通过依据。
+本轮主工作区的 Linux 验证：实际 Node `22.22.3`、pnpm `11.28.5` 下仓库检查通过；`pnpm install --frozen-lockfile --ignore-scripts` 完成根 workspace 安装，锁文件未变。Linux 准备脚本的 9 项受控命令测试通过，版本范围用例覆盖接受 Node `22.0`、`22.22.3`、`24` 及 pnpm `11.0`、`11.5.1`、`11.28.5`，拒绝 Node `21` 和 pnpm `10`、`12`。这些版本门槛用例使用命令模拟，不是逐版本原生安装实测；当时未执行 DSH 获取、模板或 DSH 依赖安装，也不作为 G0 验收通过依据。
+
+## Linux 完整 DSH 源码准备（2026-10-14，主工作区）
+
+- 主工作区（Linux）已具备完整 DSH 工作副本 `.local/upstream/dsh/` 及收据 `.local/upstream/dsh.source.json`；固定 commit `d743267388641bc76f17c45ce8b4c231aed1d32c`、归档 SHA-256 `414db357dda081d11d531ea3e9969f48fa0502809ff579396c3c2bbf7e109253` 与 `release.lock.json` 一致。
+- 重新运行 `node scripts/fetch-dsh.mjs`：归档 SHA256、17129 个条目边界、14 个内部符号链接、关键文件哈希及包声明全部通过；已存在源码被重新校验且未被覆盖，输出 `Existing source critical files verified: .local/upstream/dsh. Nothing overwritten.`。
+- 仓库检查通过：111 个受管文件、62 个模板哈希一致；`node --test tests/scripts/setup-linux.test.mjs` 9 项通过。
+- `release.lock.json` 按平台记录该结果：`fullSourceExtractionVerified=true`、`fullSourceExtractionPlatforms=[linux]`；Windows 符号链接阻塞保留在 `sourceExtractionBlockers.windows`，不被 Linux 结果覆盖。
+- 源码就绪不等于依赖安装、上游构建、插件接入、签名或安装通过，这些门槛继续未验证。
