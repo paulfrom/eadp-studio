@@ -76,15 +76,15 @@
 | 槽位注册 | `register(options: ErasedOptions, component: unknown): () => void` | `packages/client/ui-slots/src/index.ts:1203` | 注册进未声明槽位、或声明已被他人占用的子槽，激活期失败 |
 | 槽位注入 | `ctx.slots.inject(key, callback)` | `docs/subsystems/slots.md` | 回调按声明生命周期运行，随拥有者折叠移除 |
 | 根槽位 | `'root'`（唯一内建）；`ui-renderer` 调 `renderSlot('root', {})` | 同上 | `ctx.slots` 由渲染器提供 |
+| 服务声明 | `slots: SlotRegistry` | `packages/client/ui-renderer/src/client/index.ts:44–46` | 只有导入 `@deepseek-ai/dsh-client-ui-renderer/client` 才获得该 `Context` 增补；已由最小插件 client 半边编译验证 |
 | 主面板槽位 | `'main': { kind: 'keyed'; scope: 'root' }` | `packages/client/ui-layout/src/client/index.ts:73`；订阅 :203 | 组件经 `ctx.slots.entries('main')`、`subscribe('main', …)` 读取 |
 | 选择主面板 | `ILayout.selectPanel(panelId: MainPanelId \| null): void` | `packages/client/ui-layout/src/client/service.ts:28–54` | 选中未注册 main key 直接抛错；`null` 回到会话视图 |
 | 面板信息 | `panelInfo: HostObservable<PanelInfo>`、`usePanelInfo` | 同上 | 与 `usePanelInfo` 共用同一 root store |
 
 ## 未验证与待补
 
-- `ctx.slots` 服务在 `ui-renderer` 中的注册名与类型未逐行核对（本清单只核对了 `register`/`inject`/`entries`/`subscribe` 的调用点）。
 - `createUserMessage` 的签名与导出未在源码逐行核对。
-- Studio 插件应进入核心包集还是 profile patch 层、以及如何默认启用并成为满窗主面板，尚未实现与验证。
+- Studio 插件进入发行包集/profile 补丁层并成为满窗主面板：插件已产出 `lib/index.js`、`lib/client.js`（见交接），但默认启用与安装包装配尚未实现。
 - 会话恢复的真实过程（进程重启后 `sessionPersistence` → `resume` 的实际行为）尚未实测。
 - 以上均须在最小切片中实测后回填，未实测项不得按已通过处理。
 

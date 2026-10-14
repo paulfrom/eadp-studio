@@ -1,6 +1,6 @@
 # Desktop source preparation
 
-The product repository stores the fixed upstream source contract in `../release.lock.json`. DSH source itself is downloaded from the exact commit archive into the ignored `.local/upstream/dsh/` directory. It is not a Git submodule or nested Git checkout. Product-specific build scripts and necessary upstream patches belong in this `build/` directory; no product patch or distribution pipeline is implemented by this layout change.
+The product repository stores the fixed upstream source contract in `../release.lock.json`. DSH source itself is downloaded from the exact commit archive into the ignored `.local/upstream/dsh/` directory. It is not a Git submodule or nested Git checkout. Product-specific build scripts and necessary upstream patches belong in this `build/` directory. [`prepare-studio-plugin.mjs`](prepare-studio-plugin.mjs) currently assembles the Studio plugin into an ignored build tree (`<primary checkout>/.local/build/dsh`) and builds its two halves; it never writes to the verified source tree, and it does not build or package the desktop yet. Target-release plugin compatibility, dependency installation in the verified source, native Windows build, signing, installation, lifecycle and distribution acceptance remain unverified.
 
 From the product repository root:
 
