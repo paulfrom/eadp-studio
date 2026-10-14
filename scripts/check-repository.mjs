@@ -12,7 +12,9 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 
 try {
   const product = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
-  if (process.versions.node !== product.engines.node) {
+  const minimumNode = /^>=(\d+)$/.exec(product.engines?.node ?? '');
+  if (!minimumNode) throw new Error('package.json engines.node must declare a minimum major version');
+  if (Number(process.versions.node.split('.')[0]) < Number(minimumNode[1])) {
     throw new Error(`Node ${product.engines.node} required; actual ${process.versions.node}`);
   }
   const origin = git('remote', 'get-url', 'origin').trim();

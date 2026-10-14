@@ -30,13 +30,14 @@ function run(args = [], settings = {}) {
     mkdirSync(elsewhere);
     copyFileSync(source, path.join(repo, 'scripts/setup-linux.sh'));
     writeFileSync(path.join(repo, 'package.json'), JSON.stringify({
-      engines: { node: settings.requiredNode ?? process.versions.node },
-      packageManager: 'pnpm@11.28.5',
+      engines: { node: '>=22', pnpm: '11.x' },
     }));
     // Execute the actual inline preflight with Node directly. The Bash stub
     // forwards its outcome, avoiding MSYS/native Windows stdio interactions.
     const preflight = spawnSync(process.execPath,
-      ['--input-type=module', '-e', preflightCode, path.join(repo, 'package.json')],
+      ['--input-type=module', '-e',
+        `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(settings.node ?? process.versions.node)} });\n${preflightCode}`,
+        path.join(repo, 'package.json')],
       { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
     if (preflight.error) throw preflight.error;
     const stubs = new Map();
@@ -114,15 +115,29 @@ test('non-Linux and missing commands stop before preparation', () => {
   assert.deepEqual(missing.calls, []);
 });
 
-test('exact Node and pnpm versions are checked before repository writes', () => {
-  const node = run([], { requiredNode: '0.0.0' });
+test('unsupported Node and pnpm majors stop before preparation', () => {
+  const node = run([], { node: '21.99.0' });
   assert.equal(node.status, 1);
-  assert.match(node.stderr, /Node 0\.0\.0 required/);
+  assert.match(node.stderr, /Node >=22 required; actual 21\.99\.0/);
   assert.deepEqual(node.calls, []);
-  const pnpm = run([], { pnpm: '11.5.1' });
-  assert.equal(pnpm.status, 1);
-  assert.match(pnpm.stderr, /pnpm 11\.28\.5 required; actual 11\.5\.1/);
-  assert.deepEqual(pnpm.calls, []);
+  for (const version of ['10.30.0', '12.0.0']) {
+    const pnpm = run([], { pnpm: version });
+    assert.equal(pnpm.status, 1);
+    assert.match(pnpm.stderr, /pnpm 11\.x required; actual/);
+    assert.deepEqual(pnpm.calls, []);
+  }
+});
+
+test('Node 22 and newer and pnpm 11 minor versions pass preflight', () => {
+  for (const [node, pnpm] of [
+    ['22.0.0', '11.0.0'],
+    ['22.22.3', '11.5.1'],
+    ['24.0.0', '11.28.5'],
+  ]) {
+    const result = run([], { node, pnpm });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.calls.length, 3);
+  }
 });
 
 test('success uses the script root across spaces and a different cwd', () => {

@@ -24,9 +24,9 @@
 
 ## 开发准备
 
-使用 Node `22.22.0`、pnpm `11.28.5` 和 Git。pnpm workspace 仅匹配 `apps/*`、`packages/*`，不安装嵌套模板的依赖。当前产品 workspace 无业务依赖；模板缺少自己的锁文件，不能进行冻结安装或发行验收。
+使用 Node `>=22`、pnpm `11.x` 和 Git，不限制开发工具的补丁版本。根 `package.json` 的 `engines` 声明准入范围，`.node-version` 的 `22` 仅作版本管理器默认选择；依赖仍由根锁文件固定。pnpm workspace 仅匹配 `apps/*`、`packages/*`，不安装嵌套模板的依赖。当前产品 workspace 无业务依赖；模板缺少自己的锁文件，不能进行冻结安装或发行验收。
 
-Linux 工作站预先安装 Bash、Git、指定版本的 Node/pnpm 和标准 `tar`，并准备 GitHub SSH 授权、HTTPS 网络访问及可创建真实符号链接的工作目录，然后执行：
+Linux 工作站预先安装 Bash、Git、满足上述范围的 Node/pnpm 和标准 `tar`，并准备 GitHub SSH 授权、HTTPS 网络访问及可创建真实符号链接的工作目录，然后执行：
 
 ```sh
 git clone git@github.com:paulfrom/eadp-studio.git
@@ -34,7 +34,7 @@ cd eadp-studio
 bash scripts/setup-linux.sh
 ```
 
-[setup-linux.sh](scripts/setup-linux.sh) 从根 `package.json` 读取精确工具版本，依次检查仓库、冻结安装根 workspace 依赖、获取并完整解包固定 DSH 源码。仅准备校验归档时使用 `bash scripts/setup-linux.sh --archive-only`；参数说明见 `--help`。脚本不安装系统工具、模板或 DSH 依赖。
+[setup-linux.sh](scripts/setup-linux.sh) 从根 `package.json` 读取 Node/pnpm 准入范围，依次检查仓库、冻结安装根 workspace 依赖、获取并完整解包固定 DSH 源码。仅准备校验归档时使用 `bash scripts/setup-linux.sh --archive-only`；参数说明见 `--help`。脚本不安装系统工具、模板或 DSH 依赖。后续执行 DSH 构建时，另按固定上游自身的工具契约准备；工作台开发准入与上游要求分别核验。
 
 Windows 工作站使用现有 Node 入口：
 
