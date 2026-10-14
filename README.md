@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-已落实单仓库开发布局、Git 属性、独立模板快照及校验、固定 DSH 归档获取入口。当前尚未实现可运行的工作台插件、协同 API 或 Windows 安装包，不代表 G0 通过。详细范围见 [开发准备交接](docs/development/handoffs/repository-setup.md)。
+已落实单仓库开发布局、Git 属性、独立模板快照及校验、模板 `AGENT.md` 规则契约、固定 DSH 归档获取入口。模板规则加载及执行保护仍待验证；当前尚未实现可运行的工作台插件、协同 API 或 Windows 安装包，不代表 G0 通过。详细范围见 [开发准备交接](docs/development/handoffs/repository-setup.md) 与 [模板规则交接](docs/development/handoffs/template-rules.md)。
 
 ## 文件位置
 

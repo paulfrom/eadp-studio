@@ -391,19 +391,24 @@
     },
     {
       "path": "README.md",
-      "sha256": "17d91d9ac876ee5e6bf9cd589075199b0139d71781a05a1490675c9ebfcd42f3"
+      "sha256": "b2c33902ab6e52ae418e1e464fb51eaf5313de4ef9f51096da508b2c3cb2182c"
+    },
+    {
+      "path": "AGENT.md",
+      "sha256": "3fe90acc998fbd82234b226e6a9806f88272e4aab1bd42d4824b2b0691587768"
     }
   ],
   "acceptance": {
     "sourceImportVerified": true,
     "dependencyLockfilePresent": false,
-    "templateAgentRulesPresent": false,
+    "templateAgentRulesPresent": true,
     "mockDirectoryPresent": false,
     "testsPresent": false,
     "dependencyInstallExecuted": false,
     "buildExecuted": false,
     "runtimeVerified": false,
     "g0TemplateAcceptancePassed": false,
-    "releaseReady": false
+    "releaseReady": false,
+    "rulesLoadedInTargetDsh": false
   }
 }

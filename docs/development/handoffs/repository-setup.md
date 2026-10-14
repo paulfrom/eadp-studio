@@ -25,7 +25,7 @@
 - 当前 Windows Node 实测为 `22.22.0`；系统 pnpm 为 `11.5.1`，根版本约定为 `11.28.5`。
 - Windows 文件符号链接创建返回 `EPERM`，tar 对真实链接创建报错，完整 DSH 工作副本尚未就绪；归档校验与源码就绪分开，不能称桌面准备通过。
 - Linux 实机、模板安装/构建、静态 Mock、规则加载、DSH SDK/插件运行、协同服务及安装包均未验证。
-- 模板快照缺少依赖锁文件和 `AGENT.md`，manifest 中 `releaseReady` 为 false。
+- 模板快照仍缺独立依赖锁文件；后续维护已新增 `AGENT.md`，规则加载与执行保护尚未验证，manifest 中 `releaseReady` 仍为 false。具体规则维护见 [模板规则交接](template-rules.md)。
 
 ## 下一步
 
