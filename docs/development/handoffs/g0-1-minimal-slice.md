@@ -36,7 +36,7 @@
 | client 产物 | `packages/eadp/studio-plugin/lib/client.js`，`sha256 9eceeba9…b2b4d2`，`window.__ModuleLoader__.load({ id: '@eadp-studio/studio-plugin', … })`，`react/jsx-runtime` 为外部依赖 |
 | 构建边界 | client bundle 必须复用固定上游 `packages/client/tsdown.client.ts` 预设（依赖上游仓库内模块），不能在产品 workspace 单独构建 |
 
-两次独立运行（手工试验与脚本运行）产出相同 SHA256。装配脚本以 `CI=true` 运行上游安装，避免上游 lefthook postinstall 向外层产品仓库写入 git hook；本轮已清理一次误写入的 `.git/hooks/prepare-commit-msg`（非 Git 受管内容）。
+两次独立运行（手工试验与脚本运行）产出相同 SHA256；另从零删除构建树后重跑，同样退出 0 且两个产物 SHA256 一致。装配脚本以 `CI=true` 运行上游安装，避免上游 lefthook postinstall 向外层产品仓库写入 git hook 与 `lefthook.yml`；本轮已清理首次未设 `CI` 时误写入的 `.git/hooks/prepare-commit-msg` 与根 `lefthook.yml`（均非 Git 受管内容，清理后 `git status` 干净）。
 
 这些是 Linux 构建/检查结果，不替代 Windows 原生验收。
 
