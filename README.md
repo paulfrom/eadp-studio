@@ -26,13 +26,26 @@
 
 使用 Node `22.22.0`、pnpm `11.28.5` 和 Git。pnpm workspace 仅匹配 `apps/*`、`packages/*`，不安装嵌套模板的依赖。当前产品 workspace 无业务依赖；模板缺少自己的锁文件，不能进行冻结安装或发行验收。
 
+Linux 工作站预先安装 Bash、Git、指定版本的 Node/pnpm 和标准 `tar`，并准备 GitHub SSH 授权、HTTPS 网络访问及可创建真实符号链接的工作目录，然后执行：
+
 ```sh
 git clone git@github.com:paulfrom/eadp-studio.git
 cd eadp-studio
+bash scripts/setup-linux.sh
+```
+
+[setup-linux.sh](scripts/setup-linux.sh) 从根 `package.json` 读取精确工具版本，依次检查仓库、冻结安装根 workspace 依赖、获取并完整解包固定 DSH 源码。仅准备校验归档时使用 `bash scripts/setup-linux.sh --archive-only`；参数说明见 `--help`。脚本不安装系统工具、模板或 DSH 依赖。
+
+Windows 工作站使用现有 Node 入口：
+
+```powershell
+git clone git@github.com:paulfrom/eadp-studio.git
+cd eadp-studio
 node scripts/check-repository.mjs
+pnpm install --frozen-lockfile --ignore-scripts
 node scripts/fetch-dsh.mjs --archive-only
 ```
 
-满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前工作站此项失败，已校验的归档保留在 `.local/`，不发布不完整源码。Linux 的解包和运行仍待实际验证。
+满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前工作站此项失败，已校验的归档保留在 `.local/`，不发布不完整源码。Linux 原生完整准备与运行仍待实际验证，准备入口不代表 G0 或桌面发行验收通过。
 
 环境准备及换机步骤见 [setup.md](docs/development/setup.md)。后续开发从 [G0 编码启动](dsh_eadp_studio_plan/08-G0编码启动.md) 继续。
