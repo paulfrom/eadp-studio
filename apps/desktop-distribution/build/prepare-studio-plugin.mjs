@@ -207,8 +207,8 @@ async function main() {
   run('pnpm', ['run', 'build:desktop'], buildTree)
   await verifyBuildOutput()
   await packPlugin()
-  console.log('Studio plugin assembled. Desktop packaging needs a Windows or macOS host:')
-  console.log('  DSH_DESKTOP_PACKED_EXTRA=<shared>/.local/build/packed-studio pnpm run package:desktop:win:x64')
+  console.log('Studio plugin assembled and packed. Desktop packaging needs a Windows or macOS host:')
+  console.log(`  DSH_DESKTOP_PACKED_EXTRA=${packedPluginDirectory} pnpm run package:desktop:win:x64`)
 }
 
 await main()
