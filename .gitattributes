@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png -text
+*.ico -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.woff -text
+*.woff2 -text
+*.zip -text
+*.gz -text
+*.exe -text
+*.pdf -text

@@ -1,0 +1,9 @@
+{
+  "name": "@eadp-studio/desktop-distribution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch:source": "node ../../scripts/fetch-dsh.mjs"
+  }
+}

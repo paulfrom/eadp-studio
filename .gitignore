@@ -1,0 +1,25 @@
+# Workstation-local downloads, source caches and reports
+/.local/
+/.codebase-memory/
+**/node_modules/
+**/.pnpm-store/
+**/dist/
+**/coverage/
+**/.umi/
+**/.umi-production/
+/artifacts/
+*.log
+*.tsbuildinfo
+
+# Credentials and machine-local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+.DS_Store
+Thumbs.db
+
+# build/ contains maintained scripts; never ignore it globally.
