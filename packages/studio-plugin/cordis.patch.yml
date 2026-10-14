@@ -1,0 +1,8 @@
+# Desktop default-enable layer for the Studio plugin.
+#
+# The row is inserted after the shipped bundle layers, so an installed Desktop
+# loads the Studio plugin without any user action. The plugin's client half is
+# discovered through its package.json `dsh.client` declaration.
+- insert:
+    - id: studio-plugin
+      name: '@eadp-studio/studio-plugin'
