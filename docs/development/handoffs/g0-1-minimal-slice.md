@@ -15,6 +15,10 @@
 - 产出 [G0-1 真实接口清单](../g0-1-interface-inventory.md)：面板、通信、会话、事件、审批、取消、恢复的固定 SHA/路径/symbol/限制，未知项显式标注。
 - 落地最小 Host/client 插件：`packages/studio-plugin/src/host/index.ts`、`src/client/index.ts`、`src/client/StudioPanel.tsx`，`package.json` 声明 `dsh.client` 与 `exports[./client]`；client 半边注册满窗 `main` 槽位并 `ctx.layout.selectPanel`。
 - 落地装配入口：`apps/desktop-distribution/build/prepare-studio-plugin.mjs`，从已校验源码建立构建树、把插件放到固定位置 `packages/eadp/studio-plugin`、注入上游 workspace 依赖、补 `tsconfig.client.json` 引用，再跑上游 `build:lib:client`。已验证可重复执行。
+- 内置默认启用（代码已接，待 Windows 实测）：插件 `package.json` 声明 `dsh.bundle.patch` 并随包发出 `cordis.patch.yml`；装配脚本向构建树施加两处上游编辑并做桌面 typecheck：
+  - `apps/desktop/scripts/prepare-package-set.ts`：把插件加入核心包集根（`ROOT_PACKAGES`），并接受 `DSH_DESKTOP_PACKED_EXTRA` 提供的额外 tarball 目录。
+  - `apps/desktop/src/project-manager.ts`：在 profile 的 `dsh.profile.bundles` 末尾加入插件包名。
+- 装配脚本还用 `pnpm pack` 产出插件 tarball 到 `.local/build/packed-studio/`，内含 `cordis.patch.yml`、`lib/index.js`、`lib/client.js`、类型声明与 README。
 
 ## 验证环境与结果（Linux）
 
@@ -35,6 +39,9 @@
 | Host 产物 | `packages/eadp/studio-plugin/lib/index.js`，`sha256 01e3d280…41c489`，ESM `export { apply }` |
 | client 产物 | `packages/eadp/studio-plugin/lib/client.js`，`sha256 9eceeba9…b2b4d2`，`window.__ModuleLoader__.load({ id: '@eadp-studio/studio-plugin', … })`，`react/jsx-runtime` 为外部依赖 |
 | 构建边界 | client bundle 必须复用固定上游 `packages/client/tsdown.client.ts` 预设（依赖上游仓库内模块），不能在产品 workspace 单独构建 |
+| 插件 tarball | `.local/build/packed-studio/eadp-studio-studio-plugin-0.0.0.tgz`，含 `package/cordis.patch.yml`、`package/lib/{index,client}.js`、类型声明；manifest 声明 `dsh.bundle.patch` 与 `dsh.client` |
+| 上游编辑 | 两处编辑幂等重放（再次运行报 `already applied`）；`build:desktop` typecheck 通过；补丁后的 `prepare-package-set.ts` 用空输入运行得到预期报错 `contains no tarballs` |
+| 平台限制 | 桌面打包只支持 `mac-arm64`/`mac-x64`/`win-x64`，Linux 无目标，`package-target.ts` 直接拒绝；因此装配与打包只能在 Windows/macOS 主机验收 |
 
 两次独立运行（手工试验与脚本运行）产出相同 SHA256；另从零删除构建树后重跑，同样退出 0 且两个产物 SHA256 一致。装配脚本以 `CI=true` 运行上游安装，避免上游 lefthook postinstall 向外层产品仓库写入 git hook 与 `lefthook.yml`；本轮已清理首次未设 `CI` 时误写入的 `.git/hooks/prepare-commit-msg` 与根 `lefthook.yml`（均非 Git 受管内容，清理后 `git status` 干净）。
 
@@ -42,16 +49,17 @@
 
 ## 未完成与阻塞
 
-- 插件已产出两个 bundle，但**尚未默认启用**：进入发行包集/profile 补丁层、成为安装后即满窗 Studio 的默认入口，以及安装包装配均未实现。
+- 默认启用已完成代码接线，但**未在真实 Windows 打包流程中验证**：Linux 不能运行桌面打包管线（mac/win 目标限制），本机的验证只到插件 bundle、tarball、上游编辑重放与桌面 typecheck。
 - 未在实际定制的 DSH 桌面上运行该插件：会话输入、事件、审批、取消、重启恢复均未实测；`deepseek-flash` 真实调用未执行。
 - `apps/desktop/scripts/package-target.ts` 只支持 `mac-arm64`/`mac-x64`/`win-x64`，且 `win-x64` 要求 Windows x64 构建主机；Linux 不能产出 Windows 安装包。
 - Windows 侧完整源码准备仍受符号链接阻塞（见 `release.lock.json` 的 `sourceExtractionBlockers.windows`），安装/签名/首启/升级/卸载/共存全部未验证。
 - 未执行 DeepSeek `deepseek-flash` 真实会话用例：输入、事件、审批、取消、重启恢复均未实测。
 - 未安装模板依赖、未验证模板规则加载与静态 Mock（属 G0-3）。
 
-## 下一步
+## 下一步（Windows 工作站）
 
-1. 在 `g0-desktop` 落实插件默认启用：核心包集/`desktop-packages.json` 与 profile `cordis.patch.yml` 行，并用上游桌面构建入口取得可运行切片（Linux 只到构建与装配，`win-x64` 要求 Windows 构建主机）。
-2. 在实际定制桌面验证满窗 Studio、会话输入、事件、审批、取消与重启恢复，分列 Linux 与 Windows 结果。
-3. 回填接口清单中标注「未验证」的项。
-4. 同一任务分支、同一时间仅一台工作站写入；交接时更新本文件并推送 WIP 提交。
+1. 在构建树同步产品基线后运行装配：`node apps/desktop-distribution/build/prepare-studio-plugin.mjs`（会重建插件 tarball 并重放上游编辑）。
+2. 打包：`DSH_DESKTOP_PACKED_EXTRA=<共享根>/.local/build/packed-studio pnpm run package:desktop:win:x64`；未签名验证可用 `package:desktop:win:x64:unsigned`。
+3. 验收：安装后首启即满窗 Studio（`data-studio-panel="studio"`），确认 `desktop-packages.json` 包含 `@eadp-studio/studio-plugin` 且 profile bundles 含同名包；再跑会话输入、事件、审批、取消、重启恢复与 `deepseek-flash`。
+4. 失败时保留脱敏证据并修正，不静默绕过；结果分别记录 Linux 构建与 Windows 原生。
+5. 同一任务分支、同一时间仅一台工作站写入；交接时更新本文件并推送 WIP 提交。

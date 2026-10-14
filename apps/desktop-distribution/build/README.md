@@ -1,6 +1,11 @@
 # Desktop source preparation
 
-The product repository stores the fixed upstream source contract in `../release.lock.json`. DSH source itself is downloaded from the exact commit archive into the ignored `.local/upstream/dsh/` directory. It is not a Git submodule or nested Git checkout. Product-specific build scripts and necessary upstream patches belong in this `build/` directory. [`prepare-studio-plugin.mjs`](prepare-studio-plugin.mjs) currently assembles the Studio plugin into an ignored build tree (`<primary checkout>/.local/build/dsh`) and builds its two halves; it never writes to the verified source tree, and it does not build or package the desktop yet. Target-release plugin compatibility, dependency installation in the verified source, native Windows build, signing, installation, lifecycle and distribution acceptance remain unverified.
+The product repository stores the fixed upstream source contract in `../release.lock.json`. DSH source itself is downloaded from the exact commit archive into the ignored `.local/upstream/dsh/` directory. It is not a Git submodule or nested Git checkout. Product-specific build scripts and necessary upstream patches belong in this `build/` directory. [`prepare-studio-plugin.mjs`](prepare-studio-plugin.mjs) currently assembles the Studio plugin into an ignored build tree (`<primary checkout>/.local/build/dsh`), builds its two halves, packs the plugin tarball, and replays two anchored upstream edits that make the plugin a built-in profile bundle:
+
+- `apps/desktop/scripts/prepare-package-set.ts` — add the plugin to the core package-set roots and accept `DSH_DESKTOP_PACKED_EXTRA` (the plugin tarball directory).
+- `apps/desktop/src/project-manager.ts` — append the plugin to the shipped profile's `dsh.profile.bundles`.
+
+It never writes to the verified source tree. Desktop packaging itself remains an upstream command and needs a Windows or macOS host: `DSH_DESKTOP_PACKED_EXTRA=<shared>/.local/build/packed-studio pnpm run package:desktop:win:x64`. Target-release plugin compatibility, native Windows build, signing, installation, lifecycle and distribution acceptance remain unverified.
 
 From the product repository root:
 
