@@ -132,12 +132,20 @@ export class GitLab {
   }
   async namespaces(actor: Actor): Promise<NamespaceView[]> {
     await this.user(actor.gitlabUserId);
-    const groups = await this.list('/groups?all_available=true'), seen = new Set<number>(), visible: NamespaceView[] = [];
-    for (const raw of groups) {
+    const groups = await this.list('/groups?all_available=true'), seen = new Set<number>();
+    const ids = groups.map(raw => {
       valid(record(raw) && numericId(raw.id) && !seen.has(raw.id)); seen.add(raw.id);
-      const namespace = await this.group(actor, raw.id); if (namespace) visible.push(namespace);
-    }
-    return visible;
+      return raw.id;
+    });
+    const namespaces: Array<NamespaceView | null> = Array.from({ length: ids.length }, () => null);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+      while (next < ids.length) {
+        const index = next++;
+        namespaces[index] = await this.group(actor, ids[index]!);
+      }
+    }));
+    return namespaces.filter((namespace): namespace is NamespaceView => namespace !== null);
   }
   async namespace(actor: Actor, id: number): Promise<NamespaceView> {
     await this.user(actor.gitlabUserId);

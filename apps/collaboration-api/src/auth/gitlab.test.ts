@@ -146,8 +146,43 @@ test('a forbidden group membership is excluded without hiding other authorized n
 test('group membership credential failure, throttling and outages still stop namespace discovery', async () => {
   for (const [status, expected] of [[401, 'GITLAB_MANAGEMENT_DENIED'], [429, 'GITLAB_RATE_LIMITED'], [503, 'GITLAB_UNAVAILABLE']] as Array<[number, string]>) {
     mock.restoreAll();
-    fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }]) : json({}, status));
+    fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }, { id: 2 }]) : path === '/groups/1/members/all/42' ? json(member(40)) : path === '/groups/1' ? json({ id: 1, name: 'Allowed', full_path: 'allowed', project_creation_level: 'maintainer' }) : json({}, status));
     await assert.rejects(gitlab.namespaces(actor), code(expected));
+  }
+});
+
+test('namespace discovery checks at most four groups concurrently while preserving list order and excluding nonmembers', async () => {
+  let active = 0, maximum = 0;
+  const completed: number[] = [];
+  fixture(async path => {
+    if (path === '/users/42') return json(user);
+    if (path.startsWith('/groups?')) return json(Array.from({ length: 8 }, (_, index) => ({ id: index + 1 })));
+    const membership = path.match(/^\/groups\/(\d+)\/members\/all\/42$/);
+    if (membership) {
+      const id = Number(membership[1]); active++; maximum = Math.max(maximum, active);
+      await new Promise(resolve => setTimeout(resolve, id === 1 ? 40 : 1));
+      active--; completed.push(id);
+      return id === 2 ? json({}, 404) : json(member(40));
+    }
+    const group = path.match(/^\/groups\/(\d+)$/);
+    if (group) {
+      const id = Number(group[1]); assert.notEqual(id, 2, 'A nonmember must not trigger a group policy read');
+      return json({ id, name: `Group ${id}`, full_path: `group-${id}`, project_creation_level: 'maintainer' });
+    }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  const result = await gitlab.namespaces(actor);
+  assert.equal(maximum, 4);
+  assert.notEqual(completed[0], 1, 'Responses intentionally complete out of list order');
+  assert.deepEqual(result.map(namespace => namespace.id), [1, 3, 4, 5, 6, 7, 8]);
+});
+
+test('all group IDs are validated before any membership requests start', async () => {
+  for (const groups of [[{ id: 1 }, { id: 1 }], [{ id: 1 }, { id: '2' }], [{ id: 1 }, { id: -2 }]]) {
+    mock.restoreAll();
+    const calls = fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json(groups) : json(member(40)));
+    await assert.rejects(gitlab.namespaces(actor), code('GITLAB_INVALID_RESPONSE'));
+    assert.ok(calls.every(call => !call.path.includes('/members/')));
   }
 });
 
