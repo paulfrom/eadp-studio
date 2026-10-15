@@ -7,6 +7,8 @@ import { parseArgs, promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const repository = path.resolve(import.meta.dirname, '../..')
+// Product assertions from client/studio/StudioPanel.tsx and components/LoginDialog.tsx.
+const expectedStages = ['项目场景', '需求协同', '原型展示', '基线确认', '交接清单']
 const usage = 'node tests/windows-desktop/verify-studio-first-launch.mjs --exe <absolute packaged .exe> [--timeout-ms 120000] [--screenshot]'
 
 async function availablePort() {
@@ -20,7 +22,7 @@ async function availablePort() {
   return port
 }
 
-// The one CDP connection is private to this launch, with no page interaction.
+// The CDP connection is private to this launch; the only interaction opens the login form.
 async function connect(url, deadline) {
   const socket = new WebSocket(url)
   const pending = new Map()
@@ -102,6 +104,7 @@ async function main() {
     status: 'failed', scope: 'development-machine-fresh-application-data', cleanMachineInstallationVerified: false,
     startedAt: new Date().toISOString(), executable, runDirectory: run, userData: paths['electron-user-data'],
     dshHome: paths.home, agentsHome: paths.agents, debugPort: port,
+    expectedStages, loginScope: 'empty-form-only-no-authentication-submitted',
   }
   const stdout = await open(path.join(run, 'stdout.log'), 'wx')
   const stderr = await open(path.join(run, 'stderr.log'), 'wx')
@@ -115,7 +118,7 @@ async function main() {
     child.once('exit', (code, signal) => { exited = true; result.exit = { code, signal } })
     result.pid = child.pid
     const deadline = Date.now() + timeout
-    let lastError
+    let lastError, loginRequested = false
     while (Date.now() < deadline) {
       if (launchError) throw launchError
       if (exited) throw new Error('Packaged application exited before Studio verification.')
@@ -142,16 +145,71 @@ async function main() {
         let mainContainer = mainSlot;
         while (mainContainer && getComputedStyle(mainContainer).display === 'contents') mainContainer = mainContainer.parentElement;
         const mainBounds = mainContainer?.getBoundingClientRect();
+        const visible = element => {
+          if (!element) return false;
+          const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+          return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        };
+        const text = element => element?.textContent.trim() ?? '';
+        const main = panel?.querySelector('main');
+        const sidebar = panel?.querySelector('aside[aria-label="工作台导航"]');
+        const navigation = [...(sidebar?.querySelectorAll('nav > button') ?? [])];
+        const stageLabels = navigation.map(button => [...button.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim());
+        const expectedStages = ${JSON.stringify(expectedStages)};
+        const welcomeHeading = [...(main?.querySelectorAll('h2') ?? [])].find(element => text(element) === '从一个项目开始');
+        const welcome = welcomeHeading?.parentElement;
+        const loginEntry = [...(main?.querySelectorAll('button') ?? [])].find(button => text(button) === '登录协同工作台');
+        const accountLogin = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button) === '登录');
+        const newProject = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button) === '＋ 新建 / 获取项目');
+        const project = sidebar?.querySelector('#studio-project');
+        const dialog = panel?.querySelector('dialog[open][aria-labelledby="studio-login-title"]');
+        const form = dialog?.querySelector('form');
+        const username = form?.querySelector('input[autocomplete="username"]');
+        const password = form?.querySelector('input[type="password"]');
+        const submit = [...(form?.querySelectorAll('button') ?? [])].find(button => button.type === 'submit');
         return { url: location.href, readyState: document.readyState, visibility: document.visibilityState,
           panelCount: document.querySelectorAll('[data-studio-panel="studio"]').length,
           visible: !!bounds && bounds.width > 0 && bounds.height > 0 && getComputedStyle(panel).visibility !== 'hidden',
           fillsMainArea: !!bounds && !!mainBounds && mainBounds.width > 0 && mainBounds.height > 0
             && ['x','y','width','height'].every(key => Math.abs(bounds[key] - mainBounds[key]) <= 2),
+          stageLabels,
+          fiveStageNavigation: navigation.length === expectedStages.length && stageLabels.every((label, index) => label === expectedStages[index])
+            && navigation.every(button => visible(button) && !button.disabled)
+            && navigation.filter(button => button.getAttribute('aria-current') === 'page').length === 1
+            && navigation[0]?.getAttribute('aria-current') === 'page' && text(main?.querySelector('h1')) === expectedStages[0],
+          disconnected: !!main && text(main.querySelector('header')).includes('等待连接')
+            && visible(accountLogin) && !accountLogin.disabled && visible(newProject) && newProject.disabled
+            && !!project && project.value === '' && project.options.length === 1,
+          welcome: visible(welcomeHeading) && text(welcome).includes('登录协同工作台，创建或打开项目。')
+            && text(welcome).includes('场景、需求与原型将在这里持续沉淀。') && text(welcome).includes('一个项目，对应一个 Git 仓库'),
+          loginEntry: visible(loginEntry) && !loginEntry.disabled,
+          loginDialog: { visible: visible(dialog), title: text(dialog?.querySelector('#studio-login-title')),
+            emptyUsername: visible(username) && username.required && username.type === 'text' && username.value === '',
+            emptyPassword: visible(password) && password.required && password.autocomplete === 'off' && password.value === '',
+            submitReady: visible(submit) && !submit.disabled && text(submit) === '登录' },
           bounds: bounds?.toJSON(), mainBounds: mainBounds?.toJSON(), viewport: { width: innerWidth, height: innerHeight } };
       })()` })
       if (evaluation.exceptionDetails) throw new Error('Studio DOM evaluation failed.')
       result.dom = evaluation.result.value
-      if (result.dom.panelCount === 1 && result.dom.visible && result.dom.fillsMainArea && result.dom.visibility === 'visible') {
+      result.checks = {
+        singleVisibleMainPanel: result.dom.panelCount === 1 && result.dom.visible && result.dom.fillsMainArea && result.dom.visibility === 'visible',
+        fiveStageNavigation: result.dom.fiveStageNavigation, disconnected: result.dom.disconnected,
+        welcome: result.dom.welcome, loginEntry: result.dom.loginEntry,
+        loginForm: result.dom.loginDialog.visible && result.dom.loginDialog.title === '登录协同工作台'
+          && result.dom.loginDialog.emptyUsername && result.dom.loginDialog.emptyPassword && result.dom.loginDialog.submitReady,
+      }
+      const workspaceReady = Object.entries(result.checks).filter(([name]) => name !== 'loginForm').every(([, passed]) => passed)
+      if (workspaceReady && !loginRequested) {
+        const opened = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+          const panel = document.querySelector('[data-studio-panel="studio"]');
+          const button = [...panel.querySelectorAll('main button')].find(element => element.textContent.trim() === '登录协同工作台');
+          if (!button || button.disabled) return false;
+          button.click(); return true;
+        })()` })
+        if (opened.exceptionDetails || opened.result.value !== true) throw new Error('Studio login entry could not open its form.')
+        loginRequested = true; await delay(100); continue
+      }
+      if (workspaceReady && result.checks.loginForm) {
         if (values.screenshot) {
           // Let Electron paint the verified DOM before capturing its compositor surface.
           await client.request('Runtime.evaluate', { awaitPromise: true, expression:
@@ -166,7 +224,7 @@ async function main() {
       }
       await delay(250)
     }
-    if (result.status !== 'passed') throw new Error(`Studio marker was not visible before timeout.${lastError ? ` Last CDP error: ${lastError.message}` : ''}`)
+    if (result.status !== 'passed') throw new Error(`Current full Studio first launch did not pass before timeout. Missing checks: ${Object.entries(result.checks ?? { fullStudio: false }).filter(([, passed]) => !passed).map(([name]) => name).join(', ')}.${lastError ? ` Last CDP error: ${lastError.message}` : ''}`)
   } catch (error) {
     result.error = error.message
     process.exitCode = 1
