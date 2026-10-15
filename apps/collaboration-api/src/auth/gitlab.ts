@@ -118,17 +118,21 @@ export class GitLab {
     if (edit) requireCondition(project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
     return project;
   }
-  private async group(actor: Actor, id: number): Promise<NamespaceView | null> {
-    const membership = await this.member('groups', id, actor.gitlabUserId);
-    if (!this.active(membership, 30)) return null;
-    const raw = await this.json<unknown>(`/groups/${id}`);
+  private groupPolicy(raw: unknown, id: number, accessLevel: number): NamespaceView | null {
     valid(record(raw) && raw.id === id && typeof raw.name === 'string' && typeof raw.full_path === 'string');
     repositoryPath(raw.full_path);
     const group = raw as unknown as Group;
     requireCondition(['developer', 'maintainer', 'noone'].includes(group.project_creation_level), 'NAMESPACE_POLICY_UNKNOWN', 'GitLab group project creation policy could not be established', 503);
     if (group.marked_for_deletion_on || group.marked_for_deletion_at || group.project_creation_level === 'noone') return null;
-    if (!this.active(membership, group.project_creation_level === 'developer' ? 30 : 40)) return null;
+    if (accessLevel < (group.project_creation_level === 'developer' ? 30 : 40)) return null;
     return { id, name: group.name, fullPath: group.full_path };
+  }
+  private async group(actor: Actor, id: number): Promise<NamespaceView | null> {
+    const membership = await this.member('groups', id, actor.gitlabUserId);
+    if (!this.active(membership, 30)) return null;
+    const raw = await this.json<unknown>(`/groups/${id}`);
+    if (!this.active(membership, 30)) return null;
+    return this.groupPolicy(raw, id, membership.access_level);
   }
   async namespaces(actor: Actor): Promise<NamespaceView[]> {
     await this.user(actor.gitlabUserId);
@@ -139,10 +143,11 @@ export class GitLab {
     });
     const namespaces: Array<NamespaceView | null> = Array.from({ length: ids.length }, () => null);
     let next = 0;
-    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+    await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
       while (next < ids.length) {
         const index = next++;
-        namespaces[index] = await this.group(actor, ids[index]!);
+        const membership = await this.member('groups', ids[index]!, actor.gitlabUserId);
+        if (this.active(membership, 30)) namespaces[index] = this.groupPolicy(groups[index], ids[index]!, membership.access_level);
       }
     }));
     return namespaces.filter((namespace): namespace is NamespaceView => namespace !== null);

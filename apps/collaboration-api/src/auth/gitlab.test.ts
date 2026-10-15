@@ -12,6 +12,7 @@ const user = { id: 42, username: 'bound-user', state: 'active', email: 'songlin.
 const manager = { id: 90, username: 'management-user', state: 'active', email: 'manager@example.test' };
 const project = { id: 7, name: '项目', path: 'project', path_with_namespace: 'team/project', http_url_to_repo: 'http://gitlab.test/team/project.git', namespace: { id: 2, full_path: 'team' }, visibility: 'private', default_branch: null, description: 'marker', permissions: { project_access: { access_level: 50 } } };
 const member = (access_level = 30) => ({ id: 42, state: 'active', access_level, expires_at: null });
+const namespaceGroup = (id: number, project_creation_level = 'maintainer') => ({ id, name: `Group ${id}`, full_path: `group-${id}`, project_creation_level });
 const json = (value: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify(value), { status, headers });
 const code = (expected: string) => (error: unknown) => error instanceof DomainError && error.code === expected;
 afterEach(() => mock.restoreAll());
@@ -110,7 +111,7 @@ test('a blocked numeric binding, unknown membership role, or cross-origin reposi
 test('namespace choices use the bound user inherited role and group creation policy, independent of management access', async () => {
   fixture(path => {
     if (path === '/users/42') return json(user);
-    if (path.startsWith('/groups?')) return json([1, 2, 3, 4, 5].map(id => ({ id })), 200, { 'x-next-page': '' });
+    if (path.startsWith('/groups?')) return json([1, 2, 3, 4, 5].map(id => namespaceGroup(id, id === 1 ? 'developer' : 'maintainer')), 200, { 'x-next-page': '' });
     const membership = path.match(/^\/groups\/(\d+)\/members\/all\/42$/);
     if (membership) {
       const id = Number(membership[1]);
@@ -132,7 +133,7 @@ test('unknown namespace policy cannot silently grant project creation', async ()
 test('a forbidden group membership is excluded without hiding other authorized namespaces or permitting creation', async () => {
   const calls = fixture(path => {
     if (path === '/users/42') return json(user);
-    if (path.startsWith('/groups?')) return json([{ id: 1 }, { id: 2 }]);
+    if (path.startsWith('/groups?')) return json([namespaceGroup(1), { ...namespaceGroup(2), name: 'Allowed', full_path: 'allowed' }]);
     if (path === '/groups/1/members/all/42') return json({ message: '403 Forbidden' }, 403);
     if (path === '/groups/2/members/all/42') return json(member(40));
     if (path === '/groups/2') return json({ id: 2, name: 'Allowed', full_path: 'allowed', project_creation_level: 'maintainer' });
@@ -146,17 +147,17 @@ test('a forbidden group membership is excluded without hiding other authorized n
 test('group membership credential failure, throttling and outages still stop namespace discovery', async () => {
   for (const [status, expected] of [[401, 'GITLAB_MANAGEMENT_DENIED'], [429, 'GITLAB_RATE_LIMITED'], [503, 'GITLAB_UNAVAILABLE']] as Array<[number, string]>) {
     mock.restoreAll();
-    fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }, { id: 2 }]) : path === '/groups/1/members/all/42' ? json(member(40)) : path === '/groups/1' ? json({ id: 1, name: 'Allowed', full_path: 'allowed', project_creation_level: 'maintainer' }) : json({}, status));
+    fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([namespaceGroup(1), namespaceGroup(2)]) : path === '/groups/1/members/all/42' ? json(member(40)) : json({}, status));
     await assert.rejects(gitlab.namespaces(actor), code(expected));
   }
 });
 
-test('namespace discovery checks at most four groups concurrently while preserving list order and excluding nonmembers', async () => {
+test('namespace discovery checks at most eight memberships concurrently without group detail reads and preserves list order', async () => {
   let active = 0, maximum = 0;
   const completed: number[] = [];
   fixture(async path => {
     if (path === '/users/42') return json(user);
-    if (path.startsWith('/groups?')) return json(Array.from({ length: 8 }, (_, index) => ({ id: index + 1 })));
+    if (path.startsWith('/groups?')) return json(Array.from({ length: 16 }, (_, index) => namespaceGroup(index + 1)));
     const membership = path.match(/^\/groups\/(\d+)\/members\/all\/42$/);
     if (membership) {
       const id = Number(membership[1]); active++; maximum = Math.max(maximum, active);
@@ -164,17 +165,12 @@ test('namespace discovery checks at most four groups concurrently while preservi
       active--; completed.push(id);
       return id === 2 ? json({}, 404) : json(member(40));
     }
-    const group = path.match(/^\/groups\/(\d+)$/);
-    if (group) {
-      const id = Number(group[1]); assert.notEqual(id, 2, 'A nonmember must not trigger a group policy read');
-      return json({ id, name: `Group ${id}`, full_path: `group-${id}`, project_creation_level: 'maintainer' });
-    }
     throw new Error(`Unexpected path ${path}`);
   });
   const result = await gitlab.namespaces(actor);
-  assert.equal(maximum, 4);
+  assert.equal(maximum, 8);
   assert.notEqual(completed[0], 1, 'Responses intentionally complete out of list order');
-  assert.deepEqual(result.map(namespace => namespace.id), [1, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(result.map(namespace => namespace.id), [1, ...Array.from({ length: 14 }, (_, index) => index + 3)]);
 });
 
 test('all group IDs are validated before any membership requests start', async () => {
@@ -186,20 +182,52 @@ test('all group IDs are validated before any membership requests start', async (
   }
 });
 
+test('namespace listing requires complete known policy fields and never fetches a replacement group detail', async () => {
+  const { project_creation_level: _policy, ...missingPolicy } = namespaceGroup(2);
+  for (const [group, expected] of [[missingPolicy, 'NAMESPACE_POLICY_UNKNOWN'], [namespaceGroup(2, 'unknown'), 'NAMESPACE_POLICY_UNKNOWN'], [{ ...namespaceGroup(2), name: undefined }, 'GITLAB_INVALID_RESPONSE']] as Array<[unknown, string]>) {
+    mock.restoreAll();
+    const calls = fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([namespaceGroup(1), group]) : path.includes('/members/') ? json(member(40)) : json(namespaceGroup(2)));
+    await assert.rejects(gitlab.namespaces(actor), code(expected));
+    assert.ok(calls.every(call => !/^\/groups\/\d+$/.test(call.path)));
+  }
+  mock.restoreAll();
+  fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([namespaceGroup(1, 'noone'), { ...namespaceGroup(2), marked_for_deletion_on: '2026-10-15' }, namespaceGroup(3)]) : json(member(40)));
+  assert.deepEqual((await gitlab.namespaces(actor)).map(namespace => namespace.id), [3]);
+});
+
+test('specific namespace authorization rechecks current membership and group policy after discovery', async () => {
+  let accessLevel = 30, policy = 'developer', members = 0, details = 0;
+  fixture(path => {
+    if (path === '/users/42') return json(user);
+    if (path.startsWith('/groups?')) return json([namespaceGroup(1, 'developer')]);
+    if (path === '/groups/1/members/all/42') { members++; return json(member(accessLevel)); }
+    if (path === '/groups/1') { details++; return json(namespaceGroup(1, policy)); }
+    throw new Error(`Unexpected path ${path}`);
+  });
+  assert.deepEqual((await gitlab.namespaces(actor)).map(namespace => namespace.id), [1]);
+  assert.equal(details, 0);
+  policy = 'maintainer';
+  await assert.rejects(gitlab.namespace(actor, 1), code('NAMESPACE_CREATE_DENIED'));
+  assert.equal(details, 1); assert.equal(members, 2);
+  policy = 'developer'; accessLevel = 20;
+  await assert.rejects(gitlab.namespace(actor, 1), code('NAMESPACE_CREATE_DENIED'));
+  assert.equal(details, 1); assert.equal(members, 3);
+});
+
 test('forbidden group listings, group policies and project memberships are never treated as usable authority', async () => {
   fixture(path => path === '/users/42' ? json(user) : json({}, 403));
   await assert.rejects(gitlab.namespaces(actor), code('GITLAB_RESOURCE_DENIED'));
   await assert.rejects(gitlab.authorize(actor, 7), code('GITLAB_RESOURCE_DENIED'));
   mock.restoreAll();
-  fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }]) : path.includes('/members/') ? json(member(40)) : json({}, 403));
-  await assert.rejects(gitlab.namespaces(actor), code('GITLAB_RESOURCE_DENIED'));
+  fixture(path => path === '/users/42' ? json(user) : path.includes('/members/') ? json(member(40)) : json({}, 403));
+  await assert.rejects(gitlab.namespace(actor, 1), code('GITLAB_RESOURCE_DENIED'));
 });
 
 test('a full first listing page is followed even without pagination headers', async () => {
   const calls = fixture(path => {
     if (path === '/users/42') return json(user);
-    if (path === '/groups?all_available=true&per_page=100&page=1') return json(Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })));
-    if (path === '/groups?all_available=true&per_page=100&page=2') return json([{ id: 101 }]);
+    if (path === '/groups?all_available=true&per_page=100&page=1') return json(Array.from({ length: 100 }, (_, i) => namespaceGroup(i + 1)));
+    if (path === '/groups?all_available=true&per_page=100&page=2') return json([{ ...namespaceGroup(101, 'developer'), name: 'Last group', full_path: 'last' }]);
     if (path === '/groups/101/members/all/42') return json(member(30));
     if (path === '/groups/101') return json({ id: 101, name: 'Last group', full_path: 'last', project_creation_level: 'developer' });
     if (path.includes('/members/all/42')) return json({}, 404);
