@@ -17,3 +17,5 @@ pnpm run preview -- --port 4173
 `/__eadp_preview_ready` 是服务 ready 检查，浏览器 `window.__EADP_MOCK__.ready` 是 Mock ready 检查。直接 fetch/XHR/WS 等请求均拒绝；页面服务通过 `src/mock/runtime.ts` 调用精确的本地 handler，未知 method/path 拒绝。
 
 具体生成规则见 `AGENT.md`，模板版本、完整文件校验值与保护区由同级 `prototype-template.manifest.json` 固定。Windows 原生执行、DSH 会话规则加载和最终打包由 Windows 验收，不能由 Linux 检查替代。
+
+路由只在 `config/routes.json` 中声明，保护配置以 JSON 解析并验证 `path`、`component`、`title`、`redirect`、`routes`；拒绝额外字段、外部重定向、重复路径和页面目录外的组件。组件使用 `./PageName`（指向 `src/pages/`），嵌套路径使用绝对路由；整体布局固定在 `config/config.ts`。不支持可执行路由配置。该边界不构成完整操作系统沙箱。

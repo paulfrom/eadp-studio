@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'umi';
-import routes from './router.config';
+import { loadPrototypeRoutes } from './load-routes';
 import { PrototypeResourceFencePlugin } from './resource-fence';
 
 export default defineConfig({
@@ -15,7 +15,7 @@ export default defineConfig({
   mock: false,
   plugins: ['@umijs/plugins/dist/locale'],
   locale: { default: 'zh-CN', baseNavigator: false, antd: false },
-  routes,
+  routes: [{ path: '/', component: '@/layouts/BlankLayout', routes: loadPrototypeRoutes(resolve(__dirname, '..')) }],
   chainWebpack(memo) {
     memo.plugin('eadp-prototype-resource-fence').use(PrototypeResourceFencePlugin);
   },

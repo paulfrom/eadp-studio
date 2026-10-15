@@ -1,4 +1,4 @@
-# 原型工程规则（eadp-prototype 1.0.0-g0.4）
+# 原型工程规则（eadp-prototype 1.0.0-g0.5）
 
 本工程用于已确认需求的合成数据演示。工程根 `AGENT.md` 是唯一规则入口；不创建另一份规则或兼容路径。本文件自包含，不能依赖维护者机器上的目录、外部 skill 或主应用。
 
@@ -31,9 +31,9 @@
 | `src/components/` | 本需求确有调用方的复用组件，不预建通用框架 |
 | `src/locales/` | 本次业务中英文文案，保留现有 locale 组织 |
 | `src/mock/fixtures.ts`、`src/mock/handlers.ts` | 本需求合成 fixture、精确 method/path handler，不添加透传 |
-| `config/router.config.ts` | 仅明确授权的新页面路由/标题，不改 hash history 或整体布局 |
+| `config/routes.json` | 仅明确授权的 JSON 页面路由/标题；固定布局由保护配置维护 |
 
-普通任务不得修改 `AGENT.md`、package/lock、`.npmrc`、`pnpm-workspace.yaml`、tsconfig、lint 配置、`config/config.ts`、`src/app.tsx`、`src/mock/runtime.ts`、`public/`、`scripts/` 或模板来源清单。规则加载、Mock 初始化、网络策略、预览实现、发布设置和凭证属于维护者职责。维护者修改保护区后必须重新固定 manifest 与验收。
+普通任务不得修改 `AGENT.md`、package/lock、`.npmrc`、`pnpm-workspace.yaml`、tsconfig、lint 配置、`config/config.ts`、`config/load-routes.ts`、`src/app.tsx`、`src/mock/runtime.ts`、`public/`、`scripts/` 或模板来源清单。规则加载、Mock 初始化、网络策略、预览实现、发布设置和凭证属于维护者职责。维护者修改保护区后必须重新固定 manifest 与验收。
 
 不覆盖他人未提交成果、不删除无关页面。路由授权不扩展为工程配置授权。原型任务不改写其它资产目录、公共资产清单或工作台控制元数据。
 

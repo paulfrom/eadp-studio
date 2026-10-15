@@ -106,14 +106,8 @@
     {
       "path": "config/config.ts",
       "sourceSha256": "1986fee3ff6053d4d6b69ccb98e2a04b2ec8c1b476c90cd94ee1ab676bb5807d",
-      "sha256": "ee3c5cf8d2291026fcd1d8d0da9da2a21265c3d1bf9848893694c484cdf3e8ab",
-      "treatment": "maintained-g0-4"
-    },
-    {
-      "path": "config/router.config.ts",
-      "sourceSha256": "f254d910eb51c3fb765d0b6d30e2a822a458022e97b8a5ead515835d1e075663",
-      "sha256": "d36ade5f78e0821369cd29e871480dadb3252ede8552e89dd8f01a4716c8f161",
-      "treatment": "maintained-g0-3"
+      "sha256": "8393b929c4681faba9e00b378bcefcd8d40bc97333a8d543159c2c4fc98a6af7",
+      "treatment": "maintained-g0-5"
     },
     {
       "path": "package.json",
@@ -265,11 +259,11 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "c07c8b29340c92e0456a6a0b87afe4b961b276f84fed710531171f143e94983f"
+      "sha256": "85bc0d9b848e6cc83cab2a1454376055cb2935c1723a228fd5d5107a48e8299b"
     },
     {
       "path": "README.md",
-      "sha256": "52a49eef09add75963aae9fa729fa688ed3c0c45c3c04ef88cae59c52311d6a8"
+      "sha256": "8a21cd31d21ccbdcc35ffa57922ed339b2d420a21698b81346d1d04c9165e459"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -306,6 +300,14 @@
     {
       "path": "config/resource-fence.js",
       "sha256": "455b12069bc77c788c88018df58acf9386612e82a0f7515ee1eab25d593ae492"
+    },
+    {
+      "path": "config/load-routes.ts",
+      "sha256": "084ea1f9164e204e9a7c068318b72ad8fbd4488e0351989fd6b50b71ea7fdef4"
+    },
+    {
+      "path": "config/routes.json",
+      "sha256": "89b3b013e12bdd5bddf03fe5649d0aa677f23ded0bc861f4ab518e8704f85435"
     }
   ],
   "acceptance": {
@@ -328,8 +330,10 @@
     "mockBoundarySmokeVerified": true,
     "windowsAcceptancePending": true
   },
-  "version": "eadp-prototype@1.0.0-g0.4",
-  "removedFiles": [],
+  "version": "eadp-prototype@1.0.0-g0.5",
+  "removedFiles": [
+    "config/router.config.ts"
+  ],
   "contract": {
     "node": "22.22.3",
     "packageManager": "pnpm@11.28.5",
@@ -374,7 +378,8 @@
       "src/mock/runtime.ts",
       "src/typings.d.ts",
       "tsconfig.json",
-      "config/resource-fence.js"
+      "config/resource-fence.js",
+      "config/load-routes.ts"
     ],
     "writablePrefixes": [
       "src/pages/",
@@ -382,7 +387,7 @@
       "src/locales/",
       "src/mock/fixtures.ts",
       "src/mock/handlers.ts",
-      "config/router.config.ts"
+      "config/routes.json"
     ],
     "commands": {
       "install": [
