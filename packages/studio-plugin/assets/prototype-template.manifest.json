@@ -259,7 +259,7 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "85bc0d9b848e6cc83cab2a1454376055cb2935c1723a228fd5d5107a48e8299b"
+      "sha256": "c3659ad9f5b172ece33583c09cf6f1cdc96d85e8aea469c56b44601215f82c0d"
     },
     {
       "path": "README.md",
@@ -308,6 +308,10 @@
     {
       "path": "config/routes.json",
       "sha256": "89b3b013e12bdd5bddf03fe5649d0aa677f23ded0bc861f4ab518e8704f85435"
+    },
+    {
+      "path": "config/resource-fence.d.ts",
+      "sha256": "316a83cd1cf781c29343a937becd828341f82b33ac9e7cf087f8ffa0e31626ab"
     }
   ],
   "acceptance": {
@@ -330,7 +334,7 @@
     "mockBoundarySmokeVerified": true,
     "windowsAcceptancePending": true
   },
-  "version": "eadp-prototype@1.0.0-g0.5",
+  "version": "eadp-prototype@1.0.0-g0.6",
   "removedFiles": [
     "config/router.config.ts"
   ],
@@ -379,7 +383,8 @@
       "src/typings.d.ts",
       "tsconfig.json",
       "config/resource-fence.js",
-      "config/load-routes.ts"
+      "config/load-routes.ts",
+      "config/resource-fence.d.ts"
     ],
     "writablePrefixes": [
       "src/pages/",
