@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -131,8 +131,26 @@ async function main() {
     }
     await unlink(probeLink);
     await unlink(probeTarget);
-    await tar('-xf', archive, '-C', staging);
     const extracted = path.join(staging, rootName);
+    // POSIX tar headers do not carry a symlink target's directory/file type.
+    // Windows bsdtar creates directory targets as file symlinks, which fail
+    // realpath/access with EPERM. Extract regular entries first, then create
+    // real symlinks with Node's explicit target type on every platform.
+    // Windows bsdtar otherwise decodes UTF-8 ustar names using the local code
+    // page (e.g. 说明.txt becomes 璇存槑.txt on a Chinese Windows machine).
+    await tar('-xf', archive, '-C', staging,
+      ...(process.platform === 'win32' ? ['--options', 'hdrcharset=UTF-8'] : []),
+      ...links.flatMap(({ name }) => ['--exclude', name]));
+    for (const { name, target } of links) {
+      const linkPath = path.join(staging, name);
+      const targetPath = await realpath(path.resolve(path.dirname(linkPath), target));
+      if (targetPath !== extracted && !targetPath.startsWith(`${extracted}${path.sep}`)) {
+        throw new Error(`Extracted symlink target escapes source root: ${name}`);
+      }
+      const targetStat = await stat(targetPath);
+      if (!targetStat.isDirectory() && !targetStat.isFile()) throw new Error(`Unsupported source symlink target: ${name}`);
+      await symlink(target, linkPath, targetStat.isDirectory() ? 'dir' : 'file');
+    }
     for (const entry of entries) {
       const actual = await realpath(path.join(staging, entry));
       if (actual !== extracted && !actual.startsWith(`${extracted}${path.sep}`)) throw new Error(`Extracted entry escapes source root: ${entry}`);

@@ -15,6 +15,10 @@ import { spawnSync } from 'node:child_process'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runPnpm } from './run-pnpm.mjs'
+import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
+import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
+import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -30,28 +34,20 @@ const productPlugin = path.join(repo, 'packages/studio-plugin')
 const assembledPlugin = path.join(buildTree, 'packages/eadp/studio-plugin')
 const packedPluginDirectory = path.join(sharedRoot, '.local/build/packed-studio')
 
-/** Package name the product adds to the Desktop runtime and profile layers. */
-const STUDIO_PACKAGE = '@eadp-studio/studio-plugin'
-
 /**
  * Upstream edits the product needs for a built-in plugin. Each is anchored on
  * exact source text and re-applied idempotently; a missing anchor is an error
  * so upstream drift cannot silently drop the product integration.
  */
 const UPSTREAM_EDITS = [
+  ...DESKTOP_POLICY_EDITS,
+  DESKTOP_STARTUP_EDIT,
+  DESKTOP_PLUGIN_EDIT,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
-      if (source.includes('STUDIO_PACKAGE')) return source
+      if (source.includes('const extraInputs =')) return source
       let next = source.replace(
-        "const DSH_PACKAGE = '@deepseek-ai/dsh'",
-        `const DSH_PACKAGE = '@deepseek-ai/dsh'\nconst STUDIO_PACKAGE = '${STUDIO_PACKAGE}'`,
-      )
-      next = next.replace(
-        'const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const',
-        'const ROOT_PACKAGES: readonly string[] = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE, STUDIO_PACKAGE]',
-      )
-      next = next.replace(
         "import { basename, join, resolve } from 'node:path'",
         "import { basename, delimiter, join, resolve } from 'node:path'",
       )
@@ -93,18 +89,6 @@ const exists = async (target) => stat(target).then(() => true, (error) => {
   if (error.code === 'ENOENT') return false
   throw error
 })
-
-function run(command, args, cwd) {
-  // CI=true keeps the upstream lefthook postinstall from writing git hooks into
-  // the enclosing product repository.
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: 'inherit',
-    env: { ...process.env, CI: 'true' },
-  })
-  if (result.error !== undefined) throw result.error
-  if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${String(result.status)}`)
-}
 
 async function copyVerifiedSource() {
   if (await exists(buildTree)) {
@@ -192,7 +176,7 @@ async function applyUpstreamEdits() {
 async function packPlugin() {
   await rm(packedPluginDirectory, { recursive: true, force: true })
   await mkdir(packedPluginDirectory, { recursive: true })
-  run('pnpm', ['pack', '--pack-destination', packedPluginDirectory], assembledPlugin)
+  runPnpm('pack', assembledPlugin)
   console.log(`Packed the plugin into ${path.relative(sharedRoot, packedPluginDirectory)}`)
 }
 
@@ -201,10 +185,11 @@ async function main() {
   await placePlugin()
   await referencePlugin()
   await applyUpstreamEdits()
-  run('pnpm', ['install', '--no-frozen-lockfile'], buildTree)
-  run('pnpm', ['run', 'build:lib:client'], buildTree)
+  runPnpm('install', buildTree)
+  // A clean source tree needs Host-generated Remote contracts before Client compilation.
+  runPnpm('libraries', buildTree)
   // The desktop typecheck proves the product edits above still compile.
-  run('pnpm', ['run', 'build:desktop'], buildTree)
+  runPnpm('desktop', buildTree)
   await verifyBuildOutput()
   await packPlugin()
   console.log('Studio plugin assembled and packed. Desktop packaging needs a Windows or macOS host:')

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "source-layout-only",
+  "status": "unsigned-windows-build-verified",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
     "tag": "dsh-v0.2.1-alpha.2",
@@ -32,14 +32,12 @@
     "sourceArchiveVerified": true,
     "fullSourceExtractionVerified": true,
     "fullSourceExtractionPlatforms": [
-      "linux"
+      "linux",
+      "windows"
     ],
-    "sourceExtractionBlockers": {
-      "windows": "Current Windows account cannot create source symlinks (Node EPERM; Windows tar Invalid argument), including CLAUDE.md -> AGENTS.md."
-    },
     "targetReleasePocVerified": false,
-    "dependencyInstallVerified": false,
-    "nativeBuildVerified": false,
+    "dependencyInstallVerified": true,
+    "nativeBuildVerified": true,
     "distributionVerified": false,
     "releaseReady": false
   }
