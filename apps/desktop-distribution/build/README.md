@@ -15,6 +15,8 @@ It never writes to the verified source tree. Desktop packaging itself remains an
 
 Current assembly puts `@eadp/contracts` into the plugin's production dependencies and packs both product packages for the upstream package-set closure. It uses the official `compile-referenced-projects.ts libraries` and `scripts/build.ts --profile official --artifacts-only` entries. These retain checked Host-before-Client artifact builds while excluding the upstream aggregate script/test typecheck programs from packaging. Full repository checks remain separate.
 
+Workspace reflection also uses the fixed upstream `WorkspaceAnalyzer.analyzeInBatches()` API, whose default is eight selected contributors per TypeScript program. The product patch changes only the generator's analyzer invocation and retains stable graph merging and all artifact emit/validation. This bounds reflection memory during the workspace bundler pass without increasing the Node heap. `studio-typert-edits.test.mjs` checks the fixed source anchor and compares direct/batched Host and Client fixture models; its semantic fixture requires the prepared DSH dependency tree.
+
 The build rejects the former empty Host and missing generated Remote files, validates every template file, and records source and shipped output hashes in `studio-build.json`. The current source receipt must match when checking the prepared or extracted final app resources:
 
 ```powershell

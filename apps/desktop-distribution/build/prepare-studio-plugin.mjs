@@ -23,6 +23,7 @@ import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
 import { STUDIO_PACKAGING_EDIT } from './studio-packaging-edits.mjs'
+import { STUDIO_TYPERT_EDIT } from './studio-typert-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -51,6 +52,7 @@ const UPSTREAM_EDITS = [
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
   STUDIO_PACKAGING_EDIT,
+  STUDIO_TYPERT_EDIT,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
