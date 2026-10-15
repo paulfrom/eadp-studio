@@ -185,7 +185,7 @@ async function referencePlugin() {
   const manifest = JSON.parse(await readFile(path.join(repo, 'packages/contracts/package.json'), 'utf8'))
   manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
   manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' } }
-  manifest.files = ['lib']
+  manifest.files = ['lib/index.js', 'lib/types/**/*.d.ts', 'lib/types/**/*.d.ts.map', 'lib/types/**/*.js', 'lib/types/**/*.js.map']
   delete manifest.scripts
   await writeFile(path.join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   await writeFile(path.join(target, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src'] }, null, 2) + '\n')
