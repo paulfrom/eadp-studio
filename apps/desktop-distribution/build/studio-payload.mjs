@@ -76,7 +76,7 @@ export async function recordStudioBuild(pluginRoot, repo) {
   await verifyStudioPluginFiles(pluginRoot)
   const files = []
   for (const directory of ['lib', 'assets']) files.push(...(await inventory(path.join(pluginRoot, directory)))
-    .filter(file => directory === 'assets' || /^(?:index\.js|client\.js|typert\.[^/]+|types\/.*(?:\.js|\.d\.ts))$/.test(file.path))
+    .filter(file => directory === 'assets' || /^(?:index\.js|client\.js|typert\.(?:host|remote-client)\.(?:js|d\.ts)|types\/.*(?:\.js|\.d\.ts))$/.test(file.path))
     .map(file => ({ ...file, path: `${directory}/${file.path}` })))
   files.push({ path: 'cordis.patch.yml', bytes: (await readFile(path.join(pluginRoot, 'cordis.patch.yml'))).length, sha256: hash(await readFile(path.join(pluginRoot, 'cordis.patch.yml'))) })
   await writeFile(path.join(pluginRoot, 'studio-build.json'), `${JSON.stringify({ schemaVersion: 1, sourceDigest: await studioSourceDigest(repo), files }, null, 2)}\n`)
