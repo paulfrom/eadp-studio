@@ -5,7 +5,7 @@ import type { AgentHandle, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { TaskView } from '../../../shared/studio.ts'
 import { materialPath } from '../assets/materials.ts'
 import { registerStudioExecutionScope } from '../platform/execution-guard.js'
@@ -16,16 +16,16 @@ export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
   constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onCandidates: (sessionId: string, content: string) => Promise<void>) {
-    ctx.on('session/event', (session, event) => {
-        if (event.type !== 'assistant/message' || event.data.interrupted) return
-        const content = event.data.message.content.filter(p => p.type === 'text').map(p => p.text).join('\n')
-      void this.onCandidates(session.id, content).catch(() => { /* Invalid model output cannot create authoritative assets. */ })
-    })
-      ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
+    ctx.on('session/event', (session, event) => this.enqueueCandidates(session.id, event))
+    ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
     if (this.handles.has(task.sessionId)) {
       if (input) await this.bind(task, input)
+      if (task.purpose === 'split' && task.split?.status === 'sent') {
+        const inspection = await this.ctx.sessionController.inspect(task.sessionId as SessionId)
+        for (const event of inspection.events) this.enqueueCandidates(task.sessionId, event)
+      }
       return task.sessionId
     }
     const setup: AgentSetup = async (scope) => {
@@ -51,11 +51,23 @@ export class DshTaskSessions {
     }
     const sessionId = task.sessionId as SessionId
     let handle: AgentHandle
-    const hasPersisted = await this.ctx.sessionController.inspect(sessionId).then(() => true, () => false)
-    if (hasPersisted) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, setup })
+    const inspection = await this.ctx.sessionController.inspect(sessionId).catch(error => {
+      if (task.purpose === 'split' && task.split?.status === 'sent') throw new Error('已发送的拆分会话无法读取，请保留现场后重试恢复', { cause: error })
+      return undefined
+    })
+    if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, setup })
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree }, setup })
     this.handles.set(task.sessionId, handle)
+    if (task.purpose === 'split' && task.split?.status === 'sent' && inspection) {
+      // Do not await application delivery: open runs inside its serialized command queue.
+      for (const event of inspection.events) this.enqueueCandidates(task.sessionId, event)
+    }
     return task.sessionId
+  }
+  private enqueueCandidates(sessionId: string, event: SessionEvent): void {
+    if (event.type !== 'assistant/message' || event.data.interrupted) return
+    const content = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+    void this.onCandidates(sessionId, content).catch(() => { /* Persisted events remain available for the next recovery attempt. */ })
   }
   async bind(task: TaskView, input: PrototypeTaskIdentity): Promise<PrototypeRuleBinding> {
     const handle = this.handles.get(task.sessionId)

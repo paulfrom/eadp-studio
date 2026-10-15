@@ -64,8 +64,8 @@ export class StudioApplication {
       }
       case 'confirmMaterial': await this.confirmMaterial(command.entityId, command.expectedHash, command.method); break
       case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'); break }
-      case 'checkPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const sha = (await this.ports.git.state(task.worktree)).head; await this.ports.checks(task, sha); break }
-      case 'startPreview': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const result = await this.ports.preview(task); this.previewState = { entityId: entity.id, url: result.url }; break }
+      case 'checkPrototype': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const sha = (await this.ports.git.state(task.worktree)).head; await this.ports.checks(task, sha); break }
+      case 'startPreview': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const result = await this.ports.preview(task); this.previewState = { entityId: entity.id, url: result.url }; break }
       case 'stopPreview': await this.ports.stopPreview(); this.previewState = undefined; break
       case 'confirmPrototype': await this.confirmPrototype(command.entityId); break
       case 'releaseOccupation': {
@@ -277,12 +277,14 @@ export class StudioApplication {
     }
     const split = task.split!
     if (split.confirmationId !== input.confirmationId || task.inputHash !== input.fixed.sha256 || split.version !== input.version) throw new Error('拆分任务已绑定其他确认版本，不能替换其输入')
-    if (split.status === 'sent' || split.status === 'completed') return
+    if (split.status === 'completed') return
+    const rules = '仅从工作台提供的固定已确认场景生成需求候选。不要预留正式ID或认领；每项给出title与summary。不要读取未确认草稿或修改项目文件。'
+    if (split.status === 'sent') { await this.ports.session(task, rules); return }
     try {
       // Read accepted Git bytes, never a subsequently edited material worktree.
       const bytes = await this.projects.readFixed(task.projectId, split.fixed.commitSha, split.fixed.path)
       if (digest(bytes) !== task.inputHash) throw new Error('场景拆分固定输入哈希校验失败')
-      await this.ports.session(task, '仅从工作台提供的固定已确认场景生成需求候选。不要预留正式ID或认领；每项给出title与summary。不要读取未确认草稿或修改项目文件。')
+      await this.ports.session(task, rules)
       await this.ports.prompt(task.sessionId, `场景 ${entity.id} 第 ${split.version} 版已确认，确认记录 ${split.confirmationId}，输入哈希 ${task.inputHash}。仅根据以下固定材料拆分需求候选，在会话最后输出唯一代码块 \`\`\`eadp-candidates，内容为JSON数组 [{"title":"…","summary":"…"}]。不要修改项目文件。\n\n${Buffer.from(bytes).toString('utf8')}`)
       split.status = 'sent'; delete task.error; await this.store.save()
     } catch (error) {
