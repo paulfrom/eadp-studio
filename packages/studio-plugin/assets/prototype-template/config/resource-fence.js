@@ -46,13 +46,46 @@ function createFence() {
     }
   }
 
+  function internalLoaderImport(data, request, configuredLoaders) {
+    if (data.dependencyType !== 'loaderImport') return false
+    const marker = '.webpack[javascript/auto]!=!!!'
+    const index = request.indexOf(marker)
+    if (index <= 0 || typeof data.contextInfo?.issuer !== 'string') return false
+    const source = resourcePath(request.slice(0, index))
+    const issuer = resourcePath(data.contextInfo.issuer)
+    const chain = request.slice(index + marker.length).split('!')
+    const resource = resourcePath(chain.pop())
+    if (!chain.length || source !== issuer || resource !== issuer) return false
+    resolveAllowed(issuer)
+    return chain.every(loader => {
+      const filename = resourcePath(loader)
+      return (path.isAbsolute(filename) || path.win32.isAbsolute(filename)) && configuredLoaders.has(realpathSync.native(filename))
+    })
+  }
+
   return {
     apply(compiler) {
+      const configuredLoaders = new Set()
+      function use(value) {
+        if (Array.isArray(value)) return value.forEach(use)
+        const loader = typeof value === 'string' ? value : value?.loader
+        if (typeof loader === 'string' && (path.isAbsolute(loader) || path.win32.isAbsolute(loader))) configuredLoaders.add(realpathSync.native(resourcePath(loader)))
+      }
+      function rules(values) {
+        for (const rule of values || []) {
+          if (!rule || typeof rule !== 'object') continue
+          use(rule.loader)
+          use(rule.use)
+          rules(rule.rules)
+          rules(rule.oneOf)
+        }
+      }
+      rules(compiler.options?.module?.rules)
       compiler.hooks.normalModuleFactory.tap(PLUGIN, factory => {
         factory.hooks.beforeResolve.tap(PLUGIN, data => {
           if (!data) return
           const request = String(data.request ?? '')
-          if (request.includes('!')) throw new Error('Prototype source inline loader overrides are not allowed')
+          if (request.includes('!') && !internalLoaderImport(data, request, configuredLoaders)) throw new Error('Prototype source inline loader overrides are not allowed')
           const resource = resourcePath(request)
           if (isUriScheme(resource)) throw new Error('Prototype build resource scheme is not allowed')
           if (path.isAbsolute(resource) || path.win32.isAbsolute(resource)) resolveAllowed(resource)

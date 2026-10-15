@@ -10,14 +10,14 @@ function hook() {
   let callback;
   return { tap(_name, value) { callback = value; }, call(value) { return callback(value); } };
 }
-function pluginHooks() {
-  const compiler = { hooks: { normalModuleFactory: hook(), contextModuleFactory: hook() } };
+function pluginHooks(rules = []) {
+  const compiler = { options: { module: { rules } }, hooks: { normalModuleFactory: hook(), contextModuleFactory: hook() } };
   new PrototypeResourceFencePlugin().apply(compiler);
   const normal = { hooks: { beforeResolve: hook(), afterResolve: hook() } };
   const context = { hooks: { afterResolve: hook() } };
   compiler.hooks.normalModuleFactory.call(normal);
   compiler.hooks.contextModuleFactory.call(context);
-  return [request => normal.hooks.beforeResolve.call({ request }), resource => normal.hooks.afterResolve.call({ createData: { resource } }), resource => context.hooks.afterResolve.call({ resource })];
+  return [(request, extra = {}) => normal.hooks.beforeResolve.call({ request, ...extra }), resource => normal.hooks.afterResolve.call({ createData: { resource } }), resource => context.hooks.afterResolve.call({ resource })];
 }
 
 test('actual Webpack hooks allow native drive paths and still enforce resolved source boundaries', { skip: process.platform !== 'win32' }, async t => {
@@ -66,4 +66,22 @@ test('every resource hook continues rejecting executable and network URI schemes
       assert.throws(() => invoke(value), /scheme is not allowed/, value);
     }
   }
+});
+
+test('internal loaderImport cannot select task loaders or spoof an ordinary source import', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'eadp-internal-loader-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const page = path.join(directory, 'page.less');
+  const trusted = path.join(directory, 'configured-loader.cjs');
+  const untrusted = path.join(directory, 'task-loader.cjs');
+  await Promise.all([writeFile(page, '.page {}'), writeFile(trusted, 'module.exports = source => source;'), writeFile(untrusted, 'throw new Error("must never execute");')]);
+  const previous = process.cwd();
+  let beforeResolve;
+  try { process.chdir(directory); [beforeResolve] = pluginHooks([{ oneOf: [{ use: [{ loader: trusted }] }] }]); } finally { process.chdir(previous); }
+  const request = loader => page + '.webpack[javascript/auto]!=!!!' + loader + '??ruleSet[1].rules[0].oneOf[0].use[0]!' + page;
+  const internal = { dependencyType: 'loaderImport', contextInfo: { issuer: page } };
+  assert.doesNotThrow(() => beforeResolve(request(trusted), internal));
+  assert.throws(() => beforeResolve(request(untrusted), internal), /inline loader/);
+  assert.throws(() => beforeResolve(request(trusted), { ...internal, dependencyType: 'esm' }), /inline loader/);
+  assert.throws(() => beforeResolve(request(trusted), { ...internal, contextInfo: { issuer: path.join(directory, 'other.less') } }), /inline loader/);
 });

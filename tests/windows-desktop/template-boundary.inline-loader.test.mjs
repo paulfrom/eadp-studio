@@ -22,12 +22,12 @@ async function fixture(t) {
   return { directory, project, marker: path.join(directory, 'outside-marker') };
 }
 
-async function compile(project, guarded, rules = []) {
+async function compile(project, guarded, rules = [], plugins = []) {
   const previous = process.cwd();
   let compiler;
   try {
     process.chdir(project);
-    compiler = webpack({ mode: 'production', context: project, entry: './entry.js', output: { path: path.join(project, 'dist'), filename: 'app.js' }, optimization: { minimize: false }, module: { rules }, plugins: guarded ? [new PrototypeResourceFencePlugin()] : [] });
+    compiler = webpack({ mode: 'production', context: project, entry: './entry.js', output: { path: path.join(project, 'dist'), filename: 'app.js' }, optimization: { minimize: false }, module: { rules }, plugins: [...(guarded ? [new PrototypeResourceFencePlugin()] : []), ...plugins] });
   } finally { process.chdir(previous); }
   return new Promise((resolve, reject) => compiler.run((error, stats) => compiler.close(closeError => {
     if (error || closeError) reject(error || closeError);
@@ -60,4 +60,18 @@ test('real Webpack keeps normal resources and protected configuration loader rul
   const result = await compile(project, true, [{ test: /safe\.js$/, use: [path.join(project, 'configured-loader.cjs')] }]);
   assert.deepEqual(result.errors, []);
   assert.match(await readFile(path.join(project, 'dist/app.js'), 'utf8'), /PROCESSED/);
+});
+
+test('real Umi CSS extraction supports its protected configured loaderImport chain', async t => {
+  const { project } = await fixture(t);
+  const MiniCssExtractPlugin = bundlerRequire('@umijs/bundler-webpack/compiled/mini-css-extract-plugin');
+  await writeFile(path.join(project, 'entry.js'), "import './page.css';");
+  await writeFile(path.join(project, 'page.css'), '.page { color: red; }');
+  // Keep the fixture independent of node_modules source imports while exercising
+  // the real extraction loader's loaderImport lifecycle and generated request.
+  const configuredLoader = path.join(project, 'css-value-loader.cjs');
+  await writeFile(configuredLoader, 'module.exports = source => "module.exports = [[module.id, " + JSON.stringify(source) + "]];";');
+  const result = await compile(project, true, [{ test: /\.css$/, use: [bundlerRequire.resolve('@umijs/bundler-webpack/compiled/mini-css-extract-plugin/loader'), configuredLoader] }], [new MiniCssExtractPlugin({ filename: 'app.css' })]);
+  assert.deepEqual(result.errors, []);
+  assert.match(await readFile(path.join(project, 'dist/app.css'), 'utf8'), /color: red/);
 });
