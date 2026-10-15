@@ -17,13 +17,17 @@ function resourcePath(request) {
   return resourceRequest.slice(0, end).replace(/\.webpack\[[^\]]+\]$/, '')
 }
 
+function isUriScheme(resource) {
+  return !path.win32.isAbsolute(resource) && /^[a-z][a-z\d+.-]*:/i.test(resource)
+}
+
 function createFence() {
   const root = realpathSync.native(process.cwd())
 
   function resolveAllowed(request) {
     const resource = resourcePath(request)
     if (resource.includes('\0')) return
-    if (!resource || /^[a-z][a-z\d+.-]*:/i.test(resource)) throw new Error('Prototype build resource scheme is not allowed')
+    if (!resource || isUriScheme(resource)) throw new Error('Prototype build resource scheme is not allowed')
     let target
     try {
       target = realpathSync.native(resource)
@@ -49,7 +53,7 @@ function createFence() {
           if (!data) return
           const request = String(data.request ?? '')
           const resource = resourcePath(request)
-          if (/^[a-z][a-z\d+.-]*:/i.test(resource)) throw new Error('Prototype build resource scheme is not allowed')
+          if (isUriScheme(resource)) throw new Error('Prototype build resource scheme is not allowed')
           if (path.isAbsolute(resource) || path.win32.isAbsolute(resource)) resolveAllowed(resource)
         })
         factory.hooks.afterResolve.tap(PLUGIN, data => {

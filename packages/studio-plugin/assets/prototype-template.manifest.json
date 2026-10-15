@@ -259,7 +259,7 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "c3659ad9f5b172ece33583c09cf6f1cdc96d85e8aea469c56b44601215f82c0d"
+      "sha256": "e82e6f10a1e64d39870c725bff0542c7b997f77cc56d37bb487fbd7105a03149"
     },
     {
       "path": "README.md",
@@ -299,7 +299,7 @@
     },
     {
       "path": "config/resource-fence.js",
-      "sha256": "455b12069bc77c788c88018df58acf9386612e82a0f7515ee1eab25d593ae492"
+      "sha256": "dc613a1a20c06f150b6a10e9d52553e25ecf338ed29fe4a48a43100fc8729568"
     },
     {
       "path": "config/load-routes.ts",
@@ -334,7 +334,7 @@
     "mockBoundarySmokeVerified": true,
     "windowsAcceptancePending": true
   },
-  "version": "eadp-prototype@1.0.0-g0.6",
+  "version": "eadp-prototype@1.0.0-g0.7",
   "removedFiles": [
     "config/router.config.ts"
   ],
