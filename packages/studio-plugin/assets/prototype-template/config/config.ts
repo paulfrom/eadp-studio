@@ -36,5 +36,5 @@ export default defineConfig({
       '@ead/suid',
     ],
   ],
-  lessLoader: { javascriptEnabled: true, math: 'always' },
+  lessLoader: { javascriptEnabled: false, disablePluginRule: true, math: 'always' },
 });

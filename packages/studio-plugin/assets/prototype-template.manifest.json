@@ -106,7 +106,7 @@
     {
       "path": "config/config.ts",
       "sourceSha256": "1986fee3ff6053d4d6b69ccb98e2a04b2ec8c1b476c90cd94ee1ab676bb5807d",
-      "sha256": "8393b929c4681faba9e00b378bcefcd8d40bc97333a8d543159c2c4fc98a6af7",
+      "sha256": "02496450bc0bfc5318619995094827ad096cfe06dbc222c8b105717739ea644b",
       "treatment": "maintained-g0-5"
     },
     {
@@ -259,7 +259,7 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "e82e6f10a1e64d39870c725bff0542c7b997f77cc56d37bb487fbd7105a03149"
+      "sha256": "2b8acc837450acee774bf248af159144dbf7e35070221de37bdedd1dea9529fa"
     },
     {
       "path": "README.md",
@@ -334,7 +334,7 @@
     "mockBoundarySmokeVerified": true,
     "windowsAcceptancePending": true
   },
-  "version": "eadp-prototype@1.0.0-g0.7",
+  "version": "eadp-prototype@1.0.0-g0.8",
   "removedFiles": [
     "config/router.config.ts"
   ],

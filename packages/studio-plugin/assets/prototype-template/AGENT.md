@@ -1,4 +1,4 @@
-# 原型工程规则（eadp-prototype 1.0.0-g0.7）
+# 原型工程规则（eadp-prototype 1.0.0-g0.8）
 
 本工程用于已确认需求的合成数据演示。工程根 `AGENT.md` 是唯一规则入口；不创建另一份规则或兼容路径。本文件自包含，不能依赖维护者机器上的目录、外部 skill 或主应用。
 
@@ -53,6 +53,8 @@
 - 金额区分空、零、负值、精度和币种；日期区分日期/时间，明确边界和时区，不用随意 toFixed 或当前日期填空。
 
 ## 合成数据与网络保护
+
+- Less 只编译样式，不启用反引号 JavaScript 或 `@plugin` 指令；禁止在可写样式中运行宿主代码。
 
 - Umi/Webpack 解析每个模块、上下文目录、静态资源和 loader；真实路径必须留在当前原型工程内，loader 仅可来自冻结依赖。拒绝绝对外部路径、URI scheme、内联 loader、`.env`、Git 元数据及密钥文件；无法解析时构建失败。
 - `public/prototype-guard.js` 在 bundle 之前安装不可替换的 fetch/XHR/WebSocket/EventSource/Worker/sendBeacon/表单拦截。静态 CSP `connect-src 'none'` 同时拒绝绕过网络。
