@@ -1,0 +1,25 @@
+{
+  "name": "@eadp/collaboration-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --env-file=.env src/bootstrap.ts",
+    "start": "tsx --env-file=.env src/bootstrap.ts",
+    "db:init": "tsx --env-file=.env src/persistence/initialize.ts",
+    "typecheck": "tsc --noEmit",
+    "check:transactions": "tsx --env-file=.env src/persistence/check-transactions.ts"
+  },
+  "dependencies": {
+    "@eadp/contracts": "workspace:*",
+    "@eadp/asset-domain": "workspace:*",
+    "fastify": "^5.6.1",
+    "pg": "^8.16.3",
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.6",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@eadp/asset-domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit" },
+  "dependencies": { "@eadp/contracts": "workspace:*" },
+  "devDependencies": { "typescript": "^5.9.3" }
+}
