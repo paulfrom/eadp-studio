@@ -37,7 +37,7 @@
     "lib/typert.host.d.ts",
     "lib/typert.remote-client.js",
     "lib/typert.remote-client.d.ts",
-    "assets/prototype-template/",
+    "assets/prototype-template.tar.gz",
     "assets/prototype-template.manifest.json"
   ],
   "devDependencies": { "@eadp/contracts": "workspace:*" }

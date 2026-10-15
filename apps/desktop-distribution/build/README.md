@@ -19,6 +19,8 @@ Workspace reflection also uses the fixed upstream `WorkspaceAnalyzer.analyzeInBa
 
 The build rejects the former empty Host and missing generated Remote files, validates every template file, and records source and shipped output hashes in `studio-build.json`. The current source receipt must match when checking the prepared or extracted final app resources:
 
+The npm package carries the template as `assets/prototype-template.tar.gz`, generated only from its manifest allowlist. npm filters `.gitignore` and `.npmrc` from loose package assets, so these files must cross that boundary inside the archive with their original names and bytes. The official `prepare:dsh` phase verifies the archive receipt, rejects extra members, links and escaping paths, then materializes and hashes every allowlisted file at the original `assets/prototype-template` path before runtime descriptors and smoke checks. The Host consumes that fixed path. The final receipt covers both the archive and every expanded file. The build helper reuses `tar` from the fixed DSH development dependency tree; it is not a plugin runtime dependency.
+
 ```powershell
 node apps/desktop-distribution/build/verify-studio-distribution.mjs <dsh-resource-directory> <runtime/studio-tools-directory>
 ```

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readFile, readdir, lstat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { createStudioTemplateArchive } from './studio-template-archive.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = async filename => JSON.parse(await readFile(filename, 'utf8'))
@@ -74,6 +75,7 @@ export async function studioSourceDigest(repo) {
 /** Stamp only after current Host, client and generated Remote outputs passed the build. */
 export async function recordStudioBuild(pluginRoot, repo) {
   await verifyStudioPluginFiles(pluginRoot)
+  await createStudioTemplateArchive(pluginRoot)
   const files = []
   for (const directory of ['lib', 'assets']) files.push(...(await inventory(path.join(pluginRoot, directory)))
     .filter(file => directory === 'assets' || /^(?:index\.js|client\.js|typert\.(?:host|remote-client)\.(?:js|d\.ts)|types\/.*(?:\.js|\.d\.ts))$/.test(file.path))

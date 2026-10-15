@@ -24,6 +24,7 @@ import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
 import { STUDIO_PACKAGING_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_TYPERT_EDIT } from './studio-typert-edits.mjs'
+import { STUDIO_TEMPLATE_EDIT, STUDIO_TEMPLATE_FILES } from './studio-template-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -53,6 +54,7 @@ const UPSTREAM_EDITS = [
   STUDIO_BROWSER_EDIT,
   STUDIO_PACKAGING_EDIT,
   STUDIO_TYPERT_EDIT,
+  STUDIO_TEMPLATE_EDIT,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
@@ -203,7 +205,7 @@ async function verifyBuildOutput() {
 }
 
 async function applyUpstreamEdits() {
-  for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE]) {
+  for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES]) {
     const target = path.join(buildTree, addition.file)
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, addition.source)

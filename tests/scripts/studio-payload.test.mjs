@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
 import { assertStudioHost, productionPluginManifest, recordStudioBuild, verifyStudioPlugin, verifyRuntimePayload } from '../../apps/desktop-distribution/build/studio-payload.mjs'
@@ -48,7 +49,9 @@ test('official packaging keeps checked artifact compilation and rejects upstream
 })
 
 test('current source receipt detects stale bundles and omitted generated Remote outputs', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-payload-fixture-'))
+  const common = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' })
+  assert.equal(common.status, 0)
+  const root = await mkdtemp(path.join(path.dirname(common.stdout.trim()), '.local/build/dsh/.studio-payload-fixture-'))
   const repo = path.join(root, 'repo'), plugin = path.join(root, 'plugin')
   const put = async (base, filename, bytes) => { await mkdir(path.dirname(path.join(base, filename)), { recursive: true }); await writeFile(path.join(base, filename), bytes) }
   try {
