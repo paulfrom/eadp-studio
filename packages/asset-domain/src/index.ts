@@ -48,9 +48,11 @@ export function validatePrerequisites(entityId: string, prerequisites: Prerequis
 }
 export function prototypeBindings(entity: EntityView, entities: EntityView[]) {
   requireCondition(entity.kind === 'requirement' && entity.current && entity.confirmationStatus === 'confirmed', 'MATERIAL_REQUIRED', 'A confirmed requirement is required before prototype production');
+  requireCondition(!entity.current.metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'The current requirement version is explicitly not applicable');
   return entity.prerequisites.map(p => {
     const prerequisite = entities.find(e => e.id === p.requirementId);
-    requireCondition(prerequisite?.current && prerequisite.completedVersion === p.version && prerequisite.current.version === p.version && prerequisite.current.prototypeBaselineId, 'PREREQUISITE_INCOMPLETE', 'Required prerequisite version has not been accepted as completed', 409, p);
-    return { requirementId: p.requirementId, version: p.version, confirmationId: prerequisite.completionConfirmationId!, integrationSha: prerequisite.completedIntegrationSha! };
+    const completion = prerequisite?.completions?.find(c => c.version === p.version);
+    requireCondition(completion, 'PREREQUISITE_INCOMPLETE', 'Required prerequisite version has not been accepted as completed', 409, p);
+    return { requirementId: p.requirementId, version: p.version, confirmationId: completion.confirmationId, integrationSha: completion.integrationSha };
   });
 }

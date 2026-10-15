@@ -1,5 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+export type { Static, TSchema } from '@sinclair/typebox';
 
 const object = <T extends Parameters<typeof Type.Object>[0]>(properties: T) => Type.Object(properties, { additionalProperties: false });
 export const IdSchema = Type.String({ minLength: 1, maxLength: 100, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' });
@@ -23,8 +24,12 @@ export const MaterialMetadataSchema = object({
   coreRulesPresent: Type.Boolean(), acceptanceCriteriaPresent: Type.Boolean(),
   openQuestions: Type.Array(object({ blocking: Type.Boolean(), limitation: text, excludedScope: text }), { maxItems: 100 }),
   referencedAssets: Type.Array(SourceSchema, { maxItems: 100 }),
+  applicability: Type.Optional(object({ status: Type.Literal('not-applicable'), reason: text })),
 });
 export type MaterialMetadata = Static<typeof MaterialMetadataSchema>;
+export const FixedManifestSchema = object({ schemaVersion: Type.Literal(1), metadata: MaterialMetadataSchema });
+export type FixedManifest = Static<typeof FixedManifestSchema>;
+export function isFixedManifest(value: unknown): value is FixedManifest { return Value.Check(FixedManifestSchema, value); }
 export function isMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(MaterialMetadataSchema, value); }
 export const OccupationTokenSchema = object({ occupationId: IdSchema, generation: Type.Integer({ minimum: 1 }), taskId: IdSchema, clientId: IdSchema, expectedRevision: RevisionSchema });
 export type OccupationToken = Static<typeof OccupationTokenSchema>;
@@ -74,6 +79,9 @@ export const ReconcileSchema = object({ ...keyed, expectedHead: ShaSchema, corre
 export type ReconcileRequest = Static<typeof ReconcileSchema>;
 export const HandoffReceiptSchema = object({ ...keyed, confirmationId: IdSchema, note: text });
 export type HandoffReceiptRequest = Static<typeof HandoffReceiptSchema>;
+export const PublicationAuthorizationSchema = object({ baselineId: IdSchema });
+export type PublicationAuthorizationRequest = Static<typeof PublicationAuthorizationSchema>;
+export interface PublicationCurrent { baselineId: string; commitSha: string; acceptedHead: string; completionEvidence: string }
 export const DeploymentSchema = object({ ...keyed, baselineId: IdSchema, url: Type.String({ format: 'uri', maxLength: 1000 }), artifactSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }) });
 export type DeploymentRequest = Static<typeof DeploymentSchema>;
 
@@ -92,6 +100,7 @@ export interface EntityView {
   materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; taskStatus: 'idle' | 'active' | 'aborted' | 'completed';
   scenarioIds: string[]; prerequisites: Prerequisite[]; current?: FixedVersion;
   occupation?: OccupationView; frozenBy: string[]; associationRevision: number; completedVersion?: number; completionConfirmationId?: string; completedIntegrationSha?: string;
+  completions?: Array<{ version: number; confirmationId: string; integrationSha: string; baselineId: string }>;
 }
 export interface ProjectView {
   id: string; gitlabProjectId: number; repositoryUrl: string; stableBranch: string; name: string;
