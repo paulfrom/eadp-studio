@@ -79,8 +79,11 @@ export class GitLab {
     valid(user.id === id); return user;
   }
   async resolveUser(lookup: string): Promise<GitLabUser> {
+    const exactMatch = (raw: unknown) => record(raw) && (raw.username === lookup || raw.email === lookup || raw.public_email === lookup);
+    const identity = await this.json<unknown>('/user'), authenticatedUser = this.checkedUser(identity);
+    if (exactMatch(identity)) return authenticatedUser;
     const candidates = await this.list(`/users?${lookup.includes('@') ? 'search' : 'username'}=${encodeURIComponent(lookup)}`);
-    const matches = candidates.filter(raw => record(raw) && (raw.username === lookup || raw.email === lookup || raw.public_email === lookup));
+    const matches = candidates.filter(exactMatch);
     requireCondition(matches.length === 1, 'GITLAB_BINDING_UNRESOLVED', 'The configured existing GitLab user must resolve to exactly one exact match', 503);
     return this.checkedUser(matches[0]);
   }

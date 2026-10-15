@@ -9,6 +9,7 @@ const config = loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'dis
 const gitlab = new GitLab(config);
 const actor: Actor = { id: 1, name: '测试管理员', username: 'studioAdmin', email: 'songlin.liu@changhong.com', admin: true, gitlabUserId: 42, gitlabUsername: 'bound-user', sessionHash: 'b'.repeat(64) };
 const user = { id: 42, username: 'bound-user', state: 'active', email: 'songlin.liu@changhong.com' };
+const manager = { id: 90, username: 'management-user', state: 'active', email: 'manager@example.test' };
 const project = { id: 7, name: '项目', path: 'project', path_with_namespace: 'team/project', http_url_to_repo: 'http://gitlab.test/team/project.git', namespace: { id: 2, full_path: 'team' }, visibility: 'private', default_branch: null, description: 'marker', permissions: { project_access: { access_level: 50 } } };
 const member = (access_level = 30) => ({ id: 42, state: 'active', access_level, expires_at: null });
 const json = (value: unknown, status = 200, headers?: HeadersInit) => new Response(JSON.stringify(value), { status, headers });
@@ -30,6 +31,7 @@ function fixture(handle: (path: string, method: string, body: unknown) => Respon
 
 test('existing user binding resolves exactly one email or username and never creates an account', async () => {
   const calls = fixture(path => {
+    if (path === '/user') return json(manager);
     if (path.startsWith('/users?search=')) return json([{ ...user, id: 80, email: 'different@example.test', name: user.email }, user]);
     if (path.startsWith('/users?username=')) return json([user]);
     throw new Error(`Unexpected path ${path}`);
@@ -37,12 +39,42 @@ test('existing user binding resolves exactly one email or username and never cre
   assert.deepEqual(await gitlab.resolveUser(user.email), { id: 42, username: user.username, state: 'active', email: user.email });
   assert.equal((await gitlab.resolveUser(user.username)).id, 42);
   assert.ok(calls.every(call => call.method === 'GET'));
-  assert.ok(calls[0]!.path.includes(encodeURIComponent(user.email)));
+  assert.ok(calls.some(call => call.path.includes(encodeURIComponent(user.email))));
+});
+
+test('the authenticated token identity resolves exact email, username or public email without directory visibility', async () => {
+  const calls = fixture(path => {
+    assert.equal(path, '/user', 'An exact authenticated identity must not depend on directory email visibility');
+    return json({ ...user, public_email: 'public@example.test' });
+  });
+  for (const lookup of [user.email, user.username, 'public@example.test']) {
+    assert.deepEqual(await gitlab.resolveUser(lookup), user);
+  }
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(call => call.method === 'GET'));
+});
+
+test('a similar token username never proves an email binding and inactive token identities cannot bind', async () => {
+  const calls = fixture(path => path === '/user' ? json({ ...user, username: 'songlin.liu', email: 'different@example.test' }) : json([]));
+  await assert.rejects(gitlab.resolveUser(user.email), code('GITLAB_BINDING_UNRESOLVED'));
+  assert.ok(calls.some(call => call.path.startsWith('/users?search=')));
+  for (const invalid of [{ ...user, state: 'blocked' }, { ...user, locked: true }, { ...user, bot: true }]) {
+    mock.restoreAll();
+    const deniedCalls = fixture(() => json(invalid));
+    await assert.rejects(gitlab.resolveUser(user.email), code('GITLAB_USER_INACTIVE'));
+    assert.deepEqual(deniedCalls.map(call => call.path), ['/user']);
+  }
+});
+
+test('an unavailable authenticated identity cannot be replaced by a directory result', async () => {
+  const calls = fixture(path => path === '/user' ? json({}, 403) : json([user]));
+  await assert.rejects(gitlab.resolveUser(user.email), code('GITLAB_MANAGEMENT_DENIED'));
+  assert.deepEqual(calls.map(call => call.path), ['/user']);
 });
 
 test('fuzzy-only, ambiguous and blocked user matches fail closed', async () => {
   for (const [candidates, expected] of [[[{ ...user, email: 'different@example.test', name: user.email }], 'GITLAB_BINDING_UNRESOLVED'], [[user, { ...user, id: 43 }], 'GITLAB_BINDING_UNRESOLVED'], [[{ ...user, state: 'blocked' }], 'GITLAB_USER_INACTIVE']] as Array<[unknown[], string]>) {
-    mock.restoreAll(); fixture(() => json(candidates));
+    mock.restoreAll(); fixture(path => path === '/user' ? json(manager) : json(candidates));
     await assert.rejects(gitlab.resolveUser(user.email), code(expected));
   }
 });
