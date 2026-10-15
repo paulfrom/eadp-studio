@@ -68,7 +68,7 @@ test('a similar token username never proves an email binding and inactive token 
 
 test('an unavailable authenticated identity cannot be replaced by a directory result', async () => {
   const calls = fixture(path => path === '/user' ? json({}, 403) : json([user]));
-  await assert.rejects(gitlab.resolveUser(user.email), code('GITLAB_MANAGEMENT_DENIED'));
+  await assert.rejects(gitlab.resolveUser(user.email), code('GITLAB_RESOURCE_DENIED'));
   assert.deepEqual(calls.map(call => call.path), ['/user']);
 });
 
@@ -129,6 +129,37 @@ test('unknown namespace policy cannot silently grant project creation', async ()
   await assert.rejects(gitlab.namespace(actor, 2), code('NAMESPACE_POLICY_UNKNOWN'));
 });
 
+test('a forbidden group membership is excluded without hiding other authorized namespaces or permitting creation', async () => {
+  const calls = fixture(path => {
+    if (path === '/users/42') return json(user);
+    if (path.startsWith('/groups?')) return json([{ id: 1 }, { id: 2 }]);
+    if (path === '/groups/1/members/all/42') return json({ message: '403 Forbidden' }, 403);
+    if (path === '/groups/2/members/all/42') return json(member(40));
+    if (path === '/groups/2') return json({ id: 2, name: 'Allowed', full_path: 'allowed', project_creation_level: 'maintainer' });
+    throw new Error(`Unexpected path ${path}`);
+  });
+  assert.deepEqual(await gitlab.namespaces(actor), [{ id: 2, name: 'Allowed', fullPath: 'allowed' }]);
+  await assert.rejects(gitlab.namespace(actor, 1), error => code('NAMESPACE_CREATE_DENIED')(error) && (error as DomainError).status === 403);
+  assert.ok(calls.every(call => call.method === 'GET' && call.path !== '/groups/1'));
+});
+
+test('group membership credential failure, throttling and outages still stop namespace discovery', async () => {
+  for (const [status, expected] of [[401, 'GITLAB_MANAGEMENT_DENIED'], [429, 'GITLAB_RATE_LIMITED'], [503, 'GITLAB_UNAVAILABLE']] as Array<[number, string]>) {
+    mock.restoreAll();
+    fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }]) : json({}, status));
+    await assert.rejects(gitlab.namespaces(actor), code(expected));
+  }
+});
+
+test('forbidden group listings, group policies and project memberships are never treated as usable authority', async () => {
+  fixture(path => path === '/users/42' ? json(user) : json({}, 403));
+  await assert.rejects(gitlab.namespaces(actor), code('GITLAB_RESOURCE_DENIED'));
+  await assert.rejects(gitlab.authorize(actor, 7), code('GITLAB_RESOURCE_DENIED'));
+  mock.restoreAll();
+  fixture(path => path === '/users/42' ? json(user) : path.startsWith('/groups?') ? json([{ id: 1 }]) : path.includes('/members/') ? json(member(40)) : json({}, 403));
+  await assert.rejects(gitlab.namespaces(actor), code('GITLAB_RESOURCE_DENIED'));
+});
+
 test('a full first listing page is followed even without pagination headers', async () => {
   const calls = fixture(path => {
     if (path === '/users/42') return json(user);
@@ -156,7 +187,7 @@ test('creator assignment grants the existing numeric user Maintainer40 and an ac
 });
 
 test('management errors, HTML responses, body size overflow and redirects never disclose credentials or response bodies', async () => {
-  for (const [status, expected] of [[401, 'GITLAB_MANAGEMENT_DENIED'], [403, 'GITLAB_MANAGEMENT_DENIED'], [429, 'GITLAB_RATE_LIMITED'], [502, 'GITLAB_UNAVAILABLE']] as Array<[number, string]>) {
+  for (const [status, expected] of [[401, 'GITLAB_MANAGEMENT_DENIED'], [403, 'GITLAB_RESOURCE_DENIED'], [429, 'GITLAB_RATE_LIMITED'], [502, 'GITLAB_UNAVAILABLE']] as Array<[number, string]>) {
     mock.restoreAll(); fixture(() => new Response(`<html>private-body ${config.gitlabToken}</html>`, { status }));
     await assert.rejects(gitlab.json('/user'), error => { assert.ok(code(expected)(error)); assert.ok(!(error as Error).message.includes(config.gitlabToken!)); assert.ok(!(error as Error).message.includes('private-body')); return true; });
   }

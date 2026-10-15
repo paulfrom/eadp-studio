@@ -38,7 +38,8 @@ export class GitLab {
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 404) throw new DomainError('GITLAB_NOT_FOUND', 'GitLab did not resolve the requested resource', 404);
-      if (response.status === 401 || response.status === 403) throw new DomainError('GITLAB_MANAGEMENT_DENIED', 'GitLab did not authorize the backend management operation', 503);
+      if (response.status === 401) throw new DomainError('GITLAB_MANAGEMENT_DENIED', 'GitLab did not authenticate the backend management credential', 503);
+      if (response.status === 403) throw new DomainError('GITLAB_RESOURCE_DENIED', 'GitLab did not authorize the requested resource operation', 503);
       if (response.status === 429) throw new DomainError('GITLAB_RATE_LIMITED', 'GitLab temporarily limited requests', 503);
       if (response.status === 400 || response.status === 409 || response.status === 422) throw new DomainError('GITLAB_REQUEST_REJECTED', 'GitLab rejected the requested operation; verify its recorded result before retrying', 409);
       throw new DomainError('GITLAB_UNAVAILABLE', 'GitLab could not complete the operation; its result may be unknown', 502);
@@ -90,7 +91,7 @@ export class GitLab {
   private async member(scope: 'projects' | 'groups', id: number, userId: number, inherited = true): Promise<Member | null> {
     let raw: unknown;
     try { raw = await this.json(`/${scope}/${id}/members/${inherited ? 'all/' : ''}${userId}`); }
-    catch (error) { if (error instanceof DomainError && error.code === 'GITLAB_NOT_FOUND') return null; throw error; }
+    catch (error) { if (error instanceof DomainError && (error.code === 'GITLAB_NOT_FOUND' || (scope === 'groups' && error.code === 'GITLAB_RESOURCE_DENIED'))) return null; throw error; }
     valid(record(raw) && raw.id === userId && typeof raw.state === 'string' && [0, 5, 10, 15, 20, 30, 40, 50].includes(raw.access_level as number) && (raw.expires_at === null || typeof raw.expires_at === 'string') && (raw.membership_state === undefined || typeof raw.membership_state === 'string'));
     return raw as unknown as Member;
   }
