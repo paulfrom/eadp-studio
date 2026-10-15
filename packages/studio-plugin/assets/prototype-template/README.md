@@ -1,15 +1,19 @@
-# Prototype template source snapshot
+# 合成数据原型模板
 
-This directory contains the Git-tracked source snapshot of `sei-blank-ts-app-2.0` at commit `53a59662cb405533f672c209f532124c63464b39`. It is the bundled prototype template source for EADP Studio, with its own `package.json` and toolchain. Keep it outside the product root workspace installation scope.
+企业 React / Umi / SUID 工程，独立运行，无主应用、登录服务或业务后台依赖。全部演示请求在浏览器内存处理，刷新恢复合成数据。网络护栏在应用 bundle 前安装，CSP 阻断实际业务连接。
 
-Tracked source files are imported without changing application logic or dependency versions. Text files are normalized to UTF-8 without BOM and LF; PNG/ICO assets retain their exact source bytes. The adjacent `prototype-template.manifest.json` records source and imported SHA256 hashes. The source `.env` is excluded; `.env.example` names its optional local settings without copying values. The tracked `.npmrc` was checked for authentication fields, URI credentials, local paths and private IP addresses before inclusion. Do not add credentials to it.
+使用 Node 22.22.3、pnpm 11.28.5，在本目录执行：
 
-Existing package scripts include `start` (`MOCK=none umi dev`), `start:mock` (`MOCK=yes umi dev`), `build` (`ESLINT=none umi build`) and `lint`. The snapshot includes `config/`, `src/`, `public/`, `plugin.ts` and Docker configuration. Run tooling from this directory after dependencies and permitted registry access are available. No dependency installation, application build, lint run or browser verification has been performed for this import.
+```sh
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm run lint
+pnpm run build
+pnpm run preview -- --port 4173
+```
 
-## Acceptance status
+打开 `http://127.0.0.1:4173/#/demo`。支持正常/空列表、请求错误、加载、详情编辑、取消、保存失败、重置。`dist/` 为单一静态产物；hash 路由和相对资源路径可部署在静态站点的子路径。
 
-This is a source import with a maintained `AGENT.md` contract, not a releasable template or a completed G0-3 acceptance result. `AGENT.md` is the sole template rule filename and specifies writable/protected areas, Umi/SUID page conventions, synthetic Mock requirements, engineering gates and author confirmation. It was adapted from enterprise Umi/SUID conventions; it does not depend on a local reference-project path, external skill or project-specific helper. Its existence does not prove that the target DSH session loads it or that write/network restrictions are enforced.
+`/__eadp_preview_ready` 是服务 ready 检查，浏览器 `window.__EADP_MOCK__.ready` 是 Mock ready 检查。直接 fetch/XHR/WS 等请求均拒绝；页面服务通过 `src/mock/runtime.ts` 调用精确的本地 handler，未知 method/path 拒绝。
 
-The source snapshot still has no dependency lockfile, precise package-manager baseline, `mock/` directory, independent typecheck/test scripts or verified static-preview/ready contract. Existing proxy, remote Mock, production gateway and authentication dependencies have not been isolated. The `start:mock` script alone does not prove isolated Mock behavior or static-output compatibility; `start` is the real-backend development path and must not be the ordinary prototype default. The build disables ESLint and production type checking, and its actual output has not been verified. Dependency installation, lint, build, static interaction, outbound request blocking, rule loading/enforcement, Windows/Linux runtime behavior and packaging remain unverified. These gaps block ordinary prototype generation and release until maintainers resolve and verify them in G0-3.
-
-Generated user-project prototype code belongs in the user project's `原型代码/` directory, outside this product repository. Runtime downloads, dependency directories and generated output do not belong in this source snapshot.
+具体生成规则见 `AGENT.md`，模板版本、完整文件校验值与保护区由同级 `prototype-template.manifest.json` 固定。Windows 原生执行、DSH 会话规则加载和最终打包由 Windows 验收，不能由 Linux 检查替代。

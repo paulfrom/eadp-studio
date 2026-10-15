@@ -1,16 +1,8 @@
-declare module 'slash2';
-declare module '*.css';
 declare module '*.less';
-declare module '*.scss';
-declare module '*.sass';
 declare module '*.svg';
 declare module '*.png';
-declare module '*.jpg';
-declare module '*.jpeg';
-declare module '*.gif';
-declare module '*.bmp';
-declare module '*.tiff';
-declare module 'omit.js';
-declare module 'numeral';
-declare module 'mockjs';
-declare module 'react-fittext';
+
+interface Window {
+  readonly __EADP_MOCK_GUARD__?: { readonly version: string; readonly installed: boolean };
+  readonly __EADP_MOCK__?: { readonly ready: boolean; readonly version: string; verify(): Promise<{ unknownRejected: boolean; ready: boolean }> };
+}

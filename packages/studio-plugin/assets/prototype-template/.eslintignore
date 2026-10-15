@@ -1,11 +1,4 @@
-node_modules
-*.html
-/components/test/*
-dist
-public
-config
-tsconfig.json
-package.json
-.umi
-.umi-production
-.husky
+node_modules/
+dist/
+src/.umi/
+src/.umi-production/

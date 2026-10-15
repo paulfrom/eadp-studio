@@ -18,7 +18,27 @@
   "excluded": [
     {
       "path": ".env",
-      "reason": "Local environment settings; not imported; value-free .env.example provided"
+      "reason": "Local environment and credentials; only value-free .env.example is bundled"
+    },
+    {
+      "path": "node_modules/",
+      "reason": "Installed dependencies are platform-local, never bundled as template source"
+    },
+    {
+      "path": "dist/",
+      "reason": "Generated static output, created from fixed source"
+    },
+    {
+      "path": "src/.umi*/",
+      "reason": "Generated Umi files"
+    },
+    {
+      "path": ".git/",
+      "reason": "Source control metadata"
+    },
+    {
+      "path": "*.log, *.pem, *.key, *.pfx, *.p12",
+      "reason": "Runtime logs and credentials are never template assets"
     }
   ],
   "npmrcReview": {
@@ -38,26 +58,26 @@
     {
       "path": ".eslintignore",
       "sourceSha256": "c3df4c1ba68e3ce02f81bf135bba08d8abf46967dd0eb8af68eef3b38ff8c151",
-      "sha256": "a1aaa9e89c2b8fc62201e5382cc96aaf99a01c1ac5c52be7c65038cf6ccbe4f6",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "41008fee5b54b24043e857b4ce2703d4232b3415eb85dfd989757a06ac184ef5",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": ".eslintrc.js",
       "sourceSha256": "1907fcd0ccf3cb4a1c711e4841dad18f913185d30fd13dea2c368e869e3001c6",
-      "sha256": "8602a153d6b9763da734c474469091ca2cee871cbe4e70930f9ba783660cbbd5",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "509d39d31c27954daf1fc1d8c3aaa662f54442b878c81fd617a9d58e7ecfc826",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": ".gitignore",
       "sourceSha256": "ef98a6ec8dcf4c7e0da23805f7f3328ccd6150c42405b7a94e1edde9ea11bdd9",
-      "sha256": "7880d81b12645bab7291d33c1fdc003a7a69c64aabd6656c6ce1756fd855faa2",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "b77b92a8cb6364899f788e7152b013f63a302b67125df943a31cfb1cc2287d3d",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": ".npmrc",
       "sourceSha256": "2140ff969caa0c2b512465e4d4e1f2ef520de0553441ee42e2fa8090c8dc0058",
-      "sha256": "7dbeb1bff41af4d00578eb0b18f10f64c397f6eddafd7312f57f37c2d7f828a1",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "1c75e495e4b8be88b41ffb55908be2f2a7606c5085c79eafe6b11c9134a5cfa1",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": ".prettierignore",
@@ -68,8 +88,8 @@
     {
       "path": ".prettierrc.js",
       "sourceSha256": "bcbab91de2b0f4010ef8f9431bfb03ab1854a27f207cd7ca28329127daef17b7",
-      "sha256": "1c4b3921e8f6babfda555a91f90a95fec6710d5d4658e23130ee75822fc2c26d",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "4aec6ed9113bf1f6b65b17aa22fcb38941d60f9e850962382d1239a16ee958bf",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": ".stylelintignore",
@@ -80,74 +100,26 @@
     {
       "path": ".stylelintrc.js",
       "sourceSha256": "21e657a78fed9caed05b57987d5bbb80229e84fdcd07f1c4732cdca53e424570",
-      "sha256": "fd8326d8090fdb2d51a807a61932930af4c276d888cb74f48622f2b0d809b276",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "config/config.local.ts",
-      "sourceSha256": "8ae1da613416fd3b86bf082543ebbaa4a91f26aaf19d705ae9685b68cad72348",
-      "sha256": "3f74bdd761507cfaa7de025d54bc5abcec46474a06e6450bfed98bcd5193cc9d",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "config/config.prod.ts",
-      "sourceSha256": "6c40b0d4cbeabc1a936f94db15acbbda1f71445beeba17f7ac49233a10c6c0a4",
-      "sha256": "47dd1cf40f81bea722dd90b570e7d3e4f55da12e0cb461a8ff6003ae8bf3f9d9",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "094f3ba239818cef014cf9f340f8890ee176795b6a3f64e95184b0c824251784",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "config/config.ts",
       "sourceSha256": "1986fee3ff6053d4d6b69ccb98e2a04b2ec8c1b476c90cd94ee1ab676bb5807d",
-      "sha256": "c39b4a88a8a033f58cd637525ba835ca1935cbbac04ea9ecf41fa8cbad30587d",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "config/plugin.config.ts",
-      "sourceSha256": "5a4ab94e7774ed6ea03e1e45523cd589c3491435a6fab38879fc121bcace7fcc",
-      "sha256": "0db7550bf01326707fbfc51ffc8bf6c87095d3e42dc2dbdce70a25aba2c07323",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "config/proxy.config.ts",
-      "sourceSha256": "af7fd147b8f4dc20c05e8c52cb0dfdefe76586a2e0e85f41e56eff375e30f878",
-      "sha256": "8c420467b0c1ef938e0387fc599da5d8af967cb370c42caebfb77f9d72210d93",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "ed40f154e30f771d0752b8035f32656f8361d00ac2dfa33780a41a4df37d0e5f",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "config/router.config.ts",
       "sourceSha256": "f254d910eb51c3fb765d0b6d30e2a822a458022e97b8a5ead515835d1e075663",
-      "sha256": "9b300508efd9b4f4150aec93616e407a9b0e3773b6d55392e3e520b204c79f3f",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "config/theme.config.ts",
-      "sourceSha256": "3f988ee7f5e73abeb09f293d586dff543a85ace1c790aa61c7d168f64b53a341",
-      "sha256": "dca6f27ff8b2020c00920115e52920cfc8484825962dfbf801341f7edad689e3",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "docker/Dockerfile",
-      "sourceSha256": "a515ee9763648c468ea9121abcd3c18e35479aab18533578829830e99a95dd34",
-      "sha256": "408c882399b9deb43eed03e7ec99cf7f0b4d55b1a2cb96231a8c10d5413903ac",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "docker/default.conf",
-      "sourceSha256": "d625898686f5f06d70d2357441a8d56839ca3f54d57a9e8f55721106e75179b3",
-      "sha256": "028bda428e6642413abb4a251bc8e5170827c6412348ac4232038c90effc7f09",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "d36ade5f78e0821369cd29e871480dadb3252ede8552e89dd8f01a4716c8f161",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "package.json",
       "sourceSha256": "86a53da24460b47db518094c83e0f4ea6dc8822fbb5995715c7263449467598c",
-      "sha256": "6ba2f4358a1493fded717b6490331918a54d9a7904a725cc3ac558f538a54213",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "plugin.ts",
-      "sourceSha256": "647d62893498b8398a96dbd14f3cc8c660f5adc12e0e687a05a8e7695f4fe106",
-      "sha256": "c95f229d103961593586b0eb80da45a7d12397deab0eced0ecec3c176cfb30b1",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "cd40efd06153960956ff9a5a2ef69719ba9a166b09b983287b1abc251de2da17",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "public/actuator/health",
@@ -158,8 +130,8 @@
     {
       "path": "public/app.config.json",
       "sourceSha256": "08e7b6223ac3fc084c61568af4dd58b4d8fe9e45136ca34cb319fff31871cbb7",
-      "sha256": "b961ab7dd99f7f45384b4fa8f51742be9f2ecee7267c93e0ea65de6ca975b0c8",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "08127ec0d5b93a018775e8b127b50e78a8c4df702a6d8a4f8ff55179a25225e2",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "public/favicon.ico",
@@ -188,8 +160,8 @@
     {
       "path": "src/app.tsx",
       "sourceSha256": "080e8678724061671e6fd5dc4a8d57e3ad1c9343fddf3bd2d000be258619fd84",
-      "sha256": "3afcda4b3669e33b2f63069b9b3457c1550b1181c88c22f052b7789b3fb826f9",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "e79b05f6d82c5cbc3e6be92e4a4a0c806c0f0a4ba0ca8b8710934cd37ca5c454",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "src/assets/empty.svg",
@@ -230,25 +202,13 @@
     {
       "path": "src/global.less",
       "sourceSha256": "87cb3e0734607c0fe06114e60de7d0561a82cf12f5c6c0250ed2bde726c04fe9",
-      "sha256": "05c2a10e472f59e5c51109499dda5dcf4b2b5d12abf8e2471ead3ff7e778bfc6",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/layouts/AuthLayout.tsx",
-      "sourceSha256": "be6770e57e6d32a2e53dd9b17794f7d7f81dccc2f0a2843f22f02ce90bd24f2a",
-      "sha256": "8d9aaa35ba730c52a2082f557cf243a9fa51b5ef1a6f87849a147a708643258a",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "658c272fb03fd8326251ff8882a6a3768bb6970080ffafa2f1eb7ca80621e701",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "src/layouts/BlankLayout.tsx",
       "sourceSha256": "4bb4be719c774199c8aee4a54ac27cbaa24e9440676637f39ebd1d6b377112d2",
       "sha256": "6800ccf1efd75286c21242ae8e251e85366078317f1550ae3c06c38c460e9359",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/layouts/LoginLayout.tsx",
-      "sourceSha256": "c34813d8518e689ce957ddea8c5858dc600c1bd4570d920239d69ad58ae42878",
-      "sha256": "e82d02b277e2c6bf031408d4be285005581855a3aade073553219c17af4a287e",
       "treatment": "utf8-no-bom-lf"
     },
     {
@@ -260,56 +220,14 @@
     {
       "path": "src/locales/en-US.ts",
       "sourceSha256": "6f782898075ec0bb459c2ba336240801c7023440c0b76b524a932492b91046be",
-      "sha256": "db2650196324a40872961a71b3c229eca817d573b18d51e1149bf0924fc9b665",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/locales/en-US/login.ts",
-      "sourceSha256": "6ae8c06200b083e5be98f135d3390eb6d5efb1c4f92caa5819e8a9aacd47be1b",
-      "sha256": "ad207ec8417347330656d4aa486b280bc7ecf300fbe24eaf150986fd921217ff",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/locales/en-US/pwa.ts",
-      "sourceSha256": "217a78ae3159421226888e8d9ac5eb98c2693c2ebb6b5e90a727d3f3f7072b66",
-      "sha256": "be2e28db5fa7c3926abe7b50c15a3db47ade46b6c0e0a9e2ff9ff3c8872e058d",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "fadc001da0e32dc9defcdd6485f710f87a1f8d5814a91ea92b5dffb33dab50a3",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "src/locales/zh-CN.ts",
       "sourceSha256": "1b7ac766e9c16c79e011fbcc8da10ba422cee53210cc1f1ff718396326dbfd0a",
-      "sha256": "02fec18d342a2689af55f5eddeae69676d1090568aa9e22214b0d8d788287f61",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/locales/zh-CN/login.ts",
-      "sourceSha256": "cca2ac546f54acaa6dc3257c02eb22d3a3e1a0afd314e16a75b2d843988ce053",
-      "sha256": "a206560ba98dd8c7d5cbdde059b74c052a0c873e16434190a6d8c9d130ca9a9c",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/locales/zh-CN/pwa.ts",
-      "sourceSha256": "81a2d88496890b0679452f1cb8c0aa556b7a92cbed8f945ba76af0c9cb613bab",
-      "sha256": "d510c8974c037515f17196abbfedc58fdd528d447c682344d6d84d4b5a44692c",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/manifest.json",
-      "sourceSha256": "839ca5ce902837f5a3b60b57a5f2922b45490366156159aeebca07050abb4a68",
-      "sha256": "57ce3ce44bc7788f0ad0681f5c615826ccca856d2d35371ceefa9a1c44a3b580",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/models/global.ts",
-      "sourceSha256": "8532d1f5f1dd4aeca846d389dac4e0c7c2b32ce4aa963525d31bd6d4da53bc5c",
-      "sha256": "72417389a7eab65bb77261aea7495278d6bf120ae1fe9ac638840224ecaf0fc7",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/overrides.less",
-      "sourceSha256": "3360912cd73b0a26dc78da161862671dce967eba93bc72fd6ee4099003de84b8",
-      "sha256": "f213ded06668490bcd9a1e2ffcace3c6e04d8d1865a2e55b2ecfbe0e7332a1f0",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "a7775a90bce3abf4e861f3267cff39ea71d3cd60c28019bb647f919585ee4bea",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "src/pages/404/index.tsx",
@@ -318,97 +236,175 @@
       "treatment": "utf8-no-bom-lf"
     },
     {
-      "path": "src/pages/Dashboard/index.tsx",
-      "sourceSha256": "0c13ba4ce5d41058dcc5ecdeee8ccfb184f0832063f07ca019086fe3223cf9a3",
-      "sha256": "cdb3b19deb4c72e3e72333986adf5b52a820d32969dcdc5e2c0afac28eb7cc1c",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/pages/Dashboard/style.ts",
-      "sourceSha256": "3cbda3780a15c4485ac01a70f01123776718aa6e273ca604942a0e97d7937122",
-      "sha256": "eb00f958b460f3905fbfde0a03bae4c98df79f5c56e0366b973a4081a5df4b78",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
       "path": "src/pages/Demo/index.tsx",
       "sourceSha256": "cc48a86d12fbce7085d58940962fd664ea0003b1511694e71261d30a264cc692",
-      "sha256": "1746863d5b66455807a1e657f463cc487b7844dd17c8172688bf7c6d78c12435",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/pages/Login/index.tsx",
-      "sourceSha256": "478f63e335552a526faacd113a662c4fb2370f20079b52af4c7330e5adc8dcf9",
-      "sha256": "e65005a8230118e5b1aa1f122656a6d23152e151579d65754464e8deecbbf59f",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/plugins/onError.tsx",
-      "sourceSha256": "bfca785d78d73e9437d424d46dd018b52caec07b3c1510284ced35edccf4052d",
-      "sha256": "b709aa8558d1e0134f20eb18be7b7c7be6c1db32ec3c98e3bce5a7aab056bb51",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/service-worker.js",
-      "sourceSha256": "0220c2ddf855813685d8de86c4da05dd1c6d65be75f3b7910e240ffb3f3387c1",
-      "sha256": "67beb4827ea46b22e2fa3e94aba0ef9a728a3759dcd5c6ffa4cc8f60cdb9c0f9",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/services/api.ts",
-      "sourceSha256": "dd66d7e8d5dbfff704135564bd751774ba46ccd4f765e509d3e870cb8e11e26c",
-      "sha256": "7af8cd2dc5adbd14dc323f71c2812c6ca4df1dfc439737955e2d379279eb4fe6",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "358d13bafcba3e9916e8c62caa5ca6d280f82f0e3e6547a37febed7ac3bbd9cc",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "src/typings.d.ts",
       "sourceSha256": "8aac1d90b5c46d9213c002414ce1b6b001e7b479766dd2d4d5d95643934398cf",
-      "sha256": "ac99793d1fb34abf916fa09b519d2e8af385e38395731864404ff32eda1a28e7",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/utils/constants.ts",
-      "sourceSha256": "5cf7a1b71c2709cd062b455b76e48fcd7dfbe852539317cb906321e262959ebc",
-      "sha256": "f89fc3c265426c5b59b7f681232f8df6175510c2cb88f7040ceb178a5adb427f",
-      "treatment": "utf8-no-bom-lf"
-    },
-    {
-      "path": "src/utils/index.ts",
-      "sourceSha256": "a899ffc34a55eee27c691553309bdd8273d826134253665bbe8ca3adfc02a4ad",
-      "sha256": "45748a788997076fc36543518fc82cca43424396c22947c70189b59cca24e93b",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "d3e5522a5ca57256e2d7875d0858edaafe4f1d304231a3e1b8c6e62ba18123f6",
+      "treatment": "maintained-g0-3"
     },
     {
       "path": "tsconfig.json",
       "sourceSha256": "d4e252fba95bd941c6f7fd8e7411a8db1811653dff7a2d8116fb727691079c5c",
-      "sha256": "b9957b4939ab6f06fb2ed14ab0c727c780e87648ef3f7fedb03d4d7347cd575d",
-      "treatment": "utf8-no-bom-lf"
+      "sha256": "a5d45eda43a8e0d96ba0b0146329819dc18d604ec11433866f1989389eb7bc52",
+      "treatment": "maintained-g0-3"
     }
   ],
   "addedFiles": [
     {
       "path": ".env.example",
-      "sha256": "f9021197428b779df5062ec520b2d4cb4749339f7220822ac37d7f2b84cfb930"
+      "sha256": "f133cf179abdc9deecb22668f0abcb65e4c85c4c3d1544a5ccf0a04e4827112f"
     },
     {
-      "path": "README.md",
-      "sha256": "b2c33902ab6e52ae418e1e464fb51eaf5313de4ef9f51096da508b2c3cb2182c"
+      "path": ".gitattributes",
+      "sha256": "43829910d74633a651a09e8ecbdde30fa436f928d29348320108d6a22851b0be"
     },
     {
       "path": "AGENT.md",
-      "sha256": "3fe90acc998fbd82234b226e6a9806f88272e4aab1bd42d4824b2b0691587768"
+      "sha256": "4b9bb793a5b99e9da27c9bbcfb0d28c1a300b9724b817299dbaa2d5a11eff4c1"
+    },
+    {
+      "path": "README.md",
+      "sha256": "52a49eef09add75963aae9fa729fa688ed3c0c45c3c04ef88cae59c52311d6a8"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "4ffbb4834cb50ccff37bd3c0d0c15e8debef12f4f342d97f86fb3bceee58fe75"
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "sha256": "e28e1cb9e28a7da323c489ae48596b29f22bcaa020997e249648090cb0067fb0"
+    },
+    {
+      "path": "public/prototype-guard.js",
+      "sha256": "480ef2dd1033f506f0c4270bea47f0acdaf71494ab524aac72cb0e1cb6d1ac24"
+    },
+    {
+      "path": "scripts/preview.mjs",
+      "sha256": "5c87c2f7812ba97378ee59bbd181881a3293e99f222b9feb5770b42d8118c414"
+    },
+    {
+      "path": "src/mock/fixtures.ts",
+      "sha256": "3c70a8936004feb7edcefdf86ce537fa8c63e2316cf00296a1f10a5e4c7b841a"
+    },
+    {
+      "path": "src/mock/handlers.ts",
+      "sha256": "1242da82be44a728f205fd695b772aae37d22b8d0d6b43e86b457820f8c2c65c"
+    },
+    {
+      "path": "src/mock/runtime.ts",
+      "sha256": "e4ea6c394b65060c4442c6e96bfdf7d8630ef1fc3845d729963cbed17eed29c3"
+    },
+    {
+      "path": "src/pages/Demo/service.ts",
+      "sha256": "e2c184b79ed9e30716bfdeeae495673db3aa009271c04d5e3a7ed066a2e22831"
     }
   ],
   "acceptance": {
     "sourceImportVerified": true,
-    "dependencyLockfilePresent": false,
+    "dependencyLockfilePresent": true,
     "templateAgentRulesPresent": true,
-    "mockDirectoryPresent": false,
+    "mockDirectoryPresent": true,
     "testsPresent": false,
-    "dependencyInstallExecuted": false,
-    "buildExecuted": false,
+    "dependencyInstallExecuted": true,
+    "buildExecuted": true,
     "runtimeVerified": false,
     "g0TemplateAcceptancePassed": false,
     "releaseReady": false,
-    "rulesLoadedInTargetDsh": false
+    "rulesLoadedInTargetDsh": false,
+    "frozenDependencyInstallVerified": true,
+    "typecheckExecuted": true,
+    "lintExecuted": true,
+    "staticServerReadyVerified": true,
+    "staticBrowserSmokeVerified": true,
+    "mockBoundarySmokeVerified": true,
+    "windowsAcceptancePending": true
+  },
+  "version": "eadp-prototype@1.0.0-g0.3",
+  "removedFiles": [],
+  "contract": {
+    "node": "22.22.3",
+    "packageManager": "pnpm@11.28.5",
+    "outputDirectory": "dist",
+    "previewReadyPath": "/__eadp_preview_ready",
+    "rulesPath": "AGENT.md",
+    "mockMode": "synthetic-only-v1",
+    "protectedPaths": [
+      ".editorconfig",
+      ".env.example",
+      ".eslintignore",
+      ".eslintrc.js",
+      ".gitattributes",
+      ".gitignore",
+      ".npmrc",
+      ".prettierignore",
+      ".prettierrc.js",
+      ".stylelintignore",
+      ".stylelintrc.js",
+      "AGENT.md",
+      "README.md",
+      "config/config.ts",
+      "package.json",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "public/actuator/health",
+      "public/app.config.json",
+      "public/favicon.ico",
+      "public/icons/128x128.png",
+      "public/icons/192x192.png",
+      "public/icons/512x512.png",
+      "public/prototype-guard.js",
+      "scripts/preview.mjs",
+      "src/app.tsx",
+      "src/assets/empty.svg",
+      "src/assets/item_empty.svg",
+      "src/assets/page_empty.svg",
+      "src/favicon.ico",
+      "src/global.less",
+      "src/layouts/BlankLayout.tsx",
+      "src/loading.tsx",
+      "src/mock/runtime.ts",
+      "src/typings.d.ts",
+      "tsconfig.json"
+    ],
+    "writablePrefixes": [
+      "src/pages/",
+      "src/components/",
+      "src/locales/",
+      "src/mock/fixtures.ts",
+      "src/mock/handlers.ts",
+      "config/router.config.ts"
+    ],
+    "commands": {
+      "install": [
+        "install",
+        "--frozen-lockfile"
+      ],
+      "typecheck": [
+        "run",
+        "typecheck"
+      ],
+      "lint": [
+        "run",
+        "lint"
+      ],
+      "build": [
+        "run",
+        "build"
+      ],
+      "preview": [
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "<host-allocated-port>",
+        "--instance",
+        "<host-instance>"
+      ]
+    }
   }
 }

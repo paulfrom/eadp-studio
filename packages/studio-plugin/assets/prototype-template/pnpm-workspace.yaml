@@ -1,0 +1,13 @@
+packages:
+  - '.'
+engineStrict: true
+verifyDepsBeforeRun: error
+overrides:
+  dayjs: 1.11.20
+  chevrotain: 11.0.0
+allowBuilds:
+  esbuild: true
+  '@swc/core': true
+  core-js: false
+  core-js-pure: false
+  es5-ext: false
