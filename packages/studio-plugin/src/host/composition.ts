@@ -56,20 +56,23 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   }
   const stopPreview = async () => { if (preview) { const owned = preview; preview = undefined; await owned.stop() } }
   const runChecks = async (task: TaskView, sourceSha: string): Promise<CheckEvidence> => {
-    const { input, binding } = await bind(task, sourceSha)
-    await installPrototypeDependencies(runtime, input, binding)
-    const result = await runPrototypeChecks(runtime, input, binding)
-    checkResults.set(task.sessionId, result)
-    await stopPreview()
-    const current = await startPrototypePreview(runtime, input, binding, result, 4173)
-    preview = current
-    const browserHash = await checkStaticPreview(`${current.url}/`)
-    return { candidateSha: sourceSha, passed: true, checks: [
-      { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify(result)) },
-      { name: 'mock', passed: true, evidenceHash: browserHash },
-      { name: 'browser', passed: true, evidenceHash: browserHash },
-      { name: 'relations', passed: true, evidenceHash: digest(`${task.entityId}:${task.inputHash}`) },
-    ] }
+    checkResults.delete(task.sessionId)
+    try {
+      await stopPreview()
+      const { input, binding } = await bind(task, sourceSha)
+      await installPrototypeDependencies(runtime, input, binding)
+      const result = await runPrototypeChecks(runtime, input, binding)
+      const current = await startPrototypePreview(runtime, input, binding, result, 4173)
+      preview = current
+      const browserHash = await checkStaticPreview(`${current.url}/`)
+      checkResults.set(task.sessionId, result)
+      return { candidateSha: sourceSha, passed: true, checks: [
+        { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify(result)) },
+        { name: 'mock', passed: true, evidenceHash: browserHash },
+        { name: 'browser', passed: true, evidenceHash: browserHash },
+        { name: 'relations', passed: true, evidenceHash: digest(`${task.entityId}:${task.inputHash}`) },
+      ] }
+    } catch (error) { checkResults.delete(task.sessionId); await stopPreview(); throw error }
   }
   const publication = new PublicationService({
     authority: {
@@ -108,11 +111,14 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
     prompt: (id, text) => sessions.prompt(id, text), checks: runChecks,
     preview: async task => {
-      const { input, binding } = await bind(task)
-      const result = checkResults.get(task.sessionId)
-      if (!result) throw new Error('请先运行工程检查并验证静态页面')
-      await stopPreview(); preview = await startPrototypePreview(runtime, input, binding, result, 4173)
-      return { url: preview.url }
+        try {
+          const { input, binding } = await bind(task)
+          const result = checkResults.get(task.sessionId)
+          if (!result) throw new Error('请先运行工程检查并验证静态页面')
+          await stopPreview(); preview = await startPrototypePreview(runtime, input, binding, result, 4173)
+          await checkStaticPreview(`${preview.url}/`)
+          return { url: preview.url }
+        } catch (error) { checkResults.delete(task.sessionId); await stopPreview(); throw error }
     }, stopPreview,
     publication: async action => {
       const local = await store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目')

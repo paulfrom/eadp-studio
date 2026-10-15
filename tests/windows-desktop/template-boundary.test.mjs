@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile, access, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, access, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { createStudioToolGuard } from '../../packages/studio-plugin/src/host/adapters/platform/execution-guard.ts';
-import { verifyPrototypeContract, verifyTemplate } from '../../packages/studio-plugin/src/host/prototype/template.ts';
+import { copyTemplate, verifyPrototypeContract, verifyTemplate } from '../../packages/studio-plugin/src/host/prototype/template.ts';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const template = path.join(root, 'packages/studio-plugin/assets/prototype-template');
@@ -16,7 +16,7 @@ async function fixture(t) {
   const directory = await mkdtemp(path.join(tmpdir(), 'eadp-routes-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const project = path.join(directory, 'prototype');
-  await cp(template, project, { recursive: true });
+  await copyTemplate({ templateRoot: template, manifestPath, destinationRoot: project });
   return { directory, project };
 }
 async function loader(project) {
