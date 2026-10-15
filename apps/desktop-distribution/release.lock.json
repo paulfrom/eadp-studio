@@ -1,5 +1,11 @@
 {
   "schemaVersion": 1,
+  "studioTools": {
+    "lockFile": "apps/desktop-distribution/build/studio-runtime.lock.json",
+    "resourceDirectory": "runtime/studio-tools",
+    "manifest": "runtime/studio-tools/runtime-manifest.json",
+    "windowsAcceptance": "pending"
+  },
   "status": "unsigned-windows-build-verified",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
