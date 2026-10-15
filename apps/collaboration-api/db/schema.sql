@@ -3,14 +3,14 @@ CREATE TABLE studio_projects (
   id text PRIMARY KEY,
   gitlab_project_id bigint NOT NULL UNIQUE,
   data jsonb NOT NULL,
-  CHECK (NOT data ? 'body')
+  CHECK (NOT (data ? 'body'))
 );
 CREATE TABLE studio_entities (
   project_id text NOT NULL REFERENCES studio_projects(id),
   id text NOT NULL,
   data jsonb NOT NULL,
   PRIMARY KEY (project_id, id),
-  CHECK (NOT data ? 'body')
+  CHECK (NOT (data ? 'body'))
 );
 CREATE TABLE studio_occupations (
   id text PRIMARY KEY,

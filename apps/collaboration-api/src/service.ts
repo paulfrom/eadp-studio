@@ -60,7 +60,7 @@ export class CollaborationService {
   async state(actor: Actor, projectId: string): Promise<ProjectState> {
     await this.authorize(actor, projectId);
     return transaction(this.database, async c => {
-      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
       const integrations = (await c.query<{ data: integration.StoredIntegration }>('SELECT data FROM studio_integrations WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => integration.publicIntegration(r.data));
       const baselines = (await c.query('SELECT data FROM studio_baselines WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => r.data);
