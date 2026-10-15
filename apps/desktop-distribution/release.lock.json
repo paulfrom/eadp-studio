@@ -6,7 +6,7 @@
     "manifest": "runtime/studio-tools/runtime-manifest.json",
     "windowsAcceptance": "pending"
   },
-  "status": "unsigned-windows-build-verified",
+  "status": "current-studio-windows-build-pending",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
     "tag": "dsh-v0.2.1-alpha.2",
@@ -43,7 +43,7 @@
     ],
     "targetReleasePocVerified": false,
     "dependencyInstallVerified": true,
-    "nativeBuildVerified": true,
+    "nativeBuildVerified": false,
     "distributionVerified": false,
     "releaseReady": false
   }

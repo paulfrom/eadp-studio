@@ -5,7 +5,7 @@ import { mkdir, readdir, readFile, writeFile, rename, rm } from 'node:fs/promise
 import path from 'node:path'
 import extractZip from 'extract-zip'
 
-export async function prepareStudioTools(destination) {
+export async function prepareStudioTools(destination, archiveCache) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Studio runtime assembly requires Windows x64.')
   const lock = JSON.parse(await readFile(new URL('./studio-runtime.lock.json', import.meta.url), 'utf8'))
   const temporary = `${destination}.preparing`
@@ -13,13 +13,20 @@ export async function prepareStudioTools(destination) {
   await mkdir(temporary, { recursive: true })
   try {
     for (const [name, entry] of Object.entries({ node: lock.node, pnpm: lock.pnpm, git: lock.git })) {
-      const response = await fetch(entry.url, { signal: AbortSignal.timeout(180_000) })
-      if (!response.ok) throw new Error(`Cannot download fixed Studio ${name}.`)
-      const bytes = Buffer.from(await response.arrayBuffer())
+      const filename = `${name}.${name === 'pnpm' ? 'tgz' : 'zip'}`
+      const cachedArchive = archiveCache && path.join(archiveCache, filename)
+      let bytes
+      if (cachedArchive) bytes = await readFile(cachedArchive).catch(error => { if (error.code !== 'ENOENT') throw error })
+      if (bytes === undefined) {
+        const response = await fetch(entry.url, { signal: AbortSignal.timeout(180_000) })
+        if (!response.ok) throw new Error(`Cannot download fixed Studio ${name}.`)
+        bytes = Buffer.from(await response.arrayBuffer())
+      }
       const [algorithm, expected] = entry.integrity ? entry.integrity.split('-', 2) : ['sha256', entry.sha256]
       const actual = createHash(algorithm).update(bytes).digest(entry.integrity ? 'base64' : 'hex')
       if (actual !== expected) throw new Error(`Fixed Studio ${name} archive integrity mismatch.`)
-      const archive = path.join(temporary, `${name}.${name === 'pnpm' ? 'tgz' : 'zip'}`)
+      if (cachedArchive) { await mkdir(archiveCache, { recursive: true }); await writeFile(cachedArchive, bytes) }
+      const archive = path.join(temporary, filename)
       await writeFile(archive, bytes)
       const target = path.join(temporary, name)
       await mkdir(target)

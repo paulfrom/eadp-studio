@@ -1,1 +1,1 @@
-export function prepareStudioTools(destination: string): Promise<void>
+export function prepareStudioTools(destination: string, archiveCache?: string): Promise<void>

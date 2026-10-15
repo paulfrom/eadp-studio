@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 const OPERATIONS = {
   install: ['install', '--no-frozen-lockfile'],
   // The official library build emits Host Remote contracts before Client consumers.
-  libraries: ['run', 'build:lib'],
+  libraries: ['exec', 'tsx', 'scripts/compile-referenced-projects.ts', 'libraries'],
   desktop: ['run', 'build:desktop'],
   // Relative to .local/build/dsh/packages/eadp/studio-plugin. Keeping this
   // fixed avoids placing a machine-local path into a Windows shell command.

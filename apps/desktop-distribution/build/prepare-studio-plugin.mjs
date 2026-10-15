@@ -21,6 +21,8 @@ import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
+import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
+import { STUDIO_PACKAGING_EDIT } from './studio-packaging-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -34,6 +36,7 @@ const upstreamSource = path.join(sharedRoot, '.local/upstream/dsh')
 const buildTree = path.join(sharedRoot, '.local/build/dsh')
 const productPlugin = path.join(repo, 'packages/studio-plugin')
 const assembledPlugin = path.join(buildTree, 'packages/eadp/studio-plugin')
+const assembledContracts = path.join(buildTree, 'packages/eadp/contracts')
 const packedPluginDirectory = path.join(sharedRoot, '.local/build/packed-studio')
 
 /**
@@ -47,6 +50,7 @@ const UPSTREAM_EDITS = [
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
+  STUDIO_PACKAGING_EDIT,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
@@ -125,7 +129,7 @@ async function placePlugin() {
   await rm(assembledPlugin, { recursive: true, force: true })
   await mkdir(assembledPlugin, { recursive: true })
   await cp(path.join(productPlugin, 'src'), path.join(assembledPlugin, 'src'), { recursive: true })
-  const manifest = JSON.parse(await readFile(path.join(productPlugin, 'package.json'), 'utf8'))
+  const manifest = productionPluginManifest(JSON.parse(await readFile(path.join(productPlugin, 'package.json'), 'utf8')))
   manifest.peerDependencies = Object.fromEntries(WORKSPACE_DEPENDENCIES.map((name) => [name, 'workspace:*']))
   manifest.devDependencies = {
     ...manifest.devDependencies,
@@ -172,12 +176,15 @@ async function referencePlugin() {
     }
     await writeFile(target, source)
   }
-  const target = path.join(buildTree, 'packages/eadp/contracts')
+  const target = assembledContracts
+  await rm(target, { recursive: true, force: true })
   await mkdir(target, { recursive: true })
   await cp(path.join(repo, 'packages/contracts/src'), path.join(target, 'src'), { recursive: true })
   const manifest = JSON.parse(await readFile(path.join(repo, 'packages/contracts/package.json'), 'utf8'))
   manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
   manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' } }
+  manifest.files = ['lib']
+  delete manifest.scripts
   await writeFile(path.join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   await writeFile(path.join(target, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src'] }, null, 2) + '\n')
 }
@@ -188,6 +195,9 @@ async function verifyBuildOutput() {
       throw new Error(`Expected build output is missing: packages/eadp/studio-plugin/${file}`)
     }
   }
+  if (!(await exists(path.join(assembledContracts, 'lib/index.js')))) throw new Error('Expected contracts production build output is missing.')
+  await recordStudioBuild(assembledPlugin, repo)
+  await verifyStudioPlugin(assembledPlugin, repo)
 }
 
 async function applyUpstreamEdits() {
@@ -214,7 +224,8 @@ async function packPlugin() {
   await rm(packedPluginDirectory, { recursive: true, force: true })
   await mkdir(packedPluginDirectory, { recursive: true })
   runPnpm('pack', assembledPlugin)
-  console.log(`Packed the plugin into ${path.relative(sharedRoot, packedPluginDirectory)}`)
+  runPnpm('pack', assembledContracts)
+  console.log(`Packed the plugin and contracts into ${path.relative(sharedRoot, packedPluginDirectory)}`)
 }
 
 async function main() {

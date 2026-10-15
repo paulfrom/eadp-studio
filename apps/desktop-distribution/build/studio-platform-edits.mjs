@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs'
 
 function edit(file, replacements) {
   return { file, apply(source) {
+    // Replace the obsolete product-generated call when replaying into an
+    // existing disposable build tree; the maintained source has one cache path.
+    if (file === 'apps/desktop/scripts/prepare-runtime.ts') source = source.replace(
+      "() => prepareStudioTools(join(RUNTIME_ROOT, 'studio-tools')))",
+      "() => prepareStudioTools(join(RUNTIME_ROOT, 'studio-tools'), join(BUILD_PATHS.downloads, 'studio-tools-archives')))",
+    )
     for (const [before, after] of replacements) {
       if (source.includes(after)) continue
       // The product browser-check patch can already have inserted another
@@ -42,7 +48,7 @@ export const STUDIO_PLATFORM_EDITS = [
   ]),
   edit('apps/desktop/scripts/prepare-runtime.ts', [
     ["import { prepareCommandLink } from './prepare-command-link.ts'", "import { prepareCommandLink } from './prepare-command-link.ts'\nimport { prepareStudioTools } from './prepare-studio-tools.mjs'"],
-    ["  const { pnpm } = await readPrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))", "  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:studio-tools',\n    () => prepareStudioTools(join(RUNTIME_ROOT, 'studio-tools')))\n  const { pnpm } = await readPrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))"],
+    ["  const { pnpm } = await readPrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))", "  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:studio-tools',\n    () => prepareStudioTools(join(RUNTIME_ROOT, 'studio-tools'), join(BUILD_PATHS.downloads, 'studio-tools-archives')))\n  const { pnpm } = await readPrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))"],
   ]),
   edit('packages/subprocess/subprocess-local/src/index.ts', [
     ["      if (available) return 'windows-job'\n    }", "      if (available) return 'windows-job'\n      throw new Error('Studio requires native Windows Job process containment; the runner is unavailable')\n    }"],
