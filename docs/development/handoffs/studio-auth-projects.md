@@ -22,4 +22,6 @@
 
 离线验证结果（Linux）：后端 `tsc --noEmit` 通过；GitLab 成员授权和 root 首提交校验单测 16 项通过；使用专用临时 PostgreSQL 17 数据库和本地 GitLab HTTP fixture 的完整登录/创建/恢复/初始化生命周期 9 项通过，结束后已删除临时数据库、角色和连接文件。桌面端 Host/client TypeScript 构建通过；本机 Git 凭据隔离与协同登录测试 10 项通过，项目创建/推送/初始化断点恢复测试 7 项通过。仓库检查报告 207 个文件、47 个模板哈希一致；`git diff --check` 通过。以上 fixture 不代表真实企业 GitLab API 或原生 Windows 宿主验证。
 
-真实实例只读探测（2026-10-15，curl 经用户提供的显式 HTTP 代理）：管理凭据访问 `/api/v4/user` 返回 200，`/api/v4/groups?all_available=true` 第一页返回 84 条；不带凭据的 `/api/v4/version` 返回 401。指定邮箱搜索返回 200 但无匹配；用户名 `songlin.liu` 返回 active 用户 ID 70，但 `/api/v4/users/70` 的 `email` 与 `public_email` 均不能核实该邮箱，因此不能将其认定为已验证绑定。当前 `resolveUser` 严格要求精确邮箱匹配，真实登录绑定会被拒绝。此前默认代理/直连下 HTTPS 超时、HTTP 403；通过显式代理的 curl 后 API 读请求可达。未执行远端写操作。需先确认邮箱到 GitLab 数字 ID 的映射或令管理 API 可见该精确邮箱，再验证成员权限及建仓。Windows 安全存储/本机 helper/本地预览与协同、双作者/双客户端仍按 G0 门槛验收。G0-1/2 桌面打包已完成；当前无需签名或升级验收。单站点发布独立列为 M2-2。默认单测试管理员不能代替多人实名或权限隔离证据，不宣称 G0 总体通过。
+修复前的真实实例只读探测（2026-10-15，curl 经用户提供的显式 HTTP 代理）：管理凭据访问 `/api/v4/user` 返回 200，`/api/v4/groups?all_available=true` 第一页返回 84 条；不带凭据的 `/api/v4/version` 返回 401。指定邮箱搜索返回 200 但无匹配；用户名 `songlin.liu` 返回 active 用户 ID 70，但 `/api/v4/users/70` 的 `email` 与 `public_email` 均不能核实该邮箱，因此当时不能将其认定为已验证绑定。该版本 `resolveUser` 只查询目录精确邮箱，真实登录绑定会被拒绝。此前默认代理/直连下 HTTPS 超时、HTTP 403；通过显式代理的 curl 后 API 读请求可达。该轮未执行远端写操作。
+
+后续同日按用户提供的本机 pg17、显式代理和 6972 端口实际部署，确认 `/user` 精确返回 token 本人的邮箱与 ID 70，修复首次解析并完成真实登录。部署配置、客户端连接方式及逐项实际结果见 [本机部署交接](local-collaboration-deployment.md)。Windows 安全存储/本机 helper/本地预览与协同、双作者/双客户端仍按 G0 门槛验收。G0-1/2 桌面打包已完成；当前无需签名或升级验收。单站点发布独立列为 M2-2。默认单测试管理员不能代替多人实名或权限隔离证据，不宣称 G0 总体通过。
