@@ -52,6 +52,7 @@ function createFence() {
         factory.hooks.beforeResolve.tap(PLUGIN, data => {
           if (!data) return
           const request = String(data.request ?? '')
+          if (request.includes('!')) throw new Error('Prototype source inline loader overrides are not allowed')
           const resource = resourcePath(request)
           if (isUriScheme(resource)) throw new Error('Prototype build resource scheme is not allowed')
           if (path.isAbsolute(resource) || path.win32.isAbsolute(resource)) resolveAllowed(resource)
