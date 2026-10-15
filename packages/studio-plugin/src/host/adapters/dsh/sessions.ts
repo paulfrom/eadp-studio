@@ -14,15 +14,17 @@ import { readTemplateManifest } from '../../prototype/template.js'
 
 export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
+  private readonly splitSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
   constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onCandidates: (sessionId: string, content: string) => Promise<void>) {
     ctx.on('session/event', (session, event) => this.enqueueCandidates(session.id, event))
     ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
+    if (task.purpose === 'split') this.splitSessions.add(task.sessionId)
     if (this.handles.has(task.sessionId)) {
       if (input) await this.bind(task, input)
-      if (task.purpose === 'split' && task.split?.status === 'sent') {
+      if (task.purpose === 'split') {
         const inspection = await this.ctx.sessionController.inspect(task.sessionId as SessionId)
         for (const event of inspection.events) this.enqueueCandidates(task.sessionId, event)
       }
@@ -58,7 +60,7 @@ export class DshTaskSessions {
     if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, setup })
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree }, setup })
     this.handles.set(task.sessionId, handle)
-    if (task.purpose === 'split' && task.split?.status === 'sent' && inspection) {
+    if (task.purpose === 'split' && inspection) {
       // Do not await application delivery: open runs inside its serialized command queue.
       for (const event of inspection.events) this.enqueueCandidates(task.sessionId, event)
     }
@@ -84,8 +86,14 @@ export class DshTaskSessions {
   async prompt(sessionId: string, text: string): Promise<void> {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error('任务会话尚未恢复')
+    if (this.splitSessions.has(sessionId)) {
+      const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
+      const delivered = inspection.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task'
+        && event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n') === text)
+      if (delivered) return
+    }
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task' } }))
   }
-  async dispose(): Promise<void> { const handles = [...this.handles.values()]; this.handles.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
+  async dispose(): Promise<void> { const handles = [...this.handles.values()]; this.handles.clear(); this.splitSessions.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
 }
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task' } } }

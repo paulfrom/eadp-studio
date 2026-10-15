@@ -187,11 +187,11 @@ function dshFixture(events: Map<string, unknown[]>) {
     on: (_event: string, callback: typeof listener) => { listener = callback }, effect: () => {},
     sessionController: { inspect: async (id: string) => { if (!events.has(id)) throw new Error('not persisted'); return { events: events.get(id) } } },
     agents: {
-      create: async ({ sessionId }: { sessionId: string }) => { counts.creates++; events.set(sessionId, []); return handle() },
-      resume: async ({ resumeSessionId }: { resumeSessionId: string }) => { assert.ok(events.has(resumeSessionId)); counts.resumes++; return handle() },
+      create: async ({ sessionId }: { sessionId: string }) => { counts.creates++; events.set(sessionId, []); return handle(sessionId) },
+      resume: async ({ resumeSessionId }: { resumeSessionId: string }) => { assert.ok(events.has(resumeSessionId)); counts.resumes++; return handle(resumeSessionId) },
     },
   }
-  const handle = () => ({ agent: { followup: () => { counts.followups++ } }, dispose: async () => {} })
+  const handle = (sessionId: string) => ({ agent: { followup: (message: unknown) => { counts.followups++; events.get(sessionId)!.push({ type: 'user/message', data: message }) } }, dispose: async () => {} })
   return { context, counts, emit: (id: string, content: string) => listener({ id }, assistant(content)) }
 }
 const assistant = (text: string, interrupted = false) => ({ type: 'assistant/message', data: { interrupted, message: { content: [{ type: 'text', text }] } } })
@@ -305,6 +305,50 @@ test('a failed replay is retried from persisted events even when the DSH handle 
     await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptCandidates(task.sessionId, '')
     assert.equal((await store.read()).candidates[0]!.title, '可重放候选'); assert.equal(attempts, 2)
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
+    await sessions.dispose()
+  } finally { await f.dispose() }
+})
+
+
+for (const status of ['pending', 'failed'] as const) test('durable request and result recover from a stale ' + status + ' record without a duplicate prompt', { timeout: 3000 }, async () => {
+  const f = await fixture()
+  try {
+    const events = new Map<string, unknown[]>(), firstDsh = dshFixture(events)
+    let app = f.createApp(), sessions = new DshTaskSessions(firstDsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    f.ports.session = (task, rules) => sessions.open(task, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
+    await app.command({ action: 'retryOperation', operationId: f.first.id })
+    const task = f.local.tasks.find(task => task.purpose === 'split')!
+    assert.equal(firstDsh.counts.followups, 1)
+    // The official user/message is durable; the Host crashes before its sent status/candidates save.
+    task.split!.status = status; await f.store.save(); await sessions.dispose()
+    events.get(task.sessionId)!.push(assistant(output('投递崩溃窗口候选')))
+    const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
+    const dsh = dshFixture(events); sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
+    await app.acceptCandidates(task.sessionId, '')
+    assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
+    assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)
+    assert.equal((await store.read()).candidates[0]!.title, '投递崩溃窗口候选')
+    assert.equal((await store.read()).tasks.find(task => task.purpose === 'split')!.split!.status, 'completed')
+    await sessions.dispose()
+  } finally { await f.dispose() }
+})
+
+test('only an exact studio-task request suppresses split delivery', async () => {
+  const f = await fixture()
+  try {
+    const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
+    const task = f.local.tasks.find(task => task.purpose === 'split')!
+    const events = new Map([[task.sessionId, [
+      { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'fixed prompt' }] } },
+      { type: 'user/message', data: { source: { kind: 'studio-task' }, content: [{ type: 'text', text: 'different prompt' }] } },
+    ]]])
+    const dsh = dshFixture(events), sessions = new DshTaskSessions(dsh.context as never, '', async () => {})
+    await sessions.open(task, '', undefined)
+    await sessions.prompt(task.sessionId, 'fixed prompt')
+    assert.equal(dsh.counts.followups, 1)
+    await sessions.prompt(task.sessionId, 'fixed prompt')
+    assert.equal(dsh.counts.followups, 1)
     await sessions.dispose()
   } finally { await f.dispose() }
 })
