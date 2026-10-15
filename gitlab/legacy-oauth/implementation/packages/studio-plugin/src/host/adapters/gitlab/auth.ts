@@ -14,10 +14,10 @@ const KEY = 'gitlab-oauth'
 export class GitLabAuth {
   private readonly origin: string
   private readonly callback: URL
-  private server?: Server
+  private server: Server | undefined
   private pending = false
-  private lastError?: string
-  private refresh?: Promise<string>
+  private lastError: string | undefined
+  private refresh: Promise<string> | undefined
   private generation = 0
   constructor(private readonly options: GitLabAuthOptions) {
     const base = new URL(options.baseUrl)

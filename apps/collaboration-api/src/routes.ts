@@ -1,18 +1,21 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { TSchema, Static } from '@eadp/contracts';
 import * as contract from '@eadp/contracts';
-import type { Actor } from './auth/gitlab.js';
+import type { Actor } from './auth/session.js';
 import type { CollaborationService } from './service.js';
 
 declare module 'fastify' { interface FastifyRequest { actor: Actor } }
 export function registerRoutes(app: FastifyInstance, service: CollaborationService) {
   app.decorateRequest('actor');
   app.addHook('preHandler', async request => {
-    if (request.routeOptions.url === '/health' || request.routeOptions.url === '/v1/projects/:projectId/publication-current') return;
-    request.actor = await service.gitlab.authenticate(request.headers.authorization);
+    if (request.routeOptions.url === '/health' || request.routeOptions.url === '/v1/auth/login' || request.routeOptions.url === '/v1/projects/:projectId/publication-current') return;
+    request.actor = await service.auth.authenticate(request.headers.authorization);
   });
   app.get('/health', async () => { await service.database.query('SELECT 1'); return { status: 'ok' }; });
-  app.get('/v1/me', request => ({ id: request.actor.id, username: request.actor.username, admin: request.actor.admin }));
+  app.post<{ Body: contract.LoginRequest }>('/v1/auth/login', { schema: { body: contract.LoginSchema } }, request => service.auth.login(request.body));
+  app.post('/v1/auth/logout', request => service.auth.logout(request.actor));
+  app.get('/v1/me', request => service.auth.identity(request.actor));
+  app.get('/v1/namespaces', request => service.gitlab.namespaces(request.actor));
   app.get('/v1/projects', request => service.listProjects(request.actor));
   function write<S extends TSchema>(method: 'POST' | 'PUT', url: string, schema: S, handle: (actor: Actor, params: Record<string, string>, body: Static<S>) => Promise<unknown>) {
     app.route<{ Params: Record<string, string>; Body: Static<S> }>({ method, url, schema: { body: schema }, handler: request => handle(request.actor, request.params, request.body) });
@@ -20,9 +23,10 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   function read(url: string, handle: (actor: Actor, params: Record<string, string>) => Promise<unknown>) {
     app.get<{ Params: Record<string, string> }>(url, request => handle(request.actor, request.params));
   }
-  write('POST', '/v1/projects', contract.RegisterProjectSchema, (a, _p, b) => service.registerProject(a, b));
+  write('POST', '/v1/projects', contract.CreateProjectSchema, (a, _p, b) => service.createProject(a, b));
   const base = '/v1/projects/:projectId';
   read(base, (a, p) => service.state(a, p.projectId!));
+  write('POST', `${base}/initialize`, contract.InitializeProjectSchema, (a, p, b) => service.initializeProject(a, p.projectId!, b));
   write('POST', `${base}/categories`, contract.CategorySchema, (a, p, b) => service.category(a, p.projectId!, b));
   write('POST', `${base}/entities`, contract.ReserveEntitySchema, (a, p, b) => service.reserve(a, p.projectId!, b));
   write('POST', `${base}/entities/:entityId/claim`, contract.ClaimSchema, (a, p, b) => service.claim(a, p.projectId!, p.entityId!, b));

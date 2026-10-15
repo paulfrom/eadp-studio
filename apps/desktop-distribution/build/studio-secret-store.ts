@@ -13,7 +13,7 @@ export function isStudioSecretRequest(value: unknown): value is SecretRequest {
 export async function handleStudioSecretRequest(child: ChildProcess, request: SecretRequest): Promise<void> {
   const send = (value: object) => { try { if (child.connected) child.send(value, () => {}) } catch { /* The requesting Host has already exited. */ } }
   try {
-    if (!/^[a-f0-9-]{36}$/.test(request.requestId) || !/^(?:gitlab-oauth|collaboration-session|publication-[a-z0-9-]+)$/.test(request.key) || !['read', 'write', 'delete'].includes(request.action)) throw new Error('request')
+    if (!/^[a-f0-9-]{36}$/.test(request.requestId) || !/^(?:collaboration-session|publication-[a-z0-9-]+)$/.test(request.key) || !['read', 'write', 'delete'].includes(request.action)) throw new Error('request')
     if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) throw new Error('OS secure storage unavailable')
     const operation = (pending.get(request.key) ?? Promise.resolve()).catch(() => {}).then(async () => {
       const root = join(app.getPath('userData'), 'studio-vault')

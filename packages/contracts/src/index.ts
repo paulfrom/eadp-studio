@@ -34,8 +34,17 @@ export function isMaterialMetadata(value: unknown): value is MaterialMetadata { 
 export const OccupationTokenSchema = object({ occupationId: IdSchema, generation: Type.Integer({ minimum: 1 }), taskId: IdSchema, clientId: IdSchema, expectedRevision: RevisionSchema });
 export type OccupationToken = Static<typeof OccupationTokenSchema>;
 const keyed = { idempotencyKey: IdSchema };
-export const RegisterProjectSchema = object({ ...keyed, gitlabProjectId: Type.Integer({ minimum: 1 }), repositoryUrl: Type.String({ minLength: 1, maxLength: 500 }), stableBranch: text, name: text });
-export type RegisterProjectRequest = Static<typeof RegisterProjectSchema>;
+const numericId = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+export interface StudioUser { id: number; username: string; name: string; email: string; admin: boolean; gitlabUserId: number; gitlabUsername: string; gitlabEmail?: string }
+export interface StudioIdentity { user: StudioUser; gitlabOrigin: string }
+export const LoginSchema = object({ username: Type.String({ minLength: 1, maxLength: 100 }), password: Type.String({ minLength: 1, maxLength: 200 }) });
+export type LoginRequest = Static<typeof LoginSchema>;
+export interface LoginResponse extends StudioIdentity { token: string; expiresAt: string }
+export interface NamespaceView { id: number; name: string; fullPath: string }
+export const CreateProjectSchema = object({ ...keyed, name: Type.String({ minLength: 1, maxLength: 200 }), namespaceId: numericId, path: Type.String({ minLength: 1, maxLength: 100, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }) });
+export type CreateProjectRequest = Static<typeof CreateProjectSchema>;
+export const InitializeProjectSchema = object({ ...keyed, commitSha: ShaSchema });
+export type InitializeProjectRequest = Static<typeof InitializeProjectSchema>;
 export const CategorySchema = object({ ...keyed, categoryId: IdSchema, name: text, expectedRevision: RevisionSchema });
 export type CategoryRequest = Static<typeof CategorySchema>;
 export const ReserveEntitySchema = object({ ...keyed, kind: EntityKindSchema, title: text, categoryId: IdSchema, sourceCandidateId: Type.Optional(IdSchema), batch: Type.Optional(object({ scenarioId: IdSchema, token: OccupationTokenSchema })) });
@@ -104,7 +113,8 @@ export interface EntityView {
 }
 export interface ProjectView {
   id: string; gitlabProjectId: number; repositoryUrl: string; stableBranch: string; name: string;
-  revision: number; recognizedHead: string; currentBaselineId?: string;
+  namespaceId: number; namespacePath: string; initializationStatus: 'pending' | 'ready';
+  revision: number; recognizedHead: string | null; currentBaselineId?: string;
   categories: Array<{ id: string; name: string }>; deployment?: { baselineId: string; url: string; artifactSha256: string; deployedAt: string };
 }
 export interface ProjectState { project: ProjectView; entities: EntityView[]; integrations: IntegrationView[]; baselines: BaselineView[] }

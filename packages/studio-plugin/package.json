@@ -14,6 +14,9 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
+    "./types": { "types": "./lib/types/shared/studio.d.ts", "default": "./lib/types/shared/studio.js" },
+    "./typert": { "types": "./lib/typert.host.d.ts", "default": "./lib/typert.host.js" },
+    "./remote": { "types": "./lib/typert.remote-client.d.ts", "default": "./lib/typert.remote-client.js" },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -28,6 +31,11 @@
     "cordis.patch.yml",
     "lib/index.js",
     "lib/client.js",
-    "lib/types/**/*.d.ts"
-  ]
+    "lib/types/**/*.d.ts",
+    "lib/types/**/*.js",
+    "lib/typert.*",
+    "assets/prototype-template/",
+    "assets/prototype-template.manifest.json"
+  ],
+  "devDependencies": { "@eadp/contracts": "workspace:*" }
 }

@@ -1,4 +1,39 @@
 -- Current schema, applied once to a new database. No migration or compatibility paths.
+CREATE TABLE studio_users (
+  id bigint PRIMARY KEY CHECK (id = 1),
+  username text NOT NULL UNIQUE,
+  name text NOT NULL,
+  email text NOT NULL,
+  admin boolean NOT NULL,
+  password_salt text NOT NULL CHECK (password_salt ~ '^[a-f0-9]{32}$'),
+  password_hash text NOT NULL CHECK (password_hash ~ '^[a-f0-9]{128}$'),
+  gitlab_user_id bigint UNIQUE CHECK (gitlab_user_id > 0),
+  gitlab_username text,
+  gitlab_email text,
+  CHECK ((gitlab_user_id IS NULL AND gitlab_username IS NULL) OR (gitlab_user_id IS NOT NULL AND gitlab_username IS NOT NULL))
+);
+CREATE TABLE studio_sessions (
+  token_hash text PRIMARY KEY CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+  user_id bigint NOT NULL REFERENCES studio_users(id),
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX studio_sessions_expiry ON studio_sessions(expires_at);
+CREATE TABLE studio_project_creations (
+  actor_id bigint NOT NULL REFERENCES studio_users(id),
+  key text NOT NULL,
+  request_hash text NOT NULL,
+  project_id text NOT NULL UNIQUE,
+  namespace_id bigint NOT NULL,
+  namespace_path text NOT NULL,
+  path text NOT NULL,
+  name text NOT NULL,
+  marker text NOT NULL UNIQUE,
+  state text NOT NULL CHECK (state IN ('reserved','creating','created','assigned')),
+  gitlab_project_id bigint UNIQUE,
+  PRIMARY KEY(actor_id,key),
+  UNIQUE(namespace_id,path)
+);
 CREATE TABLE studio_projects (
   id text PRIMARY KEY,
   gitlab_project_id bigint NOT NULL UNIQUE,

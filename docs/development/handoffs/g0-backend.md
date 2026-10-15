@@ -2,6 +2,8 @@
 
 2026-10-15，Linux 自审（self_review）。本轮完成编码，不宣称 Windows 原生、真实 GitLab 或真实 PostgreSQL 验收通过。
 
+2026-10-15 身份修订：以下为原“客户端 GitLab OAuth 直登”编码和当时检查记录；当前协同登录、既有 GitLab 账号绑定及后端建仓方案已替代其认证/注册入口。原字节副本与旧认证源码见 [legacy-oauth 归档](../../../gitlab/legacy-oauth/README.md)，当前运行配置与结果见 [本次交接](studio-auth-projects.md) 和 [API README](../../../apps/collaboration-api/README.md)。下述旧 GITLAB_* 用户角色名单、OAuth/PKCE 和客户端令牌要求仅作为历史记录，不再用于当前身份路径。
+
 新增 `@eadp/contracts`、`@eadp/asset-domain` 与 `@eadp/collaboration-api`。API 的运行、固定材料格式、完整路由和恢复约束见 [协同 API README](../../../apps/collaboration-api/README.md)，字段以共享 TypeScript/JSON schema 为准。
 
 已实现：GitLab OAuth access token 实时身份和项目读写权限；独立后端管理员/发布者权限；单项目单仓库；分类与稳定 ID 预留；无 TTL 的持久占用、代次/revision、取消及管理员释放；前置图和固定完成版本门禁；场景关联集合冻结、派生新需求与完整批次原子确认；统一 Git 集成受理/最终接受、认可头/基线、幂等核对、纠正及旧占用拒绝；固定材料确认与自动复用资格、明确停用/恢复、跨项目来源读取与采用及目标成功依据；独立清单/交接收悉；当前部署元数据与仅可读取当前已确认基线的短发布授权。

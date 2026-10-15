@@ -17,13 +17,15 @@ export interface SubprocessProvider {
     argv: readonly string[]; cwd: string; env: NodeJS.ProcessEnv; graceMs: number
     stdio: { stdin: 'ignore' | { data: string }; stdout: 'pipe'; stderr: 'pipe' }; signal?: AbortSignal
   }): {
-    readonly stdout: Readable | undefined; readonly stderr: Readable | undefined; readonly stdin?: Writable
+      readonly stdout: Readable | undefined; readonly stderr: Readable | undefined; readonly stdin: Writable | undefined
     readonly done: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>
     terminate(): void; waitForExit(signal?: AbortSignal): Promise<boolean>
   }
 }
 export interface RunOptions {
   cwd: string; signal?: AbortSignal; env?: Record<string, string>; timeoutMs?: number; input?: string; maxOutputBytes?: number
+  /** Only WorkspaceGit opts in to the machine user's trusted Git configuration and credential helpers. */
+  gitUserCredentials?: true
 }
 export interface ProcessResult { stdout: string; stderr: string; stdoutBytes: Buffer; exitCode: number }
 export interface ManagedProcess {
@@ -33,7 +35,8 @@ export interface ManagedProcess {
 }
 
 const ENVIRONMENT_KEYS = ['SystemRoot', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE']
-const SAFE_ADDITIONAL_ENV = /^(?:CI|NODE_ENV|PORT|HOST|BROWSER|FORCE_COLOR|NO_COLOR|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|GIT_TERMINAL_PROMPT|GIT_ASKPASS|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL|STUDIO_GIT_AUTH_SOCKET|STUDIO_GIT_AUTH_NONCE)$/
+const SAFE_ADDITIONAL_ENV = /^(?:CI|NODE_ENV|PORT|HOST|BROWSER|FORCE_COLOR|NO_COLOR|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL)$/
+const GIT_USER_ENVIRONMENT_KEYS = ['HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'SSH_AUTH_SOCK']
 
 /** No PATH discovery or ambient Node/Git configuration reaches a product command. */
 export class PlatformRuntime {
@@ -69,8 +72,13 @@ export class PlatformRuntime {
     const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).map(([key]) => [key, undefined]))
     for (const key of ENVIRONMENT_KEYS) if (process.env[key]) env[key] = process.env[key]
     env.PATH = [...new Set(Object.values(this.executables).map(value => path.dirname(value)))].join(path.delimiter)
-    env.GIT_CONFIG_NOSYSTEM = '1'
-    env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
+    if (options.gitUserCredentials) {
+      if (tool !== 'git') throw new Error('用户 Git 凭据仅供专用 Git 操作使用。')
+      for (const key of GIT_USER_ENVIRONMENT_KEYS) if (process.env[key]) env[key] = process.env[key]
+    } else {
+      env.GIT_CONFIG_NOSYSTEM = '1'
+      env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'
+    }
     env.GIT_TERMINAL_PROMPT = '0'
     for (const [key, value] of Object.entries(options.env ?? {})) {
       if (!SAFE_ADDITIONAL_ENV.test(key)) throw new Error(`命令环境变量不允许：${key}`)

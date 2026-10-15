@@ -5,8 +5,25 @@ function edit(file, replacements) {
   return { file, apply(source) {
     for (const [before, after] of replacements) {
       if (source.includes(after)) continue
+      // The product browser-check patch can already have inserted another
+      // IPC handler before the same validation anchor in a staged DSH tree.
+      // Treat the unique Studio secret handler as applied in that ordering too.
+      if (file === 'apps/desktop/src/host-process.ts'
+        && ((after.includes('handleStudioSecretRequest(child, message)')
+          && source.includes('handleStudioSecretRequest(child, message)'))
+          || (after.includes('isStudioSecretRequest }')
+            && source.includes("import { handleStudioSecretRequest, isStudioSecretRequest } from './studio-secret-store.ts'")))) continue
       if (source.split(before).length !== 2) throw new Error(`Studio platform edit anchor missing or duplicated: ${file}`)
       source = source.replace(before, after)
+    }
+    if (file === 'apps/desktop/src/host-process.ts') {
+      const secretImport = "import { handleStudioSecretRequest, isStudioSecretRequest } from './studio-secret-store.ts'"
+      const first = source.indexOf(secretImport)
+      let duplicate = source.indexOf(secretImport, first + secretImport.length)
+      while (first >= 0 && duplicate >= 0) {
+        source = `${source.slice(0, duplicate)}${source.slice(duplicate + secretImport.length)}`
+        duplicate = source.indexOf(secretImport, first + secretImport.length)
+      }
     }
     return source
   } }

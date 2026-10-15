@@ -1,7 +1,7 @@
 import { canonical, prototypeBindings, requireCondition } from '@eadp/asset-domain';
 import type { ClaimRequest, EntityView, OccupationToken, OccupationView, ReleaseRequest, UpdateRelationsRequest } from '@eadp/contracts';
 import { validatePrerequisites } from '@eadp/asset-domain';
-import type { Actor } from '../auth/gitlab.js';
+import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import { audit, entity, newId, now, saveEntity } from '../persistence/repository.js';
 

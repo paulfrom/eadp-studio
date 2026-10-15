@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'umi';
 import routes from './router.config';
+import { PrototypeResourceFencePlugin } from './resource-fence';
 
 export default defineConfig({
   npmClient: 'pnpm',
@@ -15,6 +16,9 @@ export default defineConfig({
   plugins: ['@umijs/plugins/dist/locale'],
   locale: { default: 'zh-CN', baseNavigator: false, antd: false },
   routes,
+  chainWebpack(memo) {
+    memo.plugin('eadp-prototype-resource-fence').use(PrototypeResourceFencePlugin);
+  },
   title: '需求原型',
   alias: { '@': resolve(__dirname, '../src') },
   headScripts: [{ src: './prototype-guard.js' }],

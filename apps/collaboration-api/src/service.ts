@@ -1,6 +1,8 @@
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { AdoptRequest, AdoptionSuccessRequest, CategoryRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, RegisterProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
-import { GitLab, type Actor } from './auth/gitlab.js';
+import type { AdoptRequest, AdoptionSuccessRequest, CategoryRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
+import { GitLab } from './auth/gitlab.js';
+import { SessionAuth, type Actor } from './auth/session.js';
+import { Projects } from './projects.js';
 import { PublicationAuthorization } from './auth/publication.js';
 import { GitLabContent } from './gitlab-content.js';
 import { type Database, transaction, type Transaction } from './persistence/database.js';
@@ -12,17 +14,23 @@ import * as reuse from './modules/reuse.js';
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
 export class CollaborationService {
   readonly content: GitLabContent;
-  constructor(readonly database: Database, readonly gitlab: GitLab, readonly publication: PublicationAuthorization) { this.content = new GitLabContent(gitlab); }
+  readonly projects: Projects;
+  constructor(readonly database: Database, readonly gitlab: GitLab, readonly publication: PublicationAuthorization, readonly auth: SessionAuth) { this.content = new GitLabContent(gitlab); this.projects = new Projects(database, gitlab); }
   async authorize(actor: Actor, projectId: string, edit = false) {
     const project = await transaction(this.database, c => repository.project(c, projectId));
-    await this.gitlab.authorize(actor, project.gitlabProjectId, edit); return project;
+    const remote = await this.gitlab.authorize(actor, project.gitlabProjectId, edit);
+    this.boundRepository(project, remote); repository.assertProjectReady(project); return project;
+  }
+  private boundRepository(project: ProjectView, remote: { http_url_to_repo: string; namespace: { id: number; full_path: string } }): void {
+    requireCondition(remote.http_url_to_repo === project.repositoryUrl && remote.namespace.id === project.namespaceId && remote.namespace.full_path === project.namespacePath, 'PROJECT_REPOSITORY_CHANGED', 'The registered GitLab repository path changed', 409);
   }
   async mutate<T>(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }, change: Mutation<T>, extraProjectIds: string[] = []): Promise<T> {
     return transaction(this.database, async c => {
       for (const id of [...new Set([projectId, ...extraProjectIds])].sort()) await repository.project(c, id, true);
+      const project = await repository.project(c, projectId); repository.assertProjectReady(project);
       const previous = await repository.previous(c, projectId, actor, action, input);
       if (previous.found) return previous.result as T;
-      const project = await repository.project(c, projectId), all = await repository.entities(c, projectId);
+      const all = await repository.entities(c, projectId);
       const result = await change(c, project, all);
       await repository.remember(c, projectId, actor, action, input, result); return result;
     });
@@ -34,31 +42,16 @@ export class CollaborationService {
     const rows = await this.database.query<{ data: ProjectView }>('SELECT data FROM studio_projects ORDER BY id');
     const visible: ProjectView[] = [];
     for (const row of rows.rows) {
-      try { await this.gitlab.authorize(actor, row.data.gitlabProjectId); visible.push(row.data); }
+      try { const remote = await this.gitlab.authorize(actor, row.data.gitlabProjectId); this.boundRepository(row.data, remote); visible.push(row.data); }
       catch (error) { if ((error as { code?: string }).code !== 'GITLAB_READ_DENIED') throw error; }
     }
     return visible;
   }
-  async registerProject(actor: Actor, input: RegisterProjectRequest): Promise<ProjectView> {
-    const remote = await this.gitlab.authorize(actor, input.gitlabProjectId, true);
-    requireCondition(input.repositoryUrl === remote.http_url_to_repo || input.repositoryUrl === remote.ssh_url_to_repo, 'REPOSITORY_MISMATCH', 'Repository URL must match the authorized GitLab project', 422);
-    const head = await this.gitlab.branchHead(actor, input.gitlabProjectId, input.stableBranch);
-    const id = `gitlab-${input.gitlabProjectId}`;
-    return transaction(this.database, async c => {
-      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [id]);
-      const existing = (await c.query<{ data: ProjectView }>('SELECT data FROM studio_projects WHERE id=$1', [id])).rows[0]?.data;
-      if (existing) {
-        const previous = await repository.previous(c, id, actor, 'project.register', input); if (previous.found) return previous.result as ProjectView;
-        requireCondition(existing.repositoryUrl === input.repositoryUrl && existing.stableBranch === input.stableBranch, 'PROJECT_ALREADY_REGISTERED', 'Project is already bound to a repository and stable branch');
-        await repository.remember(c, id, actor, 'project.register', input, existing); return existing;
-      }
-      const project: ProjectView = { id, gitlabProjectId: input.gitlabProjectId, repositoryUrl: input.repositoryUrl, stableBranch: input.stableBranch, name: input.name, recognizedHead: head, revision: 0, categories: [] };
-      await c.query('INSERT INTO studio_projects(id,gitlab_project_id,data) VALUES($1,$2,$3)', [id, input.gitlabProjectId, project]);
-      await repository.remember(c, id, actor, 'project.register', input, project); return project;
-    });
-  }
+  async createProject(actor: Actor, input: CreateProjectRequest) { return this.projects.create(actor, input); }
+  async initializeProject(actor: Actor, projectId: string, input: InitializeProjectRequest) { return this.projects.initialize(actor, projectId, input); }
   async state(actor: Actor, projectId: string): Promise<ProjectState> {
-    await this.authorize(actor, projectId);
+    const bound = await transaction(this.database, c => repository.project(c, projectId));
+    const remote = await this.gitlab.authorize(actor, bound.gitlabProjectId); this.boundRepository(bound, remote);
     return transaction(this.database, async c => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
@@ -203,6 +196,7 @@ export class CollaborationService {
     requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
     return transaction(this.database, async c => {
       const current = await repository.project(c, projectId, true);
+      repository.assertProjectReady(current);
       requireCondition(current.currentBaselineId === input.baselineId && current.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Publication requires the current accepted prototype baseline');
       requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
       const grant = this.publication.issue(projectId, input.baselineId, current.recognizedHead, actor.id);
@@ -212,8 +206,11 @@ export class CollaborationService {
   }
   async publicationCurrent(authorization: string | undefined, projectId: string) {
     const claims = this.publication.verify(authorization, projectId);
+    const actor = await this.auth.boundUser(claims.actorId), bound = await transaction(this.database, c => repository.project(c, projectId));
+    const remote = await this.gitlab.authorize(actor, bound.gitlabProjectId); this.boundRepository(bound, remote);
     return transaction(this.database, async c => {
       const project = await repository.project(c, projectId, true);
+      repository.assertProjectReady(project);
       requireCondition(project.currentBaselineId === claims.baselineId && project.recognizedHead === claims.acceptedHead, 'PUBLICATION_CONTEXT_CHANGED', 'The accepted baseline or integration head changed; request a new publication authorization');
       requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
       const baseline = (await c.query<{ data: { id: string; commitSha: string; confirmationId: string } }>('SELECT data FROM studio_baselines WHERE id=$1 AND project_id=$2', [claims.baselineId, projectId])).rows[0]?.data;

@@ -1,24 +1,7 @@
 {
-  "extends": "../../../tsconfig.base.client.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "lib/types"
-  },
-  "include": [
-    "src"
-  ],
+  "files": [],
   "references": [
-    {
-      "path": "../../../vendor/cordis"
-    },
-    {
-      "path": "../../client/ui-layout"
-    },
-    {
-      "path": "../../client/ui-renderer"
-    },
-    {
-      "path": "../../client/ui-slots"
-    }
+    { "path": "./tsconfig.host.json" },
+    { "path": "./tsconfig.client.json" }
   ]
 }

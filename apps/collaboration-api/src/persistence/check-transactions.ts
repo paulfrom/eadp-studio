@@ -6,19 +6,21 @@ import type { EntityView, ProjectView } from '@eadp/contracts';
 import { createDatabase, transaction } from './database.js';
 import { loadConfig } from '../config.js';
 import { PublicationAuthorization } from '../auth/publication.js';
-import { GitLab, type Actor } from '../auth/gitlab.js';
+import { GitLab } from '../auth/gitlab.js';
+import type { Actor } from '../auth/session.js';
+import { SessionAuth } from '../auth/session.js';
 import { CollaborationService } from '../service.js';
 import * as occupations from '../modules/occupations.js';
 import { entities, saveEntity } from './repository.js';
 
 const config = loadConfig(), database = createDatabase(config), projectId = `transaction-check-${randomUUID()}`;
-const first: Actor = { id: 910000001, username: 'synthetic-first', token: '', admin: true };
-const second: Actor = { id: 910000002, username: 'synthetic-second', token: '', admin: false };
-const service = new CollaborationService(database, new GitLab(config), new PublicationAuthorization(config));
+const first: Actor = { id: 910000001, username: 'synthetic-first', name: 'First', email: 'first@example.test', gitlabUserId: 810000001, gitlabUsername: 'synthetic-first', sessionHash: '', admin: true };
+const second: Actor = { id: 910000002, username: 'synthetic-second', name: 'Second', email: 'second@example.test', gitlabUserId: 810000002, gitlabUsername: 'synthetic-second', sessionHash: '', admin: false };
+const service = new CollaborationService(database, new GitLab(config), new PublicationAuthorization(config), new SessionAuth(database, new GitLab(config), config));
 const initial: EntityView = { id: 'requirement', kind: 'requirement', title: 'Synthetic transaction check', categoryId: 'check', revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], frozenBy: [], associationRevision: 0 };
 try {
   await transaction(database, async c => {
-    const data: ProjectView = { id: projectId, gitlabProjectId: -Date.now(), repositoryUrl: 'synthetic', stableBranch: 'check', name: 'Synthetic transaction check', revision: 0, recognizedHead: '0'.repeat(40), categories: [{ id: 'check', name: 'Check' }] };
+    const data: ProjectView = { id: projectId, gitlabProjectId: -Date.now(), repositoryUrl: 'synthetic', stableBranch: 'check', name: 'Synthetic transaction check', namespaceId: 1, namespacePath: 'synthetic', initializationStatus: 'ready', revision: 0, recognizedHead: '0'.repeat(40), categories: [{ id: 'check', name: 'Check' }] };
     await c.query('INSERT INTO studio_projects(id,gitlab_project_id,data) VALUES($1,$2,$3)', [projectId, data.gitlabProjectId, data]);
     await saveEntity(c, projectId, initial);
   });

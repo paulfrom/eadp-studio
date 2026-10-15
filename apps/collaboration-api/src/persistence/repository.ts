@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonical, requireCondition } from '@eadp/asset-domain';
 import type { EntityView, ProjectView } from '@eadp/contracts';
 import type { Transaction } from './database.js';
-import type { Actor } from '../auth/gitlab.js';
+import type { Actor } from '../auth/session.js';
 export const newId = () => randomUUID();
 export const now = () => new Date().toISOString();
 export async function project(c: Transaction, id: string, lock = false): Promise<ProjectView> {
@@ -29,4 +29,9 @@ export async function previous(c: Transaction, projectId: string, actor: Actor, 
 export async function remember(c: Transaction, projectId: string, actor: Actor, action: string, input: { idempotencyKey: string }, result: unknown) {
   await c.query('INSERT INTO studio_operations(project_id,key,actor_id,action,request_hash,result) VALUES($1,$2,$3,$4,$5,$6)', [projectId, input.idempotencyKey, actor.id, action, requestHash(input), result]);
   await audit(c, projectId, actor, action, { idempotencyKey: input.idempotencyKey });
+}
+
+export type ReadyProject = ProjectView & { initializationStatus: 'ready'; recognizedHead: string };
+export function assertProjectReady(value: ProjectView): asserts value is ReadyProject {
+  requireCondition(value.initializationStatus === 'ready' && typeof value.recognizedHead === 'string' && /^[a-f0-9]{40}$/.test(value.recognizedHead), 'PROJECT_NOT_INITIALIZED', 'Initialize and push the project before starting business operations', 409);
 }

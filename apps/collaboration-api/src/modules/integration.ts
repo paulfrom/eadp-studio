@@ -1,6 +1,6 @@
 import { canonical, requireCondition, validatePrerequisites } from '@eadp/asset-domain';
 import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedVersion, IntegrationView, PrepareIntegrationRequest, ProjectView } from '@eadp/contracts';
-import type { Actor } from '../auth/gitlab.js';
+import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import { entity, newId, now, saveEntity, saveProject } from '../persistence/repository.js';
 import { assertNotFrozen, assertOccupation, checkBoundInputs, finishOccupation } from './occupations.js';

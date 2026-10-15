@@ -106,8 +106,8 @@
     {
       "path": "config/config.ts",
       "sourceSha256": "1986fee3ff6053d4d6b69ccb98e2a04b2ec8c1b476c90cd94ee1ab676bb5807d",
-      "sha256": "ed40f154e30f771d0752b8035f32656f8361d00ac2dfa33780a41a4df37d0e5f",
-      "treatment": "maintained-g0-3"
+      "sha256": "ee3c5cf8d2291026fcd1d8d0da9da2a21265c3d1bf9848893694c484cdf3e8ab",
+      "treatment": "maintained-g0-4"
     },
     {
       "path": "config/router.config.ts",
@@ -265,7 +265,7 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "4b9bb793a5b99e9da27c9bbcfb0d28c1a300b9724b817299dbaa2d5a11eff4c1"
+      "sha256": "c07c8b29340c92e0456a6a0b87afe4b961b276f84fed710531171f143e94983f"
     },
     {
       "path": "README.md",
@@ -302,6 +302,10 @@
     {
       "path": "src/pages/Demo/service.ts",
       "sha256": "e2c184b79ed9e30716bfdeeae495673db3aa009271c04d5e3a7ed066a2e22831"
+    },
+    {
+      "path": "config/resource-fence.js",
+      "sha256": "455b12069bc77c788c88018df58acf9386612e82a0f7515ee1eab25d593ae492"
     }
   ],
   "acceptance": {
@@ -324,7 +328,7 @@
     "mockBoundarySmokeVerified": true,
     "windowsAcceptancePending": true
   },
-  "version": "eadp-prototype@1.0.0-g0.3",
+  "version": "eadp-prototype@1.0.0-g0.4",
   "removedFiles": [],
   "contract": {
     "node": "22.22.3",
@@ -369,7 +373,8 @@
       "src/loading.tsx",
       "src/mock/runtime.ts",
       "src/typings.d.ts",
-      "tsconfig.json"
+      "tsconfig.json",
+      "config/resource-fence.js"
     ],
     "writablePrefixes": [
       "src/pages/",

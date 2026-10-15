@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "lib/types", "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo" },
+  "include": ["src/host", "src/shared"],
+  "references": [
+    { "path": "../../../vendor/cordis" }, { "path": "../contracts" },
+    { "path": "../../core/agent" }, { "path": "../../core/session" }, { "path": "../../core/system-prompt" },
+    { "path": "../../core/tools" }, { "path": "../../api/session-controller/tsconfig.host.json" },
+    { "path": "../../subprocess/subprocess" }, { "path": "../../llm/llm" }, { "path": "../../typert/protocol" }
+  ]
+}

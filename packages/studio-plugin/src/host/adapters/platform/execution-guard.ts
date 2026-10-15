@@ -8,7 +8,13 @@ export interface StudioExecutionPolicy { readRoot: string; writablePaths?: reado
 const scopes = new Map<string, StudioExecutionPolicy>()
 export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy): () => void {
   const key = canonical(cwd)
-  const prepared = { ...policy, readRoot: canonical(policy.readRoot), writablePaths: policy.writablePaths?.map(relativePolicyPath), writablePrefixes: policy.writablePrefixes?.map(relativePolicyPath), protectedPaths: policy.protectedPaths?.map(relativePolicyPath) }
+  const prepared: StudioExecutionPolicy = {
+    ...policy,
+    readRoot: canonical(policy.readRoot),
+    ...(policy.writablePaths ? { writablePaths: policy.writablePaths.map(relativePolicyPath) } : {}),
+    ...(policy.writablePrefixes ? { writablePrefixes: policy.writablePrefixes.map(relativePolicyPath) } : {}),
+    ...(policy.protectedPaths ? { protectedPaths: policy.protectedPaths.map(relativePolicyPath) } : {}),
+  }
   if (path.parse(prepared.readRoot).root === prepared.readRoot) throw new Error('Agent 读取范围不能是整个文件系统根。')
   if (!under(prepared.readRoot, key)) throw new Error('Agent 工作目录必须位于受管理读取范围。')
   scopes.set(key, prepared)

@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { DomainError } from '@eadp/asset-domain';
 import { PublicationAuthorization } from './auth/publication.js';
 import { GitLab } from './auth/gitlab.js';
+import { SessionAuth } from './auth/session.js';
 import type { Config } from './config.js';
 import { createDatabase, type Database } from './persistence/database.js';
 import { registerRoutes } from './routes.js';
@@ -19,7 +20,9 @@ export function createApp(config: Config, database: Database = createDatabase(co
     return response.status(503).send({ error: { code: 'SERVICE_UNAVAILABLE', message: 'The operation could not be completed; query its idempotency key before retrying' } });
   });
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: { code: 'ROUTE_NOT_FOUND', message: 'API route was not found' } }));
-  registerRoutes(app, new CollaborationService(database, new GitLab(config), new PublicationAuthorization(config)));
+  const gitlab = new GitLab(config), auth = new SessionAuth(database, gitlab, config);
+  app.addHook('onReady', async () => { await auth.ensureTestUser(); });
+  registerRoutes(app, new CollaborationService(database, gitlab, new PublicationAuthorization(config), auth));
   app.addHook('onClose', async () => { await database.end(); });
   return app;
 }

@@ -7,7 +7,10 @@ export function createDatabase(config: Config) {
 export type Database = ReturnType<typeof createDatabase>;
 export async function transaction<T>(database: Database, action: (connection: Transaction) => Promise<T>): Promise<T> {
   const connection = await database.connect();
-  try { await connection.query('BEGIN'); const result = await action(connection); await connection.query('COMMIT'); return result; }
-  catch (error) { await connection.query('ROLLBACK'); throw error; }
+  try { return await transactionOn(connection, () => action(connection)); }
   finally { connection.release(); }
+}
+export async function transactionOn<T>(connection: Transaction, action: () => Promise<T>): Promise<T> {
+  try { await connection.query('BEGIN'); const result = await action(); await connection.query('COMMIT'); return result; }
+  catch (error) { await connection.query('ROLLBACK'); throw error; }
 }

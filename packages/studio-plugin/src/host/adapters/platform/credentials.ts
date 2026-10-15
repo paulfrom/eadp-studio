@@ -9,7 +9,7 @@ export interface SecretStore {
 /** Private parent/child IPC to Electron safeStorage. This is never registered as a Remote. */
 export class DesktopSecretStore implements SecretStore {
   private request(action: 'read' | 'write' | 'delete', key: string, value?: unknown): Promise<unknown> {
-    if (!/^(?:gitlab-oauth|collaboration-session|publication-[a-z0-9-]+)$/.test(key)) return Promise.reject(new Error('凭据标识无效。'))
+    if (!/^(?:collaboration-session|publication-[a-z0-9-]+)$/.test(key)) return Promise.reject(new Error('凭据标识无效。'))
     if (!process.connected || !process.send) return Promise.reject(new Error('桌面安全凭据存储不可用。'))
     const requestId = randomUUID()
     return new Promise((resolve, reject) => {

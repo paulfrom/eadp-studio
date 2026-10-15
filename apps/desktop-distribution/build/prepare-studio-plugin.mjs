@@ -19,6 +19,8 @@ import { runPnpm } from './run-pnpm.mjs'
 import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
+import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
+import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -43,6 +45,8 @@ const UPSTREAM_EDITS = [
   ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
   DESKTOP_PLUGIN_EDIT,
+  ...STUDIO_PLATFORM_EDITS,
+  STUDIO_BROWSER_EDIT,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
@@ -83,6 +87,17 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-client-ui-layout',
   '@deepseek-ai/dsh-client-ui-renderer',
   '@deepseek-ai/dsh-client-ui-slots',
+  '@deepseek-ai/dsh-client-ui-session',
+  '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-api-gateway',
+  '@deepseek-ai/dsh-api-session-controller',
+  '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-session',
+  '@deepseek-ai/dsh-system-prompt',
+  '@deepseek-ai/dsh-tools',
+  '@deepseek-ai/dsh-subprocess',
+  '@deepseek-ai/dsh-llm',
+  '@deepseek-ai/dsh-typert-protocol',
 ]
 
 const exists = async (target) => stat(target).then(() => true, (error) => {
@@ -113,6 +128,7 @@ async function placePlugin() {
   const manifest = JSON.parse(await readFile(path.join(productPlugin, 'package.json'), 'utf8'))
   manifest.peerDependencies = Object.fromEntries(WORKSPACE_DEPENDENCIES.map((name) => [name, 'workspace:*']))
   manifest.devDependencies = {
+    ...manifest.devDependencies,
     ...Object.fromEntries(WORKSPACE_DEPENDENCIES.map((name) => [name, 'workspace:*'])),
     '@types/react': '~18.3.1',
     react: '^18.2.0',
@@ -126,28 +142,44 @@ async function placePlugin() {
     const source = path.join(productPlugin, entry)
     if (!(await exists(source))) continue
     await mkdir(path.dirname(path.join(assembledPlugin, entry)), { recursive: true })
+    if ((await stat(source)).isDirectory()) continue
     await cp(source, path.join(assembledPlugin, entry))
   }
-  for (const file of ['tsconfig.json', 'tsdown.config.ts']) {
+  const templateManifest = JSON.parse(await readFile(path.join(productPlugin, 'assets/prototype-template.manifest.json'), 'utf8'))
+  for (const entry of [...templateManifest.files, ...templateManifest.addedFiles]) {
+    if (!entry.path || entry.path.includes('\\') || entry.path.split('/').some(part => !part || part === '..' || part === '.')) throw new Error('Invalid template bundle entry')
+    const destination = path.join(assembledPlugin, 'assets/prototype-template', entry.path)
+    await mkdir(path.dirname(destination), { recursive: true })
+    await cp(path.join(productPlugin, 'assets/prototype-template', entry.path), destination)
+  }
+  for (const file of ['tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts']) {
     await cp(path.join(productPlugin, 'build', file), path.join(assembledPlugin, file))
   }
   console.log(`Placed plugin at packages/eadp/studio-plugin (${WORKSPACE_DEPENDENCIES.length} workspace dependencies).`)
 }
 
 async function referencePlugin() {
-  const target = path.join(buildTree, 'tsconfig.client.json')
-  const reference = './packages/eadp/studio-plugin'
-  const source = await readFile(target, 'utf8')
-  if (source.includes(`"${reference}"`)) {
-    console.log('tsconfig.client.json already references the plugin.')
-    return
+  for (const face of ['host', 'client']) {
+    const target = path.join(buildTree, `tsconfig.${face}.json`)
+    const reference = `./packages/eadp/studio-plugin/tsconfig.${face}.json`
+    let source = await readFile(target, 'utf8')
+    source = source.replace('"./packages/eadp/studio-plugin"', `"${reference}"`)
+    if (!source.includes(`"${reference}"`)) {
+      const marker = '"references": ['; const index = source.indexOf(marker)
+      if (index < 0) throw new Error(`tsconfig.${face}.json has no references block.`)
+      const insertion = index + marker.length
+      source = `${source.slice(0, insertion)}\n    { "path": "${reference}" },${source.slice(insertion)}`
+    }
+    await writeFile(target, source)
   }
-  const marker = '"references": ['
-  const index = source.indexOf(marker)
-  if (index < 0) throw new Error('tsconfig.client.json has no references block.')
-  const insertion = index + marker.length
-  await writeFile(target, `${source.slice(0, insertion)}\n    { "path": "${reference}" },${source.slice(insertion)}`)
-  console.log('Added the plugin project reference to the build tree tsconfig.client.json.')
+  const target = path.join(buildTree, 'packages/eadp/contracts')
+  await mkdir(target, { recursive: true })
+  await cp(path.join(repo, 'packages/contracts/src'), path.join(target, 'src'), { recursive: true })
+  const manifest = JSON.parse(await readFile(path.join(repo, 'packages/contracts/package.json'), 'utf8'))
+  manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
+  manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' } }
+  await writeFile(path.join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  await writeFile(path.join(target, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src'] }, null, 2) + '\n')
 }
 
 async function verifyBuildOutput() {
@@ -159,6 +191,11 @@ async function verifyBuildOutput() {
 }
 
 async function applyUpstreamEdits() {
+  for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE]) {
+    const target = path.join(buildTree, addition.file)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, addition.source)
+  }
   for (const edit of UPSTREAM_EDITS) {
     const target = path.join(buildTree, edit.file)
     const source = await readFile(target, 'utf8')
@@ -185,6 +222,7 @@ async function main() {
   await placePlugin()
   await referencePlugin()
   await applyUpstreamEdits()
+  if (process.argv.includes('--stage-only')) { console.log('Studio source staged; build steps skipped.'); return }
   runPnpm('install', buildTree)
   // A clean source tree needs Host-generated Remote contracts before Client compilation.
   runPnpm('libraries', buildTree)

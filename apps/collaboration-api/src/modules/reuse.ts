@@ -1,6 +1,6 @@
 import { requireCondition } from '@eadp/asset-domain';
 import type { AdoptRequest, AdoptionSuccessRequest, EntityView, FixedVersion } from '@eadp/contracts';
-import type { Actor } from '../auth/gitlab.js';
+import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import { audit, entity, newId, now, saveEntity } from '../persistence/repository.js';
 export interface AdoptionRecord {

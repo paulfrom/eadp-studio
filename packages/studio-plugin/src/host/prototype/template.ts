@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export interface TemplateFile { path: string; sha256: string }
@@ -82,22 +83,31 @@ export async function verifyTemplate(templateRoot: string, manifestPath: string)
   return manifest;
 }
 
-/** Copies only the verified allowlist. Never overwrites an existing project. */
+/** Resumes only matching bundled bytes in an operation-owned directory; never overwrites files. */
 export async function copyTemplate(input: { templateRoot: string; manifestPath: string; destinationRoot: string }): Promise<TemplateManifest> {
   const manifest = await verifyTemplate(input.templateRoot, input.manifestPath);
-  await mkdir(input.destinationRoot, { recursive: false });
-  try {
-    for (const entry of [...manifest.files, ...manifest.addedFiles]) {
-      const source = await regularPath(await realpath(input.templateRoot), entry.path);
-      const destination = resolveTemplatePath(input.destinationRoot, entry.path);
-      await mkdir(dirname(destination), { recursive: true });
-      await copyFile(source, destination);
-      if (sha256(await readFile(destination)) !== entry.sha256) throw new Error(`Copied template hash mismatch: ${entry.path}`);
+  await mkdir(input.destinationRoot, { recursive: true });
+  if ((await lstat(input.destinationRoot)).isSymbolicLink()) throw new Error('Prototype template destination cannot be a symbolic link');
+  for (const entry of [...manifest.files, ...manifest.addedFiles]) {
+    const source = await regularPath(await realpath(input.templateRoot), entry.path);
+    const destination = resolveTemplatePath(input.destinationRoot, entry.path);
+    let parent = input.destinationRoot;
+    for (const part of entry.path.split('/').slice(0, -1)) {
+      parent = resolve(parent, part);
+      await mkdir(parent).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; });
+      const info = await lstat(parent);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error(`Template directory is not regular: ${entry.path}`);
     }
-  } catch (error) {
-    await rm(input.destinationRoot, { recursive: true, force: true });
-    throw error;
+    // regularPath rejects intermediate symlinks before reusing any partial copy.
+    try {
+      if (sha256(await readFile(await regularPath(await realpath(input.destinationRoot), entry.path))) !== entry.sha256) throw new Error(`Existing template file differs: ${entry.path}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await copyFile(source, destination, constants.COPYFILE_EXCL);
+    }
+    if (sha256(await readFile(destination)) !== entry.sha256) throw new Error(`Copied template hash mismatch: ${entry.path}`);
   }
+  await verifyTemplate(input.destinationRoot, input.manifestPath);
   return manifest;
 }
 
