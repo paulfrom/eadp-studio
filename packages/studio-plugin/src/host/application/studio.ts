@@ -129,7 +129,7 @@ export class StudioApplication {
     return { connected: true, account, projects, availableProjects, namespaces,
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), drafts, tasks,
-      candidates: local.candidates.filter(candidate => remote?.entities.some(entity => entity.id === candidate.scenarioId)), ...(this.previewState ? { preview: this.previewState } : {}),
+      candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
       pending: local.operations.filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })) }
   }
   private async requireAccount() { const account = await this.ports.account(); if (!account) { this.store.useUser(); throw new CollaborationError('LOGIN_REQUIRED', '请先登录协同工作台。', 401) }; this.store.useUser(account.id); return account }
@@ -257,20 +257,37 @@ export class StudioApplication {
       }
       operation.phase = 'accepted'; delete operation.message; await this.store.save()
       const remote = await this.api.request<ProjectState>('GET', this.route(project.id)); const entity = remote.entities.find(e => e.id === operation.entityId)
-      if (entity?.kind === 'scenario' && !local.splitEvents.includes(integration.id)) await this.splitScenario(remote, entity, integration.id)
+      if (entity?.kind === 'scenario' && entity.current && integration.confirmationIds?.includes(entity.current.confirmationId)) await this.splitScenario(remote, entity, integration.id)
       if (integration.baselineId) await this.generateHandoff(integration.baselineId).catch(async error => { operation.message = `基线已完成，交接清单生成待重试：${error instanceof Error ? error.message : '未知'}`; await this.store.save() })
       if (entity?.kind === 'requirement' && integration.stage === 'material') {
         try { const next = await this.prototypeTask(remote, entity); await this.ports.session(next, '根据当前已确认需求与前置完成依据，按模板规则实现原型；冲突先请求修订。'); await this.ports.prompt(next.sessionId, `开始实现已确认需求 ${entity.id}，输入哈希 ${entity.current!.fixed.sha256}。`) }
         catch (error) { task.error = error instanceof Error ? `材料已确认，原型等待：${error.message}` : '原型等待条件'; await this.store.save() }
       }
-    } catch (error) { operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '原操作结果未知'; await this.store.save(); throw error }
+    } catch (error) { if (operation.phase !== 'accepted') operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '原操作结果未知'; await this.store.save(); throw error }
   }
   private async splitScenario(remote: ProjectState, entity: EntityView, integrationId: string) {
-    const local = await this.store.read(); const base = local.tasks.find(t => t.entityId === entity.id && t.projectId === remote.project.id)!
-    const task: TaskView = { ...base, sessionId: `studio-${key()}`, purpose: 'split', inputHash: entity.current!.fixed.sha256 }
-    await this.ports.session(task, '仅从已确认场景生成需求候选。不要预留正式ID或认领；每项给出title与summary。请将候选写入工作台指定的候选文件，不改变场景正文。')
-    local.tasks.push(task); local.splitEvents.push(integrationId); await this.store.save()
-    await this.ports.prompt(task.sessionId, `场景 ${entity.id} 已确认。请读取 ${entity.current!.fixed.path} 并拆分需求候选，在会话最后输出唯一代码块 \`\`\`eadp-candidates，内容为JSON数组 [{"title":"…","summary":"…"}]。不要修改项目文件。`)
+    const local = await this.store.read(), input = entity.current!
+    let task = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && t.purpose === 'split' && t.split?.integrationId === integrationId)
+    if (!task) {
+      const base = local.tasks.find(t => t.entityId === entity.id && t.projectId === remote.project.id && t.purpose === 'material')
+      if (!base) throw new Error('场景拆分所需的材料任务现场缺失')
+      task = { projectId: base.projectId, entityId: base.entityId, worktree: base.worktree, sessionId: `studio-${key()}`, purpose: 'split', inputHash: input.fixed.sha256,
+        split: { integrationId, confirmationId: input.confirmationId, version: input.version, fixed: { ...input.fixed }, status: 'pending' } }
+      local.tasks.push(task); await this.store.save()
+    }
+    const split = task.split!
+    if (split.confirmationId !== input.confirmationId || task.inputHash !== input.fixed.sha256 || split.version !== input.version) throw new Error('拆分任务已绑定其他确认版本，不能替换其输入')
+    if (split.status === 'sent' || split.status === 'completed') return
+    try {
+      // Read accepted Git bytes, never a subsequently edited material worktree.
+      const bytes = await this.projects.readFixed(task.projectId, split.fixed.commitSha, split.fixed.path)
+      if (digest(bytes) !== task.inputHash) throw new Error('场景拆分固定输入哈希校验失败')
+      await this.ports.session(task, '仅从工作台提供的固定已确认场景生成需求候选。不要预留正式ID或认领；每项给出title与summary。不要读取未确认草稿或修改项目文件。')
+      await this.ports.prompt(task.sessionId, `场景 ${entity.id} 第 ${split.version} 版已确认，确认记录 ${split.confirmationId}，输入哈希 ${task.inputHash}。仅根据以下固定材料拆分需求候选，在会话最后输出唯一代码块 \`\`\`eadp-candidates，内容为JSON数组 [{"title":"…","summary":"…"}]。不要修改项目文件。\n\n${Buffer.from(bytes).toString('utf8')}`)
+      split.status = 'sent'; delete task.error; await this.store.save()
+    } catch (error) {
+      split.status = 'failed'; task.error = error instanceof Error ? error.message : '场景拆分请求未完成'; await this.store.save(); throw error
+    }
   }
   acceptCandidates(sessionId: string, content: string): Promise<void> {
     const result = this.queue.then(async () => { if (this.store.scoped) await this.acceptCandidateContent(sessionId, content) })
@@ -278,17 +295,27 @@ export class StudioApplication {
   }
   private async acceptCandidateContent(sessionId: string, content: string): Promise<void> {
     const local = await this.store.read(); const task = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'split')
-    if (!task) return
+    if (!task?.split || task.split.status === 'completed') return
+    const remote = await this.api.request<ProjectState>('GET', this.route(task.projectId))
+    const current = remote.entities.find(entity => entity.id === task.entityId)?.current
+    if (!current || current.confirmationId !== task.split.confirmationId || current.version !== task.split.version || current.fixed.sha256 !== task.inputHash) return
     const match = /```eadp-candidates\s*\n([\s\S]*?)\n```/.exec(content)
     if (!match) return
     const values: unknown = JSON.parse(match[1]!)
     if (!Array.isArray(values) || values.length > 50 || values.some(v => !v || typeof v.title !== 'string' || !v.title.trim() || v.title.length > 150 || typeof v.summary !== 'string' || v.summary.length > 2000)) throw new Error('需求候选格式无效')
-    if (local.candidates.some(c => c.scenarioId === task.entityId)) return
-    local.candidates.push(...values.map(v => ({ id: key(), scenarioId: task.entityId, title: v.title, summary: v.summary }) as Candidate)); await this.store.save()
+    const split = task.split
+    local.candidates.push(...values.map(v => ({ id: key(), projectId: task.projectId, scenarioId: task.entityId, sessionId: task.sessionId, integrationId: split.integrationId, confirmationId: split.confirmationId, version: split.version, inputHash: task.inputHash, title: v.title, summary: v.summary }) as Candidate))
+    split.status = 'completed'; delete task.error; await this.store.save()
+  }
+  private currentCandidate(candidate: Candidate, remote: ProjectState): boolean {
+    const current = remote.entities.find(entity => entity.id === candidate.scenarioId)?.current
+    return candidate.projectId === remote.project.id && current?.confirmationId === candidate.confirmationId && current.version === candidate.version && current.fixed.sha256 === candidate.inputHash
   }
   private async selectCandidate(id: string, categoryId: string) {
     const local = await this.store.read(); const candidate = local.candidates.find(c => c.id === id)
     if (!candidate || candidate.selectedEntityId) throw new Error('候选不存在或已采用')
+    const { remote } = await this.selected()
+    if (!this.currentCandidate(candidate, remote)) throw new Error('候选来源场景已修订，请采用当前确认版本的候选')
     const entity = await this.createMaterial('requirement', candidate.title, categoryId, candidate.scenarioId)
     candidate.selectedEntityId = entity.id; await this.store.save()
   }

@@ -15,7 +15,7 @@ export interface ProjectInitialization {
 }
 export interface LocalState {
   clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
-  candidates: Candidate[]; operations: PendingOperation[]; splitEvents: string[]; projectInitializations: ProjectInitialization[];
+  candidates: Candidate[]; operations: PendingOperation[]; projectInitializations: ProjectInitialization[];
 }
 export class StudioStore {
   private value: LocalState | undefined
@@ -38,7 +38,7 @@ export class StudioStore {
       try { value = JSON.parse(await readFile(path.join(directory, 'studio-state.json'), 'utf8')) as LocalState }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('本地恢复记录无法读取，请保留现场并修复')
-        value = { clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], splitEvents: [], projectInitializations: [] }
+        value = { clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], projectInitializations: [] }
       }
       if (userId !== this.userId) throw new Error('协同登录身份已变化，请重新查询。')
       this.value = value; return value

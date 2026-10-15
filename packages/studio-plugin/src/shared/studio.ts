@@ -1,10 +1,10 @@
-import type { EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
+import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
 
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff'; inputHash: string; worktree: string; error?: string }
-export interface Candidate { id: string; scenarioId: string; title: string; summary: string; selectedEntityId?: string }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff'; inputHash: string; worktree: string; error?: string; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
+export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
 export interface StudioState {
   connected: boolean; account?: StudioUser;
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
