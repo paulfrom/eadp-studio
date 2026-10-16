@@ -1,5 +1,6 @@
 import { requireCondition } from '@eadp/asset-domain';
-export interface Config { databaseUrl: string; databaseSsl: boolean; gitlabUrl: string; gitlabToken?: string; host: string; port: number; publisherIds: Set<number>; publicationTokenSecret?: string; publicApiUrl?: string }
+import { parseVersion } from './desktop-update.js';
+export interface Config { databaseUrl: string; databaseSsl: boolean; gitlabUrl: string; gitlabToken?: string; host: string; port: number; publisherIds: Set<number>; publicationTokenSecret?: string; publicApiUrl?: string; desktopUpdate?: { minVersion: string; title?: string; detail?: string; appLink?: string } }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   requireCondition(env.DATABASE_URL && env.GITLAB_URL, 'CONFIG_REQUIRED', 'DATABASE_URL and GITLAB_URL are required', 500);
   requireCondition(env.PG_SSL === 'require' || env.PG_SSL === 'disable', 'CONFIG_REQUIRED', 'Set PG_SSL explicitly to require or disable', 500);
@@ -16,5 +17,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const publisherIds = (env.STUDIO_PUBLISHER_USER_IDS ?? '').split(',').map(x => x.trim()).filter(Boolean);
   requireCondition(publisherIds.every(x => /^[1-9][0-9]*$/.test(x) && Number.isSafeInteger(Number(x))), 'INVALID_CONFIG', 'Publisher IDs must be positive Studio user IDs', 500);
-  return { publisherIds: new Set(publisherIds.map(Number)), publicationTokenSecret: env.PUBLICATION_TOKEN_SECRET, publicApiUrl: env.PUBLIC_API_URL?.replace(/\/$/, ''), databaseUrl: env.DATABASE_URL, databaseSsl: env.PG_SSL === 'require', gitlabUrl: url!.origin, gitlabToken: env.SEI_GITLAB_TOKEN || undefined, host: env.HOST ?? '127.0.0.1', port };
+  let desktopUpdate: Config['desktopUpdate'];
+  if (env.DESKTOP_UPDATE_MIN_VERSION) {
+    requireCondition(parseVersion(env.DESKTOP_UPDATE_MIN_VERSION) !== undefined, 'INVALID_CONFIG', 'DESKTOP_UPDATE_MIN_VERSION must be a semantic version', 500);
+    if (env.DESKTOP_UPDATE_APP_LINK) {
+      let link: URL;
+      try { link = new URL(env.DESKTOP_UPDATE_APP_LINK); } catch { requireCondition(false, 'INVALID_CONFIG', 'Invalid DESKTOP_UPDATE_APP_LINK', 500); }
+      requireCondition(link!.protocol === 'https:' && !link!.username && !link!.password, 'INVALID_CONFIG', 'DESKTOP_UPDATE_APP_LINK must be an HTTPS URL without credentials', 500);
+    }
+    desktopUpdate = { minVersion: env.DESKTOP_UPDATE_MIN_VERSION, title: env.DESKTOP_UPDATE_BLOCK_TITLE, detail: env.DESKTOP_UPDATE_BLOCK_DETAIL, appLink: env.DESKTOP_UPDATE_APP_LINK };
+  }
+  return { publisherIds: new Set(publisherIds.map(Number)), publicationTokenSecret: env.PUBLICATION_TOKEN_SECRET, publicApiUrl: env.PUBLIC_API_URL?.replace(/\/$/, ''), databaseUrl: env.DATABASE_URL, databaseSsl: env.PG_SSL === 'require', gitlabUrl: url!.origin, gitlabToken: env.SEI_GITLAB_TOKEN || undefined, host: env.HOST ?? '127.0.0.1', port, desktopUpdate };
 }
