@@ -24,19 +24,19 @@ export GITLAB_URL
 echo "Starting collaboration backend on port ${API_PORT} ..."
 docker compose -f "$COMPOSE_FILE" up -d --build
 
-HEALTH_URL="http://127.0.0.1:${API_PORT}/health"
+API_CONTAINER=eadp-collaboration-api-1
 deadline=$((SECONDS + 120))
 while (( SECONDS < deadline )); do
-  healthy=0
-  if command -v curl >/dev/null 2>&1 && curl -fsS --noproxy '*' "$HEALTH_URL" >/dev/null 2>&1; then
-    healthy=1
-  else
-    status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' eadp-collaboration-api-1 2>/dev/null || true)
-    [[ "$status" == "healthy" ]] && healthy=1
+  state=$(docker inspect -f '{{.State.Status}}' "$API_CONTAINER" 2>/dev/null || echo missing)
+  if [[ "$state" != "running" ]]; then
+    echo "error: the API container is not running (state: ${state}). Recent logs:" >&2
+    docker compose -f "$COMPOSE_FILE" logs --tail=50 api >&2 || true
+    exit 1
   fi
-  if [[ "$healthy" == "1" ]]; then
+  status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$API_CONTAINER" 2>/dev/null || true)
+  if [[ "$status" == "healthy" ]]; then
     echo "Collaboration API is up:"
-    echo "  health:  $HEALTH_URL"
+    echo "  health:  http://127.0.0.1:${API_PORT}/health"
     echo "  update:  http://127.0.0.1:${API_PORT}/api/v0/check_client_update"
     echo "  logs:    docker compose -f $COMPOSE_FILE logs -f api"
     echo "  stop:    docker compose -f $COMPOSE_FILE down"

@@ -8,5 +8,5 @@ try {
     await transaction(database, applySchema);
     console.log('Created the current collaboration schema.');
   }
-} catch { console.error('Schema check failed; check database reachability and whether the schema is valid.'); process.exitCode = 1; }
+} catch (error) { console.error('Schema check failed; check database reachability and whether the schema is valid.', error); process.exitCode = 1; }
 finally { await database.end(); }

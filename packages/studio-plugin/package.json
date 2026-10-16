@@ -14,9 +14,18 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./types": { "types": "./lib/types/shared/studio.d.ts", "default": "./lib/types/shared/studio.js" },
-    "./typert": { "types": "./lib/typert.host.d.ts", "default": "./lib/typert.host.js" },
-    "./remote": { "types": "./lib/typert.remote-client.d.ts", "default": "./lib/typert.remote-client.js" },
+    "./types": {
+      "types": "./lib/types/shared/studio.d.ts",
+      "default": "./lib/types/shared/studio.js"
+    },
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -40,5 +49,7 @@
     "assets/prototype-template.tar.gz",
     "assets/prototype-template.manifest.json"
   ],
-  "devDependencies": { "@eadp/contracts": "workspace:*" }
+  "devDependencies": {
+    "@eadp/contracts": "workspace:*"
+  }
 }
