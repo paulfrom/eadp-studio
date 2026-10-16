@@ -61,6 +61,8 @@ curl --noproxy '*' http://127.0.0.1:6972/health
 | 检查 | 实际结果 |
 | --- | --- |
 | 本机 loopback、局域网 IP、Tailscale IP 的 `/health` | 三个入口从部署机访问均为 200，数据库连接有效；不替代另一台客户端网络检查 |
+
+2026-10-16 端口冲突记录：当日 13:40 容器化验证（见 [桌面更新与容器化](desktop-update-and-containerization.md)）的 compose 容器被遗留运行，`docker-proxy` 占用宿主机 6972，导致本服务自 17:25 起重启循环（`could not start`，exit 1）。已停止 `eadp-collaboration-api-1`/`eadp-collaboration-db-1`，服务恢复独占 6972。两形态不要同时对外；容器验证后用 `docker compose -f apps/collaboration-api/compose.yml down` 清理。
 | 未登录访问、错误密码 | 均为 401 |
 | 登录、`/v1/me`、项目目录 | 均为 200；协同 ID 1 绑定 GitLab ID 70；尚无业务项目，目录为空 |
 | 可建仓群组目录 | 200，返回 45 组，最终实际接口请求 12.48 秒，低于现有客户端 20 秒超时 |
