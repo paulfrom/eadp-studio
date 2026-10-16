@@ -22,7 +22,8 @@ async function availablePort() {
   return port
 }
 
-// The CDP connection is private to this launch; the only interaction opens the login form.
+// The CDP connection is private to this launch; onboarding uses its normal UI,
+// then Studio refreshes Host state and opens the empty login form.
 async function connect(url, deadline) {
   const socket = new WebSocket(url)
   const pending = new Map()
@@ -139,6 +140,26 @@ async function main() {
         client = await connect(page.webSocketDebuggerUrl, deadline)
         await client.request('Page.bringToFront')
       }
+      const onboarding = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+        const headings = [...document.querySelectorAll('[role="dialog"] h2')];
+        const heading = headings.find(element => ['预览版说明', 'Preview Notice', '添加一个 API Key 开始使用', 'Add an API Key to get started'].includes(element.textContent.trim()));
+        const dialog = heading?.closest('[role="dialog"]');
+        if (!dialog) return null;
+        const button = [...dialog.querySelectorAll('button')].find(element => !element.disabled
+          && ['继续', 'Continue', '稍后配置', 'Set up later'].includes(element.textContent.trim()));
+        if (!button) return { waiting: true };
+        const bounds = button.getBoundingClientRect();
+        return { title: heading.textContent.trim(), x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      })()` })
+      if (onboarding.result.value) {
+        const step = onboarding.result.value
+        if (!step.waiting) {
+          await client.request('Input.dispatchMouseEvent', { type: 'mousePressed', x: step.x, y: step.y, button: 'left', clickCount: 1 })
+          await client.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: step.x, y: step.y, button: 'left', clickCount: 1 })
+          result.onboarding = [...new Set([...(result.onboarding ?? []), step.title])]
+        }
+        await delay(250); continue
+      }
       const evaluation = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
         const panel = document.querySelector('[data-studio-panel="studio"]');
         const bounds = panel?.getBoundingClientRect();
@@ -168,8 +189,20 @@ async function main() {
         const username = form?.querySelector('input[autocomplete="username"]');
         const password = form?.querySelector('input[type="password"]');
         const submit = [...(form?.querySelectorAll('button') ?? [])].find(button => button.type === 'submit');
+        const luminance = color => {
+          const channels = color.match(/[\\d.]+/g)?.slice(0, 3).map(Number);
+          if (!channels || channels.length !== 3) return NaN;
+          return channels.map(value => { const channel = value / 255; return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4; })
+            .reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+        };
+        const background = dialog ? luminance(getComputedStyle(dialog).backgroundColor) : NaN;
+        const readable = !!dialog && [...dialog.querySelectorAll('h2, label, p')].every(element => {
+          const foreground = luminance(getComputedStyle(element).color);
+          return (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05) >= 4.5;
+        });
         return { url: location.href, readyState: document.readyState, visibility: document.visibilityState,
           panelCount: document.querySelectorAll('[data-studio-panel="studio"]').length,
+          interactive: !!panel && !panel.closest('[inert]'),
           visible: !!bounds && bounds.width > 0 && bounds.height > 0 && getComputedStyle(panel).visibility !== 'hidden',
           fillsMainArea: !!bounds && !!mainBounds && mainBounds.width > 0 && mainBounds.height > 0
             && ['x','y','width','height'].every(key => Math.abs(bounds[key] - mainBounds[key]) <= 2),
@@ -187,6 +220,7 @@ async function main() {
           refreshBusy: [...(panel?.querySelectorAll('header button') ?? [])].find(button => text(button) === '刷新')?.disabled !== false,
           alerts: [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map(element => text(element)),
           loginDialog: { visible: visible(dialog), title: text(dialog?.querySelector('#studio-login-title')),
+            readable,
             emptyUsername: visible(username) && username.required && username.type === 'text' && username.value === '',
             emptyPassword: visible(password) && password.required && password.autocomplete === 'off' && password.value === '',
             submitReady: visible(submit) && !submit.disabled && text(submit) === '登录' },
@@ -196,10 +230,11 @@ async function main() {
       result.dom = evaluation.result.value
       result.checks = {
         singleVisibleMainPanel: result.dom.panelCount === 1 && result.dom.visible && result.dom.fillsMainArea && result.dom.visibility === 'visible',
+        interactive: result.dom.interactive,
         fiveStageNavigation: result.dom.fiveStageNavigation, disconnected: result.dom.disconnected,
         welcome: result.dom.welcome, loginEntry: result.dom.loginEntry,
         loginForm: result.dom.loginDialog.visible && result.dom.loginDialog.title === '登录协同工作台'
-          && result.dom.loginDialog.emptyUsername && result.dom.loginDialog.emptyPassword && result.dom.loginDialog.submitReady,
+          && result.dom.loginDialog.emptyUsername && result.dom.loginDialog.emptyPassword && result.dom.loginDialog.submitReady && result.dom.loginDialog.readable,
         hostState: hostRefreshRequested && Date.now() - hostRefreshStartedAt >= 200 && !result.dom.refreshBusy && result.dom.alerts.length === 0,
       }
       const workspaceReady = Object.entries(result.checks).filter(([name]) => name !== 'loginForm' && name !== 'hostState').every(([, passed]) => passed)
