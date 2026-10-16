@@ -21,6 +21,7 @@ The DSH source/version and bundled runtimes are fixed by the maintained lock fil
 the upstream packaging preflight. It does not compile or create an installer.
 Existing .local/build/dsh/apps/desktop/.env.windows is preserved; on first use
 the public windows-package.env.example is copied there. No signing/upload occurs.
+Electron-builder tools use .local/cache/electron-builder under the primary checkout.
 `
 
 export function parseBuildArguments(args) {
@@ -86,7 +87,13 @@ export async function buildDesktop({ root, sharedRoot, check = false, runNode, p
   pnpm('checkWindows', tree)
   if (check) return undefined
   runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), [], root)
-  const environment = { ...process.env, DSH_DESKTOP_PACKED_EXTRA: path.join(sharedRoot, '.local/build/packed-studio') }
+  const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
+  await mkdir(builderCache, { recursive: true })
+  const environment = {
+    ...process.env,
+    DSH_DESKTOP_PACKED_EXTRA: path.join(sharedRoot, '.local/build/packed-studio'),
+    ELECTRON_BUILDER_CACHE: builderCache,
+  }
   pnpm('packageWindows', tree, environment)
   const manifest = JSON.parse(await readFile(path.join(desktop, 'package.json'), 'utf8'))
   const name = `eadp-studio-${manifest.version}-win-x64-unsigned.exe`

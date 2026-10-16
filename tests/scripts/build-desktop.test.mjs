@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { buildDesktop, ensureWindowsEnvironment, parseBuildArguments, validateHost } from '../../scripts/build-desktop.mjs'
+import { runPnpm } from '../../apps/desktop-distribution/build/run-pnpm.mjs'
 
 test('entry validates parameters and the upstream native host contract', () => {
   assert.deepEqual(parseBuildArguments(['--check']), { help: false, check: true })
@@ -29,7 +31,10 @@ test('source pipeline propagates failures, preserves paths and packages the actu
       configure: async target => calls.push(['configure', target]),
       pnpm: (operation, cwd, environment) => {
         calls.push(['pnpm', operation, cwd])
-        if (operation === 'packageWindows') assert.equal(environment.DSH_DESKTOP_PACKED_EXTRA, path.join(root, '.local/build/packed-studio'))
+        if (operation === 'packageWindows') {
+          assert.equal(environment.DSH_DESKTOP_PACKED_EXTRA, path.join(root, '.local/build/packed-studio'))
+          assert.equal(environment.ELECTRON_BUILDER_CACHE, path.join(root, '.local/cache/electron-builder'))
+        }
       },
     }
     await buildDesktop({ ...runner, check: true })
@@ -53,6 +58,52 @@ test('source pipeline propagates failures, preserves paths and packages the actu
     assert.equal(await readFile(receipt.path, 'utf8'), 'installer fixture')
     assert.deepEqual(JSON.parse(await readFile(`${receipt.path}.json`, 'utf8')), receipt)
   } finally {
+    assert.equal(path.dirname(root), path.resolve(tmpdir()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('packaging child receives the workspace cache and real electron-builder resolves it with Chinese and shell-character paths', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eadp 中文 & (builder cache) '))
+  const desktop = path.join(root, '.local/build/dsh/apps/desktop')
+  const originalCache = process.env.ELECTRON_BUILDER_CACHE
+  try {
+    const builder = createRequire(path.resolve(import.meta.dirname, '../../.local/build/dsh/apps/desktop/package.json'))
+      .resolve('app-builder-lib/out/util/electronGet.js')
+    await mkdir(desktop, { recursive: true })
+    await writeFile(path.join(desktop, 'package.json'), JSON.stringify({ version: '1.0.0' }))
+    const output = path.join(desktop, '.desktop-build/targets/win-x64/unsigned-artifacts')
+    await mkdir(output, { recursive: true })
+    await writeFile(path.join(output, 'eadp-studio-1.0.0-win-x64-unsigned.exe'), 'cache regression installer')
+    await writeFile(path.join(root, 'capture.mjs'), `import { writeFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const { getCacheDirectory } = createRequire(import.meta.url)(${JSON.stringify(builder)});
+const configured = process.env.ELECTRON_BUILDER_CACHE;
+writeFileSync('captured-cache.json', JSON.stringify({ configured, resolved: getCacheDirectory({ allowEnvVarOverride: true }), directoryExists: statSync(configured).isDirectory() }));
+`)
+    const shim = path.join(root, process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm')
+    await writeFile(shim, process.platform === 'win32'
+      ? `@"${process.execPath}" "%~dp0capture.mjs" %*\r\n`
+      : `#!${process.execPath}\nimport './capture.mjs'\n`)
+    if (process.platform !== 'win32') await chmod(shim, 0o755)
+    process.env.ELECTRON_BUILDER_CACHE = path.join(root, 'unrelated-global-cache')
+    await buildDesktop({
+      root, sharedRoot: root, runNode: () => {}, configure: async () => {},
+      pnpm: (operation, cwd, environment) => {
+        if (operation !== 'packageWindows') return
+        const child = Object.fromEntries(Object.entries(environment).filter(([key]) => key.toLowerCase() !== 'path'))
+        child[process.platform === 'win32' ? 'Path' : 'PATH'] = `${root}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`
+        runPnpm(operation, cwd, child)
+      },
+    })
+    const cache = path.join(root, '.local/cache/electron-builder')
+    assert.deepEqual(JSON.parse(await readFile(path.join(root, '.local/build/dsh/captured-cache.json'), 'utf8')), {
+      configured: cache, resolved: cache, directoryExists: true,
+    })
+    assert.equal(process.env.ELECTRON_BUILDER_CACHE, path.join(root, 'unrelated-global-cache'))
+  } finally {
+    if (originalCache === undefined) delete process.env.ELECTRON_BUILDER_CACHE
+    else process.env.ELECTRON_BUILDER_CACHE = originalCache
     assert.equal(path.dirname(root), path.resolve(tmpdir()))
     await rm(root, { recursive: true, force: true })
   }

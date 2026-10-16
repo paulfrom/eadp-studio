@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { stripTypeScriptTypes } from 'node:module'
@@ -8,12 +8,12 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import vm from 'node:vm'
 import test from 'node:test'
-import { STUDIO_PACKAGING_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from '../../apps/desktop-distribution/build/studio-packaging-edits.mjs'
+import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from '../../apps/desktop-distribution/build/studio-packaging-edits.mjs'
 
 const upstream = path.resolve(import.meta.dirname, '../../.local/upstream/dsh')
 
 test('all packaging edits apply to the fixed alpha.4 sources and replay idempotently', async () => {
-  for (const edit of [STUDIO_PACKAGING_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT]) {
+  for (const edit of [STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT]) {
     const source = await readFile(path.join(upstream, edit.file), 'utf8')
     const edited = edit.apply(source)
     assert.notEqual(edited, source)
@@ -32,6 +32,42 @@ test('all packaging edits apply to the fixed alpha.4 sources and replay idempote
   const line = pack.split('\n').find(value => value.includes('const packArguments ='))
   assert.deepEqual(Array.from(vm.runInNewContext(`${line}\npackArguments`, { mac: undefined })), ['--concurrency', '4'])
   assert.deepEqual(Array.from(vm.runInNewContext(`${line}\npackArguments`, { mac: { packConcurrency: 8 } })), ['--concurrency', '8'])
+})
+
+test('packaging commit snapshot keeps real client receipts valid when checkout HEAD advances', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'studio packaged commit '))
+  try {
+    const original = await readFile(path.join(upstream, STUDIO_PACKAGED_COMMIT_EDIT.file), 'utf8')
+    const source = STUDIO_PACKAGED_COMMIT_EDIT.apply(original)
+    assert.throws(() => STUDIO_PACKAGED_COMMIT_EDIT.apply(`${original}\n${original}`), /anchor/)
+    assert.throws(() => STUDIO_PACKAGED_COMMIT_EDIT.apply(`${source}\n${source}`), /anchor/)
+    const desktop = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+    const clientSource = stripTypeScriptTypes(await readFile(path.join(upstream, 'scripts/client-build-environment.ts'), 'utf8'), { mode: 'transform' })
+    const client = await import(`data:text/javascript;base64,${Buffer.from(clientSource).toString('base64')}`)
+    const git = (...args) => execFileSync('git', ['-c', 'user.name=Packaging regression', '-c', 'user.email=packaging-regression@example.invalid', ...args], { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    git('init', '--quiet')
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ version: '1.0.0' }))
+    git('add', 'package.json')
+    git('commit', '--quiet', '-m', 'build source snapshot')
+    const packaged = desktop.readDesktopBuildCommit(directory)
+    const environment = desktop.desktopBuildCommitEnvironment(packaged)
+    assert.equal(environment.DSH_CLIENT_COMMIT_HASH, packaged.commit)
+    assert.equal(environment.DSH_DESKTOP_BUILD_COMMIT, packaged.commit)
+    assert.deepEqual(desktop.resolveDesktopBuildCommit(environment), packaged)
+    await mkdir(path.join(directory, 'apps/web/dist'), { recursive: true })
+    await writeFile(path.join(directory, 'apps/web/dist/index.html'), '<title>client artifact</title>')
+    const built = client.resolveClientBuildEnvironment(client.repositoryClientBuildEnvironment(directory, environment), 'official')
+    assert.equal(built.DSH_CLIENT_COMMIT_HASH, packaged.commit.slice(0, 7))
+    client.writeClientBuildRecord(directory, built)
+    git('commit', '--quiet', '--allow-empty', '-m', 'external checkout advance during build')
+    assert.notEqual(git('rev-parse', 'HEAD'), packaged.commit)
+    assert.throws(() => client.readClientBuildRecord(directory, client.officialClientBuildEnvironment(directory, {})), /DSH_CLIENT_COMMIT_HASH/)
+    const expected = client.officialClientBuildEnvironment(directory, environment)
+    assert.equal(client.readClientBuildRecord(directory, expected).environment.DSH_CLIENT_COMMIT_HASH, packaged.commit.slice(0, 7))
+  } finally {
+    assert.equal(path.dirname(directory), path.resolve(tmpdir()))
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 const tarTools = []

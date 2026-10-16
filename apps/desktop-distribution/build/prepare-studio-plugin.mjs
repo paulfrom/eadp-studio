@@ -23,7 +23,7 @@ import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
-import { STUDIO_PACKAGING_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
+import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_TYPERT_EDIT } from './studio-typert-edits.mjs'
 import { STUDIO_TEMPLATE_EDIT, STUDIO_TEMPLATE_FILES, STUDIO_TEMPLATE_TRANSFORM_EDITS } from './studio-template-edits.mjs'
 
@@ -55,6 +55,7 @@ const UPSTREAM_EDITS = [
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
   STUDIO_PACKAGING_EDIT,
+  STUDIO_PACKAGED_COMMIT_EDIT,
   STUDIO_PACK_CONCURRENCY_EDIT,
   STUDIO_PACKAGE_SET_TAR_EDIT,
   STUDIO_TYPERT_EDIT,

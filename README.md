@@ -64,6 +64,10 @@ node scripts/fetch-dsh.mjs --archive-only
 
 构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
 
+Electron-builder 工具缓存固定在主 checkout 的 `.local/cache/electron-builder`，由入口创建并通过其官方 `ELECTRON_BUILDER_CACHE` 变量传给打包进程，避免其他应用留下的全局缓存状态干扰本仓库构建。
+
+2026-10-16 已通过完整脚本实际生成 alpha.4 安装包，入口退出码为 `0`，最终随包内容校验通过；产物哈希、源码工作区状态和未安装验证边界见[源码构建验收](docs/development/acceptance/eadp-studio-source-build-2026-10-16.md)。
+
 当前入口生成未签名的开发安装包；签名、升级发布及干净机发行验收仍遵循独立门槛。产品使用稳定 App ID `io.github.paulfrom.eadp.studio`、`eadp-studio://` 协议和 `%USERPROFILE%\.eadp-studio` 数据根，Electron 数据位于 `%APPDATA%\eadp studio`。旧 DSH 数据不迁移。配置及验证细节见 [桌面构建说明](apps/desktop-distribution/build/README.md)。
 
 环境准备及换机步骤见 [setup.md](docs/development/setup.md)。后续开发从 [G0 编码启动](dsh_eadp_studio_plan/08-G0编码启动.md) 继续。

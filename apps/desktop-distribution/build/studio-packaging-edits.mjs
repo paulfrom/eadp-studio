@@ -10,6 +10,18 @@ export const STUDIO_PACKAGING_EDIT = {
   },
 }
 
+/** Bind both desktop metadata and client artifact receipts to the packaging entry's single Git snapshot. */
+export const STUDIO_PACKAGED_COMMIT_EDIT = {
+  file: 'apps/desktop/scripts/desktop-build-commit.mjs',
+  apply(source) {
+    const before = "    [DESKTOP_BUILD_COMMIT_ENV]: packaged.commit,\n    [DESKTOP_BUILD_DIRTY_ENV]: packaged.dirty ? '1' : '0',"
+    const after = "    [DESKTOP_BUILD_COMMIT_ENV]: packaged.commit,\n    DSH_CLIENT_COMMIT_HASH: packaged.commit,\n    [DESKTOP_BUILD_DIRTY_ENV]: packaged.dirty ? '1' : '0',"
+    if (source.split(after).length === 2 && !source.includes(before)) return source
+    if (source.split(before).length !== 2 || source.includes(after)) throw new Error('Studio packaged-commit edit anchor missing or duplicated.')
+    return source.replace(before, after)
+  },
+}
+
 /** Pack release families with the official bounded scheduler on Windows too; upstream enables it only for macOS. */
 export const STUDIO_PACK_CONCURRENCY_EDIT = {
   file: 'apps/desktop/scripts/package-target.ts',
