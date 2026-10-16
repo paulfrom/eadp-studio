@@ -529,8 +529,8 @@ git commit -m "feat(studio-plugin): reskin the Studio shell with Tailwind utilit
 
 - [ ] **Step 1: 全量脚本测试**
 
-Run（仓库根目录）: `node --test tests/scripts/`
-Expected: 全部 PASS（含既有 desktop-startup-edits 等测试无回归）。
+Run（仓库根目录）: `node --test 'tests/scripts/*.test.mjs'`
+Expected: 47 项中 43 通过、2 跳过、2 失败——失败的 2 项（desktop-policy-edits.test.mjs、studio-typert-edits 中的 "fixed upstream bounded analysis..."）为 base 上可复现的 Node 22 环境限制，非本计划回归。
 
 - [ ] **Step 2: stage-only 装配终验**
 

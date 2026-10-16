@@ -12,6 +12,7 @@ export function productionPluginManifest(source) {
   const manifest = structuredClone(source)
   manifest.dependencies = { ...manifest.dependencies, '@eadp/contracts': 'workspace:*' }
   delete manifest.devDependencies?.['@eadp/contracts']
+  delete manifest.devDependencies?.['@tailwindcss/cli']
   manifest.files = [...new Set([...(manifest.files ?? []), 'studio-build.json'])]
   return manifest
 }

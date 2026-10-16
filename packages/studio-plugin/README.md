@@ -16,3 +16,7 @@
 本包不在产品根 workspace 直接构建：client bundle 必须复用固定上游 `packages/client/tsdown.client.ts` 预设，该预设依赖上游仓库内模块。装配方式、目标位置和依赖注入见 [`build/README.md`](build/README.md) 与 `apps/desktop-distribution/build/`。
 
 模板保留自己的依赖、锁定和运行规则，不作为根 workspace 子包安装。生成的用户业务原型不放入本包。
+
+## Studio 外壳样式
+
+`src/client/studio/StudioPanel.tsx` 导入的 `../studio.tw.generated.css` 是构建产物（gitignored）：由 `@tailwindcss/cli` 从 `src/client/studio.tw.css`（拆分导入、无 preflight、无前缀）预编译生成。装配脚本 `apps/desktop-distribution/build/prepare-studio-plugin.mjs` 在复制插件源码前自动生成；手工改动外壳工具类后需重新运行装配。

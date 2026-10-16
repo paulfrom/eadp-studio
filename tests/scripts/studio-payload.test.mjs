@@ -108,12 +108,14 @@ test('old minimal Host is rejected even though both bundle filenames exist', () 
 })
 
 test('contracts used by material validation belong to the production package closure', () => {
-  const source = { name: '@eadp-studio/studio-plugin', files: ['lib/index.js'], devDependencies: { '@eadp/contracts': 'workspace:*' } }
+  const source = { name: '@eadp-studio/studio-plugin', files: ['lib/index.js'], devDependencies: { '@eadp/contracts': 'workspace:*', '@tailwindcss/cli': '^4' } }
   const manifest = productionPluginManifest(source)
   assert.equal(manifest.dependencies['@eadp/contracts'], 'workspace:*')
   assert.equal(manifest.devDependencies['@eadp/contracts'], undefined)
+  assert.equal(manifest.devDependencies['@tailwindcss/cli'], undefined)
   assert.ok(manifest.files.includes('studio-build.json'))
   assert.equal(source.devDependencies['@eadp/contracts'], 'workspace:*')
+  assert.equal(source.devDependencies['@tailwindcss/cli'], '^4')
 })
 
 test('runtime inventory rejects missing companion DLL and modified payload', async () => {
