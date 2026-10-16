@@ -51,10 +51,10 @@
 
 ## 4.1 一键启动脚本（交付物）
 
-- 位置 `apps/collaboration-api/start.sh`（chmod +x，入 Git），与 compose.yml 同目录。
+- 位置 `start-collaboration-backend.sh`（仓库根目录，chmod +x，入 Git）；compose.yml 仍在 `apps/collaboration-api/`，脚本内部以仓库根为定位基准（`cd` 到脚本所在目录后引用 compose 路径）。
 - 行为：
   1. 检查 `docker` 与 `docker compose` 可用，缺失时明确报错退出。
-  2. 环境变量取自同目录 `.env`（Git 忽略）或已 export 的环境；compose 必需项缺失（如 `GITLAB_URL`）时明确报错并指向 `.env.example`，不静默带过。
+  2. 环境变量取自 `apps/collaboration-api/.env`（Git 忽略）或已 export 的环境；compose 必需项缺失（如 `GITLAB_URL`）时明确报错并指向 `.env.example`，不静默带过。
   3. `docker compose up -d --build` 构建并拉起 `db` + `api`。
   4. 轮询等待 `http://127.0.0.1:6972/health` 就绪（带超时），成功后输出入口地址与常用命令提示（查看日志、停止），失败时输出最近日志并非零退出。
 - 幂等：重复执行 = 重新构建并重启服务，不产生重复资源。
@@ -62,7 +62,7 @@
 ## 5. 验证与文档
 
 - 单测：升级接口路由测试覆盖放行、强制、低于门槛、缺失/不可解析版本头（fail-closed）、链接配置校验；既有测试全绿；`pnpm --filter @eadp/collaboration-api typecheck` 通过。
-- 实测：compose 拉起后 curl 验证 `/health` 与 `/api/v0/check_client_update` 两种模式（未配置门槛 → 放行结构；配置门槛 → 高/低于门槛各自响应）；并执行 `start.sh` 做一次完整的一键启动/健康就绪/停止循环。
+- 实测：compose 拉起后 curl 验证 `/health` 与 `/api/v0/check_client_update` 两种模式（未配置门槛 → 放行结构；配置门槛 → 高/低于门槛各自响应）；并执行根目录 `start-collaboration-backend.sh` 做一次完整的一键启动/健康就绪/停止循环。
 - 文档：`.env.example` 增补 4 个新变量；API README 增加升级接口与 Docker/compose 运行两节；按仓库惯例在 `docs/development/handoffs/` 记录部署与验证结果。
 
 ## 不变边界
