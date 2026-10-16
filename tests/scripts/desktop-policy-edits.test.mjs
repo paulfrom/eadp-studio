@@ -44,9 +44,9 @@ function policy(origin) {
     ...resolveDesktopPolicyEnvironment(environment(origin)),
     allowedPageOrigins: ['https://www.zyjsm.top'], timeoutMs: 1000,
   })
-  return new DesktopMandatoryUpdatePolicy(config, { platform: 'win32', arch: 'x64', bundledDshVersion: '0.2.1-alpha.2' },
+  return new DesktopMandatoryUpdatePolicy(config, { platform: 'win32', arch: 'x64', bundledDshVersion: '0.2.1-alpha.4' },
     () => {}, undefined,
-    () => ({ version: '0.2.1-alpha.2', locale: 'zh-CN', timezoneOffsetSeconds: 28800 }))
+    () => ({ version: '0.2.1-alpha.4', locale: 'zh-CN', timezoneOffsetSeconds: 28800 }))
 }
 
 test('fixed-upstream edits reject drift, replay idempotently, and never modify the verified source', async () => {
