@@ -11,6 +11,7 @@
 | 升级检查接口 | `88b99c2` | `GET /api/v0/check_client_update` 注册进 `src/routes.ts`，preHandler 会话豁免单行追加；`src/app.ts` 传入 `config` |
 | 镜像与幂等建 schema | `1bffe30` | 多阶段 `Dockerfile`、`docker-entrypoint.sh`（非 root、入口幂等建 schema）、`src/persistence/schema.ts` + `ensure-schema.ts`、`initialize.ts` 改用共享 applySchema、根 `.dockerignore`；`pnpm-workspace.yaml` 增加 `allowBuilds: esbuild: true`（pnpm 11 fresh install 必需） |
 | compose 与一键脚本 | `8485073` | `apps/collaboration-api/compose.yml`（compose 项目 `eadp-collaboration`，postgres:17 + api，卷 `eadp-pgdata`）与仓库根 `start-backend.sh`（读取 `apps/collaboration-api/.env`，`EADP_API_PORT` 覆盖端口） |
+| 最终评审修正 | `5546679` `938f23c` `ec24b51` | `EADP_API_PORT` 改在 source `.env` 之后读取（health 兜底只认 `healthy`）；镜像 `ENV HOST=0.0.0.0` 使手工 `docker run` 默认可达；`pnpm deploy --prod --legacy` 运行时仅生产依赖（含 `@eadp/*` workspace 源码注入） |
 
 配套文档：本 API README 追加「桌面强制更新检查」「Docker 运行与一键启动」两节，`.env.example` 追加 `DESKTOP_UPDATE_*` 变量说明。
 
@@ -35,7 +36,7 @@
 | --- | --- |
 | Task 1 裁决模块 TDD | RED 后 GREEN：`desktop-update.test.ts` 7/7；全量 12/12；`tsc --noEmit` 无输出 |
 | Task 2 路由接线 TDD | RED（未注册路由时新测试失败）后 GREEN：8/8；全量 34/34（21 auth/gitlab + 8 desktop-update + 5 project-initialization）；`tsc --noEmit` 干净 |
-| 镜像构建 | `docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .` 成功，镜像 `c7c3d53ec755`，482MB |
+| 镜像构建 | `docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .` 成功；初版镜像 `c7c3d53ec755` 482MB，最终评审后 `pnpm deploy --prod --legacy` 精简为仅生产依赖约 378MB（`ec24b51`） |
 | ensure-schema 幂等（镜像内，`--entrypoint node` 隔离） | 第一次：`Created the current collaboration schema.` 退出 0；第二次：`Collaboration schema already present; skipping initialization.` 退出 0；表计数 14 |
 | clear 模式 smoke（6973） | `curl 'http://127.0.0.1:6973/api/v0/check_client_update?scenario=launch'` → `{"code":0,"data":{"biz_code":0,"biz_data":null}}` |
 | block 模式 smoke（`DESKTOP_UPDATE_MIN_VERSION=99.0.0`，6973） | 带版本头 `x-client-version: 0.2.1-alpha.2` → `{"code":40005,"data":{"show_content":{}}}`；无版本头（fail-closed）→ 同 40005 |
