@@ -123,3 +123,18 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 可选的 `pnpm --filter @eadp/collaboration-api check:transactions` 在已初始化的 G0 数据库中只创建一个合成项目，检查并发唯一占用、幂等重放、管理员释放与旧代次拒绝，最后删除其测试数据；不自动执行大套测试。
 
 账号查询、群组建仓和成员分配采用 [GitLab Users API](https://docs.gitlab.com/api/users/)、[Groups API](https://docs.gitlab.com/api/groups/) 与 [Members API](https://docs.gitlab.com/api/members/)；当前官方文档不证明所选企业实例版本和实际能力已验收。固定内容与业务实现采用 [GitLab raw file API](https://docs.gitlab.com/api/repository_files/)、[项目权限 API](https://docs.gitlab.com/api/projects/)、[Fastify JSON schema 校验](https://fastify.dev/docs/latest/Reference/Validation-and-Serialization/) 与 [PostgreSQL 显式锁](https://www.postgresql.org/docs/current/explicit-locking.html)。每个动作在短事务内按稳定项目 ID 排序加行锁，数据库部分唯一索引再保证同实体唯一有效占用；没有 TTL、续期或断线释放。
+
+## 桌面强制更新检查
+
+`GET /api/v0/check_client_update?scenario=<launch|periodic|manual|...>` 服务 DSH 桌面强制更新策略客户端。无需会话；客户端版本取自 `x-client-version` header。未配置 `DESKTOP_UPDATE_MIN_VERSION` 时永远返回放行 `{"code":0,"data":{"biz_code":0,"biz_data":null}}`；配置后低于该 semver 门槛、或版本头缺失/不可解析的客户端返回强制 `{"code":40005,"data":{"show_content":{...}}}`（fail-closed）。可选文案与 `DESKTOP_UPDATE_APP_LINK`（必须 HTTPS，且其 origin 需在该桌面构建的 `allowedPageOrigins` 内，否则客户端丢弃链接）。环境变量见 `.env.example`。
+
+## Docker 运行与一键启动
+
+多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）；`compose.yml`（postgres:17 + api，默认端口 `6972:3001`）仅用于本机一键拉起，企业形态仍是独立 PostgreSQL + 本镜像。
+
+```sh
+./start-backend.sh            # 需要 docker 与 compose 插件；读取 apps/collaboration-api/.env
+EADP_API_PORT=6973 ./start-backend.sh   # 端口被占时覆盖
+```
+
+手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，容器内默认监听 3001，`DATABASE_URL`/`PG_SSL`/`GITLAB_URL` 等配置全部走环境变量。
