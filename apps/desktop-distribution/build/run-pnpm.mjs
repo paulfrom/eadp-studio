@@ -7,7 +7,7 @@ const OPERATIONS = {
   checkWindows: ['run', 'package:desktop:win:x64:unsigned', '--check'],
   packageWindows: ['run', 'package:desktop:win:x64:unsigned'],
   // The official library build emits Host Remote contracts before Client consumers.
-  libraries: ['exec', 'tsx', 'scripts/compile-referenced-projects.ts', 'libraries'],
+  libraries: ['run', 'build:lib'],
   desktop: ['run', 'build:desktop'],
   // Relative to .local/build/dsh/packages/eadp/studio-plugin. Keeping this
   // fixed avoids placing a machine-local path into a Windows shell command.

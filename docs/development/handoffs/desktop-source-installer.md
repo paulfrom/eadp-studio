@@ -1,5 +1,11 @@
 # eadp studio 源码安装包入口
 
+2026-10-16 同步补记：主分支已同步至 `2048a39`，产品入口和品牌改动已由 `70be7ca` 提交，固定上游已由 `3766738` 升级为 `dsh-v0.2.1-alpha.4`（commit `86a402200d95fecef4529d969836f1fe13c6cb0d`）。三个旧 worktree 的 13 个提交经 `git cherry` 和逐对 stable patch-id 确认均已等价集成，主 Agent 已保存引用和必要运行记录并清理旧 checkout。当前 alpha.4 适配保留，不恢复 alpha.2 实现。
+
+alpha.4 的源码装配沿用官方 `build:lib`（含 Host/Client aggregate TypeScript 检查）；正式打包改用官方 `scripts/build.ts --profile official --scope artifacts`，替代已删除的 `--artifacts-only` 参数。Typert 调用锚点随 `rejectBuildOutputs` 参数更新，仍调用现有 `analyzeInBatches()`。Windows release pack 复用官方有界 scheduler，固定并发为 4。GNU tar 获取源码时启用本地路径及原始 UTF-8 名称；package-set 读取 tarball manifest 时使用 basename 和其父目录作为 cwd，与上游 tarball helper 一致。
+
+现有运行证据须分开解释：alpha.4 的 `2026-10-16T09-06-08.341Z-Jq4gzC` 已完成 artifact build、release pack 和 runtime 准备，随后在 `prepare:packages` 的绝对 Windows 路径触发 GNU tar `Cannot connect to D: resolve failed`；当前定点编辑覆盖此失败行。该旧过程的 client receipt 对应 `86c5fc5`，不是同步后源码的最终验收。此前 alpha.2 流程在编译期间 HEAD 改变，release receipt 因 `DSH_CLIENT_COMMIT_HASH` 不一致被正确拒绝。后续固定提交、冻结源码再执行完整入口，禁止在构建中提交代码。最终 alpha.4 exe 和原生验收尚待主 Agent 记录，当前 `nativeBuildVerified=false`、`distributionVerified=false`、`releaseReady=false`；`windowsVerification` 中 alpha.2 安装记录仅为历史证据。相同 alpha.4 source hash 的 Linux、Windows 解包证据一并保留；fetch 脚本不写验收字段，升级脚本仅在新 source materialization 时清空旧验收，非本次平台列表变更的来源。
+
 本次提供 `./build-desktop.ps1`，亦可 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。原生 Windows x64 执行，安装依赖、获取固定源码、装配、构建插件及随包工具，并复用上游 Electron/NSIS 管线生成 unsigned 安装包；不创建新壳。`--help` 查看要求，`--check` 装配与安装构建依赖后执行上游打包前置检查。
 
 品牌变更由 `apps/desktop-distribution/build/desktop-brand-edits.mjs` 中的定点编辑维护，verified 上游缓存不改。应用、可执行文件、快捷方式显示名均为 `eadp studio`，App ID 为 `io.github.paulfrom.eadp.studio`，安装包 `eadp-studio-<version>-win-x64-unsigned.exe`。产品协议为 `eadp-studio://`，Electron 数据 `%APPDATA%\eadp studio`；启动早于首次 userData 读取设置 app.name，并将 Host 的 DSH_HOME 固定为 `%USERPROFILE%\.eadp-studio`，隔离原 DSH 数据，无迁移。固定上游 home-paths 在调用函数时读取 env，不在模块加载时缓存 DSH_HOME；桌面路径解析在 main 执行时发生。沿用原图标资源。

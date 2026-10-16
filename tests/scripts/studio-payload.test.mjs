@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
 import { assertStudioHost, productionPluginManifest, recordStudioBuild, verifyStudioPlugin, verifyRuntimePayload } from '../../apps/desktop-distribution/build/studio-payload.mjs'
-import { STUDIO_PACKAGING_EDIT } from '../../apps/desktop-distribution/build/studio-packaging-edits.mjs'
+import { STUDIO_PACKAGING_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from '../../apps/desktop-distribution/build/studio-packaging-edits.mjs'
 import { STUDIO_PLATFORM_EDITS } from '../../apps/desktop-distribution/build/studio-platform-edits.mjs'
 
 test('runtime preparation has one fixed cache call when replayed into fresh or older staging', () => {
@@ -43,9 +43,25 @@ test('a corrupted fixed archive cache fails before download or extraction', { sk
 test('official packaging keeps checked artifact compilation and rejects upstream drift', () => {
   const original = "await execute(['run', 'build:official'], buildEnv, REPOSITORY_ROOT)"
   const edited = STUDIO_PACKAGING_EDIT.apply(original)
-  assert.match(edited, /scripts\/build\.ts.*--profile.*official.*--artifacts-only/)
+  assert.match(edited, /scripts\/build\.ts.*--profile.*official.*--scope.*artifacts/)
   assert.equal(STUDIO_PACKAGING_EDIT.apply(edited), edited)
   assert.throws(() => STUDIO_PACKAGING_EDIT.apply('drift'), /anchor/)
+})
+
+test('Windows release packing uses the official bounded concurrency and rejects upstream drift', () => {
+  const original = "  const packArguments = mac === undefined ? [] : ['--concurrency', String(mac.packConcurrency)]"
+  const edited = STUDIO_PACK_CONCURRENCY_EDIT.apply(original)
+  assert.match(edited, /mac\?\.packConcurrency \?\? 4/)
+  assert.equal(STUDIO_PACK_CONCURRENCY_EDIT.apply(edited), edited)
+  assert.throws(() => STUDIO_PACK_CONCURRENCY_EDIT.apply('drift'), /anchor/)
+})
+
+test('package-set tar reads stay local for both tar flavors and rejects upstream drift', () => {
+  const original = "  const value: unknown = JSON.parse(capture('tar', ['-xOzf', tarball, 'package/package.json']))"
+  const edited = STUDIO_PACKAGE_SET_TAR_EDIT.apply(original)
+  assert.match(edited, /basename\(tarball\).*cwd: resolve\(tarball, '\.\.'\)/)
+  assert.equal(STUDIO_PACKAGE_SET_TAR_EDIT.apply(edited), edited)
+  assert.throws(() => STUDIO_PACKAGE_SET_TAR_EDIT.apply('drift'), /anchor/)
 })
 
 test('current source receipt detects stale bundles and omitted generated Remote outputs', async () => {

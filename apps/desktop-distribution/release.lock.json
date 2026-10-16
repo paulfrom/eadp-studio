@@ -6,7 +6,7 @@
     "manifest": "runtime/studio-tools/runtime-manifest.json",
     "windowsAcceptance": "passed-development-machine-installed"
   },
-  "status": "windows-native-verified-release-pending",
+  "status": "source-archive-extraction-verified",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
     "tag": "dsh-v0.2.1-alpha.4",
@@ -38,10 +38,11 @@
     "sourceArchiveVerified": true,
     "fullSourceExtractionVerified": true,
     "fullSourceExtractionPlatforms": [
-      "linux"
+      "linux",
+      "windows"
     ],
     "targetReleasePocVerified": false,
-    "dependencyInstallVerified": true,
+    "dependencyInstallVerified": false,
     "nativeBuildVerified": false,
     "distributionVerified": false,
     "releaseReady": false

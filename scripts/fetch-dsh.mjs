@@ -44,7 +44,12 @@ async function main() {
   try {
     staging = await mkdtemp(path.join(upstream, '.dsh-fetch-'));
     const archive = path.join(upstream, `dsh-${dsh.commit}.tar.gz`);
-    const tar = async (...args) => (await run('tar', args, { encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 })).stdout;
+    // GNU tar (from Git Bash/MSYS2 on PATH) parses a leading drive letter as a
+    // remote host, and lists non-ASCII member names with octal escapes.
+    // --force-local keeps Windows archive paths local; literal quoting keeps
+    // UTF-8 member names intact. bsdtar (Windows system tar) needs neither.
+    const gnuTar = /^tar \(GNU tar\)/m.test((await run('tar', ['--version'], { encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 })).stdout.toString('utf8'));
+    const tar = async (...args) => (await run('tar', [...(gnuTar ? ['--force-local', '--quoting-style=literal'] : []), ...args], { encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 })).stdout;
     if (!await exists(archive)) {
       console.log(`Downloading fixed source commit ${dsh.commit}...`);
       const response = await fetch(dsh.archive.url, { redirect: 'error', signal: AbortSignal.timeout(120_000) });
@@ -138,8 +143,9 @@ async function main() {
     // real symlinks with Node's explicit target type on every platform.
     // Windows bsdtar otherwise decodes UTF-8 ustar names using the local code
     // page (e.g. 说明.txt becomes 璇存槑.txt on a Chinese Windows machine).
+    // GNU tar handles UTF-8 natively and rejects the bsdtar-only --options.
     await tar('-xf', archive, '-C', staging,
-      ...(process.platform === 'win32' ? ['--options', 'hdrcharset=UTF-8'] : []),
+      ...(process.platform === 'win32' && !gnuTar ? ['--options', 'hdrcharset=UTF-8'] : []),
       ...links.flatMap(({ name }) => ['--exclude', name]));
     for (const { name, target } of links) {
       const linkPath = path.join(staging, name);
