@@ -77,7 +77,7 @@ export function StudioPanel(props: StudioProps) {
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'confirmPrototype' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
-  return <div className={`${css.studio} studio-root flex h-full w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
+  return <div className={`${css.studio} studio-root flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
     <header className="flex h-10 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8fafc] px-3">
       <div className="flex min-w-0 items-center space-x-2">
         <span className="text-[12px] font-medium tracking-tight text-slate-800">EADP Studio</span>
