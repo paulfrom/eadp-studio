@@ -6,6 +6,7 @@ import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
 import { LoginDialog } from '../components/LoginDialog.tsx'
 import css from '../studio.module.css'
+import '../studio.tw.generated.css'
 
 export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference }
 export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace
@@ -18,6 +19,16 @@ const stages: Array<{ id: Stage; name: string; mark: string; description: string
 ]
 
 const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [] })
+const stageIconPaths: Record<Stage, string> = {
+  scenarios: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+  requirements: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+  prototype: 'M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z',
+  baselines: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+  handoffs: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+}
+function StageIcon({ path }: { path: string }) {
+  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d={path} /></svg>
+}
 export function StudioPanel(props: StudioProps) {
   const [state, setState] = useState<StudioState>(disconnectedState)
   const [stage, setStage] = useState<Stage>('scenarios')
@@ -66,18 +77,49 @@ export function StudioPanel(props: StudioProps) {
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'confirmPrototype' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
-  return <div className={css.studio} data-studio-panel="studio">
-    <header className={css.topbar}>
-      <div className={css.wordmark}><span className={css.logo}>e</span><strong>EADP Studio</strong><span className={css.divider}>/</span><span>{state.project?.name ?? '项目工作台'}</span></div>
-      <div className={css.topActions}><span className={css.branch}>{state.project?.stableBranch ?? '工作空间'}</span>{state.preview ? <a className={css.previewLink} href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className={css.muted}>原型未运行</span>}<button onClick={() => void call({ action: 'state' })} disabled={busy}>刷新</button></div>
+  return <div className={`${css.studio} studio-root flex h-full w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
+    <header className="flex h-10 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8fafc] px-3">
+      <div className="flex min-w-0 items-center space-x-2">
+        <span className="text-[12px] font-medium tracking-tight text-slate-800">EADP Studio</span>
+        <span className="text-slate-400">/</span>
+        <span className="truncate rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{state.project?.name ?? '项目工作台'}</span>
+        <span className="flex items-center space-x-1 pl-1 font-mono text-[10px] text-slate-500">
+          <span className={`h-1.5 w-1.5 rounded-full ${state.connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+          <span>{state.project?.stableBranch ?? '工作空间'}{state.connected ? '（已同步）' : ''}</span>
+        </span>
+      </div>
+      <div className="flex items-center space-x-2">
+        {state.preview ? <a className="text-[11px] text-emerald-700 hover:text-emerald-800" href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className="text-[11px] text-slate-400">原型未运行</span>}
+        <button className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50" onClick={() => void call({ action: 'state' })} disabled={busy}>刷新</button>
+      </div>
     </header>
-    <div className={css.shell}>
-      <aside className={css.sidebar} aria-label="工作台导航">
-        <div className={css.projectPicker}><label htmlFor="studio-project">工作空间 / 项目</label><select id="studio-project" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><button className={css.newProject} disabled={!state.connected} onClick={() => setProjectDialog(true)}>＋ 新建 / 获取项目</button></div>
-        <p className={css.eyebrow}>STUDIO WORKSPACE</p>
-        <nav>{stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`${css.navItem} ${stage === item.id ? css.activeNav : ''}`} onClick={() => selectStage(item.id)}><span className={css.navNumber}>{item.mark}</span>{item.name}<span className={css.navArrow}>›</span></button>)}</nav>
-        <div className={css.sidebarNote}>从业务材料出发<br />与 AI 一起形成可交付成果</div>
-        <div className={css.account}><span className={css.avatar}>{state.account?.name?.slice(0, 1) ?? 'S'}</span><div><strong>{state.account?.name ?? '登录协同工作台'}</strong><small>{state.account ? `@${state.account.username} · GitLab @${state.account.gitlabUsername}` : '登录后查看可用项目'}</small></div><button onClick={() => { if (state.connected) { setState(disconnectedState()); setSelectedId(undefined); void call({ action: 'logout' }) } else setLoginDialog(true) }}>{state.connected ? '退出' : '登录'}</button></div>
+    <div className="flex flex-1 overflow-hidden">
+      <aside className="flex w-52 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white" aria-label="工作台导航">
+        <div>
+          <div className="border-b border-slate-100 bg-slate-50/50 p-3">
+            <label htmlFor="studio-project" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">工作空间 / 项目</label>
+            <select id="studio-project" className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <button className="mt-2 w-full rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50" disabled={!state.connected} onClick={() => setProjectDialog(true)}>＋ 新建 / 获取项目</button>
+          </div>
+          <nav className="space-y-1 p-2">
+            <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Studio Workspace</div>
+            {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`flex w-full items-center space-x-2.5 rounded-md px-3 py-2 text-left text-[11px] transition-colors ${stage === item.id ? 'bg-[#1e40af] font-semibold text-white shadow-sm' : 'font-medium text-slate-600 hover:bg-slate-100/80'}`} onClick={() => selectStage(item.id)}>
+              <span className={stage === item.id ? 'text-white' : 'text-slate-400'}><StageIcon path={stageIconPaths[item.id]} /></span>
+              <span>{item.name}</span>
+              <span className={`ml-auto ${stage === item.id ? 'text-indigo-200' : 'text-slate-300'}`}>›</span>
+            </button>)}
+          </nav>
+        </div>
+        <div className="flex flex-shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex min-w-0 items-center space-x-2">
+            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-[11px] text-slate-600">{state.account?.name?.slice(0, 1) ?? 'S'}</div>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[11px] font-medium text-slate-800">{state.account?.name ?? '登录协同工作台'}</div>
+              <div className="truncate font-mono text-[9px] text-slate-500">{state.account ? `@${state.account.username} · GitLab @${state.account.gitlabUsername}` : '登录后查看可用项目'}</div>
+            </div>
+          </div>
+          <button className="rounded p-1 text-[10px] text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-700" onClick={() => { if (state.connected) { setState(disconnectedState()); setSelectedId(undefined); void call({ action: 'logout' }) } else setLoginDialog(true) }}>{state.connected ? '退出' : '登录'}</button>
+        </div>
       </aside>
       <main className={css.main}>
         <header className={css.pageHeader}><div><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
