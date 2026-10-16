@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT/apps/collaboration-api/compose.yml"
 ENV_FILE="$ROOT/apps/collaboration-api/.env"
-API_PORT="${EADP_API_PORT:-6972}"
 
 command -v docker >/dev/null 2>&1 || { echo "error: docker is required but not found in PATH." >&2; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "error: the Docker Compose plugin is required (docker compose)." >&2; exit 1; }
@@ -16,6 +15,8 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
   set +a
 fi
+
+API_PORT="${EADP_API_PORT:-6972}"
 
 : "${GITLAB_URL:?GITLAB_URL is required. Copy apps/collaboration-api/.env.example to apps/collaboration-api/.env and fill it in.}"
 export GITLAB_URL
@@ -31,7 +32,7 @@ while (( SECONDS < deadline )); do
     healthy=1
   else
     status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' eadp-collaboration-api-1 2>/dev/null || true)
-    [[ "$status" == "healthy" || "$status" == "running" ]] && healthy=1
+    [[ "$status" == "healthy" ]] && healthy=1
   fi
   if [[ "$healthy" == "1" ]]; then
     echo "Collaboration API is up:"
