@@ -123,10 +123,10 @@ test('frame edit is idempotent, byte-reversible, and fails on anchor drift', () 
   const edited = STUDIO_FRAME_EDIT.apply(appFrame)
   assert.equal(STUDIO_FRAME_EDIT.apply(edited), edited)
   assert.throws(() => STUDIO_FRAME_EDIT.apply('upstream drift'), /anchor missing or duplicated/)
-  assert.throws(() => STUDIO_FRAME_EDIT.apply(`${appFrame}\n  const narrow = viewport < SIDEBAR_AUTO_COLLAPSE`), /anchor missing or duplicated/)
+  assert.throws(() => STUDIO_FRAME_EDIT.apply(`${appFrame}\n  const narrow = viewport < SIDEBAR_AUTO_COLLAPSE\n  const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0`), /anchor missing or duplicated/)
   // Outside the three patched regions the file stays byte-for-byte upstream.
   let reversed = edited
-  for (const [after, before] of STUDIO_FRAME_EDIT.pairs) reversed = reversed.replace(after, before)
+  for (const [before, after] of STUDIO_FRAME_EDIT.pairs) reversed = reversed.replace(after, before)
   assert.equal(reversed, appFrame)
 })
 ```
