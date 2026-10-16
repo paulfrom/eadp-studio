@@ -11,18 +11,19 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { StudioCommand, StudioReply } from '../shared/studio.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import studioRemote from '@eadp-studio/studio-plugin/remote'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface SlotMap { 'studio.session': { kind: 'single'; scope: 'session' } } }
 declare module '@deepseek-ai/dsh-api-session-controller/client' { interface SessionReferenceSourceMap { studio: unknown } }
 declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>> } } }
 
 /** The layout service and the slot registry are the only services this slice needs. */
-export const inject = ['slots', 'layout', 'sessions', 'remote', 'remote.studio', 'uiSession', 'uiConversation']
+export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation']
 
 const PANEL_ID = 'studio' as MainPanelId
 
 /** Mount the Studio panel and make it the selected main panel. */
-export function apply(ctx: ClientContext): void {
+function registerStudio(ctx: ClientContext): void {
   ctx.slots.inject('main', () => {
     const call = async (command: StudioCommand): Promise<StudioReply> => {
       const result = await ctx.remote.studio.command(command)
@@ -37,4 +38,12 @@ export function apply(ctx: ClientContext): void {
     ctx.layout.selectPanel(PANEL_ID)
     return dispose
   })
+}
+
+/** Mount the generated namespace before waiting for the UI's Remote dependency. */
+export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
+  const disposeRemote = await ctx.remote.$mount(studioRemote)
+  const ui = ctx.inject(['remote.studio'], registerStudio)
+  try { await ui } catch (error) { await ui.dispose(); await disposeRemote(); throw error }
+  return async () => { await ui.dispose(); await disposeRemote() }
 }
