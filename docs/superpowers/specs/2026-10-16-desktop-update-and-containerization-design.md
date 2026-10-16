@@ -6,7 +6,7 @@
 
 1. 桌面端默认协同后端地址改为 `http://100.119.183.44:6972`（正式发布后再改）。
 2. 协同后端实现桌面强制更新策略检查接口（DSH `mandatory-update-policy` 客户端契约，路由 `/api/v0/check_client_update`），替换当前 `unavailable` 状态。
-3. 协同后端镜像化：交付 API 的 Dockerfile，另附本机一键拉起的 compose（不入企业交付）。
+3. 协同后端镜像化：交付 API 的 Dockerfile、本机一键拉起的 compose（不入企业交付），以及一键启动 bash 脚本。
 
 ## 1. 默认地址
 
@@ -49,10 +49,20 @@
 - `api`：本地 build（根上下文），`depends_on: db (service_healthy)`；环境变量模板默认 `DATABASE_URL` 指向 compose 内 db、`PG_SSL=disable`（沿用现有本机 loopback 约定）、`HOST=0.0.0.0`；GitLab 相关变量由使用方填写，显式代理 env 沿用。端口映射 `6972:3001`，与现有测试入口一致。
 - 企业正式部署仍是独立 PG 实例 + 此 API 镜像；compose 不替代该形态。
 
+## 4.1 一键启动脚本（交付物）
+
+- 位置 `apps/collaboration-api/start.sh`（chmod +x，入 Git），与 compose.yml 同目录。
+- 行为：
+  1. 检查 `docker` 与 `docker compose` 可用，缺失时明确报错退出。
+  2. 环境变量取自同目录 `.env`（Git 忽略）或已 export 的环境；compose 必需项缺失（如 `GITLAB_URL`）时明确报错并指向 `.env.example`，不静默带过。
+  3. `docker compose up -d --build` 构建并拉起 `db` + `api`。
+  4. 轮询等待 `http://127.0.0.1:6972/health` 就绪（带超时），成功后输出入口地址与常用命令提示（查看日志、停止），失败时输出最近日志并非零退出。
+- 幂等：重复执行 = 重新构建并重启服务，不产生重复资源。
+
 ## 5. 验证与文档
 
 - 单测：升级接口路由测试覆盖放行、强制、低于门槛、缺失/不可解析版本头（fail-closed）、链接配置校验；既有测试全绿；`pnpm --filter @eadp/collaboration-api typecheck` 通过。
-- 实测：compose 拉起后 curl 验证 `/health` 与 `/api/v0/check_client_update` 两种模式（未配置门槛 → 放行结构；配置门槛 → 高/低于门槛各自响应）。
+- 实测：compose 拉起后 curl 验证 `/health` 与 `/api/v0/check_client_update` 两种模式（未配置门槛 → 放行结构；配置门槛 → 高/低于门槛各自响应）；并执行 `start.sh` 做一次完整的一键启动/健康就绪/停止循环。
 - 文档：`.env.example` 增补 4 个新变量；API README 增加升级接口与 Docker/compose 运行两节；按仓库惯例在 `docs/development/handoffs/` 记录部署与验证结果。
 
 ## 不变边界
