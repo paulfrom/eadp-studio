@@ -21,6 +21,9 @@ writeFileSync('captured.json', JSON.stringify({ args: process.argv.slice(2), cwd
     process.env.PATH = `${directory}${path.delimiter}${originalPath ?? ''}`
     for (const [operation, args] of [
       ['install', ['install', '--no-frozen-lockfile']],
+      ['productInstall', ['install', '--frozen-lockfile', '--ignore-scripts']],
+      ['checkWindows', ['run', 'package:desktop:win:x64:unsigned', '--check']],
+      ['packageWindows', ['run', 'package:desktop:win:x64:unsigned']],
       ['libraries', ['exec', 'tsx', 'scripts/compile-referenced-projects.ts', 'libraries']],
       ['desktop', ['run', 'build:desktop']],
       ['pack', ['pack', '--pack-destination', '../../../../packed-studio']],

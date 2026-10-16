@@ -3,6 +3,9 @@ import { spawnSync } from 'node:child_process'
 
 const OPERATIONS = {
   install: ['install', '--no-frozen-lockfile'],
+  productInstall: ['install', '--frozen-lockfile', '--ignore-scripts'],
+  checkWindows: ['run', 'package:desktop:win:x64:unsigned', '--check'],
+  packageWindows: ['run', 'package:desktop:win:x64:unsigned'],
   // The official library build emits Host Remote contracts before Client consumers.
   libraries: ['exec', 'tsx', 'scripts/compile-referenced-projects.ts', 'libraries'],
   desktop: ['run', 'build:desktop'],
@@ -11,7 +14,7 @@ const OPERATIONS = {
   pack: ['pack', '--pack-destination', '../../../../packed-studio'],
 }
 
-export function runPnpm(operation, cwd) {
+export function runPnpm(operation, cwd, environment = process.env) {
   if (!Object.hasOwn(OPERATIONS, operation)) throw new Error(`Unknown pnpm operation: ${operation}`)
   const args = OPERATIONS[operation]
   // Node cannot execute Windows .cmd shims directly. Use the documented
@@ -25,7 +28,7 @@ export function runPnpm(operation, cwd) {
     stdio: 'inherit',
     windowsHide: true,
     // Avoid the upstream lefthook postinstall writing hooks to this repository.
-    env: { ...process.env, CI: 'true' },
+    env: { ...environment, CI: 'true' },
   })
   if (result.error !== undefined) throw result.error
   if (result.status !== 0) throw new Error(`pnpm ${args.join(' ')} exited with ${String(result.status)}`)

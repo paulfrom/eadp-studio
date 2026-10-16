@@ -17,6 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runPnpm } from './run-pnpm.mjs'
 import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
+import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
@@ -47,6 +48,7 @@ const packedPluginDirectory = path.join(sharedRoot, '.local/build/packed-studio'
  * so upstream drift cannot silently drop the product integration.
  */
 const UPSTREAM_EDITS = [
+  ...DESKTOP_BRAND_EDITS,
   ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
   DESKTOP_PLUGIN_EDIT,
@@ -246,8 +248,7 @@ async function main() {
   runPnpm('desktop', buildTree)
   await verifyBuildOutput()
   await packPlugin()
-  console.log('Studio plugin assembled and packed. Desktop packaging needs a Windows or macOS host:')
-  console.log(`  DSH_DESKTOP_PACKED_EXTRA=${packedPluginDirectory} pnpm run package:desktop:win:x64`)
+  console.log('Studio plugin assembled and packed. Build the Windows installer from the product root with ./build-desktop.ps1.')
 }
 
 await main()

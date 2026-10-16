@@ -50,6 +50,20 @@ pnpm install --frozen-lockfile --ignore-scripts
 node scripts/fetch-dsh.mjs --archive-only
 ```
 
-满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前工作站此项失败，已校验的归档保留在 `.local/`，不发布不完整源码。Linux 原生完整准备与运行仍待实际验证，准备入口不代表 G0 或桌面发行验收通过。
+满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前开发机已验证完整解包。Linux 原生完整准备与运行仍待实际验证，准备入口不代表 G0 或桌面发行验收通过。
+
+## 从源码生成桌面安装包
+
+在 Windows x64 工作站的仓库根目录执行：
+
+```powershell
+./build-desktop.ps1
+```
+
+也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包输出到 `artifacts/windows/eadp-studio-<版本>-win-x64-unsigned.exe`，同时输出绝对路径、SHA256 和同名 `.json` 记录。
+
+构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
+
+当前入口生成未签名的开发安装包；签名、升级发布及干净机发行验收仍遵循独立门槛。产品使用稳定 App ID `io.github.paulfrom.eadp.studio`、`eadp-studio://` 协议和 `%USERPROFILE%\.eadp-studio` 数据根，Electron 数据位于 `%APPDATA%\eadp studio`。旧 DSH 数据不迁移。配置及验证细节见 [桌面构建说明](apps/desktop-distribution/build/README.md)。
 
 环境准备及换机步骤见 [setup.md](docs/development/setup.md)。后续开发从 [G0 编码启动](dsh_eadp_studio_plan/08-G0编码启动.md) 继续。
