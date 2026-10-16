@@ -109,6 +109,7 @@ async function main() {
   const stdout = await open(path.join(run, 'stdout.log'), 'wx')
   const stderr = await open(path.join(run, 'stderr.log'), 'wx')
   let child, exited = false, client
+  let hostRefreshRequested = false, hostRefreshStartedAt = 0
   try {
     child = spawn(executable, [`--user-data-dir=${paths['electron-user-data']}`, `--remote-debugging-port=${port}`], {
       cwd: run, env: environment, shell: false, windowsHide: false, stdio: ['ignore', stdout.fd, stderr.fd],
@@ -183,6 +184,8 @@ async function main() {
           welcome: visible(welcomeHeading) && text(welcome).includes('登录协同工作台，创建或打开项目。')
             && text(welcome).includes('场景、需求与原型将在这里持续沉淀。') && text(welcome).includes('一个项目，对应一个 Git 仓库'),
           loginEntry: visible(loginEntry) && !loginEntry.disabled,
+          refreshBusy: [...(panel?.querySelectorAll('header button') ?? [])].find(button => text(button) === '刷新')?.disabled !== false,
+          alerts: [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map(element => text(element)),
           loginDialog: { visible: visible(dialog), title: text(dialog?.querySelector('#studio-login-title')),
             emptyUsername: visible(username) && username.required && username.type === 'text' && username.value === '',
             emptyPassword: visible(password) && password.required && password.autocomplete === 'off' && password.value === '',
@@ -197,9 +200,20 @@ async function main() {
         welcome: result.dom.welcome, loginEntry: result.dom.loginEntry,
         loginForm: result.dom.loginDialog.visible && result.dom.loginDialog.title === '登录协同工作台'
           && result.dom.loginDialog.emptyUsername && result.dom.loginDialog.emptyPassword && result.dom.loginDialog.submitReady,
+        hostState: hostRefreshRequested && Date.now() - hostRefreshStartedAt >= 200 && !result.dom.refreshBusy && result.dom.alerts.length === 0,
       }
-      const workspaceReady = Object.entries(result.checks).filter(([name]) => name !== 'loginForm').every(([, passed]) => passed)
-      if (workspaceReady && !loginRequested) {
+      const workspaceReady = Object.entries(result.checks).filter(([name]) => name !== 'loginForm' && name !== 'hostState').every(([, passed]) => passed)
+      if (workspaceReady && !hostRefreshRequested) {
+        const refreshed = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+          const panel = document.querySelector('[data-studio-panel="studio"]');
+          const button = [...panel.querySelectorAll('header button')].find(element => element.textContent.trim() === '刷新');
+          if (!button || button.disabled) return false;
+          button.click(); return true;
+        })()` })
+        if (refreshed.exceptionDetails || refreshed.result.value !== true) throw new Error('Studio Host state refresh could not start.')
+        hostRefreshRequested = true; hostRefreshStartedAt = Date.now(); await delay(250); continue
+      }
+      if (workspaceReady && result.checks.hostState && !loginRequested) {
         const opened = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
           const panel = document.querySelector('[data-studio-panel="studio"]');
           const button = [...panel.querySelectorAll('main button')].find(element => element.textContent.trim() === '登录协同工作台');
@@ -209,7 +223,7 @@ async function main() {
         if (opened.exceptionDetails || opened.result.value !== true) throw new Error('Studio login entry could not open its form.')
         loginRequested = true; await delay(100); continue
       }
-      if (workspaceReady && result.checks.loginForm) {
+      if (workspaceReady && result.checks.hostState && result.checks.loginForm) {
         if (values.screenshot) {
           // Let Electron paint the verified DOM before capturing its compositor surface.
           await client.request('Runtime.evaluate', { awaitPromise: true, expression:
