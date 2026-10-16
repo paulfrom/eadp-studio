@@ -40,7 +40,7 @@ curl --noproxy '*' http://127.0.0.1:6972/health
 
 ## 客户端连接
 
-Windows 桌面默认仍连接 `127.0.0.1:3001`，需要在桌面 profile 的 `cordis.patch.yml` 设置实际后端地址。未设置 `DSH_HOME` 时，文件位于 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml`；设置了 `DSH_HOME` 则位于该目录下的 `profiles\desktop\cordis.patch.yml`。保留文件中其他 patch；如果已有 `studio-plugin` 项，修改其 config 并保留其他 Studio 配置，随后重启桌面。
+提交 `7bc8fe5` 已将桌面默认地址改为 `http://100.119.183.44:6972`，使用该提交之后源码生成的安装包无需手工配置此地址。需要使用其他部署地址时，在桌面 profile 的 `cordis.patch.yml` 设置 `collaborationUrl`。未设置 `DSH_HOME` 时，文件位于 `%USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml`；设置了 `DSH_HOME` 则位于该目录下的 `profiles\desktop\cordis.patch.yml`。保留文件中其他 patch；如果已有 `studio-plugin` 项，修改其 config 并保留其他 Studio 配置，随后重启桌面。
 
 ```yaml
 - id: studio-plugin

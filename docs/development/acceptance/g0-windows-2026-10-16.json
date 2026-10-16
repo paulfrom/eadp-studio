@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-16",
+  "scope": "Windows development-machine installed unsigned desktop; AI-assisted technical self-review",
+  "windowsScopeVerified": true,
+  "completeG0Accepted": false,
+  "releaseReady": false,
+  "sourceCommit": "2deda4a26a28702921107597d534086d1c8c8f0d",
+  "mergedMain": "368e720",
+  "mergeCommit": "3b0e7a9",
+  "sourceDigest": "ccc058bf25e17200dfa931979eb57a9c99a4d490b676fff7b21a2cfa17671e8f",
+  "installer": {
+    "path": "artifacts/windows/2026-10-16-final-2deda4a/deepseek-harness-0.2.1-alpha.2-win-x64-unsigned.exe",
+    "bytes": 350445630,
+    "sha256": "75ca003d07e2e92ca9832996b3fd64b98fff3eebce7aad299a8c58132b7ecd73"
+  },
+  "asar": {
+    "bytes": 151654258,
+    "sha256": "fcfa917f25dc641d56ca479f5385c7627f44f3a137e4ccfa4b63c73afa0ec129"
+  },
+  "receiptFiles": 86,
+  "templateFiles": 49,
+  "firstLaunch": {
+    "singleVisibleMainPanel": true,
+    "interactive": true,
+    "fiveStageNavigation": true,
+    "disconnected": true,
+    "welcome": true,
+    "loginEntry": true,
+    "loginForm": true,
+    "hostState": true
+  },
+  "loginScope": "empty-form-only-no-authentication-submitted",
+  "tools": {
+    "node": {
+      "version": "v22.22.3",
+      "exitCode": 0
+    },
+    "pnpm": {
+      "version": "11.28.5",
+      "exitCode": 0
+    },
+    "git": {
+      "version": "git version 2.56.0.windows.2",
+      "exitCode": 0
+    },
+    "ssh": {
+      "version": "OpenSSH_10.5p1, OpenSSL 3.5.9 29 Sep 2026",
+      "exitCode": 0
+    }
+  },
+  "credentialsIsolated": true,
+  "detachedDescendantExited": true,
+  "findings": {
+    "A01": "verified-in-this-scope",
+    "A02": "verified-in-this-scope",
+    "A05": "verified-in-this-scope",
+    "A06": "adapter-and-application-regressions-passed",
+    "A09": "adapter-and-application-regressions-passed",
+    "A03": "not-required-by-user",
+    "A04": "Linux-login-binding-evidence-present; provisioning-push-ready-pending",
+    "A07": "Linux-followup-unverified",
+    "A08": "Linux-followup-unverified"
+  },
+  "evidence": {
+    "build": ".local/build/dsh/apps/desktop/.desktop-build/packaging-runs/2026-10-16T06-42-19.214Z-k2ZA2Q/result.json",
+    "installation": ".local/acceptance/windows-fixes-20261016/installation-final.json",
+    "payload": ".local/acceptance/windows-fixes-20261016/installed-final-contrast/result.json",
+    "firstLaunch": ".local/acceptance/studio-first-launch-99553t/result.json",
+    "tools": ".local/acceptance/windows-fixes-20261016/installed-runtime-final-contrast.json",
+    "remote": ".local/acceptance/windows-fixes-20261016/remote-readonly.json"
+  },
+  "excluded": [
+    "clean-machine installation",
+    "signing",
+    "upgrade/uninstall",
+    "authenticated remote business workflow",
+    "production deployment"
+  ],
+  "verifiedAt": "2026-10-16T07:06:20.150Z"
+}

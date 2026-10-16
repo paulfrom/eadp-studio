@@ -142,11 +142,11 @@ async function main() {
       }
       const onboarding = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
         const headings = [...document.querySelectorAll('[role="dialog"] h2')];
-        const heading = headings.find(element => ['预览版说明', 'Preview Notice', '添加一个 API Key 开始使用', 'Add an API Key to get started'].includes(element.textContent.trim()));
+        const heading = headings.find(element => ['预览版说明', 'Preview Notice', '添加一个 API Key 开始使用', 'Add an API key to get started'].includes(element.textContent.trim()));
         const dialog = heading?.closest('[role="dialog"]');
         if (!dialog) return null;
         const button = [...dialog.querySelectorAll('button')].find(element => !element.disabled
-          && ['继续', 'Continue', '稍后配置', 'Set up later'].includes(element.textContent.trim()));
+          && ['继续', 'Continue', '稍后配置', 'Configure later'].includes(element.textContent.trim()));
         if (!button) return { waiting: true };
         const bounds = button.getBoundingClientRect();
         return { title: heading.textContent.trim(), x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
@@ -259,13 +259,24 @@ async function main() {
         loginRequested = true; await delay(100); continue
       }
       if (workspaceReady && result.checks.hostState && result.checks.loginForm) {
+        let screenshotBytes
         if (values.screenshot) {
           // Let Electron paint the verified DOM before capturing its compositor surface.
           await client.request('Runtime.evaluate', { awaitPromise: true, expression:
             'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))' })
           await delay(1000)
           const captured = await client.request('Page.captureScreenshot', { format: 'png' })
-          await writeFile(path.join(run, 'studio.png'), Buffer.from(captured.data, 'base64'), { flag: 'wx' })
+          screenshotBytes = Buffer.from(captured.data, 'base64')
+        }
+        const stable = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
+          const panel = document.querySelector('[data-studio-panel="studio"]');
+          return !!panel && !panel.closest('[inert]') && document.visibilityState === 'visible'
+            && !!panel.querySelector('dialog[open][aria-labelledby="studio-login-title"]')
+            && !document.querySelector('[role="dialog"][aria-modal="true"]');
+        })()` })
+        if (stable.exceptionDetails || stable.result.value !== true) { await delay(250); continue }
+        if (screenshotBytes) {
+          await writeFile(path.join(run, 'studio.png'), screenshotBytes, { flag: 'wx' })
           result.screenshot = path.join(run, 'studio.png')
         }
         result.status = 'passed'

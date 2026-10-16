@@ -4,9 +4,9 @@
     "lockFile": "apps/desktop-distribution/build/studio-runtime.lock.json",
     "resourceDirectory": "runtime/studio-tools",
     "manifest": "runtime/studio-tools/runtime-manifest.json",
-    "windowsAcceptance": "pending"
+    "windowsAcceptance": "passed-development-machine-installed"
   },
-  "status": "current-studio-windows-build-pending",
+  "status": "windows-native-verified-release-pending",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
     "tag": "dsh-v0.2.1-alpha.2",
@@ -43,8 +43,25 @@
     ],
     "targetReleasePocVerified": false,
     "dependencyInstallVerified": true,
-    "nativeBuildVerified": false,
+    "nativeBuildVerified": true,
     "distributionVerified": false,
     "releaseReady": false
+  },
+  "windowsVerification": {
+    "scope": "development-machine-installed-unsigned",
+    "report": "docs/development/acceptance/g0-windows-2026-10-16.md",
+    "sourceCommit": "2deda4a26a28702921107597d534086d1c8c8f0d",
+    "sourceDigest": "ccc058bf25e17200dfa931979eb57a9c99a4d490b676fff7b21a2cfa17671e8f",
+    "installer": {
+      "path": "artifacts/windows/2026-10-16-final-2deda4a/deepseek-harness-0.2.1-alpha.2-win-x64-unsigned.exe",
+      "bytes": 350445630,
+      "sha256": "75ca003d07e2e92ca9832996b3fd64b98fff3eebce7aad299a8c58132b7ecd73"
+    },
+    "asar": {
+      "bytes": 151654258,
+      "sha256": "fcfa917f25dc641d56ca479f5385c7627f44f3a137e4ccfa4b63c73afa0ec129"
+    },
+    "cleanMachineInstallationVerified": false,
+    "verifiedAt": "2026-10-16T07:06:20.150Z"
   }
 }
