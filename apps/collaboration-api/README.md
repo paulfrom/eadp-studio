@@ -137,4 +137,4 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 EADP_API_PORT=6973 ./start-backend.sh   # 端口被占时覆盖
 ```
 
-手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，容器内默认监听 3001，`DATABASE_URL`/`PG_SSL`/`GITLAB_URL` 等配置全部走环境变量。
+手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，运行时显式传 `-e DATABASE_URL=... -e PG_SSL=disable -e GITLAB_URL=...` 等配置；镜像默认 `HOST=0.0.0.0`、容器内默认监听 3001，可用 `-e HOST=...` 覆盖。
