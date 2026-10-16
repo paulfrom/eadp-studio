@@ -19,6 +19,7 @@ import { runPnpm } from './run-pnpm.mjs'
 import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
 import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
+import { STUDIO_FRAME_EDIT } from './studio-frame-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
@@ -51,6 +52,7 @@ const UPSTREAM_EDITS = [
   ...DESKTOP_BRAND_EDITS,
   ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
+  STUDIO_FRAME_EDIT,
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
@@ -133,6 +135,11 @@ async function copyVerifiedSource() {
     recursive: true,
     filter: (source) => !source.split(path.sep).includes('node_modules'),
   })
+}
+
+async function generateStudioStyles() {
+  runPnpm('studioStyles', productPlugin)
+  console.log('Generated the Studio Tailwind stylesheet.')
 }
 
 async function placePlugin() {
@@ -240,6 +247,7 @@ async function packPlugin() {
 
 async function main() {
   await copyVerifiedSource()
+  await generateStudioStyles()
   await placePlugin()
   await referencePlugin()
   await applyUpstreamEdits()

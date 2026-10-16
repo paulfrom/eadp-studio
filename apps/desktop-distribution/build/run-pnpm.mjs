@@ -12,6 +12,8 @@ const OPERATIONS = {
   // Relative to .local/build/dsh/packages/eadp/studio-plugin. Keeping this
   // fixed avoids placing a machine-local path into a Windows shell command.
   pack: ['pack', '--pack-destination', '../../../../packed-studio'],
+  // Regenerate the Studio shell's Tailwind utilities from its source classes.
+  studioStyles: ['exec', 'tailwindcss', '-i', 'src/client/studio.tw.css', '-o', 'src/client/studio.tw.generated.css', '--minify'],
 }
 
 export function runPnpm(operation, cwd, environment = process.env) {
