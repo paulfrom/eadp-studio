@@ -33,6 +33,8 @@ export async function prepareStudioTools(destination, archiveCache) {
       if (name === 'pnpm') {
         const result = spawnSync(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-xzf', archive, '--strip-components=1', '-C', target], { windowsHide: true, stdio: 'inherit' })
         if (result.status !== 0) throw new Error('Cannot extract fixed Studio pnpm.')
+        // electron-builder omits VCS placeholders; remove this empty source marker before sealing the delivered tool inventory.
+        await rm(path.join(target, 'dist/node_modules/undici/lib/llhttp/.gitkeep'))
       } else await extractZip(archive, { dir: target })
       await rm(archive)
     }
