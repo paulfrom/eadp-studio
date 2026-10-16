@@ -127,7 +127,7 @@ export function compareVersions(a: SemVer, b: SemVer): number {
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
   if (a.patch !== b.patch) return a.patch - b.patch;
-  if (a.prerelease.length === 0 || b.prerelease.length === 0) return a.prerelease.length - b.prerelease.length;
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) return b.prerelease.length - a.prerelease.length;
   for (let i = 0; i < Math.max(a.prerelease.length, b.prerelease.length); i++) {
     const x = a.prerelease[i], y = b.prerelease[i];
     if (x === undefined || y === undefined) return (x === undefined ? -1 : 1);
@@ -146,7 +146,7 @@ export function decideDesktopUpdate(config: Config, headers: Record<string, unkn
   const clear: DesktopUpdateDecision = { code: 0, data: { biz_code: 0, biz_data: null } };
   if (!policy) return clear;
   const client = parseVersion(String(headers['x-client-version'] ?? ''));
-  if (client && compareVersions(client, parseVersion(policy.minVersion)!) <= 0) return clear;
+  if (client && compareVersions(client, parseVersion(policy.minVersion)!) >= 0) return clear;
   const show_content: { title?: string; detail?: string } = {};
   if (policy.title) show_content.title = policy.title;
   if (policy.detail) show_content.detail = policy.detail;
