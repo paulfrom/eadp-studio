@@ -1,0 +1,10 @@
+/* Studio shell utilities: no preflight (the host shell owns global styles), no prefix
+   (v4 drops prefix() on split imports; the host UI is all CSS Modules, so bare
+   utility classes never match host DOM). */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+@theme {
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", SFMono-Regular, Consolas, monospace;
+}

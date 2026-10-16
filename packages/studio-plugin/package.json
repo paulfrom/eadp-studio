@@ -50,6 +50,7 @@
     "assets/prototype-template.manifest.json"
   ],
   "devDependencies": {
-    "@eadp/contracts": "workspace:*"
+    "@eadp/contracts": "workspace:*",
+    "@tailwindcss/cli": "^4.3.3"
   }
 }
