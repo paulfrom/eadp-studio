@@ -4,7 +4,7 @@
 
 **Goal:** 消除桌面端双侧边栏（Studio 面板满窗），并把 StudioPanel 外壳按 docs/dsign/dsign.html 的视觉语言用 Tailwind v4 重写。
 
-**Architecture:** 两处改动：(1) 发行补丁 `studio-frame-edits.mjs` 在构建树 AppFrame.tsx 中让 studio 面板激活时侧栏列宽为 0 且不渲染 sidebarCol；(2) 插件侧引入 @tailwindcss/cli 预编译（无 preflight、prefix(tw-)），产物走宿主现成的 `dsh-css-global-inline` 注入通道，StudioPanel 外壳 JSX 用 tw- 工具类重写，逻辑不变。
+**Architecture:** 两处改动：(1) 发行补丁 `studio-frame-edits.mjs` 在构建树 AppFrame.tsx 中让 studio 面板激活时侧栏列宽为 0 且不渲染 sidebarCol；(2) 插件侧引入 @tailwindcss/cli 预编译（无 preflight、无前缀——spike 实测 v4 的 prefix 与无 preflight 不可兼得），产物走宿主现成的 `dsh-css-global-inline` 注入通道，StudioPanel 外壳 JSX 用 Tailwind 工具类重写，逻辑不变。
 
 **Tech Stack:** Tailwind CSS v4 (@tailwindcss/cli)、React TSX、CSS Modules（保留内部）、node:test、宿主 tsdown.client.ts CSS 虚拟模块管线。
 
@@ -15,7 +15,7 @@
 - 不修改 `.local/upstream/dsh/` 缓存源码；上游改动一律走 `apps/desktop-distribution/build/` 的锚点 edit，锚点缺失/重复即抛错。
 - 验证边界（用户明确）：**不在本机打包桌面客户端验证**；改动完成后提交代码，由 Windows 工作站做宿主验收。本机必做的验证：单元测试通过 + Tailwind 产物生成成功 + `prepare-studio-plugin.mjs --stage-only` 装配无锚点错误。
 - 保留 StudioPanel 根节点的 `data-studio-panel="studio"` 属性（`tests/windows-desktop/verify-studio-first-launch.mjs` 依赖它）。
-- Tailwind 入口不引入 preflight；全部工具类带 `tw-` 前缀；面板根节点保留 `studio-root` 类。
+- Tailwind 入口不引入 preflight；工具类**不加前缀**（spike 实测：v4 的 `prefix()` 在拆分 import 上静默失效，全量 import 无法排除 preflight；宿主全量使用 CSS Modules 哈希类名，裸工具类不会作用于宿主 DOM）；面板根节点保留 `studio-root` 类。
 - 不加兼容层：外壳旧 CSS 类删除即删除，新旧外壳样式不并存。
 - 测试用 `node --test tests/scripts/<file>` 运行，模式参照 `tests/scripts/desktop-startup-edits.test.mjs`。
 - StudioPanel 的所有状态逻辑（`call`、`retainSession`、轮询、登录/项目弹窗、五阶段数据）一字不改，只换外壳 JSX 与样式。
@@ -213,7 +213,7 @@ git commit -m "feat(desktop): close the shell sidebar while the Studio panel is 
 
 **Interfaces:**
 - Consumes: 无。
-- Produces: Tailwind 入口 `src/client/studio.tw.css`；生成产物路径约定 `src/client/studio.tw.generated.css`（gitignored，Task 3 的构建步骤生成，Task 4 的 StudioPanel 导入它）；工具类前缀 `tw-`；字体令牌 `--font-sans`/`--font-mono`。
+- Produces: Tailwind 入口 `src/client/studio.tw.css`；生成产物路径约定 `src/client/studio.tw.generated.css`（gitignored，Task 3 的构建步骤生成，Task 4 的 StudioPanel 导入它）；工具类**无前缀**；字体令牌 `--font-sans`/`--font-mono`。
 
 - [ ] **Step 1: 添加依赖**
 
@@ -225,9 +225,11 @@ Expected: `packages/studio-plugin/package.json` 的 devDependencies 出现 `@tai
 创建 `packages/studio-plugin/src/client/studio.tw.css`：
 
 ```css
-/* Studio shell utilities: no preflight (the host shell owns global styles), tw- prefixed. */
+/* Studio shell utilities: no preflight (the host shell owns global styles), no prefix
+   (v4 drops prefix() on split imports; the host UI is all CSS Modules, so bare
+   utility classes never match host DOM). */
 @import "tailwindcss/theme.css";
-@import "tailwindcss/utilities.css" prefix(tw);
+@import "tailwindcss/utilities.css";
 
 @theme {
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -235,23 +237,25 @@ Expected: `packages/studio-plugin/package.json` 的 devDependencies 出现 `@tai
 }
 ```
 
-- [ ] **Step 3: spike 探针 —— 验证 prefix、任意值、无 preflight**
+- [ ] **Step 3: spike 探针 —— 验证工具类生成、任意值、无 preflight**
+
+背景：2026-10-17 spike 已实测 `prefix(tw)` 在拆分 import 上被静默忽略（产物为无前缀类），全量 import 虽支持 prefix 但必然注入 preflight——故采用「拆分导入、无前缀、无 preflight」方案。本步骤验收该入口的最终行为。
 
 创建临时探针 `packages/studio-plugin/src/client/tw-probe.html`：
 
 ```html
-<div class="tw-flex tw-w-52 tw-bg-[#1e40af] tw-text-[11px] tw-font-mono tw-space-x-2.5 tw-rounded-md tw-border-slate-200 tw-antialiased"></div>
+<div class="flex w-52 bg-[#1e40af] text-[11px] font-mono space-x-2.5 rounded-md border-slate-200 antialiased"></div>
 ```
 
 Run（cwd = `packages/studio-plugin`）: `pnpm exec tailwindcss -i src/client/studio.tw.css -o src/client/tw-probe.out.css --minify`
 
 然后用 `grep -o ... | wc -l`（产物为单行 minify，需按出现次数计）验证：
-- `grep -o '\.tw-flex' src/client/tw-probe.out.css | wc -l` ≥ 1（prefix 生效）
+- `grep -o '\.flex' src/client/tw-probe.out.css | wc -l` ≥ 1（工具类生成）
 - `grep -o '1e40af' src/client/tw-probe.out.css | wc -l` ≥ 1（任意值生效）
-- `grep -o 'tw-w-52' src/client/tw-probe.out.css | wc -l` ≥ 1
+- `grep -o 'w-52' src/client/tw-probe.out.css | wc -l` ≥ 1
 - `grep -o 'box-sizing:border-box' src/client/tw-probe.out.css | wc -l` = 0（无 preflight 全局重置）
 
-若 prefix(tw) 在拆分 import 上不生效（产物出现 `.flex` 而无 `.tw-flex`）：停止铺开，把入口改为 `@import "tailwindcss" prefix(tw);` 再验证 preflight 是否被注入；preflight 无法排除时回到用户确认的备选（Tailwind v3 + `important` 作用域）并在提交信息中说明。
+四条全部符合才能继续；任一不符，停止并以 BLOCKED 上报实测输出。
 
 - [ ] **Step 4: 清理探针并加 gitignore**
 
@@ -361,10 +365,10 @@ git commit -m "feat(desktop): wire the Studio frame edit and Tailwind generation
 - Modify: `packages/studio-plugin/src/client/studio.module.css`
 
 **Interfaces:**
-- Consumes: Task 3 生成的 `studio.tw.generated.css`（`import '../studio.tw.generated.css'`）；Task 2 的 `tw-` 前缀约定。
-- Produces: 外壳（根节点、顶栏、侧栏、账号区）全部使用 tw- 工具类；`studio.module.css` 中重置选择器收缩为 `:where(.studio .main, .studio .dialog)` 作用域，外壳专用类删除；`css.main` 及内部区域类保持原名（内部 JSX 不动）。
+- Consumes: Task 3 生成的 `studio.tw.generated.css`（`import '../studio.tw.generated.css'`）；Task 2 的无前缀工具类约定。
+- Produces: 外壳（根节点、顶栏、侧栏、账号区）全部使用 Tailwind 工具类；`studio.module.css` 中重置选择器收缩为 `:where(.studio .main, .studio .dialog)` 作用域，外壳专用类删除；`css.main` 及内部区域类保持原名（内部 JSX 不动）。
 
-关键点：`.studio button` 等重置选择器特异性 (0,1,1) 高于单个 tw 工具类 (0,1,0)，不收缩会覆盖外壳的 tw 样式。收缩为 `:where(...)` 后特异性降到 (0,0,1)，tw 类与内部 module 类均不受影响（内部 module 类如 `.studio .assetItem` 为 (0,2,0)，仍高于重置）。
+关键点：`.studio button` 等重置选择器特异性 (0,1,1) 高于单个工具类 (0,1,0)，不收缩会覆盖外壳的 Tailwind 样式。收缩为 `:where(...)` 后特异性降到 (0,0,1)，工具类与内部 module 类均不受影响（内部 module 类如 `.studio .assetItem` 为 (0,2,0)，仍高于重置）。
 
 - [ ] **Step 1: 重写 StudioPanel 外壳**
 
@@ -387,7 +391,7 @@ const stageIconPaths: Record<Stage, string> = {
   handoffs: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
 }
 function StageIcon({ path }: { path: string }) {
-  return <svg className="tw-h-4 tw-w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d={path} /></svg>
+  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d={path} /></svg>
 }
 ```
 
@@ -412,48 +416,48 @@ function StageIcon({ path }: { path: string }) {
 new_string（逻辑表达式逐项保留，仅换结构与样式；侧栏导航标签沿用 dsign 的 eyebrow 样式，文案保留 STUDIO WORKSPACE）：
 
 ```tsx
-  return <div className={`${css.studio} studio-root tw-flex tw-h-full tw-w-full tw-flex-col tw-overflow-hidden tw-bg-[#f4f6fa] tw-antialiased`} data-studio-panel="studio">
-    <header className="tw-flex tw-h-10 tw-flex-shrink-0 tw-items-center tw-justify-between tw-border-b tw-border-slate-200 tw-bg-[#f8fafc] tw-px-3">
-      <div className="tw-flex tw-min-w-0 tw-items-center tw-space-x-2">
-        <span className="tw-text-[12px] tw-font-medium tw-tracking-tight tw-text-slate-800">EADP Studio</span>
-        <span className="tw-text-slate-400">/</span>
-        <span className="tw-truncate tw-rounded tw-border tw-border-slate-200 tw-bg-slate-100 tw-px-1.5 tw-py-0.5 tw-font-mono tw-text-[11px] tw-text-slate-600">{state.project?.name ?? '项目工作台'}</span>
-        <span className="tw-flex tw-items-center tw-space-x-1 tw-pl-1 tw-font-mono tw-text-[10px] tw-text-slate-500">
-          <span className={`tw-h-1.5 tw-w-1.5 tw-rounded-full ${state.connected ? 'tw-bg-emerald-500' : 'tw-bg-slate-300'}`} />
+  return <div className={`${css.studio} studio-root flex h-full w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
+    <header className="flex h-10 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8fafc] px-3">
+      <div className="flex min-w-0 items-center space-x-2">
+        <span className="text-[12px] font-medium tracking-tight text-slate-800">EADP Studio</span>
+        <span className="text-slate-400">/</span>
+        <span className="truncate rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{state.project?.name ?? '项目工作台'}</span>
+        <span className="flex items-center space-x-1 pl-1 font-mono text-[10px] text-slate-500">
+          <span className={`h-1.5 w-1.5 rounded-full ${state.connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
           <span>{state.project?.stableBranch ?? '工作空间'}{state.connected ? '（已同步）' : ''}</span>
         </span>
       </div>
-      <div className="tw-flex tw-items-center tw-space-x-2">
-        {state.preview ? <a className="tw-text-[11px] tw-text-emerald-700 hover:tw-text-emerald-800" href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className="tw-text-[11px] tw-text-slate-400">原型未运行</span>}
-        <button className="tw-rounded tw-border tw-border-slate-200 tw-bg-white tw-px-2 tw-py-1 tw-text-[11px] tw-text-slate-600 tw-transition-colors hover:tw-bg-slate-100 disabled:tw-opacity-50" onClick={() => void call({ action: 'state' })} disabled={busy}>刷新</button>
+      <div className="flex items-center space-x-2">
+        {state.preview ? <a className="text-[11px] text-emerald-700 hover:text-emerald-800" href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className="text-[11px] text-slate-400">原型未运行</span>}
+        <button className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50" onClick={() => void call({ action: 'state' })} disabled={busy}>刷新</button>
       </div>
     </header>
-    <div className="tw-flex tw-flex-1 tw-overflow-hidden">
-      <aside className="tw-flex tw-w-52 tw-flex-shrink-0 tw-flex-col tw-justify-between tw-border-r tw-border-slate-200 tw-bg-white" aria-label="工作台导航">
+    <div className="flex flex-1 overflow-hidden">
+      <aside className="flex w-52 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white" aria-label="工作台导航">
         <div>
-          <div className="tw-border-b tw-border-slate-100 tw-bg-slate-50/50 tw-p-3">
-            <label htmlFor="studio-project" className="tw-mb-1.5 tw-block tw-text-[10px] tw-font-bold tw-uppercase tw-tracking-wider tw-text-slate-400">工作空间 / 项目</label>
-            <select id="studio-project" className="tw-w-full tw-rounded-md tw-border tw-border-slate-300 tw-bg-white tw-px-2 tw-py-1.5 tw-text-[11px] tw-font-semibold tw-text-slate-700" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-            <button className="tw-mt-2 tw-w-full tw-rounded-md tw-border tw-border-dashed tw-border-slate-300 tw-py-1.5 tw-text-[11px] tw-text-slate-600 tw-transition-colors hover:tw-border-indigo-300 hover:tw-text-indigo-700 disabled:tw-opacity-50" disabled={!state.connected} onClick={() => setProjectDialog(true)}>＋ 新建 / 获取项目</button>
+          <div className="border-b border-slate-100 bg-slate-50/50 p-3">
+            <label htmlFor="studio-project" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">工作空间 / 项目</label>
+            <select id="studio-project" className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <button className="mt-2 w-full rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50" disabled={!state.connected} onClick={() => setProjectDialog(true)}>＋ 新建 / 获取项目</button>
           </div>
-          <nav className="tw-space-y-1 tw-p-2">
-            <div className="tw-px-2 tw-py-1.5 tw-text-[10px] tw-font-bold tw-uppercase tw-tracking-wider tw-text-slate-400">Studio Workspace</div>
-            {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`tw-flex tw-w-full tw-items-center tw-space-x-2.5 tw-rounded-md tw-px-3 tw-py-2 tw-text-left tw-text-[11px] tw-transition-colors ${stage === item.id ? 'tw-bg-[#1e40af] tw-font-semibold tw-text-white tw-shadow-sm' : 'tw-font-medium tw-text-slate-600 hover:tw-bg-slate-100/80'}`} onClick={() => selectStage(item.id)}>
-              <span className={stage === item.id ? 'tw-text-white' : 'tw-text-slate-400'}><StageIcon path={stageIconPaths[item.id]} /></span>
+          <nav className="space-y-1 p-2">
+            <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Studio Workspace</div>
+            {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`flex w-full items-center space-x-2.5 rounded-md px-3 py-2 text-left text-[11px] transition-colors ${stage === item.id ? 'bg-[#1e40af] font-semibold text-white shadow-sm' : 'font-medium text-slate-600 hover:bg-slate-100/80'}`} onClick={() => selectStage(item.id)}>
+              <span className={stage === item.id ? 'text-white' : 'text-slate-400'}><StageIcon path={stageIconPaths[item.id]} /></span>
               <span>{item.name}</span>
-              <span className={`tw-ml-auto ${stage === item.id ? 'tw-text-indigo-200' : 'tw-text-slate-300'}`}>›</span>
+              <span className={`ml-auto ${stage === item.id ? 'text-indigo-200' : 'text-slate-300'}`}>›</span>
             </button>)}
           </nav>
         </div>
-        <div className="tw-flex tw-flex-shrink-0 tw-items-center tw-justify-between tw-border-t tw-border-slate-200 tw-bg-slate-50/70 tw-p-3">
-          <div className="tw-flex tw-min-w-0 tw-items-center tw-space-x-2">
-            <div className="tw-flex tw-h-6 tw-w-6 tw-flex-shrink-0 tw-items-center tw-justify-center tw-rounded-full tw-border tw-border-slate-300 tw-bg-slate-200 tw-text-[11px] tw-text-slate-600">{state.account?.name?.slice(0, 1) ?? 'S'}</div>
-            <div className="tw-min-w-0 tw-leading-tight">
-              <div className="tw-truncate tw-text-[11px] tw-font-medium tw-text-slate-800">{state.account?.name ?? '登录协同工作台'}</div>
-              <div className="tw-truncate tw-font-mono tw-text-[9px] tw-text-slate-500">{state.account ? `@${state.account.username} · GitLab @${state.account.gitlabUsername}` : '登录后查看可用项目'}</div>
+        <div className="flex flex-shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50/70 p-3">
+          <div className="flex min-w-0 items-center space-x-2">
+            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-[11px] text-slate-600">{state.account?.name?.slice(0, 1) ?? 'S'}</div>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[11px] font-medium text-slate-800">{state.account?.name ?? '登录协同工作台'}</div>
+              <div className="truncate font-mono text-[9px] text-slate-500">{state.account ? `@${state.account.username} · GitLab @${state.account.gitlabUsername}` : '登录后查看可用项目'}</div>
             </div>
           </div>
-          <button className="tw-rounded tw-p-1 tw-text-[10px] tw-text-slate-400 tw-transition-colors hover:tw-bg-slate-200/60 hover:tw-text-slate-700" onClick={() => { if (state.connected) { setState(disconnectedState()); setSelectedId(undefined); void call({ action: 'logout' }) } else setLoginDialog(true) }}>{state.connected ? '退出' : '登录'}</button>
+          <button className="rounded p-1 text-[10px] text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-700" onClick={() => { if (state.connected) { setState(disconnectedState()); setSelectedId(undefined); void call({ action: 'logout' }) } else setLoginDialog(true) }}>{state.connected ? '退出' : '登录'}</button>
         </div>
       </aside>
 ```
@@ -503,7 +507,7 @@ Run（仓库根目录）:
 ```bash
 node apps/desktop-distribution/build/prepare-studio-plugin.mjs --stage-only
 ```
-Expected: 退出码 0；`packages/studio-plugin/src/client/studio.tw.generated.css` 内容包含 `.tw-flex` 与 `.tw-bg-\[\#1e40af\]`（用 `grep -c 'tw-bg' packages/studio-plugin/src/client/studio.tw.generated.css` ≥ 1 验证新外壳类已被扫描进产物）。
+Expected: 退出码 0；`packages/studio-plugin/src/client/studio.tw.generated.css` 内容包含 `.flex` 与 `.bg-\[\#1e40af\]`（用 `grep -c 'bg-' packages/studio-plugin/src/client/studio.tw.generated.css` ≥ 1 验证新外壳类已被扫描进产物）。
 
 - [ ] **Step 5: Commit**
 

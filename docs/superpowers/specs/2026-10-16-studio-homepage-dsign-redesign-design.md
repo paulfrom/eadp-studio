@@ -34,11 +34,11 @@
 1. `packages/studio-plugin` 增加 devDependency `@tailwindcss/cli`（Tailwind v4）。
 2. 新增 `src/client/studio.tw.css` 入口：
    - 只引入 `tailwindcss/theme.css` 与 `tailwindcss/utilities.css`，**不引入 preflight**（避免重置宿主全局样式）；
-   - `@theme` 块写入 dsign.html `tailwind-config` 的配色令牌（primary/secondary/surface 系列）与字体令牌（Inter、JetBrains Mono）；
-   - 工具类使用 v4 `prefix(tw-)` 与宿主 DOM 隔离，面板根节点保留 `studio-root` 兜底作用域。
-3. 预编译产物 `src/client/studio.tw.generated.css`：`tailwindcss -i studio.tw.css -o studio.tw.generated.css --minify`。生成时机在 `prepare-studio-plugin.mjs` 的 placePlugin 阶段执行（构建树内保证依赖可用），产物不进 Git（构建产物）。
+   - `@theme` 块写入字体令牌（Inter、JetBrains Mono）；配色直接使用默认 slate/indigo/emerald 调色板加少量任意值（如 `bg-[#1e40af]`），与 dsign.html 本体做法一致；
+   - 工具类**不加前缀**（spike 实测：v4 的 `prefix()` 在拆分 import 上被静默忽略，全量 import 则无法排除 preflight，二者不可兼得）。隔离依据：宿主 DSH 全部界面使用 CSS Modules 哈希类名，裸工具类（`.flex`、`.w-52` 等）不会作用于宿主 DOM；面板根节点保留 `studio-root` 类作标识。
+3. 预编译产物 `src/client/studio.tw.generated.css`：`tailwindcss -i studio.tw.css -o studio.tw.generated.css --minify`。生成时机在 `prepare-studio-plugin.mjs` 的 placePlugin 阶段执行，产物不进 Git（构建产物）。
 4. `StudioPanel.tsx` 顶部 `import '../studio.tw.generated.css'`，由 `dsh-css-global-inline` 编译注入。
-5. **先行 spike**：第一步用最小页面验证 v4 输出（`@theme`、`prefix`、modern CSS 特性）与宿主 lightningcss 管线兼容后再铺开；不兼容时的备选是 Tailwind v3 + `important: '.studio-root'`（已论证可行，届时需用户确认变更）。
+5. **Spike 结论（2026-10-17 实测）**：`prefix(tw)` 在拆分 import 上静默失效（Tailwind v4 已知限制），故采用无前缀拆分导入方案；spec 原记录的 v3 备选不再适用。
 
 ## 5. 改动三：StudioPanel 外壳换肤
 
@@ -50,6 +50,7 @@
 
 ## 6. 验证
 
-- `node apps/desktop-distribution/build/prepare-studio-plugin.mjs` 全流程通过（install → libraries → desktop typecheck → pack）。
-- 运行桌面端，截图对照 dsign.html 检查：无 DSH 侧栏、外壳配色/字号/密度与设计一致、五阶段切换与登录/项目弹窗功能不回归。
+- 本机边界（用户明确）：不打包桌面客户端验证；改动完成后提交代码，由 Windows 工作站做宿主验收。
+- 本机必做：edit 单元测试通过、Tailwind 产物生成成功、`prepare-studio-plugin.mjs --stage-only` 装配无锚点错误。
+- Windows 工作站验收：完整 `prepare-studio-plugin.mjs` 构建（验证 lightningcss 对 Tailwind v4 产物的编译与插件打包），安装运行后执行 `tests/windows-desktop/verify-studio-first-launch.mjs --screenshot` 并目视核对截图：无 DSH 侧栏、Studio 满窗、外壳样式符合 dsign.html、五阶段切换与登录/项目弹窗功能不回归。
 - 满窗补丁锚点缺失即报错，防止上游漂移静默失效。
