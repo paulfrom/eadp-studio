@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { compareVersions, decideDesktopUpdate, parseVersion } from './desktop-update.js';
+import type { Database } from './persistence/database.js';
 
 const base = { DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true' };
 
@@ -53,4 +55,18 @@ test('config load rejects an invalid minimum version or a non-HTTPS app link', (
   assert.throws(() => loadConfig({ ...base, DESKTOP_UPDATE_MIN_VERSION: 'v1.2' }), /DESKTOP_UPDATE_MIN_VERSION/);
   assert.throws(() => loadConfig({ ...base, DESKTOP_UPDATE_MIN_VERSION: '1.0.0', DESKTOP_UPDATE_APP_LINK: 'http://100.119.183.44/download' }), /HTTPS/);
   assert.throws(() => loadConfig({ ...base, DESKTOP_UPDATE_MIN_VERSION: '1.0.0', DESKTOP_UPDATE_APP_LINK: 'not-a-url' }), /DESKTOP_UPDATE_APP_LINK/);
+});
+
+test('the check endpoint is served without a session and ignores the scenario parameter', async () => {
+  const database = { query: async () => ({ rows: [], rowCount: 0 }), end: async () => {} } as unknown as Database;
+  const app = createApp(loadConfig({ ...base, DESKTOP_UPDATE_MIN_VERSION: '1.2.0' }), database);
+  const blocked = await app.inject({ method: 'GET', url: '/api/v0/check_client_update?scenario=launch', headers: { 'x-client-version': '0.9.0' } });
+  assert.equal(blocked.statusCode, 200);
+  assert.equal(blocked.json().code, 40005);
+  const cleared = await app.inject({ method: 'GET', url: '/api/v0/check_client_update?scenario=periodic', headers: { 'x-client-version': '1.2.0' } });
+  assert.deepEqual(cleared.json(), { code: 0, data: { biz_code: 0, biz_data: null } });
+  const anonymous = await app.inject({ method: 'GET', url: '/api/v0/check_client_update' });
+  assert.equal(anonymous.statusCode, 200, 'no Authorization header is required');
+  assert.equal(anonymous.json().code, 40005, 'missing version fails closed when a minimum is configured');
+  await app.close();
 });
