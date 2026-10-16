@@ -52,7 +52,7 @@ export function StudioPanel(props: StudioProps) {
     const timer = setInterval(() => { void refresh() }, 5000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [props.call])
-  const entities = state.collaboration?.entities ?? []
+  const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const selected = entities.find(e => e.id === selectedId)
   const draft = state.drafts.find(d => d.entityId === selectedId)
   const task = state.tasks.find(t => t.entityId === selectedId && t.purpose === (stage === 'prototype' ? 'prototype' : 'material'))

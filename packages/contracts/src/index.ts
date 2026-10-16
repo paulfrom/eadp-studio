@@ -107,17 +107,18 @@ export interface FixedVersion {
 export interface EntityView {
   id: string; kind: EntityKind; title: string; categoryId: string; revision: number; generation: number;
   materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; taskStatus: 'idle' | 'active' | 'aborted' | 'completed';
-  scenarioIds: string[]; prerequisites: Prerequisite[]; current?: FixedVersion;
+  scenarioIds: string[]; prerequisites: Prerequisite[]; current?: FixedVersion; authorId: number;
   occupation?: OccupationView; frozenBy: string[]; associationRevision: number; completedVersion?: number; completionConfirmationId?: string; completedIntegrationSha?: string;
   completions?: Array<{ version: number; confirmationId: string; integrationSha: string; baselineId: string }>;
 }
+export interface EntityOccupancyView { id: string; kind: EntityKind; revision: number; taskStatus: EntityView['taskStatus']; occupation?: OccupationView }
 export interface ProjectView {
   id: string; gitlabProjectId: number; repositoryUrl: string; stableBranch: string; name: string;
   namespaceId: number; namespacePath: string; initializationStatus: 'pending' | 'ready';
   revision: number; recognizedHead: string | null; currentBaselineId?: string;
   categories: Array<{ id: string; name: string }>; deployment?: { baselineId: string; url: string; artifactSha256: string; deployedAt: string };
 }
-export interface ProjectState { project: ProjectView; entities: EntityView[]; integrations: IntegrationView[]; baselines: BaselineView[] }
+export interface ProjectState { project: ProjectView; entities: Array<EntityView | EntityOccupancyView>; integrations: IntegrationView[]; baselines: BaselineView[] }
 export interface IntegrationView {
   id: string; entityId: string; ownerId: number; status: 'prepared' | 'accepted' | 'aborted';
   sourceSha: string; expectedHead: string; candidateSha: string; stage: PrepareIntegrationRequest['stage'];

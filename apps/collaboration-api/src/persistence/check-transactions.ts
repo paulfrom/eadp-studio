@@ -17,7 +17,7 @@ const config = loadConfig(), database = createDatabase(config), projectId = `tra
 const first: Actor = { id: 910000001, username: 'synthetic-first', name: 'First', email: 'first@example.test', gitlabUserId: 810000001, gitlabUsername: 'synthetic-first', sessionHash: '', admin: true };
 const second: Actor = { id: 910000002, username: 'synthetic-second', name: 'Second', email: 'second@example.test', gitlabUserId: 810000002, gitlabUsername: 'synthetic-second', sessionHash: '', admin: false };
 const service = new CollaborationService(database, new GitLab(config), new PublicationAuthorization(config), new SessionAuth(database, new GitLab(config), config));
-const initial: EntityView = { id: 'requirement', kind: 'requirement', title: 'Synthetic transaction check', categoryId: 'check', revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], frozenBy: [], associationRevision: 0 };
+const initial: EntityView = { id: 'requirement', kind: 'requirement', title: 'Synthetic transaction check', categoryId: 'check', revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: first.id, frozenBy: [], associationRevision: 0 };
 try {
   await transaction(database, async c => {
     const data: ProjectView = { id: projectId, gitlabProjectId: -Date.now(), repositoryUrl: 'synthetic', stableBranch: 'check', name: 'Synthetic transaction check', namespaceId: 1, namespacePath: 'synthetic', initializationStatus: 'ready', revision: 0, recognizedHead: '0'.repeat(40), categories: [{ id: 'check', name: 'Check' }] };

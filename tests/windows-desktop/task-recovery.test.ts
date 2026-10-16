@@ -26,7 +26,7 @@ async function fixture(failure?: 'session' | 'prompt') {
   const storeRoot = path.join(root, 'state')
   const store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
-  const scenario = (version: number): EntityView => ({ id: 'scenario', kind: 'scenario', title: '采购', categoryId: 'cat', revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], frozenBy: [], associationRevision: 0,
+  const scenario = (version: number): EntityView => ({ id: 'scenario', kind: 'scenario', title: '采购', categoryId: 'cat', revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0,
     current: { version, confirmationId: `confirmation-${version}`, fixed: { commitSha: String(version).repeat(40), path: '场景/scenario.md', sha256: hash(version) }, metadata: {} as never, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } } })
   const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1, categories: [] }, entities: [scenario(1)], baselines: [], integrations: [] }
   const integrations = new Map<string, IntegrationView>()

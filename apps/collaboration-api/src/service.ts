@@ -10,6 +10,7 @@ import * as repository from './persistence/repository.js';
 import * as occupations from './modules/occupations.js';
 import * as integration from './modules/integration.js';
 import * as reuse from './modules/reuse.js';
+import { visibleEntity } from './modules/visibility.js';
 
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
 export class CollaborationService {
@@ -57,7 +58,7 @@ export class CollaborationService {
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
       const integrations = (await c.query<{ data: integration.StoredIntegration }>('SELECT data FROM studio_integrations WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => integration.publicIntegration(r.data));
       const baselines = (await c.query('SELECT data FROM studio_baselines WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => r.data);
-      return { project, entities, integrations, baselines };
+      return { project, entities: entities.map(entity => visibleEntity(entity, actor)), integrations, baselines };
     });
   }
   async category(actor: Actor, projectId: string, input: CategoryRequest) {
@@ -74,7 +75,7 @@ export class CollaborationService {
     await this.authorize(actor, projectId, true);
     return this.mutate(actor, projectId, 'entity.reserve', input, async (c, project, all) => {
       requireCondition(project.categories.some(x => x.id === input.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
-      const value: EntityView = { id: repository.newId(), kind: input.kind, title: input.title, categoryId: input.categoryId, revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], frozenBy: [], associationRevision: 0 };
+      const value: EntityView = { id: repository.newId(), kind: input.kind, title: input.title, categoryId: input.categoryId, revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: actor.id, frozenBy: [], associationRevision: 0 };
       if (input.batch) {
         requireCondition(input.kind === 'requirement', 'INVALID_BATCH_ENTITY', 'Only a new requirement may be reserved in a scenario batch');
         const scene = repository.entity(all, input.batch.scenarioId), occupation = occupations.assertOccupation(scene, input.batch.token, actor);
@@ -86,7 +87,8 @@ export class CollaborationService {
     });
   }
   async claim(actor: Actor, projectId: string, id: string, input: ClaimRequest) {
-    await this.authorize(actor, projectId, true);
+    const project = await this.authorize(actor, projectId, true);
+    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before claiming', 409);
     return this.mutate(actor, projectId, `occupation.claim:${id}`, input, (c, _p, all) => occupations.claim(c, projectId, all, id, actor, input));
   }
   async release(actor: Actor, projectId: string, id: string, input: ReleaseRequest, admin = false) {

@@ -120,7 +120,7 @@ export class StudioApplication {
       if (task) {
         try { drafts.push(await readMaterial(task.worktree, entity.kind, entity.id)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-      } else if (entity.current) {
+      } else if ('current' in entity && entity.current) {
         const bytes = await this.projects.readFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path)
         if (digest(bytes) !== entity.current.fixed.sha256) throw new Error('固定材料哈希校验失败')
         drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
@@ -141,7 +141,7 @@ export class StudioApplication {
     if (remote.project.initializationStatus !== 'ready' || !remote.project.recognizedHead) throw new Error('项目尚未完成初始化，请先恢复首次提交。')
     return { project, remote }
   }
-  private async entity(entityId: string) { const context = await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity) throw new Error('资产不存在或不可见'); return { ...context, entity } }
+  private async entity(entityId: string) { const context = await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity || !('title' in entity)) throw new Error('资产不存在或不可见'); return { ...context, entity } }
   private async requireOwned(entity: EntityView): Promise<OccupationToken> {
     const account = await this.ports.account(); const state = await this.store.read(); const token = entity.occupation
     if (!token || token.ownerId !== account?.id || token.clientId !== state.clientId) throw new Error('此任务需要本人当前客户端的有效占用')
@@ -215,7 +215,7 @@ export class StudioApplication {
     if (!changed) throw new Error('当前内容没有新变化；已有确认结果请刷新查看')
     const candidateSha = await this.ports.git.commitFiles(task.worktree, [draft.path], `确认材料 ${entity.id}`, await this.identity())
     await this.ports.git.verifyFile(task.worktree, candidateSha, draft.path)
-    const input: PrepareIntegrationRequest = { idempotencyKey: key(), entityId: entity.id, token, stage: entity.kind === 'scenario' && entity.materialVersion > 0 ? 'scenario-batch' : 'material', sourceSha: candidateSha, candidateSha, expectedHead: remote.project.recognizedHead!, allowedPaths: [draft.path], checks: this.materialEvidence(candidateSha, draft), confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationMethod: method, authorConfirmed: true }], ...(entity.kind === 'scenario' && entity.materialVersion > 0 ? { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: remote.entities.filter(e => e.scenarioIds.includes(entity.id)).map(e => e.id) } : {}) }
+    const input: PrepareIntegrationRequest = { idempotencyKey: key(), entityId: entity.id, token, stage: entity.kind === 'scenario' && entity.materialVersion > 0 ? 'scenario-batch' : 'material', sourceSha: candidateSha, candidateSha, expectedHead: remote.project.recognizedHead!, allowedPaths: [draft.path], checks: this.materialEvidence(candidateSha, draft), confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationMethod: method, authorConfirmed: true }], ...(entity.kind === 'scenario' && entity.materialVersion > 0 ? { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: remote.entities.filter(e => 'scenarioIds' in e && e.scenarioIds.includes(entity.id)).map(e => e.id) } : {}) }
     await this.integrate(task, draft, input)
   }
   private async confirmPrototype(entityId: string) {
@@ -257,9 +257,9 @@ export class StudioApplication {
       }
       operation.phase = 'accepted'; delete operation.message; await this.store.save()
       const remote = await this.api.request<ProjectState>('GET', this.route(project.id)); const entity = remote.entities.find(e => e.id === operation.entityId)
-      if (entity?.kind === 'scenario' && entity.current && integration.confirmationIds?.includes(entity.current.confirmationId)) await this.splitScenario(remote, entity, integration.id)
+      if (entity && 'current' in entity && entity.kind === 'scenario' && entity.current && integration.confirmationIds?.includes(entity.current.confirmationId)) await this.splitScenario(remote, entity, integration.id)
       if (integration.baselineId) await this.generateHandoff(integration.baselineId).catch(async error => { operation.message = `基线已完成，交接清单生成待重试：${error instanceof Error ? error.message : '未知'}`; await this.store.save() })
-      if (entity?.kind === 'requirement' && integration.stage === 'material') {
+      if (entity && 'current' in entity && entity.kind === 'requirement' && integration.stage === 'material') {
         try { const next = await this.prototypeTask(remote, entity); await this.ports.session(next, '根据当前已确认需求与前置完成依据，按模板规则实现原型；冲突先请求修订。'); await this.ports.prompt(next.sessionId, `开始实现已确认需求 ${entity.id}，输入哈希 ${entity.current!.fixed.sha256}。`) }
         catch (error) { task.error = error instanceof Error ? `材料已确认，原型等待：${error.message}` : '原型等待条件'; await this.store.save() }
       }
@@ -299,7 +299,8 @@ export class StudioApplication {
     const local = await this.store.read(); const task = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'split')
     if (!task?.split || task.split.status === 'completed') return
     const remote = await this.api.request<ProjectState>('GET', this.route(task.projectId))
-    const current = remote.entities.find(entity => entity.id === task.entityId)?.current
+    const found = remote.entities.find(entity => entity.id === task.entityId)
+    const current = found && 'current' in found ? found.current : undefined
     if (!current || current.confirmationId !== task.split.confirmationId || current.version !== task.split.version || current.fixed.sha256 !== task.inputHash) return
     const match = /```eadp-candidates\s*\n([\s\S]*?)\n```/.exec(content)
     if (!match) return
@@ -310,7 +311,8 @@ export class StudioApplication {
     split.status = 'completed'; delete task.error; await this.store.save()
   }
   private currentCandidate(candidate: Candidate, remote: ProjectState): boolean {
-    const current = remote.entities.find(entity => entity.id === candidate.scenarioId)?.current
+    const found = remote.entities.find(entity => entity.id === candidate.scenarioId)
+    const current = found && 'current' in found ? found.current : undefined
     return candidate.projectId === remote.project.id && current?.confirmationId === candidate.confirmationId && current.version === candidate.version && current.fixed.sha256 === candidate.inputHash
   }
   private async selectCandidate(id: string, categoryId: string) {
@@ -335,8 +337,8 @@ export class StudioApplication {
   private async generateHandoff(baselineId: string) {
     const { remote } = await this.selected(); const baseline = remote.baselines.find(b => b.id === baselineId)
     if (!baseline) throw new Error('基线不存在或尚未被接受')
-    const existing = remote.entities.find(e => e.kind === 'handoff' && e.title === `交接 ${baseline.id}`)
-    const entity = existing ?? await this.createMaterial('handoff', `交接 ${baseline.id}`, remote.entities.find(e => e.id === baseline.entityId)!.categoryId)
+    const existing = remote.entities.find((e): e is EntityView => 'title' in e && e.kind === 'handoff' && e.title === `交接 ${baseline.id}`)
+    const entity = existing ?? await this.createMaterial('handoff', `交接 ${baseline.id}`, remote.entities.find((e): e is EntityView => 'title' in e && e.id === baseline.entityId)!.categoryId)
     const fresh = await this.entity(entity.id); const task = await this.designTask(fresh.remote, fresh.entity)
     const source = remote.entities.find(e => e.id === baseline.entityId)!
     const metadata = { ...initialMetadata(entity), referencedAssets: [{ projectId: remote.project.id, entityId: source.id, version: baseline.version }], businessEvidence: [{ label: '已接受原型基线', reference: baseline.id }] }
