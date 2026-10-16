@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-export const STUDIO_TEMPLATE_FILES = ['studio-template-archive.mjs', 'studio-template-archive.d.mts']
+export const STUDIO_TEMPLATE_FILES = ['studio-template-archive.mjs', 'studio-template-archive.d.mts', 'studio-template-transform.mjs']
   .map(file => ({ file: `apps/desktop/scripts/${file}`, source: readFileSync(new URL(file, import.meta.url), 'utf8') }))
 export const STUDIO_TEMPLATE_EDIT = {
   file: 'apps/desktop/scripts/prepare-dsh.ts',
@@ -12,3 +12,12 @@ export const STUDIO_TEMPLATE_EDIT = {
     return declaration + source.replace(before, after)
   },
 }
+export const STUDIO_TEMPLATE_TRANSFORM_EDITS = [
+  ['apps/desktop/scripts/prepare-runtime-manifests.ts', "import { readdir, writeFile } from 'node:fs/promises'"],
+  ['apps/desktop/scripts/electron-builder-config.mjs', "import { officePackageDirectories } from '../../../scripts/libreoffice-packages.mjs'"],
+].map(([file, anchor]) => ({ file, apply(source) {
+  const declaration = "import './studio-template-transform.mjs'\n"
+  if (source.includes(declaration)) return source
+  if (source.split(anchor).length !== 2) throw new Error('Studio template transformer anchor missing or duplicated.')
+  return source.replace(anchor, declaration + anchor)
+} }))

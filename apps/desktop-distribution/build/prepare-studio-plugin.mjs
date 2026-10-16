@@ -24,7 +24,7 @@ import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
 import { STUDIO_PACKAGING_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_TYPERT_EDIT } from './studio-typert-edits.mjs'
-import { STUDIO_TEMPLATE_EDIT, STUDIO_TEMPLATE_FILES } from './studio-template-edits.mjs'
+import { STUDIO_TEMPLATE_EDIT, STUDIO_TEMPLATE_FILES, STUDIO_TEMPLATE_TRANSFORM_EDITS } from './studio-template-edits.mjs'
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url))
 // .local/ is machine-local scratch under the primary checkout; every linked
@@ -55,6 +55,7 @@ const UPSTREAM_EDITS = [
   STUDIO_PACKAGING_EDIT,
   STUDIO_TYPERT_EDIT,
   STUDIO_TEMPLATE_EDIT,
+  ...STUDIO_TEMPLATE_TRANSFORM_EDITS,
   {
     file: 'apps/desktop/scripts/prepare-package-set.ts',
     apply: (source) => {
