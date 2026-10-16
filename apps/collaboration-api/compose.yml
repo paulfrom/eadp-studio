@@ -1,0 +1,43 @@
+name: eadp-collaboration
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: eadp_studio
+      POSTGRES_USER: eadp
+      POSTGRES_PASSWORD: ${EADP_DB_PASSWORD:-eadp-dev-password}
+    volumes:
+      - eadp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U eadp -d eadp_studio']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/collaboration-api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://eadp:${EADP_DB_PASSWORD:-eadp-dev-password}@db:5432/eadp_studio
+      PG_SSL: disable
+      GITLAB_URL: ${GITLAB_URL:?Set GITLAB_URL in apps/collaboration-api/.env or the environment}
+      GITLAB_ALLOW_HTTP: ${GITLAB_ALLOW_HTTP:-}
+      SEI_GITLAB_TOKEN: ${SEI_GITLAB_TOKEN:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-},db
+      HOST: 0.0.0.0
+      PORT: 3001
+      DESKTOP_UPDATE_MIN_VERSION: ${DESKTOP_UPDATE_MIN_VERSION:-}
+      DESKTOP_UPDATE_BLOCK_TITLE: ${DESKTOP_UPDATE_BLOCK_TITLE:-}
+      DESKTOP_UPDATE_BLOCK_DETAIL: ${DESKTOP_UPDATE_BLOCK_DETAIL:-}
+      DESKTOP_UPDATE_APP_LINK: ${DESKTOP_UPDATE_APP_LINK:-}
+    ports:
+      - '${EADP_API_PORT:-6972}:3001'
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  eadp-pgdata:
