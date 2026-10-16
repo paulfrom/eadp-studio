@@ -22,7 +22,7 @@ export function createApp(config: Config, database: Database = createDatabase(co
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: { code: 'ROUTE_NOT_FOUND', message: 'API route was not found' } }));
   const gitlab = new GitLab(config), auth = new SessionAuth(database, gitlab, config);
   app.addHook('onReady', async () => { await auth.ensureTestUser(); });
-  registerRoutes(app, new CollaborationService(database, gitlab, new PublicationAuthorization(config), auth));
+  registerRoutes(app, new CollaborationService(database, gitlab, new PublicationAuthorization(config), auth), config);
   app.addHook('onClose', async () => { await database.end(); });
   return app;
 }

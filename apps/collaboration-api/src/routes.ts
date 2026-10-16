@@ -2,16 +2,19 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { TSchema, Static } from '@eadp/contracts';
 import * as contract from '@eadp/contracts';
 import type { Actor } from './auth/session.js';
+import type { Config } from './config.js';
+import { decideDesktopUpdate } from './desktop-update.js';
 import type { CollaborationService } from './service.js';
 
 declare module 'fastify' { interface FastifyRequest { actor: Actor } }
-export function registerRoutes(app: FastifyInstance, service: CollaborationService) {
+export function registerRoutes(app: FastifyInstance, service: CollaborationService, config: Config) {
   app.decorateRequest('actor');
   app.addHook('preHandler', async request => {
-    if (request.routeOptions.url === '/health' || request.routeOptions.url === '/v1/auth/login' || request.routeOptions.url === '/v1/projects/:projectId/publication-current') return;
+    if (request.routeOptions.url === '/health' || request.routeOptions.url === '/v1/auth/login' || request.routeOptions.url === '/v1/projects/:projectId/publication-current' || request.routeOptions.url === '/api/v0/check_client_update') return;
     request.actor = await service.auth.authenticate(request.headers.authorization);
   });
   app.get('/health', async () => { await service.database.query('SELECT 1'); return { status: 'ok' }; });
+  app.get('/api/v0/check_client_update', request => decideDesktopUpdate(config, request.headers));
   app.post<{ Body: contract.LoginRequest }>('/v1/auth/login', { schema: { body: contract.LoginSchema } }, request => service.auth.login(request.body));
   app.post('/v1/auth/logout', request => service.auth.logout(request.actor));
   app.get('/v1/me', request => service.auth.identity(request.actor));

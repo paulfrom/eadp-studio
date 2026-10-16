@@ -17,13 +17,26 @@ GitLab 当前实例按计划使用 `http://rddgit.changhong.com`，后端保留 
 
 Host 只配置 `collaborationUrl`，安全存储 `collaboration-session` 保存后端会话 token/expiresAt；桌面不配置 GitLab OAuth 应用、PKCE/回调或 GitHub Device Flow。用户本机 Git 凭据独立用于 canonical HTTP(S) remote 的 init/push/clone，经可信 system/global credential helper 取用；协同 token 和管理 token 都不注入 Git 授权头、remote 或 askpass。
 
+本工作站的测试服务使用本机 pg17、`0.0.0.0:6972` 及显式 GitLab 代理，实际服务管理、客户端连接配置和验收范围见 [本机部署交接](../../docs/development/handoffs/local-collaboration-deployment.md)。需要代理时在后端 `.env` 设置 `HTTP_PROXY`、`HTTPS_PROXY` 和绕过本地服务的 `NO_PROXY`，并用支持原生环境代理的 Node 启动；当前验证版本为 Node 22.22.3：
+
+```sh
+# 在 apps/collaboration-api 中运行；此命令启用 fetch 的环境代理。
+node --use-env-proxy --env-file=.env --import=tsx src/bootstrap.ts
+```
+
+普通 `pnpm start` 不会添加该 Node 代理选项；curl 的 `-x` 也不会改变服务进程的网络配置。
+
 ## 登录、账号绑定与权限
 
 默认预置单个测试管理员：显示名 `测试管理员`、邮箱 `songlin.liu@changhong.com`、用户名 `studioAdmin`、密码 `admin@123`、协同 ID `1`。账号资料邮箱与 GitLab API 返回的可选 `gitlabEmail` 分开保存/返回；密码以 scrypt 哈希保存；首次成功登录时，后端对既有 GitLab 账号做唯一精确查询，将确认的数字用户 ID 持久绑定，之后不自动重绑，不创建 GitLab 账号。账号不存在、匹配歧义、状态无效或无法完成绑定时拒绝；默认账号只证明单账号入口，不代表多人实名或双作者分权验收。
 
+首次解析先读取 GitLab `/user` 的已认证 token 身份，仅在定位值与其 username/email/public_email 精确相等且账号有效时接受；其他账号仍通过用户目录唯一精确匹配。这样能够验证 token 所属账号的私有邮箱，无需将邮箱公开；不根据邮箱前缀猜测用户名，不因接口失败信任客户端自报身份。采用 [GitLab 当前用户接口](https://docs.gitlab.com/api/users/#retrieve-the-current-user) 的正式身份信息。
+
 `POST /v1/auth/login` 接收 `{username,password}`，返回 `LoginResponse`：`{user,gitlabOrigin,token,expiresAt}`。其中 `user` 为 `StudioUser`，含 `id`、`username`、`name`、账号资料 `email`、`admin`、`gitlabUserId`、`gitlabUsername` 和可选 `gitlabEmail`；协同 ID 与 GitLab 用户 ID 互不替代。opaque Bearer 会话默认 8 小时，数据库只保存会话哈希；`GET /v1/me` 返回 `{user,gitlabOrigin}`，`POST /v1/auth/logout` 无请求正文并撤销当前会话。
 
 后端目录、单项目及固定内容读取均按绑定用户的有效 GitLab 成员权限校验，包含继承、active 状态和到期：读取至少 Reporter（20），编辑至少 Developer（30）。公开仓库可读或管理 token 能读取不等于工作台有权限。管理员 `admin:true` 只授予明确的占用释放/集成纠正能力，不豁免仓库成员权限；不配置 `GITLAB_ADMIN_USER_IDS` 或 `STUDIO_ADMIN_USER_IDS`。发布权限单独使用 `STUDIO_PUBLISHER_USER_IDS` 的协同用户 ID（测试管理员需显式配置 `1`），不因 admin 标记自动授予。
+
+可建仓群组目录从完整分页列表取得策略，以最多 8 个并发请求核验绑定用户的有效成员权限，保持返回顺序。仅群组成员读取的 403/404 表示本次无法证明该组资格并排除；认证失败、限流、未知策略及其他上游错误仍阻断。实际创建重新读取目标成员和群组策略，不缓存或信任之前目录结果。
 
 ## 固定材料
 
@@ -105,8 +118,23 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 
 ## 验证边界
 
-此前直接 OAuth 版本的 TypeScript、无外部依赖请求/内容与短发布 token 检查，以及本机 PostgreSQL 17.10 的四项事务检查，只按原记录范围计入；旧事实未改写为新方案已通过。当前协同登录/绑定成员、管理 API 建仓和 pending/ready 初始化须补齐对应证据，见 [身份与建仓交接](../../docs/development/handoffs/studio-auth-projects.md)。真实企业 GitLab API、用户本机首次 push、双作者/双客户端与 Windows 宿主验收仍须目标环境执行，默认单测试账号不能代替；不据代码或合成检查宣布 G0 通过。
+此前直接 OAuth 版本的 TypeScript、无外部依赖请求/内容与短发布 token 检查，以及本机 PostgreSQL 17.10 的四项事务检查，只按原记录范围计入；旧事实未改写为新方案已通过。当前协同登录、真实账号绑定和群组目录的本机部署验证见 [本机部署交接](../../docs/development/handoffs/local-collaboration-deployment.md)，隔离数据库的完整登录/建仓/初始化检查见 [身份与建仓交接](../../docs/development/handoffs/studio-auth-projects.md)。真实企业实例建仓/分配、用户本机首次 push、真实 pending/ready 初始化、双作者/双客户端与 Windows 宿主验收仍须目标环境执行，默认单测试账号不能代替；不据代码或合成检查宣布 G0 通过。
 
 可选的 `pnpm --filter @eadp/collaboration-api check:transactions` 在已初始化的 G0 数据库中只创建一个合成项目，检查并发唯一占用、幂等重放、管理员释放与旧代次拒绝，最后删除其测试数据；不自动执行大套测试。
 
 账号查询、群组建仓和成员分配采用 [GitLab Users API](https://docs.gitlab.com/api/users/)、[Groups API](https://docs.gitlab.com/api/groups/) 与 [Members API](https://docs.gitlab.com/api/members/)；当前官方文档不证明所选企业实例版本和实际能力已验收。固定内容与业务实现采用 [GitLab raw file API](https://docs.gitlab.com/api/repository_files/)、[项目权限 API](https://docs.gitlab.com/api/projects/)、[Fastify JSON schema 校验](https://fastify.dev/docs/latest/Reference/Validation-and-Serialization/) 与 [PostgreSQL 显式锁](https://www.postgresql.org/docs/current/explicit-locking.html)。每个动作在短事务内按稳定项目 ID 排序加行锁，数据库部分唯一索引再保证同实体唯一有效占用；没有 TTL、续期或断线释放。
+
+## 桌面强制更新检查
+
+`GET /api/v0/check_client_update?scenario=<launch|periodic|manual|...>` 服务 DSH 桌面强制更新策略客户端。无需会话；客户端版本取自 `x-client-version` header。未配置 `DESKTOP_UPDATE_MIN_VERSION` 时永远返回放行 `{"code":0,"data":{"biz_code":0,"biz_data":null}}`；配置后低于该 semver 门槛、或版本头缺失/不可解析的客户端返回强制 `{"code":40005,"data":{"show_content":{...}}}`（fail-closed）。可选文案与 `DESKTOP_UPDATE_APP_LINK`（必须 HTTPS，且其 origin 需在该桌面构建的 `allowedPageOrigins` 内，否则客户端丢弃链接）。环境变量见 `.env.example`。
+
+## Docker 运行与一键启动
+
+多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）；`compose.yml`（postgres:17 + api，默认端口 `6972:3001`）仅用于本机一键拉起，企业形态仍是独立 PostgreSQL + 本镜像。
+
+```sh
+./start-backend.sh            # 需要 docker 与 compose 插件；读取 apps/collaboration-api/.env
+EADP_API_PORT=6973 ./start-backend.sh   # 端口被占时覆盖
+```
+
+手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，运行时显式传 `-e DATABASE_URL=... -e PG_SSL=disable -e GITLAB_URL=...` 等配置；镜像默认 `HOST=0.0.0.0`、容器内默认监听 3001，可用 `-e HOST=...` 覆盖。

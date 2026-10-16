@@ -38,7 +38,8 @@ export class GitLab {
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 404) throw new DomainError('GITLAB_NOT_FOUND', 'GitLab did not resolve the requested resource', 404);
-      if (response.status === 401 || response.status === 403) throw new DomainError('GITLAB_MANAGEMENT_DENIED', 'GitLab did not authorize the backend management operation', 503);
+      if (response.status === 401) throw new DomainError('GITLAB_MANAGEMENT_DENIED', 'GitLab did not authenticate the backend management credential', 503);
+      if (response.status === 403) throw new DomainError('GITLAB_RESOURCE_DENIED', 'GitLab did not authorize the requested resource operation', 503);
       if (response.status === 429) throw new DomainError('GITLAB_RATE_LIMITED', 'GitLab temporarily limited requests', 503);
       if (response.status === 400 || response.status === 409 || response.status === 422) throw new DomainError('GITLAB_REQUEST_REJECTED', 'GitLab rejected the requested operation; verify its recorded result before retrying', 409);
       throw new DomainError('GITLAB_UNAVAILABLE', 'GitLab could not complete the operation; its result may be unknown', 502);
@@ -79,15 +80,18 @@ export class GitLab {
     valid(user.id === id); return user;
   }
   async resolveUser(lookup: string): Promise<GitLabUser> {
+    const exactMatch = (raw: unknown) => record(raw) && (raw.username === lookup || raw.email === lookup || raw.public_email === lookup);
+    const identity = await this.json<unknown>('/user'), authenticatedUser = this.checkedUser(identity);
+    if (exactMatch(identity)) return authenticatedUser;
     const candidates = await this.list(`/users?${lookup.includes('@') ? 'search' : 'username'}=${encodeURIComponent(lookup)}`);
-    const matches = candidates.filter(raw => record(raw) && (raw.username === lookup || raw.email === lookup || raw.public_email === lookup));
+    const matches = candidates.filter(exactMatch);
     requireCondition(matches.length === 1, 'GITLAB_BINDING_UNRESOLVED', 'The configured existing GitLab user must resolve to exactly one exact match', 503);
     return this.checkedUser(matches[0]);
   }
   private async member(scope: 'projects' | 'groups', id: number, userId: number, inherited = true): Promise<Member | null> {
     let raw: unknown;
     try { raw = await this.json(`/${scope}/${id}/members/${inherited ? 'all/' : ''}${userId}`); }
-    catch (error) { if (error instanceof DomainError && error.code === 'GITLAB_NOT_FOUND') return null; throw error; }
+    catch (error) { if (error instanceof DomainError && (error.code === 'GITLAB_NOT_FOUND' || (scope === 'groups' && error.code === 'GITLAB_RESOURCE_DENIED'))) return null; throw error; }
     valid(record(raw) && raw.id === userId && typeof raw.state === 'string' && [0, 5, 10, 15, 20, 30, 40, 50].includes(raw.access_level as number) && (raw.expires_at === null || typeof raw.expires_at === 'string') && (raw.membership_state === undefined || typeof raw.membership_state === 'string'));
     return raw as unknown as Member;
   }
@@ -114,26 +118,39 @@ export class GitLab {
     if (edit) requireCondition(project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
     return project;
   }
-  private async group(actor: Actor, id: number): Promise<NamespaceView | null> {
-    const membership = await this.member('groups', id, actor.gitlabUserId);
-    if (!this.active(membership, 30)) return null;
-    const raw = await this.json<unknown>(`/groups/${id}`);
+  private groupPolicy(raw: unknown, id: number, accessLevel: number): NamespaceView | null {
     valid(record(raw) && raw.id === id && typeof raw.name === 'string' && typeof raw.full_path === 'string');
     repositoryPath(raw.full_path);
     const group = raw as unknown as Group;
     requireCondition(['developer', 'maintainer', 'noone'].includes(group.project_creation_level), 'NAMESPACE_POLICY_UNKNOWN', 'GitLab group project creation policy could not be established', 503);
     if (group.marked_for_deletion_on || group.marked_for_deletion_at || group.project_creation_level === 'noone') return null;
-    if (!this.active(membership, group.project_creation_level === 'developer' ? 30 : 40)) return null;
+    if (accessLevel < (group.project_creation_level === 'developer' ? 30 : 40)) return null;
     return { id, name: group.name, fullPath: group.full_path };
+  }
+  private async group(actor: Actor, id: number): Promise<NamespaceView | null> {
+    const membership = await this.member('groups', id, actor.gitlabUserId);
+    if (!this.active(membership, 30)) return null;
+    const raw = await this.json<unknown>(`/groups/${id}`);
+    if (!this.active(membership, 30)) return null;
+    return this.groupPolicy(raw, id, membership.access_level);
   }
   async namespaces(actor: Actor): Promise<NamespaceView[]> {
     await this.user(actor.gitlabUserId);
-    const groups = await this.list('/groups?all_available=true'), seen = new Set<number>(), visible: NamespaceView[] = [];
-    for (const raw of groups) {
+    const groups = await this.list('/groups?all_available=true'), seen = new Set<number>();
+    const ids = groups.map(raw => {
       valid(record(raw) && numericId(raw.id) && !seen.has(raw.id)); seen.add(raw.id);
-      const namespace = await this.group(actor, raw.id); if (namespace) visible.push(namespace);
-    }
-    return visible;
+      return raw.id;
+    });
+    const namespaces: Array<NamespaceView | null> = Array.from({ length: ids.length }, () => null);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
+      while (next < ids.length) {
+        const index = next++;
+        const membership = await this.member('groups', ids[index]!, actor.gitlabUserId);
+        if (this.active(membership, 30)) namespaces[index] = this.groupPolicy(groups[index], ids[index]!, membership.access_level);
+      }
+    }));
+    return namespaces.filter((namespace): namespace is NamespaceView => namespace !== null);
   }
   async namespace(actor: Actor, id: number): Promise<NamespaceView> {
     await this.user(actor.gitlabUserId);

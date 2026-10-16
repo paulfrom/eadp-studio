@@ -8,6 +8,8 @@
 
 当前只预置一个测试管理员：显示名 `测试管理员`、用户名 `studioAdmin`、密码 `admin@123`，协同用户 ID 为 `1`，绑定定位值为既有 GitLab 账号 `songlin.liu@changhong.com`。后端首次成功登录时查询并进行唯一精确匹配，确认存在且有效后持久绑定 GitLab 数字用户 ID；之后不因登录或邮件变化自动改绑，不新建 GitLab 账号。该默认账号是本次测试入口，只证明单账号行为；多人实名身份、账号分配与真实管理员分权仍需独立验收，不能借它宣称完成。
 
+账号解析先读取已认证 `/user`，定位值与该账号的 username/email/public_email 精确相等时使用其已核验数字 ID；其他账号使用原有用户目录唯一精确查询。普通 token 查询用户目录不能证明私有邮箱不存在，而 `/user` 可提供 token 本人邮箱的正式证据；不推断邮箱与相似用户名的关系，不在请求失败时绕过身份校验。本机真实实例验证和部署结果见 [本机部署交接](../development/handoffs/local-collaboration-deployment.md)。
+
 `SEI_GITLAB_TOKEN` 只由后端管理端配置，用于查询和受控 GitLab 管理 API（建仓、给已存在绑定用户分配成员、受门禁约束的固定字节读取等）。管理端可提供该凭据；是否在实际运行后端中配置并可用须运行验证，当前执行进程未继承它不等于凭据不存在。桌面不读取、不接收该 token；用户 clone/push 使用自己机器上的 Git 凭据，凭据与协同会话完全独立。
 
 可见项目与可建仓群组均依据绑定 GitLab 用户的实际权限过滤。项目访问须核验有效成员权限，群组选择须核验有效直接/继承成员、成员状态/到期及群组 `project_creation_level`；`developer` 要求至少 Developer，`maintainer` 要求至少 Maintainer，未知策略/状态阻断。管理 token 可看见或可创建不代表协同用户可看见或可创建；登录管理员也不豁免仓库权限。发布权限仍由 `STUDIO_PUBLISHER_USER_IDS` 的协同用户 ID 独立配置，不由管理员或 GitLab 项目角色推导。

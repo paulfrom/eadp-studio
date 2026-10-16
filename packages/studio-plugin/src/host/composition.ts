@@ -32,7 +32,7 @@ export interface Config {
 }
 /** Product deployment config belongs in the shipped Host bundle; users do not deploy a backend. */
 export async function composeStudio(ctx: Context, config: Config): Promise<StudioApplication> {
-  const collaborationUrl = config.collaborationUrl ?? 'http://127.0.0.1:3001'
+  const collaborationUrl = config.collaborationUrl ?? 'http://100.119.183.44:6972'
   const stateDirectory = config.stateDirectory ?? path.join(process.env.APPDATA ?? path.join(homedir(), '.local/share'), 'eadp-studio', 'studio')
   const workspaceRoot = config.workspaceRoot ?? path.join(homedir(), 'EADP 项目')
   const runtimeRoot = config.runtimeRoot ?? path.join(path.dirname(process.argv[4] ?? ''), 'studio-tools')
