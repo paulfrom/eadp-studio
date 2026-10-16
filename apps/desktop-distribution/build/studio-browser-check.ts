@@ -1,5 +1,5 @@
 /** Electron-owned static preview verification. No credentials or Host APIs enter this renderer. */
-import { BrowserWindow, session } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { randomUUID, createHash } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 
@@ -13,6 +13,7 @@ export async function handleStudioPreviewCheck(child: ChildProcess, request: Pre
   try {
     const url = new URL(request.url)
     if (!/^[a-f0-9-]{36}$/.test(request.requestId) || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.pathname !== '/' || url.username || url.password || url.search || url.hash) throw new Error('preview url')
+    const { BrowserWindow, session } = await import('electron')
     const isolated = session.fromPartition(`studio-check-${randomUUID()}`)
     let outsideRequests = 0
     isolated.webRequest.onBeforeRequest((details, callback) => {

@@ -1,5 +1,4 @@
 /** Copied into the fixed Electron Desktop build; never loaded in the browser or Agent. */
-import { app, safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -14,6 +13,7 @@ export async function handleStudioSecretRequest(child: ChildProcess, request: Se
   const send = (value: object) => { try { if (child.connected) child.send(value, () => {}) } catch { /* The requesting Host has already exited. */ } }
   try {
     if (!/^[a-f0-9-]{36}$/.test(request.requestId) || !/^(?:collaboration-session|publication-[a-z0-9-]+)$/.test(request.key) || !['read', 'write', 'delete'].includes(request.action)) throw new Error('request')
+    const { app, safeStorage } = await import('electron')
     if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) throw new Error('OS secure storage unavailable')
     const operation = (pending.get(request.key) ?? Promise.resolve()).catch(() => {}).then(async () => {
       const root = join(app.getPath('userData'), 'studio-vault')
