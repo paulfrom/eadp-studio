@@ -375,7 +375,7 @@ try {
 finally { await database.end(); }
 ```
 
-注意：`schemaApplied`/`applySchema` 来自 Step 1 的 `schema.ts`；`ensure-schema.ts` 与 `initialize.ts` 共用 `db/schema.sql`，schema.sql 仍是唯一建库定义。
+注意：`schemaApplied`/`applySchema` 来自 Step 1 的 `schema.ts`；`ensure-schema.ts` 与 `initialize.ts` 共用 `db/schema.sql`，schema.sql 仍是唯一建库定义。实现注记：`rowCount` 在 pg 类型中为 `number | null`，需写 `(…rowCount ?? 0) > 0` 才能通过 typecheck；fresh `pnpm install`（pnpm 11 `strictDepBuilds`）需要 `pnpm-workspace.yaml` 增加 `allowBuilds: { esbuild: true }` 审批 esbuild 构建脚本（tsx 的传递依赖）。
 
 - [ ] **Step 3: 写 Dockerfile**
 
@@ -465,15 +465,15 @@ Expected: 末尾输出 `naming to docker.io/library/eadp-collaboration-api:local
 docker run --rm -d --name eadp-schema-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=eadp_studio -p 55433:5432 postgres:17
 # 等待数据库就绪
 for i in $(seq 1 30); do docker exec eadp-schema-test pg_isready -U postgres -d eadp_studio && break; sleep 1; done
-# 第一次：应建表
-docker run --rm --network host -e DATABASE_URL=postgresql://postgres:test@127.0.0.1:55433/eadp_studio -e PG_SSL=disable -e GITLAB_URL=http://gitlab.test -e GITLAB_ALLOW_HTTP=true eadp-collaboration-api:local node --import=tsx src/persistence/ensure-schema.ts
+# 第一次：应建表（镜像 ENTRYPOINT 会忽略附加命令，故用 --entrypoint node 隔离运行 ensure-schema）
+docker run --rm --network host --entrypoint node -e DATABASE_URL=postgresql://postgres:test@127.0.0.1:55433/eadp_studio -e PG_SSL=disable -e GITLAB_URL=http://gitlab.test -e GITLAB_ALLOW_HTTP=true eadp-collaboration-api:local --import=tsx src/persistence/ensure-schema.ts
 # 第二次：应跳过
-docker run --rm --network host -e DATABASE_URL=postgresql://postgres:test@127.0.0.1:55433/eadp_studio -e PG_SSL=disable -e GITLAB_URL=http://gitlab.test -e GITLAB_ALLOW_HTTP=true eadp-collaboration-api:local node --import=tsx src/persistence/ensure-schema.ts
+docker run --rm --network host --entrypoint node -e DATABASE_URL=postgresql://postgres:test@127.0.0.1:55433/eadp_studio -e PG_SSL=disable -e GITLAB_URL=http://gitlab.test -e GITLAB_ALLOW_HTTP=true eadp-collaboration-api:local --import=tsx src/persistence/ensure-schema.ts
 # 清理
 docker stop eadp-schema-test
 ```
 
-Expected: 第一次输出 `Created the current collaboration schema.`；第二次输出 `Collaboration schema already present; skipping initialization.`；退出码均为 0。另验证 14 张业务表已建：`docker exec eadp-schema-test psql -U postgres -d eadp_studio -c '\dt' | grep -c '^ studio_'` 输出 14。
+Expected: 第一次输出 `Created the current collaboration schema.`；第二次输出 `Collaboration schema already present; skipping initialization.`；退出码均为 0。另验证 14 张业务表已建：`docker exec eadp-schema-test psql -U postgres -d eadp_studio -c '\dt' | grep -c '| studio_'` 输出 14。
 
 ---
 
