@@ -26,3 +26,13 @@ node --test tests/scripts/desktop-brand-edits.test.mjs tests/scripts/build-deskt
 ```
 
 自动回归覆盖固定源码 anchors、上游漂移和重复拒绝、二次装配、真实 locale 字典、早期产品数据隔离、入口参数/主机约束、编排顺序/失败传播、中文空格和 shell 字符路径、已有配置保留，以及安装包复制和 SHA256 记录。模拟编排验证不能替代真实原生编译与安装。当前任务的真实 Windows 构建和最终产物验收由主 Agent 单独执行；签名、升级、卸载、干净机安装与正式发行门槛继续独立记录，不将源码入口视为 G0 通过。
+
+alpha.4 专项复验最终纯测试命令（Windows 原生、沙箱外；exit code `0`，`11/11` 通过，未跳过）：
+
+```powershell
+node --experimental-transform-types --test tests/scripts/studio-typert-edits.test.mjs tests/scripts/studio-template-archive.test.mjs tests/scripts/fetch-dsh.test.mjs tests/scripts/studio-packaging-edits.test.mjs
+```
+
+该结果包含真实 GNU tar 和系统 bsdtar 的中文/空格/驱动器路径 manifest 读取、GNU tar 获取源码时 UTF-8 成员及真实符号链接、fixed alpha.4 anchors/命令参数/Windows并发4及macOS已有值保留，以及原 Typert direct/batch 模型一致性和模板实际 pnpm pack/hardlink 验证。GNU tar 测试从 Git 所在目录发现 `usr/bin/tar.exe`，并提供它的工具 PATH（包括 gzip），不改变产品配置。参数属性转换仅用于在原生 Node 测试中导入 alpha.4 TypeScript 源码，产品构建继续使用上游 tsx 工具链。
+
+其余 focused（品牌、入口、pnpm调用、payload、IPC导入、启动和模板cleanup）首轮覆盖 27 项中的 25 项通过；另外两项分别是沙箱拒绝 hardlink 和 Node strip-only 不支持新参数属性，已在上述纯命令中复验通过。未宣称全测试套件通过：Windows 上 `setup-linux.test.mjs` 的 `/bin/bash` 场景不适用；此前全量脚本测试的对应 9 项因 Windows 缺 `/bin/bash` 失败，Linux 原生验证应在 Linux 工作站执行。主 Agent 已将适配固定到 `0c0f746`，后续完整入口运行中不改变 HEAD 或产品构建源码；新增专项测试和本段记录暂留工作区，等待原生构建结束后再提交。

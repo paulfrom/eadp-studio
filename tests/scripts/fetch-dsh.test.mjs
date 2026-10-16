@@ -59,7 +59,7 @@ async function fixture(t, directoryTarget = '../.agents/skills') {
       sha256: hash(archive), bytes: archive.length, rootDirectory: root, entryCount: members.length, symlinkCount: 2 },
     package: { name: '@test/dsh', version: '1.0.0' }, verifiedFiles: { 'package.json': hash(pkg) },
   } }));
-  const run = () => spawnSync(process.execPath, [path.join(repo, 'scripts/fetch-dsh.mjs')], { encoding: 'utf8', timeout: 20_000 });
+  const run = (environment = process.env) => spawnSync(process.execPath, [path.join(repo, 'scripts/fetch-dsh.mjs')], { env: environment, encoding: 'utf8', timeout: 20_000 });
   return { repo, run, source: path.join(repo, '.local/upstream/dsh') };
 }
 
@@ -91,4 +91,23 @@ test('missing symlink target cannot publish incomplete source', async (t) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /ENOENT/);
   await assert.rejects(lstat(source), { code: 'ENOENT' });
+});
+
+const gitPaths = process.platform === 'win32'
+  ? spawnSync('where.exe', ['git'], { encoding: 'utf8' }).stdout?.trim().split(/\r?\n/) ?? [] : [];
+let gnuTarDirectory;
+for (const gitPath of gitPaths) {
+  const candidate = path.resolve(path.dirname(gitPath), '../usr/bin');
+  try { await lstat(path.join(candidate, 'tar.exe')); gnuTarDirectory = candidate; break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+
+test('GNU tar on Windows preserves source UTF-8 members, local drive paths, and real links', { skip: !gnuTarDirectory }, async (t) => {
+  const { run, source } = await fixture(t);
+  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'path'));
+  environment.Path = `${gnuTarDirectory}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`;
+  const result = run(environment);
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.equal(await readFile(path.join(source, '说明.txt'), 'utf8'), '中文 source filename');
+  assert.ok((await lstat(path.join(source, '.claude/skills'))).isSymbolicLink());
+  assert.equal(await readFile(path.join(source, '.claude/skills/SKILL.md'), 'utf8'), 'skill');
 });
