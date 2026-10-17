@@ -5,6 +5,9 @@ import { GitLab } from './gitlab.js';
 import type { Actor } from './session.js';
 import { loadConfig } from '../config.js';
 import { ReadThrough } from '../persistence/cache.js';
+import type { Database } from '../persistence/database.js';
+import { requestHash } from '../persistence/repository.js';
+import { Projects } from '../projects.js';
 
 const config = loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: 'synthetic-management-secret' });
 const gitlab = new GitLab(config);
@@ -303,13 +306,56 @@ test('the local cache serves repeated GitLab reads while creation authority and 
   assert.equal(membershipReads(), 2);
   assert.equal(projectReads(), 2);
 
-  const namespaceMembershipReads = () => calls.filter(call => call.path === '/groups/1/members/all/42').length;
-  const beforeNamespace = namespaceMembershipReads();
+  const beforeNamespace = calls.length;
   assert.deepEqual(await cached.namespace(actor, 1), expected[0]);
-  assert.equal(namespaceMembershipReads(), beforeNamespace + 1, 'project creation must revalidate the group live');
+  assert.deepEqual(calls.slice(beforeNamespace).map(call => [call.method, call.path]), [
+    ['GET', '/users/42'], ['GET', '/groups/1/members/all/42'], ['GET', '/groups/1'],
+  ], 'project creation must revalidate the user, group membership and policy live');
 
   await cached.grantCreator(actor, 7);
   const beforeGrantRead = membershipReads();
   await cached.authorize(actor, 7);
   assert.equal(membershipReads(), beforeGrantRead + 1, 'a completed grant must invalidate the cached membership');
+});
+
+test('project creation rejects a newly blocked user before repository POST despite a warm active user cache', async () => {
+  let userState = 'active';
+  const calls = fixture((path, method) => {
+    if (path === '/users/42') return json({ ...user, state: userState });
+    if (path === '/groups/1/members/all/42') return json(member(40));
+    if (path === '/groups/1') return json({ ...namespaceGroup(1), full_path: 'team' });
+    if (path === '/projects/team%2Fnew-project') return json({}, 404);
+    if (path === '/projects' && method === 'POST') return json({}, 503);
+    throw new Error(`Unexpected request ${method} ${path}`);
+  });
+  const values = new Map<string, string>();
+  const cached = new GitLab(config, new ReadThrough({
+    get: async key => values.get(key) ?? null,
+    set: async (key, value) => { values.set(key, value); },
+    del: async key => { values.delete(key); },
+  }));
+  await cached.user(actor.gitlabUserId);
+  assert.deepEqual(calls.map(call => [call.method, call.path]), [['GET', '/users/42']]);
+  calls.length = 0;
+  userState = 'blocked';
+
+  const input = { name: 'New project', path: 'new-project', namespaceId: 1, idempotencyKey: 'blocked-user-regression' };
+  const creation = { actor_id: String(actor.id), key: input.idempotencyKey, request_hash: requestHash(input), project_id: 'synthetic-project', namespace_id: '1', namespace_path: 'team', path: input.path, name: input.name, marker: 'synthetic-marker', state: 'reserved', gitlab_project_id: null };
+  const queries: string[] = [];
+  let released = false;
+  const query = async (sql: string) => {
+    queries.push(sql);
+    if (sql.startsWith('SELECT * FROM studio_project_creations')) return { rows: [creation] };
+    if (sql.startsWith('SELECT pg_try_advisory_lock')) return { rows: [{ acquired: true }] };
+    if (sql.startsWith('SELECT pg_advisory_unlock') || sql.startsWith('UPDATE studio_project_creations')) return { rows: [] };
+    throw new Error(`Unexpected database query: ${sql}`);
+  };
+  const database = { query, connect: async () => ({ query, release: () => { released = true; } }) } as unknown as Database;
+  let failure: unknown;
+  try { await new Projects(database, cached).create(actor, input); } catch (error) { failure = error; }
+  assert.equal(calls.filter(call => call.method === 'POST' && call.path === '/projects').length, 0, 'blocked users must not trigger a management repository POST');
+  assert.ok(code('GITLAB_USER_INACTIVE')(failure));
+  assert.deepEqual(calls.map(call => [call.method, call.path]), [['GET', '/projects/team%2Fnew-project'], ['GET', '/users/42']]);
+  assert.equal(queries.some(sql => sql.startsWith('UPDATE')), false, 'failed authorization must not advance creation state');
+  assert.equal(released, true);
 });

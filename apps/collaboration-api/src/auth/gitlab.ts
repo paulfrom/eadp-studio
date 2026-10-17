@@ -171,7 +171,7 @@ export class GitLab {
     });
   }
   async namespace(actor: Actor, id: number): Promise<NamespaceView> {
-    await this.user(actor.gitlabUserId);
+    await this.liveUser(actor.gitlabUserId);
     const value = await this.group(actor, id);
     requireCondition(value, 'NAMESPACE_CREATE_DENIED', 'The bound GitLab user may not create projects in this group', 403); return value;
   }
