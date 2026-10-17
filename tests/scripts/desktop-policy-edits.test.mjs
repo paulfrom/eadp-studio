@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { stripTypeScriptTypes } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -14,6 +14,9 @@ import { DESKTOP_POLICY_EDITS } from '../../apps/desktop-distribution/build/desk
 const root = path.resolve(import.meta.dirname, '../..')
 const upstream = path.join(root, '.local/upstream/dsh')
 const desktop = path.join(root, '.local/build/dsh/apps/desktop')
+await access(path.join(desktop, 'node_modules/@deepseek-ai/dsh-deepseek-account/lib/index.js')).catch(() => {
+  throw new Error('The DSH build tree is not built. Run `node apps/desktop-distribution/build/prepare-studio-plugin.mjs` (installs and builds the workspace) before this regression.')
+})
 const directory = await mkdtemp(path.join(desktop, '.studio-policy-regression-'))
 const original = new Map()
 const generated = new Map()

@@ -21,10 +21,20 @@ test('Typert patch only changes the workspace analyzer invocation, is idempotent
   assert.throws(() => STUDIO_TYPERT_EDIT.apply(`${edited}\n${edited}`), /anchor/)
 })
 
-test('fixed upstream bounded analysis preserves the complete small Host/client fixture model', async () => {
-  const { WorkspaceAnalyzer } = await import(pathToFileURL(path.join(prepared, 'packages/typert/generator/src/analyzer.ts')).href)
+test('fixed upstream bounded analysis preserves the complete small Host/client fixture model', () => {
+  // The fixed fixture is TypeScript with parameter properties. Node's default
+  // strip-only loader cannot execute it, so the fixture runs in a child that
+  // enables the transform this repository's Node 22 range provides.
+  const analyzer = pathToFileURL(path.join(prepared, 'packages/typert/generator/src/analyzer.ts')).href
   const options = { root: path.join(prepared, 'packages/typert/generator/tests/fixtures/type-model'), packages: ['@fixture/host', '@fixture/client'], checkDiagnostics: false }
-  const direct = new WorkspaceAnalyzer(options).analyze()
-  assert.deepEqual(new WorkspaceAnalyzer(options).analyzeInBatches(1), direct)
-  assert.deepEqual(new WorkspaceAnalyzer(options).analyzeInBatches(2), direct)
+  const script = `
+import assert from 'node:assert/strict'
+const { WorkspaceAnalyzer } = await import(${JSON.stringify(analyzer)})
+const options = ${JSON.stringify(options)}
+const direct = new WorkspaceAnalyzer(options).analyze()
+assert.deepEqual(new WorkspaceAnalyzer(options).analyzeInBatches(1), direct)
+assert.deepEqual(new WorkspaceAnalyzer(options).analyzeInBatches(2), direct)
+`
+  const result = spawnSync(process.execPath, ['--experimental-transform-types', '--input-type=module', '--eval', script], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
 })
