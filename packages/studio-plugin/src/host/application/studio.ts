@@ -5,10 +5,11 @@ import type { Candidate, MaterialDraft, StudioCommand, StudioReply, StudioState,
 import { digest, materialPath, parseMaterial, readMaterial, saveMaterial, checkMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
 import { initialMetadata, type HostPorts } from './ports.ts'
-import { StudioStore, type PendingOperation } from './state.ts'
+import { StudioStore, type PendingOperation, type AdoptionOperation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
 
 const key = (): string => randomUUID()
+const sameSource = (left: { projectId: string; entityId: string; version: number }, right: { projectId: string; entityId: string; version: number }) => left.projectId === right.projectId && left.entityId === right.entityId && left.version === right.version
 const starter = (title: string) => `# ${title}\n\n## 业务背景\n\n请与 AI 整理实际业务背景与使用者。\n\n## 核心业务规则\n\n待补充。\n\n## 验收条件\n\n待补充。\n\n## 限制与不适用范围\n\n待澄清。\n`
 
 /** Serializes one local writer. PostgreSQL and Git CAS remain the cross-client authority. */
@@ -50,7 +51,7 @@ export class StudioApplication {
         const context = await this.entity(command.entityId)
         const task = await this.designTask(context.remote, context.entity)
         if (command.metadata.entityId !== command.entityId || command.metadata.kind !== context.entity.kind) throw new Error('材料身份不能修改')
-        if (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites)) {
+        if (!context.entity.frozenBy.length && (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites))) {
           await this.api.request('PUT', this.route(context.remote.project.id, `/entities/${context.entity.id}/relations`), { idempotencyKey: key(), token: context.entity.occupation, scenarioIds: command.metadata.scenarioIds, prerequisites: command.metadata.prerequisites })
         }
         await saveMaterial(task.worktree, command.metadata, command.body); break
@@ -84,8 +85,9 @@ export class StudioApplication {
       case 'adopt': await this.adopt(command); break
       case 'retryOperation': {
         const local = await this.store.read(); const operation = local.operations.find(op => op.id === command.operationId)
-        if (!operation) throw new Error('未找到原操作现场')
-        await this.resumeOperation(operation); break
+        if (operation) await this.resumeOperation(operation)
+        else { const adoption = local.adoptions.find(op => op.id === command.operationId); if (!adoption) throw new Error('未找到原操作现场'); await this.resumeAdoption(adoption) }
+        break
       }
       case 'generateHandoff': await this.generateHandoff(command.baselineId); break
       case 'acknowledgeHandoff': {
@@ -115,6 +117,10 @@ export class StudioApplication {
     const projects = local.projects.filter(project => allowed.has(project.id))
     const selected = projects.find(project => project.id === local.selectedProjectId)
     const remote = selected ? await this.api.request<ProjectState>('GET', this.route(selected.id)) : undefined
+    if (remote) for (const value of remote.entities) {
+      if ('title' in value && value.frozenBy.length && !(value.completedVersion === value.materialVersion && value.materialVersion > 0)
+        && remote.entities.some(batch => 'title' in batch && batch.occupation?.ownerId === account.id && batch.occupation.clientId === local.clientId && value.frozenBy.includes(batch.occupation.occupationId))) await this.designTask(remote, value)
+    }
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
     const drafts: MaterialDraft[] = []
     if (remote) for (const entity of remote.entities.filter(entity => entity.kind !== 'baseline')) {
@@ -132,7 +138,7 @@ export class StudioApplication {
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), drafts, tasks,
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
-      pending: local.operations.filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })) }
+      pending: [...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })) }
   }
   private async requireAccount() { const account = await this.ports.account(); if (!account) { this.store.useUser(); throw new CollaborationError('LOGIN_REQUIRED', '请先登录协同工作台。', 401) }; this.store.useUser(account.id); return account }
   private route(projectId: string, suffix = '') { return `/v1/projects/${encodeURIComponent(projectId)}${suffix}` }
@@ -166,6 +172,26 @@ export class StudioApplication {
   }
   private async designTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     const local = await this.store.read()
+    if (entity.frozenBy.length) {
+      const batch = remote.entities.find((value): value is EntityView => 'title' in value && value.kind === 'scenario' && !!value.occupation && entity.frozenBy.includes(value.occupation.occupationId))
+      if (!batch) throw new Error('关联场景正在修订，请从当前场景批次编辑需求')
+      await this.requireOwned(batch)
+      if (entity.completedVersion === entity.materialVersion && entity.materialVersion > 0) throw new Error('已完成需求必须保留，请派生新需求')
+      const base = await this.designTask(remote, batch)
+      let task = local.tasks.find(value => value.projectId === base.projectId && value.entityId === entity.id && value.purpose === 'material' && value.worktree === base.worktree)
+      if (!task) { task = { ...base, entityId: entity.id, sessionId: 'studio-' + key(), inputHash: entity.current?.fixed.sha256 ?? '', purpose: 'material' }; local.tasks.push(task); await this.store.save() }
+      try { await readMaterial(task.worktree, entity.kind, entity.id) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        if (entity.current) {
+          const bytes = await this.projects.readFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path)
+          if (digest(bytes) !== entity.current.fixed.sha256) throw new Error('批次需求固定材料哈希不一致')
+          const draft = parseMaterial(Buffer.from(bytes), entity.current.fixed.path)
+          await saveMaterial(task.worktree, draft.metadata, draft.body)
+        } else await saveMaterial(task.worktree, { ...initialMetadata(entity), scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites, businessEvidence: [{ label: '关联场景修订批次', reference: batch.id }] }, starter(entity.title))
+      }
+      return task
+    }
     let current = entity
     if (!current.occupation) current = await this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: entity.kind === 'scenario' && entity.materialVersion ? 'scenario-batch' : 'design' })
     const token = await this.requireOwned(current)
@@ -215,9 +241,21 @@ export class StudioApplication {
     checkMaterial(draft)
     const changed = (await this.ports.gitLocal(['status', '--porcelain=v1'], task.worktree)).trim()
     if (!changed) throw new Error('当前内容没有新变化；已有确认结果请刷新查看')
-    const candidateSha = await this.ports.git.commitFiles(task.worktree, [draft.path], `确认材料 ${entity.id}`, await this.identity())
-    await this.ports.git.verifyFile(task.worktree, candidateSha, draft.path)
-    const input: PrepareIntegrationRequest = { idempotencyKey: key(), entityId: entity.id, token, stage: entity.kind === 'scenario' && entity.materialVersion > 0 ? 'scenario-batch' : 'material', sourceSha: candidateSha, candidateSha, expectedHead: remote.project.recognizedHead!, allowedPaths: [draft.path], checks: this.materialEvidence(candidateSha, draft), confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationMethod: method, authorConfirmed: true }], ...(entity.kind === 'scenario' && entity.materialVersion > 0 ? { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: remote.entities.filter(e => 'scenarioIds' in e && e.scenarioIds.includes(entity.id)).map(e => e.id) } : {}) }
+    const frozen = entity.kind === 'scenario' && entity.materialVersion > 0
+      ? remote.entities.filter((value): value is EntityView => 'title' in value && value.frozenBy.includes(token.occupationId)) : []
+    const drafts = [{ entity, draft }]
+    for (const requirement of frozen) {
+      if (requirement.completedVersion === requirement.materialVersion && requirement.materialVersion > 0) continue
+      const related = await readMaterial(task.worktree, 'requirement', requirement.id)
+      checkMaterial(related); drafts.push({ entity: requirement, draft: related })
+    }
+    const paths = drafts.map(value => value.draft.path)
+    const candidateSha = await this.ports.git.commitFiles(task.worktree, paths, '确认材料 ' + entity.id, await this.identity())
+    for (const value of drafts) await this.ports.git.verifyFile(task.worktree, candidateSha, value.draft.path)
+    const input: PrepareIntegrationRequest = { idempotencyKey: key(), entityId: entity.id, token, stage: entity.kind === 'scenario' && entity.materialVersion > 0 ? 'scenario-batch' : 'material', sourceSha: candidateSha, candidateSha, expectedHead: remote.project.recognizedHead!, allowedPaths: paths,
+      checks: { candidateSha, passed: true, checks: drafts.flatMap(value => this.materialEvidence(candidateSha, value.draft).checks) },
+      confirmations: drafts.map(value => ({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: candidateSha, path: value.draft.path, sha256: value.draft.sha256 }, metadata: value.draft.metadata, confirmationMethod: method, authorConfirmed: true })),
+      ...(entity.kind === 'scenario' && entity.materialVersion > 0 ? { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: frozen.map(value => value.id) } : {}) }
     await this.integrate(task, draft, input)
   }
   private async confirmPrototype(entityId: string) {
@@ -232,7 +270,7 @@ export class StudioApplication {
   }
   private async integrate(task: TaskView, draft: MaterialDraft, prepare: PrepareIntegrationRequest) {
     const local = await this.store.read()
-    const operation: PendingOperation = { id: prepare.idempotencyKey, projectId: task.projectId, entityId: task.entityId, phase: 'fixed', candidateSha: prepare.candidateSha, expectedHead: prepare.expectedHead, fixedPath: draft.path, sha256: draft.sha256, prepare, token: prepare.token }
+    const operation: PendingOperation = { id: prepare.idempotencyKey, projectId: task.projectId, entityId: task.entityId, phase: 'fixed', candidateSha: prepare.candidateSha, expectedHead: prepare.expectedHead, fixedPath: draft.path, sha256: draft.sha256, prepare, token: prepare.token, adoptionIds: local.adoptions.filter(value => value.projectId === task.projectId && value.entityId === task.entityId && value.worktree === task.worktree && value.applied && draft.metadata.sources.some(source => sameSource(source, value.request.source))).map(value => value.id) }
     local.operations.push(operation); await this.store.save()
     await this.ports.git.push(task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`)
     await this.resumeOperation(operation)
@@ -259,6 +297,16 @@ export class StudioApplication {
       }
       operation.phase = 'accepted'; delete operation.message; await this.store.save()
       const remote = await this.api.request<ProjectState>('GET', this.route(project.id)); const entity = remote.entities.find(e => e.id === operation.entityId)
+      for (const adoptionId of operation.adoptionIds ?? []) {
+        const adoption = local.adoptions.find(value => value.id === adoptionId)
+        if (!adoption) throw new Error('采用恢复记录缺失，不能申报复用成功')
+        const confirmations = (operation.prepare as PrepareIntegrationRequest).confirmations
+        const index = confirmations.findIndex(value => value.entityId === adoption.entityId)
+        const confirmationId = integration.confirmationIds?.[index]
+        if (index < 0 || !confirmationId || !confirmations[index]!.metadata.sources.some(source => sameSource(source, adoption.request.source))) throw new Error('本次接受结果未包含精确采用来源')
+        adoption.success ??= { idempotencyKey: adoption.id + '-success-' + confirmationId, targetConfirmationId: confirmationId }
+        await this.store.save(); await this.resumeAdoption(adoption)
+      }
       if (entity && 'current' in entity && entity.kind === 'scenario' && entity.current && integration.confirmationIds?.includes(entity.current.confirmationId)) await this.splitScenario(remote, entity, integration.id)
       if (integration.baselineId) await this.generateHandoff(integration.baselineId).catch(async error => { operation.message = `基线已完成，交接清单生成待重试：${error instanceof Error ? error.message : '未知'}`; await this.store.save() })
       if (entity && 'current' in entity && entity.kind === 'requirement' && integration.stage === 'material') {
@@ -326,26 +374,70 @@ export class StudioApplication {
     candidate.selectedEntityId = entity.id; await this.store.save()
   }
   private async adopt(command: Extract<StudioCommand, { action: 'adopt' }>) {
-    const { remote, entity } = await this.entity(command.targetEntityId); const task = await this.designTask(remote, entity)
-    const versions = await this.api.request<FixedVersion[]>('GET', this.route(command.sourceProjectId, `/entities/${command.sourceEntityId}/versions`)); const source = versions.find(v => v.version === command.version)
+    const { remote, entity } = await this.entity(command.targetEntityId); const task = await this.designTask(remote, entity), local = await this.store.read()
+    const previous = local.adoptions.find(value => value.projectId === remote.project.id && value.entityId === entity.id && value.worktree === task.worktree && value.request.source.projectId === command.sourceProjectId && value.request.source.entityId === command.sourceEntityId && value.request.source.version === command.version)
+    if (previous) { if (previous.request.adjustmentSummary !== command.reason) throw new Error('原采用调整说明已固定，请先恢复原操作'); await this.resumeAdoption(previous); return }
+    const versions = await this.api.request<FixedVersion[]>('GET', this.route(command.sourceProjectId, '/entities/' + command.sourceEntityId + '/versions')); const source = versions.find(v => v.version === command.version)
     if (!source?.reuse.enabled) throw new Error('该来源当前不能采用')
-    const sourceState = await this.api.request<ProjectState>('GET', this.route(command.sourceProjectId))
-    const bytes = await this.projects.readFixed(sourceState.project.id, source.fixed.commitSha, source.fixed.path)
-    if (digest(bytes) !== source.fixed.sha256) throw new Error('来源固定材料校验失败')
-    await this.api.request('POST', this.route(remote.project.id, '/adoptions'), { idempotencyKey: key(), source: { projectId: command.sourceProjectId, entityId: command.sourceEntityId, version: command.version }, targetEntityId: entity.id, targetTaskId: path.basename(task.worktree), scope: 'material-package', adjustmentSummary: command.reason })
-    const draft = parseMaterial(Buffer.from(bytes), source.fixed.path)
-    await saveMaterial(task.worktree, { ...draft.metadata, entityId: entity.id, kind: entity.kind, title: entity.title, categoryId: entity.categoryId, scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites, sources: [{ projectId: command.sourceProjectId, entityId: command.sourceEntityId, version: command.version }], coreRulesPresent: false, acceptanceCriteriaPresent: false }, `${draft.body}\n\n## 目标采用调整\n\n${command.reason}\n`)
+    const current = await readMaterial(task.worktree, entity.kind, entity.id)
+    const operation: AdoptionOperation = { id: key(), projectId: remote.project.id, entityId: entity.id, worktree: task.worktree, sourceFixed: { ...source.fixed }, targetHash: current.sha256, phase: 'requesting',
+      request: { idempotencyKey: key(), source: { projectId: command.sourceProjectId, entityId: command.sourceEntityId, version: command.version }, targetEntityId: entity.id, targetTaskId: path.basename(task.worktree), scope: 'material-package', adjustmentSummary: command.reason } }
+    local.adoptions.push(operation); await this.store.save(); await this.resumeAdoption(operation)
+  }
+  private async resumeAdoption(operation: AdoptionOperation): Promise<void> {
+    try {
+      if (!operation.adoptionId) {
+        let result: { id: string }
+        try { result = (await this.api.request<{ result: { id: string } }>('GET', this.route(operation.projectId, '/operations/' + operation.request.idempotencyKey))).result }
+        catch (error) { if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error; result = await this.api.request<{ id: string }>('POST', this.route(operation.projectId, '/adoptions'), operation.request) }
+        operation.adoptionId = result.id; operation.phase = 'accepted'; await this.store.save()
+      }
+      if (!operation.applied) {
+        const { remote, entity } = await this.entity(operation.entityId)
+        const token = await this.requireOwned(entity)
+        if (remote.project.id !== operation.projectId || token.taskId !== operation.request.targetTaskId) throw new Error('原采用任务占用已变化，不能覆盖目标材料')
+        const current = await readMaterial(operation.worktree, entity.kind, entity.id)
+        const sameSource = current.metadata.sources.some(source => sameSource(source, operation.request.source))
+        if (!sameSource) {
+          if (current.sha256 !== operation.targetHash) throw new Error('目标草稿已变化，采用现场已保留，请先核对')
+          const bytes = await this.projects.readFixed(operation.request.source.projectId, operation.sourceFixed.commitSha, operation.sourceFixed.path)
+          if (digest(bytes) !== operation.sourceFixed.sha256) throw new Error('来源固定材料校验失败')
+          const draft = parseMaterial(Buffer.from(bytes), operation.sourceFixed.path)
+          await saveMaterial(operation.worktree, { ...draft.metadata, entityId: entity.id, kind: entity.kind, title: entity.title, categoryId: entity.categoryId, scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites, sources: [operation.request.source], coreRulesPresent: false, acceptanceCriteriaPresent: false }, draft.body + '\n\n## 目标采用调整\n\n' + operation.request.adjustmentSummary + '\n')
+        }
+        operation.applied = true; await this.store.save()
+      }
+      if (operation.success && operation.phase !== 'succeeded') {
+        const result = await this.api.request<{ status: string; targetConfirmationId: string }>('POST', this.route(operation.projectId, '/adoptions/' + operation.adoptionId + '/success'), operation.success)
+        if (result.status !== 'succeeded' || result.targetConfirmationId !== operation.success.targetConfirmationId) throw new Error('服务端未确认本次目标采用成功')
+        operation.phase = 'succeeded'
+      }
+      delete operation.message; await this.store.save()
+    } catch (error) { operation.message = error instanceof Error ? error.message : '采用操作结果待恢复'; await this.store.save(); throw error }
   }
   private async generateHandoff(baselineId: string) {
     const { remote } = await this.selected(); const baseline = remote.baselines.find(b => b.id === baselineId)
     if (!baseline) throw new Error('基线不存在或尚未被接受')
     const existing = remote.entities.find((e): e is EntityView => 'title' in e && e.kind === 'handoff' && e.title === `交接 ${baseline.id}`)
-    const entity = existing ?? await this.createMaterial('handoff', `交接 ${baseline.id}`, remote.entities.find((e): e is EntityView => 'title' in e && e.id === baseline.entityId)!.categoryId)
+    const source = remote.entities.find((value): value is EntityView => 'title' in value && value.id === baseline.entityId)
+    if (!source) throw new Error('基线需求不可见')
+    const entity = existing ?? await this.api.request<EntityView>('POST', this.route(remote.project.id, '/entities'), { idempotencyKey: key(), kind: 'handoff', title: '交接 ' + baseline.id, categoryId: source.categoryId })
     const fresh = await this.entity(entity.id); const task = await this.designTask(fresh.remote, fresh.entity)
-    const source = remote.entities.find(e => e.id === baseline.entityId)!
-    const metadata = { ...initialMetadata(entity), referencedAssets: [{ projectId: remote.project.id, entityId: source.id, version: baseline.version }], businessEvidence: [{ label: '已接受原型基线', reference: baseline.id }] }
-    await saveMaterial(task.worktree, metadata, `# ${entity.title}\n\n## 固定资料\n\n需求 ${source.id}，材料版本 ${baseline.version}，代码 ${baseline.commitSha}。\n\n## 核心业务规则\n\n待根据固定需求整理。\n\n## 验收条件\n\n待根据固定需求整理。\n\n## 交付内容、限制与待澄清\n\n请结合固定材料补充。当前演示链接只表示项目当前站点。\n`)
-    await this.ports.session(task, this.materialRules(await readMaterial(task.worktree, 'handoff', entity.id)))
-    await this.ports.prompt(task.sessionId, `基于已接受基线 ${baseline.id}（代码 ${baseline.commitSha}）读取固定需求，整理可阅读交接清单 ${materialPath('handoff', entity.id)}：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。`)
+    if (!task.handoff) { task.handoff = { baselineId: baseline.id, entityId: baseline.entityId, version: baseline.version, commitSha: baseline.commitSha, status: 'pending' }; await this.store.save() }
+    const handoff = task.handoff
+    if (handoff.baselineId !== baseline.id || handoff.commitSha !== baseline.commitSha || handoff.entityId !== baseline.entityId || handoff.version !== baseline.version) throw new Error('交接任务已绑定其他固定基线')
+    if (handoff.status === 'sent') return
+    try {
+      let draft: MaterialDraft
+      try { draft = await readMaterial(task.worktree, 'handoff', entity.id) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        const metadata = { ...initialMetadata(entity), referencedAssets: [{ projectId: remote.project.id, entityId: source.id, version: baseline.version }], businessEvidence: [{ label: '已接受原型基线', reference: baseline.id }] }
+        draft = await saveMaterial(task.worktree, metadata, '# ' + entity.title + '\n\n## 固定资料\n\n需求 ' + source.id + '，材料版本 ' + baseline.version + '，代码 ' + baseline.commitSha + '。\n\n## 核心业务规则\n\n待根据固定需求整理。\n\n## 验收条件\n\n待根据固定需求整理。\n\n## 交付内容、限制与待澄清\n\n请结合固定材料补充。\n')
+      }
+      await this.ports.session(task, this.materialRules(draft))
+      await this.ports.prompt(task.sessionId, '基于已接受基线 ' + baseline.id + '（代码 ' + baseline.commitSha + '）读取固定需求，整理可阅读交接清单 ' + materialPath('handoff', entity.id) + '：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。')
+      handoff.status = 'sent'; delete task.error; await this.store.save()
+    } catch (error) { handoff.status = 'failed'; task.error = error instanceof Error ? error.message : '交接清单请求未完成'; await this.store.save(); throw error }
   }
 }

@@ -3,7 +3,7 @@ import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, Proje
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff'; inputHash: string; worktree: string; error?: string; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff'; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
 export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
 export interface StudioState {
   connected: boolean; account?: StudioUser;
