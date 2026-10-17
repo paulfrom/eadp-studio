@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { CheckEvidence, ConfirmationInput } from '@eadp/contracts'
 import type { ConfirmationChoice, ReviewView, TaskView } from '../../shared/studio.ts'
 import { digest } from '../adapters/assets/materials.ts'
-import type { HostPorts } from './ports.ts'
+import type { HostPorts, SessionOutput } from './ports.ts'
 import type { StudioStore } from './state.ts'
 
 export interface ReviewCandidate {
@@ -11,7 +11,7 @@ export interface ReviewCandidate {
   paths: string[]; checks: CheckEvidence; task: TaskView;
 }
 export interface LocalReview extends ReviewView {
-  projectId: string; task: TaskView; paths: string[]; checks: CheckEvidence; sent: boolean;
+  projectId: string; task: TaskView; paths: string[]; checks: CheckEvidence; sent: boolean; ended?: boolean;
   report?: string; reportHash?: string;
 }
 const rules = '你正在对工作台固定的 Git 候选与输入进行 AI 辅助评审。只能读取此固定快照；不得编辑文件、运行命令、改变 Git、认领或确认资产。作者自行处理意见并确认。指出实际问题，不编造依据。'
@@ -47,10 +47,20 @@ export class AuthorReviews {
       review.status = 'pending'; delete review.error; await this.store.save()
     } catch (error) { review.status = 'failed'; review.error = error instanceof Error ? error.message : '评审请求未完成'; await this.store.save(); throw error }
   }
-  async accept(sessionId: string, content: string): Promise<boolean> {
+  async accept(sessionId: string, output: SessionOutput): Promise<boolean> {
     const local = await this.store.read(), review = local.reviews.find(value => value.task.sessionId === sessionId)
     if (!review) return false
-    if (review.status === 'reported') return true
+    if (output.kind === 'turn-ended') {
+      review.ended = true; review.sent = true; review.task.reviewSent = true
+      if (output.reason === 'completed' && review.status !== 'failed' && review.report && review.reportHash && digest(review.report) === review.reportHash) { review.status = 'reported'; delete review.error }
+      else {
+        review.status = 'failed'
+        review.error = output.reason === 'completed' ? '评审已结束但没有有效报告，请重新发起评审' : output.reason === 'aborted' ? '评审已取消，请重新发起评审' : '评审会话未完成，请重新发起评审'
+      }
+      await this.store.save(); return true
+    }
+    if (review.ended) return true
+    const content = output.content
     const matches = [...content.matchAll(new RegExp(String.fromCharCode(96).repeat(3) + 'eadp-review\\s*\\n([\\s\\S]*?)\\n' + String.fromCharCode(96).repeat(3), 'g'))]
     if (!matches.length) return true
     try {
@@ -68,7 +78,7 @@ export class AuthorReviews {
         if (Object.keys(item).some(key => key !== 'severity' && key !== 'message') || !['info', 'warning', 'blocking'].includes(String(item.severity)) || typeof item.message !== 'string' || !item.message.trim() || item.message.length > 4000) throw new Error('评审意见格式无效')
         findings.push({ severity: item.severity as 'info' | 'warning' | 'blocking', message: item.message })
       }
-      review.summary = result.summary; review.findings = findings; review.report = content; review.reportHash = digest(content); review.status = 'reported'; review.sent = true; review.task.reviewSent = true; delete review.error
+      review.summary = result.summary; review.findings = findings; review.report = content; review.reportHash = digest(content); review.status = 'pending'; review.sent = true; review.task.reviewSent = true; delete review.error
       await this.store.save(); return true
     } catch (error) { review.status = 'failed'; review.sent = true; review.task.reviewSent = true; review.error = error instanceof Error ? error.message : '评审报告无法解析'; await this.store.save(); throw error }
   }

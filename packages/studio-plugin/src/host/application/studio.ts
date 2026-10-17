@@ -4,7 +4,7 @@ import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityView, Fixed
 import type { Candidate, ConfirmationChoice, MaterialDraft, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
 import { digest, materialPath, parseMaterial, readMaterial, saveMaterial, checkMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
-import { initialMetadata, type HostPorts } from './ports.ts'
+import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
 import { StudioStore, type PendingOperation, type AdoptionOperation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
 import { AuthorReviews, type ReviewCandidate } from './reviews.ts'
@@ -371,8 +371,8 @@ export class StudioApplication {
       split.status = 'failed'; task.error = error instanceof Error ? error.message : '场景拆分请求未完成'; await this.store.save(); throw error
     }
   }
-  acceptSessionOutput(sessionId: string, content: string): Promise<void> {
-    const result = this.queue.then(async () => { if (this.store.scoped && !await this.reviews.accept(sessionId, content)) await this.acceptCandidateContent(sessionId, content) })
+  acceptSessionOutput(sessionId: string, output: SessionOutput): Promise<void> {
+    const result = this.queue.then(async () => { if (this.store.scoped && !await this.reviews.accept(sessionId, output) && output.kind === 'assistant') await this.acceptCandidateContent(sessionId, output.content) })
     this.queue = result.catch(() => undefined); return result
   }
   private async acceptCandidateContent(sessionId: string, content: string): Promise<void> {

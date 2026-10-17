@@ -68,10 +68,10 @@ for (const failure of ['session', 'prompt'] as const) test(`failed ${failure} re
     assert.equal(splits.length, 1); assert.equal(splits[0]!.sessionId, task.sessionId)
     assert.equal(f.calls.prompts.at(-1), task.sessionId)
     assert.equal(f.calls.prompts.length, failure === 'prompt' ? 2 : 1)
-    await app.acceptSessionOutput(task.sessionId, output('候选一'))
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('候选一') })
     assert.equal((await rebooted.read()).candidates.length, 1)
     await app.command({ action: 'retryOperation', operationId: f.first.id })
-    await app.acceptSessionOutput(task.sessionId, output('重放不能覆盖'))
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('重放不能覆盖') })
     assert.equal(f.calls.prompts.length, failure === 'prompt' ? 2 : 1)
     assert.equal((await rebooted.read()).candidates[0]!.title, '候选一')
   } finally { await f.dispose() }
@@ -83,13 +83,13 @@ test('new confirmed versions have independent candidates and preserve adopted so
     const app = f.createApp()
     await app.command({ action: 'retryOperation', operationId: f.first.id })
     const oldTask = f.local.tasks.find(task => task.purpose === 'split')!
-    await app.acceptSessionOutput(oldTask.sessionId, output('旧候选'))
+    await app.acceptSessionOutput(oldTask.sessionId, { kind: 'assistant', content: output('旧候选') })
     f.local.candidates[0]!.selectedEntityId = 'adopted-requirement'; await f.store.save()
     f.nextVersion(2); const next = f.addOperation(2); await f.store.save()
     await app.command({ action: 'retryOperation', operationId: next.id })
     const newTask = f.local.tasks.filter(task => task.purpose === 'split').at(-1)!
     assert.notEqual(newTask.sessionId, oldTask.sessionId)
-    await app.acceptSessionOutput(newTask.sessionId, output('新候选'))
+    await app.acceptSessionOutput(newTask.sessionId, { kind: 'assistant', content: output('新候选') })
     assert.equal(f.local.candidates.length, 2)
     assert.equal(f.local.candidates[0]!.selectedEntityId, 'adopted-requirement')
     const current = f.local.candidates[1]! as unknown as Record<string, unknown>
@@ -103,7 +103,7 @@ test('late old-session output and old-operation retry cannot acquire the new con
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const oldTask = f.local.tasks.find(task => task.purpose === 'split')!
     f.nextVersion(2)
-    await app.acceptSessionOutput(oldTask.sessionId, output('迟到旧候选'))
+    await app.acceptSessionOutput(oldTask.sessionId, { kind: 'assistant', content: output('迟到旧候选') })
     assert.equal(f.local.candidates.length, 0)
     const prompts = f.calls.prompts.length
     await app.command({ action: 'retryOperation', operationId: f.first.id })
@@ -117,7 +117,7 @@ test('unadopted old candidates are hidden and rejected before any requirement cr
   try {
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
-    await app.acceptSessionOutput(task.sessionId, output('失效候选')); const id = f.local.candidates[0]!.id
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('失效候选') }); const id = f.local.candidates[0]!.id
     f.nextVersion(2)
     assert.equal((await app.state()).candidates.length, 0)
     assert.equal((await app.command({ action: 'selectCandidate', candidateId: id, categoryId: 'cat' })).ok, false)
@@ -130,9 +130,9 @@ test('empty completed output is durable and malformed output can be corrected', 
   try {
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
-    await assert.rejects(app.acceptSessionOutput(task.sessionId, output('').replace('需求摘要', 'x')), /格式无效/)
-    await app.acceptSessionOutput(task.sessionId, '```eadp-candidates\n[]\n```')
-    await app.acceptSessionOutput(task.sessionId, output('完成后重放'))
+    await assert.rejects(app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('').replace('需求摘要', 'x') }), /格式无效/)
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '```eadp-candidates\n[]\n```' })
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('完成后重放') })
     await app.command({ action: 'retryOperation', operationId: f.first.id })
     assert.equal(f.local.candidates.length, 0); assert.equal(f.calls.prompts.length, 1)
   } finally { await f.dispose() }
@@ -158,7 +158,7 @@ test('identical bytes with a different confirmation still invalidate old-session
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
     f.remote.entities[0]!.current!.confirmationId = 'different-confirmation'
-    await app.acceptSessionOutput(task.sessionId, output('相同哈希的旧确认'))
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('相同哈希的旧确认') })
     assert.equal(f.local.candidates.length, 0)
   } finally { await f.dispose() }
 })
@@ -193,7 +193,7 @@ function dshFixture(events: Map<string, unknown[]>) {
     },
   }
   const handle = (sessionId: string) => ({ agent: { followup: (message: unknown) => { counts.followups++; events.get(sessionId)!.push({ type: 'user/message', data: message }) } }, dispose: async () => {} })
-  return { context, counts, emit: (id: string, content: string) => listener({ id }, assistant(content)) }
+  return { context, counts, emit: (id: string, content: string) => listener({ id }, assistant(content)), emitEvent: (id: string, event: unknown) => listener({ id }, event) }
 }
 const assistant = (text: string, interrupted = false) => ({ type: 'assistant/message', data: { interrupted, message: { content: [{ type: 'text', text }] } } })
 
@@ -212,7 +212,7 @@ test('sent split resumes its original DSH handle after Host restart without anot
     sessions = new DshTaskSessions(resumed.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
     assert.deepEqual(resumed.counts, { creates: 0, resumes: 1, followups: 0 })
-    resumed.emit(task.sessionId, output('恢复后的候选')); await app.acceptSessionOutput(task.sessionId, '')
+    resumed.emit(task.sessionId, output('恢复后的候选')); await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal((await store.read()).candidates[0]!.title, '恢复后的候选')
     assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)
     await sessions.dispose()
@@ -229,9 +229,9 @@ test('persisted assistant output is replayed after restart without queue deadloc
     const dsh = dshFixture(events), sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     f.ports.session = (next, rules) => sessions.open(next, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
-    await app.acceptSessionOutput(task.sessionId, '')
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal((await store.read()).candidates[0]!.title, '持久候选')
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal((await store.read()).candidates.length, 1); assert.equal(dsh.counts.followups, 0); assert.equal(dsh.counts.creates, 0)
     await sessions.dispose()
   } finally { await f.dispose() }
@@ -247,7 +247,7 @@ test('persisted output from a superseded confirmation is not replayed into curre
     const dsh = dshFixture(new Map([[task.sessionId, [assistant(output('过期持久输出'))]]]))
     let deliveries = 0
     const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { deliveries++; return app.acceptSessionOutput(id, text) })
-    await sessions.open(task, '', undefined); await app.acceptSessionOutput(task.sessionId, '')
+    await sessions.open(task, '', undefined); await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal(deliveries, 1); assert.equal((await store.read()).candidates.length, 0); assert.equal(dsh.counts.followups, 0)
     await sessions.dispose()
   } finally { await f.dispose() }
@@ -301,9 +301,9 @@ test('a failed replay is retried from persisted events even when the DSH handle 
     let attempts = 0
     const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { attempts++; return attempts === 1 ? Promise.reject(new Error('injected delivery failure')) : app.acceptSessionOutput(id, text) })
     f.ports.session = (next, rules) => sessions.open(next, rules, undefined)
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal((await store.read()).candidates.length, 0)
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.equal((await store.read()).candidates[0]!.title, '可重放候选'); assert.equal(attempts, 2)
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
     await sessions.dispose()
@@ -326,7 +326,7 @@ for (const status of ['pending', 'failed'] as const) test('durable request and r
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
     const dsh = dshFixture(events); sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
-    await app.acceptSessionOutput(task.sessionId, '')
+    await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
     assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)
     assert.equal((await store.read()).candidates[0]!.title, '投递崩溃窗口候选')
@@ -382,4 +382,19 @@ test('review setup is read-only before the official Agent handle is published an
     await assert.rejects(sessions.open(task, 'readonly', {} as never), /不能取得原型写入权限/)
     await sessions.dispose()
   } finally { for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
+})
+
+
+for (const reason of [{ kind: 'completed' }, { kind: 'error', error: { code: 'UNKNOWN', message: 'provider body must stay private' } }, { kind: 'aborted', reason: { kind: 'user' } }]) test('DSH forwards terminal ' + reason.kind + ' using the actual alpha4 turn/end event', async () => {
+  const f = await fixture()
+  try {
+    const received: unknown[] = [], dsh = dshFixture(new Map())
+    const sessions = new DshTaskSessions(dsh.context as never, '', async (_id, output) => { received.push(output) })
+    const task = { projectId: 'project', entityId: 'requirement', sessionId: 'terminal-review', worktree: f.root, purpose: 'review' as const, reviewId: 'review', inputHash: 'fixed' }
+    await sessions.open(task, 'readonly', undefined)
+    dsh.emitEvent(task.sessionId, { type: 'turn/end', data: { turn: 1, reason } })
+    assert.deepEqual(received, [{ kind: 'turn-ended', reason: reason.kind }])
+    assert.equal(JSON.stringify(received).includes('provider body'), false)
+    await sessions.dispose()
+  } finally { await f.dispose() }
 })

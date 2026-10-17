@@ -211,7 +211,8 @@ test('an author-requested material review uses a separate fixed snapshot and onl
   assert.notEqual(review.task.worktree, f.worktree)
   assert.equal(review.task.purpose, 'review')
   assert.equal(review.candidateSha, candidate)
-  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
   assert.equal(f.calls.prepared.length, 0, 'AI output cannot author-confirm or integrate')
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对异常分支并在交付限制中保留说明。' })
@@ -239,7 +240,8 @@ test('AI-assisted confirmation rejects pending output and blank author dispositi
   await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
   const review = (await f.store.read()).reviews[0]!, draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已自行检查' })).ok, false)
-  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '   ' })).ok, false)
   assert.equal(f.calls.prepared.length, 0)
 })
@@ -248,7 +250,8 @@ test('changing author material after review invalidates the original report and 
   const f = await fixture(t), app = f.app()
   await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
   const review = (await f.store.read()).reviews[0]!
-  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
   const original = await readMaterial(f.worktree, 'requirement', f.value.id)
   const changed = await saveMaterial(f.worktree, original.metadata, original.body + '\n作者新增业务规则。')
   f.gitState.dirtyFiles = [changed.path]
@@ -266,7 +269,7 @@ test('duplicate review requests recover the same local report across Host restar
   assert.equal((await next.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })).ok, true)
   assert.equal(f.calls.prompts.length, 1)
   assert.equal((await rebooted.read()).reviews.length, 1)
-  await assert.rejects(next.acceptSessionOutput(review.task.sessionId, String.fromCharCode(96).repeat(3) + 'eadp-review\n' + JSON.stringify({ summary: 'AI self approval', findings: [], authorConfirmed: true }) + '\n' + String.fromCharCode(96).repeat(3)), /格式无效/)
+  await assert.rejects(next.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: String.fromCharCode(96).repeat(3) + 'eadp-review\n' + JSON.stringify({ summary: 'AI self approval', findings: [], authorConfirmed: true }) + '\n' + String.fromCharCode(96).repeat(3) }), /格式无效/)
   assert.equal((await rebooted.read()).reviews[0]!.status, 'failed')
   assert.equal(f.calls.prepared.length, 0)
 })
@@ -286,7 +289,8 @@ test('prototype AI review binds the confirmed input and uses the same completion
   const f = await prototypeFixture(t), app = f.app()
   assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'prototype' })).ok, true)
   const review = (await f.store.read()).reviews[0]!
-  await app.acceptSessionOutput(review.task.sessionId, reviewReport('原型固定候选已检查。'))
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport('原型固定候选已检查。') })
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
   const reply = await app.command({ action: 'confirmPrototype', entityId: f.value.id, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对并确认本次固定原型。' })
   assert.equal(reply.ok, true, JSON.stringify(reply))
   assert.equal(f.calls.prepared[0]!.stage, 'prototype')
@@ -312,4 +316,36 @@ test('adoption recovery recognizes already-applied exact provenance without repl
   assert.equal((await f.app(rebooted).command(f.adopt)).ok, true)
   assert.match((await readMaterial(f.worktree, 'requirement', f.value.id)).body, /采用后作者调整/)
   assert.equal(f.calls.adoptions, 1)
+})
+
+
+for (const reason of ['error', 'aborted', 'completed']) test('review terminal ' + reason + ' without a valid report leaves pending and permits an explicit new-session retry', async t => {
+  const f = await fixture(t), app = f.app()
+  assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })).ok, true)
+  const review = (await f.store.read()).reviews[0]!
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: '正在核对固定业务依据，尚未生成报告。' })
+  assert.equal(review.status, 'pending', 'intermediate assistant text must not fail a running review')
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason })
+  assert.equal(review.status, 'failed')
+  assert.ok(review.error)
+  assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })).ok, true)
+  const next = (await f.store.read()).reviews.at(-1)!
+  assert.notEqual(next.id, review.id); assert.notEqual(next.task.sessionId, review.task.sessionId)
+  assert.equal(next.status, 'pending'); assert.equal(f.calls.prompts.length, 2)
+})
+
+
+for (const reason of ['error', 'aborted']) test('a valid-looking report followed by ' + reason + ' cannot become author-confirmable or be revived by late text', async t => {
+  const f = await fixture(t), app = f.app()
+  await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
+  const review = (await f.store.read()).reviews[0]!
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
+  assert.equal(review.status, 'pending', 'a report is incomplete until the actual turn succeeds')
+  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '尝试提前确认' })).ok, false)
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason })
+  assert.equal(review.status, 'failed')
+  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
+  assert.equal(review.status, 'failed')
+  assert.equal(f.calls.prepared.length, 0)
 })

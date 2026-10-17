@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
 import { materialPath } from '../assets/materials.ts'
 import { registerStudioExecutionScope } from '../platform/execution-guard.js'
@@ -16,7 +17,7 @@ export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly durableSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
-  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, content: string) => Promise<void>) {
+  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>) {
     ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
     ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
   }
@@ -71,10 +72,13 @@ export class DshTaskSessions {
     return task.sessionId
   }
   private enqueueOutput(sessionId: string, event: SessionEvent): void {
-    if (event.type !== 'assistant/message' || event.data.interrupted) return
-    const content = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    void this.onOutput(sessionId, content).catch(() => { /* Persisted events remain available for the next recovery attempt. */ })
+    let output: SessionOutput
+    if (event.type === 'turn/end') output = { kind: 'turn-ended', reason: event.data.reason.kind }
+    else if (event.type === 'assistant/message' && !event.data.interrupted) output = { kind: 'assistant', content: event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n') }
+    else return
+    void this.onOutput(sessionId, output).catch(() => { /* Persisted events remain available for the next recovery attempt. */ })
   }
+
   async bind(task: TaskView, input: PrototypeTaskIdentity): Promise<PrototypeRuleBinding> {
     const handle = this.handles.get(task.sessionId)
     if (!handle) throw new Error('会话尚未加载规则')

@@ -2,6 +2,8 @@ import type { CheckEvidence, MaterialMetadata, StudioIdentity, StudioUser } from
 import type { TaskView } from '../../shared/studio.ts'
 import type { WorkspaceGit } from '../adapters/workspace/git.js'
 
+export type SessionOutput = { kind: 'assistant'; content: string } | { kind: 'turn-ended'; reason: string }
+
 export interface HostPorts {
   workspaceRoot: string
   git: WorkspaceGit
