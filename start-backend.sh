@@ -18,6 +18,27 @@ fi
 
 API_PORT="${EADP_API_PORT:-6972}"
 
+# Free the API port if a non-Docker process (e.g. a leftover host dev server) holds it.
+occupants=$(ss -tlnHp "sport = :${API_PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u || true)
+for pid in $occupants; do
+  comm=$(ps -o comm= -p "$pid" 2>/dev/null || true)
+  if [[ "$comm" == "docker-proxy" || -z "$comm" ]]; then
+    continue
+  fi
+  echo "Port ${API_PORT} is held by PID ${pid} (${comm}); killing it."
+  kill "$pid" 2>/dev/null || true
+done
+if [[ -n "$occupants" ]]; then
+  for _ in 1 2 3 4 5; do
+    ss -tlnH "sport = :${API_PORT}" 2>/dev/null | grep -q . || break
+    sleep 1
+  done
+fi
+if ss -tlnH "sport = :${API_PORT}" 2>/dev/null | grep -q . && ! docker ps --format '{{.Ports}}' | grep -q ":${API_PORT}->"; then
+  echo "error: port ${API_PORT} is still in use and not owned by a Docker container." >&2
+  exit 1
+fi
+
 : "${GITLAB_URL:?GITLAB_URL is required. Copy apps/collaboration-api/.env.example to apps/collaboration-api/.env and fill it in.}"
 export GITLAB_URL
 
