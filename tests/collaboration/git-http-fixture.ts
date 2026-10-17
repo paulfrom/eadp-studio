@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -33,6 +34,8 @@ export async function gitHttpFixture(gitExecutable: string, serverGitExecutable:
     const { stdout } = await exec(gitExecutable, ['-c', 'core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'), ...args], { cwd: directory, env: isolatedEnvironment, encoding: 'buffer', timeout: 30_000, maxBuffer: 20 * 1024 * 1024 })
     return stdout
   }
+  const serverVersion = await exec(serverGitExecutable, ['--version'], { env: isolatedEnvironment, encoding: 'utf8', timeout: 30_000 })
+  const serverGit = { version: serverVersion.stdout.trim(), sha256: createHash('sha256').update(await readFile(serverGitExecutable)).digest('hex') }
   const projects = new Map<number, Project>(), objects: Array<{ projectId: number; operation: string; ref: string }> = []
   let origin = '', nextId = 1000, gitRequests = 0
   const json = (response: ServerResponse, status: number, body: unknown) => response.writeHead(status, { 'content-type': 'application/json', 'x-next-page': '' }).end(JSON.stringify(body))
@@ -125,7 +128,7 @@ export async function gitHttpFixture(gitExecutable: string, serverGitExecutable:
     const done = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => { child.once('error', reject); child.once('close', (exitCode, signal) => { if (exitCode && spec.argv.includes('push')) console.error('Synthetic Git push stderr:', Buffer.concat(diagnostics).toString('utf8')); resolve({ exitCode, signal }) }) })
     return { stdout: child.stdout, stderr: child.stderr, stdin: child.stdin, done, terminate: () => { child.kill() }, waitForExit: async () => { await done; return true } }
   } }
-  return { origin, root, home, projects, objects, failures, subprocess, git, gitRequests: () => gitRequests,
+  return { origin, root, home, projects, objects, failures, subprocess, git, serverGit, gitRequests: () => gitRequests,
     close: async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections() }); await rm(root, { recursive: true, force: true }) },
   }
 }

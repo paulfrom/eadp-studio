@@ -98,7 +98,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   const body = (title: string) => `# ${title}\n\n## 核心业务规则\n\n数量必须大于零，提交保留固定来源。\n\n## 验收条件\n\n输入合法时显示成功，非法时显示校验错误。\n`
   const saveReady = async (entityId: string, title: string) => {
     const current = (await app.state()).drafts.find(draft => draft.entityId === entityId)!
-    return command({ action: 'saveMaterial', entityId, metadata: { ...current.metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true }, body: body(title) })
+    return command({ action: 'saveMaterial', entityId, metadata: { ...current.metadata, businessEvidence: [...current.metadata.businessEvidence, { label: 'Explicit synthetic author input', reference: 'test:studio-workflow-fixture' }], coreRulesPresent: true, acceptanceCriteriaPresent: true }, body: body(title) })
   }
   state = await saveReady(scenario.entityId, 'Purchase scenario')
   await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /变化|新版本/)
@@ -108,7 +108,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   const operation = (await store.read()).operations[0]!
   state = await command({ action: 'retryOperation', operationId: operation.id })
   const split = (await store.read()).tasks.find(task => task.purpose === 'split')!
-  await app.acceptCandidates(split.sessionId, '```eadp-candidates\n' + JSON.stringify([{ title: 'Purchase requirement', summary: 'Deterministic model fixture output' }]) + '\n```')
+  await app.acceptSessionOutput(split.sessionId, { kind: 'assistant', content: '```eadp-candidates\n' + JSON.stringify([{ title: 'Purchase requirement', summary: 'Deterministic model fixture output' }]) + '\n```' })
   state = await command({ action: 'state' }); assert.equal(state.candidates.length, 1)
   state = await command({ action: 'selectCandidate', candidateId: state.candidates[0]!.id, categoryId })
   const requirement = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.kind === 'requirement')!
@@ -118,7 +118,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   assert.ok(prototype)
   const codePath = path.join(prototype.worktree, '原型代码', 'src', 'pages', 'workflow', 'index.tsx'); await mkdir(path.dirname(codePath), { recursive: true }); await writeFile(codePath, 'export default function Workflow() { return <div>合成工作流演示</div> }\n')
   await command({ action: 'checkPrototype', entityId: requirement.id })
-  state = await command({ action: 'confirmPrototype', entityId: requirement.id })
+  state = await command({ action: 'confirmPrototype', entityId: requirement.id, method: 'direct' })
   const baseline = state.collaboration!.baselines[0]!; assert.ok(baseline); assert.equal(baseline.entityId, requirement.id)
   const handoff = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.kind === 'handoff')!
   assert.ok(handoff)
@@ -142,6 +142,6 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   assert.equal(adopted[0]!.status, 'succeeded'); assert.ok(adopted[0]!.targetConfirmationId); assert.equal(adopted[0]!.targetVersion, 1)
   const pgVersion = (await database.query('SHOW server_version')).rows[0].server_version
   assert.deepEqual(f.gitlab.failures, [])
-  const evidence = { status: 'passed', scope: 'actual-Host-API-PostgreSQL-and-Git-objects-with-loopback-test-GitLab-and-deterministic-model-check-ports', actualEnterpriseGitLabVerified: false, liveModelVerified: false, nativeGuiVerified: false, pgVersion, projectId, rootSha, baseline, adoption: adopted[0], completionResponseLost, gitRequests: f.gitlab.gitRequests(), objectReads: f.gitlab.objects, requests }
+  const evidence = { status: 'passed', scope: 'actual-Host-API-PostgreSQL-and-Git-objects-with-loopback-test-GitLab-and-deterministic-model-check-ports', actualEnterpriseGitLabVerified: false, liveModelVerified: false, nativeGuiVerified: false, tools: { clientGit: { version: f.runtime.manifest.tools.git.version, sha256: f.runtime.manifest.tools.git.sha256 }, serverGit: f.gitlab.serverGit }, pgVersion, projectId, rootSha, baseline, adoption: adopted[0], completionResponseLost, gitRequests: f.gitlab.gitRequests(), objectReads: f.gitlab.objects, requests }
   const evidencePath = process.env.STUDIO_WORKFLOW_EVIDENCE ?? path.resolve('.local/acceptance/g0-workflow-e2e/result.json'); await mkdir(path.dirname(evidencePath), { recursive: true }); await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + '\n')
 })
