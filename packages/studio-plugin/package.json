@@ -52,5 +52,8 @@
   "devDependencies": {
     "@eadp/contracts": "workspace:*",
     "@tailwindcss/cli": "^4.3.3"
+  },
+  "dependencies": {
+    "undici": "8.11.2"
   }
 }

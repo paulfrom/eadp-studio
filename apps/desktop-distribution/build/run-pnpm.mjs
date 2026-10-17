@@ -9,6 +9,10 @@ const OPERATIONS = {
   // The official library build emits Host Remote contracts before Client consumers.
   libraries: ['run', 'build:lib'],
   desktop: ['run', 'build:desktop'],
+  artifacts: ['run', 'build:artifacts'],
+  startDesktop: ['run', 'start:desktop'],
+  electron: ['--filter', '@deepseek-ai/dsh-desktop', 'exec', 'install-electron'],
+  primaryRuntime: ['--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime'],
   // Relative to .local/build/dsh/packages/eadp/studio-plugin. Keeping this
   // fixed avoids placing a machine-local path into a Windows shell command.
   pack: ['pack', '--pack-destination', '../../../../packed-studio'],
@@ -16,7 +20,7 @@ const OPERATIONS = {
   studioStyles: ['exec', 'tailwindcss', '-i', 'src/client/studio.tw.css', '-o', 'src/client/studio.tw.generated.css', '--minify'],
 }
 
-export function runPnpm(operation, cwd, environment = process.env) {
+export function pnpmInvocation(operation) {
   if (!Object.hasOwn(OPERATIONS, operation)) throw new Error(`Unknown pnpm operation: ${operation}`)
   const args = OPERATIONS[operation]
   // Node cannot execute Windows .cmd shims directly. Use the documented
@@ -25,6 +29,11 @@ export function runPnpm(operation, cwd, environment = process.env) {
   const windows = process.platform === 'win32'
   const command = windows ? 'cmd.exe' : 'pnpm'
   const commandArgs = windows ? ['/d', '/s', '/c', `pnpm ${args.join(' ')}`] : args
+  return { command, args: commandArgs }
+}
+
+export function runPnpm(operation, cwd, environment = process.env) {
+  const { command, args: commandArgs } = pnpmInvocation(operation)
   const result = spawnSync(command, commandArgs, {
     cwd,
     stdio: 'inherit',
@@ -33,5 +42,5 @@ export function runPnpm(operation, cwd, environment = process.env) {
     env: { ...environment, CI: 'true' },
   })
   if (result.error !== undefined) throw result.error
-  if (result.status !== 0) throw new Error(`pnpm ${args.join(' ')} exited with ${String(result.status)}`)
+  if (result.status !== 0) throw new Error(`pnpm ${OPERATIONS[operation].join(' ')} exited with ${String(result.status)}`)
 }

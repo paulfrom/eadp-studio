@@ -33,11 +33,18 @@ test('product startup isolates app data and the host home before Electron paths 
   vm.runInNewContext(source.slice(start, end), {
     join: path.join, process: { platform: 'win32', env: environment },
     app: {
+      isPackaged: true,
       setName: value => calls.push(['name', value]), getPath: name => { calls.push(['path', name]); return '/user/home' },
       setAppUserModelId: value => calls.push(['id', value]), setAppLogsPath: () => calls.push(['logs']),
     },
   })
   assert.equal(environment.DSH_HOME, path.join('/user/home', '.eadp-studio'))
+  const devEnvironment = { DSH_HOME: '/isolated/development/home' }
+  vm.runInNewContext(source.slice(start, end), {
+    join: path.join, process: { platform: 'win32', env: devEnvironment },
+    app: { isPackaged: false, setName() {}, setAppUserModelId() {}, setAppLogsPath() {}, getPath() { assert.fail('development must keep launcher home') } },
+  })
+  assert.equal(devEnvironment.DSH_HOME, '/isolated/development/home')
   assert.deepEqual(calls, [['name', 'eadp studio'], ['path', 'home'], ['id', STUDIO_APP_ID], ['logs']])
   assert.ok(end < source.indexOf("readDesktopSettings(app.getPath('userData'))"))
   assert.ok(source.includes("app.setAsDefaultProtocolClient('eadp-studio')"))

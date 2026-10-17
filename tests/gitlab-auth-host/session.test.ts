@@ -86,3 +86,25 @@ test('backend identity must match the saved collaboration user', async () => {
   const session = new CollaborationSession('http://studio.example.test', credentials, async () => json({ ...profile, user: { ...user, id: 2 } }))
   await assert.rejects(session.current(), /身份不一致/); assert.equal(credentials.value, undefined)
 })
+
+test('login distinguishes timeout, connection, response and local storage failures without exposing their cause', async () => {
+  const privateText = 'PRIVATE_PASSWORD_TOKEN_ERROR'
+  for (const scenario of [
+    { request: async () => { throw new DOMException(privateText, 'TimeoutError') }, expected: /请求超时/ },
+    { request: async () => { throw new Error(privateText) }, expected: /请求未完成/ },
+    { request: async () => json({ ...result, token: privateText }), expected: /响应无效/ },
+  ]) {
+    const session = new CollaborationSession('http://studio.example.test', new Secrets(), scenario.request)
+    await assert.rejects(session.login('tester', 'fixture-password'), error => {
+      assert.match(String(error), scenario.expected); assert.match(String(error), /http:\/\/studio\.example\.test/)
+      assert.equal(String(error).includes(privateText), false); return true
+    })
+  }
+  const credentials = new Secrets()
+  credentials.write = async () => { throw new Error(privateText) }
+  const session = new CollaborationSession('http://studio.example.test', credentials, async () => json(result))
+  await assert.rejects(session.login('tester', 'fixture-password'), error => {
+    assert.match(String(error), /本机安全凭据存储/); assert.match(String(error), /HTTP 200/)
+    assert.equal(String(error).includes(privateText), false); return true
+  })
+})

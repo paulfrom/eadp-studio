@@ -52,6 +52,22 @@ node scripts/fetch-dsh.mjs --archive-only
 
 满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前开发机已验证完整解包。Linux 原生完整准备与运行仍待实际验证，准备入口不代表 G0 或桌面发行验收通过。
 
+## 本地桌面开发与调试
+
+在原生 Windows x64 工作站的仓库根目录执行：
+
+```powershell
+pnpm dev:desktop
+```
+
+需要 Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、真实符号链接创建权限及首次下载网络。该命令按需安装依赖、校验固定 DSH 源码、装配当前 Studio 和模板、构建并准备开发运行环境，随后启动上游 Electron 开发入口；首次执行会下载和构建较多内容。
+
+后续仍执行同一条命令。输入、依赖和实际装配内容未变且构建产物校验通过时，复用已有准备与构建；源码修改、删除、模板更新或其他 worktree 改写共享构建树后，会先重新装配和构建。当前不监听源码变化：修改后退出本轮调试，再运行 `pnpm dev:desktop`。产品源码在本仓库维护，`.local/build/dsh` 是可重新生成的构建副本。
+
+默认打开 DevTools；主进程、Renderer 和插件 Host 调试端口分别为 `9229`、`9222`、`9230`。开发数据与 Electron 配置位于 `.local/build/dsh/apps/desktop/.desktop-build/development/`，与安装版 `%USERPROFILE%\.eadp-studio` 隔离。退出应用或按 `Ctrl+C` 结束调试后，入口释放共享构建锁；调试期间不能同时打包或从另一 worktree 启动同一构建树。
+
+`pnpm dev:desktop --prepare` 执行相同的源码准备、构建及运行环境检查，不打开 Electron；`pnpm dev:desktop --help` 查看说明。准备或构建失败时不会启动桌面。强制杀进程或机器断电留下的 `.local/build/.studio-desktop-build.lock`，会在下次启动时根据持有者的 PID 和进程启动时间自动回收；仍在运行的会话继续互斥。若进程树清理失败，锁会保留，须先检查相关进程再人工清理。
+
 ## 从源码生成桌面安装包
 
 在 Windows x64 工作站的仓库根目录执行：

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { stripTypeScriptTypes } from 'node:module'
+import { createRequire, stripTypeScriptTypes } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
 import { STUDIO_FRAME_EDIT } from '../../apps/desktop-distribution/build/studio-frame-edits.mjs'
 
 const upstream = path.resolve(import.meta.dirname, '../../.local/upstream/dsh')
+const typescript = createRequire(path.resolve(import.meta.dirname, '../../.local/build/dsh/package.json'))('typescript')
 const appFrame = await readFile(path.join(upstream, 'packages/client/ui-layout/src/client/AppFrame.tsx'), 'utf8')
 const columnsSource = await readFile(path.join(upstream, 'packages/client/ui-layout/src/client/columns.ts'), 'utf8')
 const computeColumns = new Function(`${stripTypeScriptTypes(columnsSource)
@@ -49,7 +50,7 @@ test('studio panel closes the shell sidebar column entirely', () => {
   assert.equal(result.sidebarCollapsed, true)
   assert.equal(result.collapsedWidth, 0)
   assert.equal(computeColumns(1600, result.sidebarPreference, 0, result.collapsedWidth).sidebar, 0)
-  assert.ok(edited.includes("activePanelId !== 'studio' && <div className={css.sidebarCol}>"))
+  assert.ok(edited.includes("{activePanelId !== 'studio' && sidebar}"))
 })
 
 test('other panels keep upstream sidebar behavior', () => {
@@ -59,6 +60,41 @@ test('other panels keep upstream sidebar behavior', () => {
   assert.equal(conversation.collapsedWidth, 56)
   const narrow = geometry(edited, { panelId: 'conversation', viewport: 800 })
   assert.equal(narrow.sidebarCollapsed, true)
+})
+
+test('Studio preserves the three auto-placed grid items so its center occupies the nonzero track', () => {
+  const source = STUDIO_FRAME_EDIT.apply(appFrame)
+  const title = source.indexOf('<DocumentTitle')
+  const start = source.indexOf('/>', title) + 2
+  const end = source.indexOf('<div className={css.bottomRow}', start)
+  assert.ok(title >= 0 && end > start)
+  // Execute the real edited JSX, including its conditional and fragment boundaries.
+  const program = typescript.transpileModule(`const tree = <>${source.slice(start, end)}</>`, {
+    compilerOptions: { jsx: typescript.JsxEmit.React, target: typescript.ScriptTarget.ES2022 },
+  }).outputText
+  const fragment = Symbol('fragment')
+  const render = (type, props, ...children) => {
+    const visible = children.flat(Infinity).filter(child => child !== false && child != null)
+    if (type === fragment) return visible
+    if (typeof type === 'function') return type({ ...props, children: visible })
+    return { type, props, children: visible }
+  }
+  const run = new Function('React', 'css', 'activePanelId', 'sidebar', 'main', 'normal', 'viewport', 'renderSlot', 'CenterColumn', 'RightbarColumn', `${program}; return tree`)
+  const nodes = panelId => run(
+    { createElement: render, Fragment: fragment }, { sidebarCol: 'sidebarCol' }, panelId,
+    'shell-sidebar', 'studio-main', { rightbar: 0 }, 1600, () => null,
+    props => render('div', { className: 'centerCol' }, props.children),
+    props => render('div', { className: 'rightbarCol' }, props.children),
+  )
+  const studio = nodes('studio')
+  assert.deepEqual(studio.map(node => node.props.className), ['sidebarCol', 'centerCol', 'rightbarCol'])
+  assert.deepEqual(studio[0].children, [], 'only sidebar content is hidden')
+  assert.deepEqual(studio[1].children, ['studio-main'])
+  const solved = geometry(source, { panelId: 'studio' })
+  const columns = computeColumns(1600, solved.sidebarPreference, 0, solved.collapsedWidth)
+  const widths = [columns.sidebar, columns.center, columns.rightbar]
+  assert.equal(widths[studio.findIndex(node => node.props.className === 'centerCol')], 1600)
+  assert.deepEqual(nodes('conversation')[0].children, ['shell-sidebar'])
 })
 
 test('frame edit is idempotent, byte-reversible, and fails on anchor drift', () => {

@@ -5,6 +5,30 @@ import { CollaborationError, collaborationJson, collaborationOrigin } from './cl
 interface SavedSession { origin: string; token: string; expiresAt: string; userId: number }
 const KEY = 'collaboration-session'
 const positiveId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
+class LoginFailure extends Error {}
+const loginFailures: Readonly<Record<string, string>> = {
+  ACCOUNT_NOT_INITIALIZED: '协同账号尚未初始化，请联系管理员。',
+  ACCOUNT_INVALID: '协同账号配置异常，请联系管理员。',
+  GITLAB_BINDING_REQUIRED: '协同账号尚未完成 GitLab 身份绑定，请联系管理员。',
+  GITLAB_BINDING_UNRESOLVED: '协同账号的 GitLab 身份无法唯一确定，请联系管理员。',
+  GITLAB_NOT_CONFIGURED: '协同后端尚未配置 GitLab 访问凭据，请联系管理员。',
+  GITLAB_MANAGEMENT_DENIED: '协同后端的 GitLab 访问凭据无效，请联系管理员。',
+  GITLAB_RESOURCE_DENIED: '协同后端没有所需的 GitLab 访问权限，请联系管理员。',
+  GITLAB_UNAVAILABLE: '协同后端暂时无法访问 GitLab，请稍后重试。',
+  GITLAB_RATE_LIMITED: 'GitLab 请求受限，请稍后重试。',
+  GITLAB_INVALID_RESPONSE: 'GitLab 返回无效响应，请联系管理员。',
+  GITLAB_EMPTY_RESPONSE: 'GitLab 返回空响应，请联系管理员。',
+  SERVICE_UNAVAILABLE: '协同后端暂时无法完成登录，请检查服务状态。',
+}
+async function loginHttpFailure(response: Response, origin: string): Promise<LoginFailure> {
+  const context = `（HTTP ${response.status}；服务：${origin}）`
+  if (response.status === 401) { await response.body?.cancel(); return new LoginFailure(`用户名或密码错误。${context}`) }
+  // Treat upstream bodies as untrusted: only known codes choose local messages.
+  const value = await collaborationJson(response).catch(() => undefined) as { error?: { code?: unknown } } | undefined
+  const code = value?.error?.code
+  const message = typeof code === 'string' && Object.hasOwn(loginFailures, code) ? loginFailures[code] : '协同登录失败，请检查服务地址和状态。'
+  return new LoginFailure(`${message}${context}`)
+}
 function identity(value: unknown): StudioIdentity {
   if (!value || typeof value !== 'object') throw new Error('协同身份响应无效。')
   const record = value as StudioIdentity, user = record.user
@@ -18,18 +42,22 @@ export class CollaborationSession {
   private generation = 0
   private writes: Promise<unknown> = Promise.resolve()
   private loginController: AbortController | undefined
-  constructor(baseUrl: string, private readonly credentials: SecretStore, private readonly request: typeof fetch = fetch) { this.origin = collaborationOrigin(baseUrl) }
+  constructor(baseUrl: string, private readonly credentials: SecretStore, private readonly request: typeof fetch) { this.origin = collaborationOrigin(baseUrl) }
   async login(username: string, password: string): Promise<StudioIdentity> {
     if (!username.trim() || username.length > 100 || !password || password.length > 200) throw new Error('请输入有效的协同用户名和密码。')
     this.loginController?.abort()
     const generation = ++this.generation, controller = new AbortController()
     this.loginController = controller
+    let phase: 'request' | 'response' | 'storage' = 'request'
+    let status: number | undefined
     try {
       const response = await this.request(`${this.origin}/v1/auth/login`, { method: 'POST', body: JSON.stringify({ username: username.trim(), password }), headers: { 'content-type': 'application/json' }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]), redirect: 'error' })
-      if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 401 ? '用户名或密码错误。' : '协同登录失败，请检查服务状态。') }
+      status = response.status; phase = 'response'
+      if (!response.ok) throw await loginHttpFailure(response, this.origin)
       const result = await collaborationJson(response) as LoginResponse
       const profile = identity(result)
       if (typeof result.token !== 'string' || !/^studio_[A-Za-z0-9_-]{43}$/.test(result.token) || typeof result.expiresAt !== 'string' || !Number.isFinite(Date.parse(result.expiresAt)) || Date.parse(result.expiresAt) <= Date.now()) throw new Error('协同登录会话响应无效。')
+      phase = 'storage'
       await this.mutate(async () => {
         if (generation !== this.generation) throw new Error('协同登录已取消。')
         await this.credentials.write(KEY, { origin: this.origin, token: result.token, expiresAt: result.expiresAt, userId: profile.user.id } satisfies SavedSession)
@@ -38,8 +66,12 @@ export class CollaborationSession {
       return profile
     } catch (error) {
       if (generation !== this.generation) throw new Error('协同登录已取消。')
-      if (error instanceof Error && /^(用户名或密码错误|协同登录|请输入)/.test(error.message)) throw error
-      throw new Error('协同登录请求未完成，请检查网络后重试。')
+      if (error instanceof LoginFailure) throw error
+      const context = `（${status === undefined ? '' : `HTTP ${status}；`}服务：${this.origin}）`
+      if (error instanceof Error && error.name === 'TimeoutError') throw new Error(`协同登录请求超时，请检查网络与服务状态。${context}`)
+      if (phase === 'storage') throw new Error(`协同登录会话无法保存，请检查本机安全凭据存储。${context}`)
+      if (phase === 'response') throw new Error(`协同登录响应无效，请检查服务状态。${context}`)
+      throw new Error(`协同登录请求未完成，请检查网络后重试。${context}`)
     } finally { if (this.loginController === controller) this.loginController = undefined }
   }
   async getAccessToken(): Promise<string> {

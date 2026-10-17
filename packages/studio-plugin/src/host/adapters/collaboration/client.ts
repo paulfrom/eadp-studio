@@ -21,7 +21,7 @@ export async function collaborationJson(response: Response): Promise<unknown> {
 /** Only Host carries the collaboration session. Git uses the machine user's separate credentials. */
 export class CollaborationClient {
   private readonly origin: string
-  constructor(baseUrl: string, private readonly accessToken: () => Promise<string>, private readonly unauthorized?: (token: string) => Promise<void>, private readonly requestHttp: typeof fetch = fetch) { this.origin = collaborationOrigin(baseUrl) }
+  constructor(baseUrl: string, private readonly accessToken: () => Promise<string>, private readonly unauthorized: ((token: string) => Promise<void>) | undefined, private readonly requestHttp: typeof fetch) { this.origin = collaborationOrigin(baseUrl) }
   async request<T>(method: 'GET' | 'POST' | 'PUT', route: string, body?: object): Promise<T> {
     if (!route.startsWith('/v1/') || route.includes('\\') || route.split('/').some(part => part === '..' || part === '.')) throw new Error('协同操作路径无效')
     const token = await this.accessToken()

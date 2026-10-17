@@ -26,6 +26,10 @@ writeFileSync('captured.json', JSON.stringify({ args: process.argv.slice(2), cwd
       ['packageWindows', ['run', 'package:desktop:win:x64:unsigned']],
       ['libraries', ['run', 'build:lib']],
       ['desktop', ['run', 'build:desktop']],
+      ['artifacts', ['run', 'build:artifacts']],
+      ['startDesktop', ['run', 'start:desktop']],
+      ['electron', ['--filter', '@deepseek-ai/dsh-desktop', 'exec', 'install-electron']],
+      ['primaryRuntime', ['--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime']],
       ['pack', ['pack', '--pack-destination', '../../../../packed-studio']],
     ]) {
       runPnpm(operation, directory)

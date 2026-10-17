@@ -13,6 +13,7 @@ import { CollaborationClient } from './adapters/collaboration/client.ts'
 import { PlatformRuntime } from './adapters/platform/runtime.js'
 import { DesktopSecretStore } from './adapters/platform/credentials.js'
 import { CollaborationSession } from './adapters/collaboration/session.js'
+import { CollaborationTransport } from './adapters/collaboration/transport.js'
 import { WorkspaceGit } from './adapters/workspace/git.js'
 import { studioToolGuard } from './adapters/platform/execution-guard.js'
 import { DshTaskSessions } from './adapters/dsh/sessions.ts'
@@ -38,8 +39,10 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const runtimeRoot = config.runtimeRoot ?? path.join(path.dirname(process.argv[4] ?? ''), 'studio-tools')
   const runtime = await PlatformRuntime.load(path.join(runtimeRoot, 'runtime-manifest.json'), runtimeRoot, ctx.subprocess)
   const credentials = new DesktopSecretStore()
-  const auth = new CollaborationSession(collaborationUrl, credentials)
-  const api = new CollaborationClient(collaborationUrl, () => auth.getAccessToken(), token => auth.invalidateToken(token))
+  const collaboration = new CollaborationTransport(collaborationUrl)
+  const auth = new CollaborationSession(collaborationUrl, credentials, collaboration.request)
+  const api = new CollaborationClient(collaborationUrl, () => auth.getAccessToken(), token => auth.invalidateToken(token), collaboration.request)
+  ctx.effect(() => () => collaboration.dispose(), 'studio: collaboration transport')
   const git = new WorkspaceGit(runtime, async () => { const identity = await auth.current(); if (!identity) throw new Error('请先登录协同工作台。'); return identity.gitlabOrigin })
   const assets = fileURLToPath(new URL('../assets/', import.meta.url))
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')

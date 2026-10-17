@@ -2,10 +2,11 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, readFile, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseEnv } from 'node:util'
+import { acquireDesktopBuildLock } from '../apps/desktop-distribution/build/desktop-build-lock.mjs'
 import { runPnpm } from '../apps/desktop-distribution/build/run-pnpm.mjs'
 import { STUDIO_APP_ID } from '../apps/desktop-distribution/build/desktop-brand-edits.mjs'
 
@@ -117,17 +118,12 @@ async function main(args) {
   const common = execute('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], repo, { encoding: 'utf8', stdio: 'pipe' })
   const sharedRoot = path.dirname(common.stdout.trim())
   const buildRoot = path.join(sharedRoot, '.local/build')
-  await mkdir(buildRoot, { recursive: true })
-  const lock = path.join(buildRoot, '.studio-desktop-build.lock')
-  try { await mkdir(lock) } catch (error) {
-    if (error.code === 'EEXIST') throw new Error(`A desktop build owns ${lock}. If interrupted, inspect running processes before manually removing the empty lock.`)
-    throw error
-  }
+  const desktopLock = await acquireDesktopBuildLock(buildRoot)
   try {
     await checkSymlinks(buildRoot)
     await buildDesktop({ root: repo, sharedRoot, check: options.check, runNode: (script, args, cwd) => execute(process.execPath, [script, ...args], cwd) })
     if (options.check) console.log('Desktop preflight passed; installer compilation was not requested.')
-  } finally { await rmdir(lock) }
+  } finally { await desktopLock.release() }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

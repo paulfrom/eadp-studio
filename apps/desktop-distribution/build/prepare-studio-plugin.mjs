@@ -12,14 +12,15 @@
  * Usage: node apps/desktop-distribution/build/prepare-studio-plugin.mjs
  */
 import { spawnSync } from 'node:child_process'
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { runPnpm } from './run-pnpm.mjs'
 import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
 import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { STUDIO_FRAME_EDIT } from './studio-frame-edits.mjs'
+import { STUDIO_TITLEBAR_EDIT } from './studio-titlebar-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
@@ -53,6 +54,7 @@ const UPSTREAM_EDITS = [
   ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
   STUDIO_FRAME_EDIT,
+  STUDIO_TITLEBAR_EDIT,
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
@@ -97,6 +99,15 @@ const UPSTREAM_EDITS = [
   },
 ]
 
+/** Files whose actual staged bytes must still match before a developer build is reused. */
+export const studioStagingPaths = [...new Set([
+  ...UPSTREAM_EDITS.map(edit => edit.file),
+  ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
+  'tsconfig.host.json', 'tsconfig.client.json',
+  ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
+  ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
+])]
+
 /** Upstream workspace packages the assembled plugin needs to compile and bundle. */
 const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/cordis',
@@ -123,6 +134,13 @@ const exists = async (target) => stat(target).then(() => true, (error) => {
 
 async function copyVerifiedSource() {
   if (await exists(buildTree)) {
+    // These package contracts are never edited by assembly or installation.
+    // An old fixed-version tree must not survive a release.lock source upgrade.
+    for (const file of ['package.json', 'apps/desktop/package.json', 'pnpm-workspace.yaml']) {
+      if (!(await readFile(path.join(buildTree, file))).equals(await readFile(path.join(upstreamSource, file)))) {
+        throw new Error(`Build tree source differs from verified DSH (${file}); remove .local/build/dsh after closing desktop processes, then retry.`)
+      }
+    }
     console.log(`Build tree present: ${path.relative(repo, buildTree)}`)
     return
   }
@@ -142,8 +160,31 @@ async function generateStudioStyles() {
   console.log('Generated the Studio Tailwind stylesheet.')
 }
 
-async function placePlugin() {
-  await rm(assembledPlugin, { recursive: true, force: true })
+/** TypeScript does not remove orphaned outputs when a source file disappears. */
+export async function removeDeletedSourceOutputs(source, destination) {
+  const files = async (root, relative = '') => {
+    const entries = await readdir(path.join(root, relative), { withFileTypes: true }).catch(error => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
+    const result = []
+    for (const entry of entries) {
+      const filename = path.join(relative, entry.name)
+      if (entry.isDirectory()) result.push(...await files(root, filename))
+      else result.push(filename)
+    }
+    return result
+  }
+  const current = new Set(await files(source))
+  if ((await files(path.join(destination, 'src'))).some(file => !current.has(file))) {
+    await rm(path.join(destination, 'lib'), { recursive: true, force: true })
+  }
+}
+
+async function placePlugin(incremental = false) {
+  if (incremental) await removeDeletedSourceOutputs(path.join(productPlugin, 'src'), assembledPlugin)
+  if (!incremental) await rm(assembledPlugin, { recursive: true, force: true })
+  else for (const directory of ['src', 'assets']) await rm(path.join(assembledPlugin, directory), { recursive: true, force: true })
   await mkdir(assembledPlugin, { recursive: true })
   await cp(path.join(productPlugin, 'src'), path.join(assembledPlugin, 'src'), { recursive: true })
   const manifest = productionPluginManifest(JSON.parse(await readFile(path.join(productPlugin, 'package.json'), 'utf8')))
@@ -179,7 +220,7 @@ async function placePlugin() {
   console.log(`Placed plugin at packages/eadp/studio-plugin (${WORKSPACE_DEPENDENCIES.length} workspace dependencies).`)
 }
 
-async function referencePlugin() {
+async function referencePlugin(incremental = false) {
   for (const face of ['host', 'client']) {
     const target = path.join(buildTree, `tsconfig.${face}.json`)
     const reference = `./packages/eadp/studio-plugin/tsconfig.${face}.json`
@@ -194,7 +235,8 @@ async function referencePlugin() {
     await writeFile(target, source)
   }
   const target = assembledContracts
-  await rm(target, { recursive: true, force: true })
+  if (incremental) await removeDeletedSourceOutputs(path.join(repo, 'packages/contracts/src'), target)
+  await rm(incremental ? path.join(target, 'src') : target, { recursive: true, force: true })
   await mkdir(target, { recursive: true })
   await cp(path.join(repo, 'packages/contracts/src'), path.join(target, 'src'), { recursive: true })
   const manifest = JSON.parse(await readFile(path.join(repo, 'packages/contracts/package.json'), 'utf8'))
@@ -218,6 +260,11 @@ async function verifyBuildOutput() {
 }
 
 async function applyUpstreamEdits() {
+  // Replay all maintained edits from the verified version, never from an old patch.
+  // Unrelated source, dependencies and compiler outputs remain in place.
+  for (const file of new Set(UPSTREAM_EDITS.map(edit => edit.file))) {
+    await cp(path.join(upstreamSource, file), path.join(buildTree, file))
+  }
   for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES]) {
     const target = path.join(buildTree, addition.file)
     await mkdir(path.dirname(target), { recursive: true })
@@ -245,13 +292,19 @@ async function packPlugin() {
   console.log(`Packed the plugin and contracts into ${path.relative(sharedRoot, packedPluginDirectory)}`)
 }
 
-async function main() {
+export async function stageStudioPlugin({ incremental = false } = {}) {
   await copyVerifiedSource()
   await generateStudioStyles()
-  await placePlugin()
-  await referencePlugin()
+  await placePlugin(incremental)
+  await referencePlugin(incremental)
   await applyUpstreamEdits()
-  if (process.argv.includes('--stage-only')) { console.log('Studio source staged; build steps skipped.'); return }
+}
+
+async function main() {
+  const args = process.argv.slice(2)
+  if (args.length > 1 || args.some(arg => !['--stage-only', '--dev-stage'].includes(arg))) throw new Error('Usage: prepare-studio-plugin.mjs [--stage-only | --dev-stage]')
+  await stageStudioPlugin({ incremental: args.includes('--dev-stage') })
+  if (args.length) { console.log('Studio source staged; build steps skipped.'); return }
   runPnpm('install', buildTree)
   // A clean source tree needs Host-generated Remote contracts before Client compilation.
   runPnpm('libraries', buildTree)
@@ -262,4 +315,4 @@ async function main() {
   console.log('Studio plugin assembled and packed. Build the Windows installer from the product root with ./build-desktop.ps1.')
 }
 
-await main()
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main()

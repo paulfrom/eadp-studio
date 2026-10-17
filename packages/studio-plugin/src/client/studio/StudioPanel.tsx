@@ -5,6 +5,7 @@ import type { EntityView, Stage, StudioCommand, StudioReply, StudioState } from 
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
 import { LoginDialog } from '../components/LoginDialog.tsx'
+import { StudioTopbar } from '../components/StudioTopbar.tsx'
 import css from '../studio.module.css'
 import '../studio.tw.generated.css'
 
@@ -78,21 +79,7 @@ export function StudioPanel(props: StudioProps) {
     if (selectedId) void call({ action, entityId: selectedId })
   }
   return <div className={`${css.studio} studio-root flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
-    <header className="flex h-10 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8fafc] px-3">
-      <div className="flex min-w-0 items-center space-x-2">
-        <span className="text-[12px] font-medium tracking-tight text-slate-800">EADP Studio</span>
-        <span className="text-slate-400">/</span>
-        <span className="truncate rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{state.project?.name ?? '项目工作台'}</span>
-        <span className="flex items-center space-x-1 pl-1 font-mono text-[10px] text-slate-500">
-          <span className={`h-1.5 w-1.5 rounded-full ${state.connected ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-          <span>{state.project?.stableBranch ?? '工作空间'}{state.connected ? '（已同步）' : ''}</span>
-        </span>
-      </div>
-      <div className="flex items-center space-x-2">
-        {state.preview ? <a className="text-[11px] text-emerald-700 hover:text-emerald-800" href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className="text-[11px] text-slate-400">原型未运行</span>}
-        <button className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50" onClick={() => void call({ action: 'state' })} disabled={busy}>刷新</button>
-      </div>
-    </header>
+    <StudioTopbar state={state} busy={busy} onRefresh={() => void call({ action: 'state' })} />
     <div className="flex flex-1 overflow-hidden">
       <aside className="flex w-52 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white" aria-label="工作台导航">
         <div>

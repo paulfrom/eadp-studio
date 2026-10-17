@@ -20,9 +20,9 @@ const pairs = [
     `      <div className={css.sidebarCol}>
         {sidebar}
       </div>`,
-    `      {activePanelId !== 'studio' && <div className={css.sidebarCol}>
-        {sidebar}
-      </div>}`,
+    `      <div className={css.sidebarCol}>
+        {activePanelId !== 'studio' && sidebar}
+      </div>`,
   ],
 ]
 

@@ -16,7 +16,7 @@ alpha.4 的源码装配沿用官方 `build:lib`（含 Host/Client aggregate Type
 
 首次入口将追踪的 `windows-package.env.example` 独占创建到忽略构建树的 `.env.windows`。已有本地配置不覆盖；App ID 不同则停止并提示手工修正。默认策略源 `http://100.119.183.44:6972` 源于当前部署验证：2026-10-16 主 Agent 实测 `/api/v0/check_client_update?scenario=launch` 返回 HTTP 200 和严格 allow 载荷；原无端口示例返回 404。下载页域名保留 `https://www.zyjsm.top`。入口不打印配置，不签名或上传。现有部署设置仍由 `.env.windows` 管理。
 
-构建共享目录通过 `.local/build/.studio-desktop-build.lock` 排斥入口之间并发运行。异常返回非零，任一步失败停止后续步骤；中断残留锁需先检查进程后人工清理。手工执行 assembly 或上游打包也应避开正在运行的入口。成功后复制最终 exe 到 `artifacts/windows/`，输出绝对路径、字节数、SHA256 及同名 JSON。旧验收产物和历史结果不改写。
+构建共享目录通过 `.local/build/.studio-desktop-build.lock` 排斥入口之间并发运行。异常返回非零，任一步失败停止后续步骤；中断残留锁由后续入口核对持有者 PID 和进程启动时间后自动回收，进程树清理失败的锁仍保留供人工检查。手工执行 assembly 或上游打包也应避开正在运行的入口。成功后复制最终 exe 到 `artifacts/windows/`，输出绝对路径、字节数、SHA256 及同名 JSON。旧验收产物和历史结果不改写。
 
 验证入口：
 

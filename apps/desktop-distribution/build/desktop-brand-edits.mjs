@@ -26,7 +26,7 @@ export const DESKTOP_BRAND_EDITS = [
   ]),
   edit('apps/desktop/src/main.ts', [
     ['DeepSeek Harness', 'eadp studio', 1, 2],
-    ['app.setAppLogsPath()', "app.setName('eadp studio')\n// Product-owned home: never inherit the official DSH application's data directory.\nprocess.env.DSH_HOME = join(app.getPath('home'), '.eadp-studio')\nif (process.platform === 'win32') app.setAppUserModelId('io.github.paulfrom.eadp.studio')\napp.setAppLogsPath()"],
+    ['app.setAppLogsPath()', "app.setName('eadp studio')\n// Installed builds own the product home; development keeps the launcher's isolated home.\nif (app.isPackaged) process.env.DSH_HOME = join(app.getPath('home'), '.eadp-studio')\nif (process.platform === 'win32') app.setAppUserModelId('io.github.paulfrom.eadp.studio')\napp.setAppLogsPath()"],
     ["app.setAsDefaultProtocolClient('dsh')", "app.setAsDefaultProtocolClient('eadp-studio')"],
     ["url === 'dsh://open' || url === 'dsh://open/'", "url === 'eadp-studio://open' || url === 'eadp-studio://open/'"],
   ]),
