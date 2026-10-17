@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -34,6 +34,8 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   local.projects.push({ id: 'source-project', name: '来源项目', directory: sourceDirectory, repositoryUrl: project.repositoryUrl }); await store.save()
   const source: FixedVersion = { version: 2, fixed: { commitSha: head, path: sourceDraft.path, sha256: sourceDraft.sha256 }, metadata: sourceMetadata, confirmationId: 'source-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
   const records = new Map<string, unknown>(), calls = { prompts: [] as string[], sessions: [] as string[], adoptions: 0, successEffects: 0, successRequests: [] as object[], commits: [] as Array<readonly string[]>, prepared: [] as PrepareIntegrationRequest[] }
+  const gitState = { head, dirtyFiles: [(await readMaterial(worktree, kind, value.id)).path], changedFiles: [] as string[] }
+  const reviewTrees = new Map<string, string>()
   const failures = { adoptionResponse: false, successResponse: false, prompt: false, session: false }
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
     if (method === 'GET' && route === '/v1/projects') return [project]
@@ -62,7 +64,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
       validateIntegration(project, remote.entities as EntityView[], { id: 1 } as never, prepared)
       const accepted = { id: 'integration', entityId: value.id, ownerId: 1, status: 'accepted' as const, sourceSha: candidate, expectedHead: head, candidateSha: candidate, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
       remote.integrations.push(accepted); records.set(prepared.idempotencyKey, accepted)
-      for (const item of prepared.confirmations) {
+      if (prepared.stage !== 'prototype') for (const item of prepared.confirmations) {
         const changed = remote.entities.find(e => e.id === item.entityId) as EntityView
         changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: item.metadata, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
       }
@@ -73,12 +75,13 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const ports = { account: async () => ({ id: 1, name: '作者', gitlabUsername: 'author', gitlabEmail: 'author@example.invalid' }), stopPreview: async () => {},
     session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failures.session) { failures.session = false; throw new Error('session failed') }; return task.sessionId },
     prompt: async (session: string, text: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') } },
-    gitLocal: async () => ' M material.md',
-    git: { commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); return candidate }, verifyFile: async () => {}, push: async () => {}, fetch: async () => {}, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, createWorktree: async () => { throw new Error('prototype intentionally not started') } },
+    checks: async (_task: unknown, sha: string) => ({ candidateSha: sha, passed: true, checks: [{ name: 'engineering', passed: true, evidenceHash: digest('checked') }] }),
+    gitLocal: async () => gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
+    git: { commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async () => {}, fetch: async () => {}, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
   } as unknown as HostPorts
   const app = (nextStore = store) => new StudioApplication(nextStore, api, ports)
   const adopt = { action: 'adopt' as const, sourceProjectId: 'source-project', sourceEntityId: 'source', version: 2, targetEntityId: value.id, reason: '依据目标业务调整验收条件' }
-  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, app, adopt }
+  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt }
 }
 
 test('adoption success binds the accepted target confirmation and survives a lost response without duplicate acceptance', async t => {
@@ -195,4 +198,118 @@ test('frozen unstarted requirements remain editable only through the owned scena
   assert.equal(state.tasks.find(value => value.entityId === related.id)!.worktree, f.worktree)
   assert.equal((await f.app().command({ action: 'saveMaterial', entityId: related.id, metadata: draft.metadata, body })).ok, true)
   assert.equal(related.occupation, undefined)
+})
+
+
+const reviewReport = (summary = '固定候选符合业务依据，作者仍需检查并确认。') => String.fromCharCode(96).repeat(3) + 'eadp-review\n' + JSON.stringify({ summary, findings: [{ severity: 'warning', message: '请作者核对异常分支的使用限制。' }] }) + '\n' + String.fromCharCode(96).repeat(3)
+
+test('an author-requested material review uses a separate fixed snapshot and only explicit author confirmation submits its hashes', async t => {
+  const f = await fixture(t), app = f.app()
+  const requested = await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
+  assert.equal(requested.ok, true, JSON.stringify(requested))
+  const review = (await f.store.read()).reviews[0]!
+  assert.notEqual(review.task.worktree, f.worktree)
+  assert.equal(review.task.purpose, 'review')
+  assert.equal(review.candidateSha, candidate)
+  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  assert.equal(f.calls.prepared.length, 0, 'AI output cannot author-confirm or integrate')
+  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对异常分支并在交付限制中保留说明。' })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  const confirmation = f.calls.prepared[0]!.confirmations[0]!
+  assert.equal(confirmation.confirmationMethod, 'ai-assisted')
+  if (confirmation.confirmationMethod === 'ai-assisted') {
+    assert.deepEqual(confirmation.reviewEvidence, { candidateSha: candidate, inputHash: review.inputHash, reportHash: digest(reviewReport()), dispositionHash: digest('已核对异常分支并在交付限制中保留说明。') })
+  }
+  assert.equal(JSON.stringify(f.calls.prepared).includes('请作者核对异常分支'), false)
+  assert.equal(f.calls.commits.length, 1, 'confirmation reuses the reviewed physical commit when the worktree remains clean')
+})
+
+test('direct confirmation remains available after a pending review freezes a clean candidate', async t => {
+  const f = await fixture(t), app = f.app()
+  assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })).ok, true)
+  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, true)
+  assert.equal(f.calls.prepared[0]!.confirmations[0]!.confirmationMethod, 'direct')
+  assert.equal(f.calls.commits.length, 1)
+})
+
+test('AI-assisted confirmation rejects pending output and blank author disposition without integration', async t => {
+  const f = await fixture(t), app = f.app()
+  await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
+  const review = (await f.store.read()).reviews[0]!, draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已自行检查' })).ok, false)
+  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '   ' })).ok, false)
+  assert.equal(f.calls.prepared.length, 0)
+})
+
+test('changing author material after review invalidates the original report and preserves the fixed review snapshot', async t => {
+  const f = await fixture(t), app = f.app()
+  await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
+  const review = (await f.store.read()).reviews[0]!
+  await app.acceptSessionOutput(review.task.sessionId, reviewReport())
+  const original = await readMaterial(f.worktree, 'requirement', f.value.id)
+  const changed = await saveMaterial(f.worktree, original.metadata, original.body + '\n作者新增业务规则。')
+  f.gitState.dirtyFiles = [changed.path]
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: changed.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '确认旧评审' })).ok, false)
+  assert.equal((await readMaterial(review.task.worktree, 'requirement', f.value.id)).sha256, original.sha256)
+  assert.equal(f.calls.prepared.length, 0)
+})
+
+test('duplicate review requests recover the same local report across Host restart and reject AI self-confirm fields', async t => {
+  const f = await fixture(t), app = f.app()
+  await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
+  const review = (await f.store.read()).reviews[0]!
+  const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
+  const next = f.app(rebooted)
+  assert.equal((await next.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })).ok, true)
+  assert.equal(f.calls.prompts.length, 1)
+  assert.equal((await rebooted.read()).reviews.length, 1)
+  await assert.rejects(next.acceptSessionOutput(review.task.sessionId, String.fromCharCode(96).repeat(3) + 'eadp-review\n' + JSON.stringify({ summary: 'AI self approval', findings: [], authorConfirmed: true }) + '\n' + String.fromCharCode(96).repeat(3)), /格式无效/)
+  assert.equal((await rebooted.read()).reviews[0]!.status, 'failed')
+  assert.equal(f.calls.prepared.length, 0)
+})
+
+async function prototypeFixture(t: test.TestContext) {
+  const f = await fixture(t)
+  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  f.value.materialVersion = 1; f.value.confirmationStatus = 'confirmed'; f.value.current = { version: 1, fixed: { commitSha: head, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationId: 'requirement-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+  f.value.occupation!.purpose = 'prototype'; f.value.occupation!.inputVersion = 1
+  f.local.tasks[0]!.purpose = 'prototype'; f.local.tasks[0]!.inputHash = draft.sha256
+  await mkdir(path.join(f.worktree, '原型代码/src'), { recursive: true }); await writeFile(path.join(f.worktree, '原型代码/src/page.tsx'), 'export default () => null')
+  f.gitState.dirtyFiles = ['原型代码/src/page.tsx']; await f.store.save()
+  return f
+}
+
+test('prototype AI review binds the confirmed input and uses the same completion pipeline as direct author confirmation', async t => {
+  const f = await prototypeFixture(t), app = f.app()
+  assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'prototype' })).ok, true)
+  const review = (await f.store.read()).reviews[0]!
+  await app.acceptSessionOutput(review.task.sessionId, reviewReport('原型固定候选已检查。'))
+  const reply = await app.command({ action: 'confirmPrototype', entityId: f.value.id, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对并确认本次固定原型。' })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  assert.equal(f.calls.prepared[0]!.stage, 'prototype')
+  assert.deepEqual(f.calls.prepared[0]!.confirmations[0]!.fixed, f.value.current!.fixed)
+  assert.equal(f.calls.prepared[0]!.confirmations[0]!.confirmationMethod, 'ai-assisted')
+})
+
+test('candidate commits outside the task whitelist are rejected even when the current worktree is clean', async t => {
+  const f = await prototypeFixture(t)
+  f.gitState.dirtyFiles = []; f.gitState.head = candidate; f.gitState.changedFiles = ['原型代码/src/page.tsx', '场景/unrelated.md']
+  assert.equal((await f.app().command({ action: 'confirmPrototype', entityId: f.value.id, method: 'direct' })).ok, false)
+  assert.equal(f.calls.prepared.length, 0)
+})
+
+
+test('adoption recovery recognizes already-applied exact provenance without replacing later author edits', async t => {
+  const f = await fixture(t), app = f.app()
+  await app.command(f.adopt)
+  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  await saveMaterial(f.worktree, draft.metadata, draft.body + '\n采用后作者调整。')
+  const adoption = (await f.store.read()).adoptions[0]!; delete adoption.applied; await f.store.save()
+  const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
+  assert.equal((await f.app(rebooted).command(f.adopt)).ok, true)
+  assert.match((await readMaterial(f.worktree, 'requirement', f.value.id)).body, /采用后作者调整/)
+  assert.equal(f.calls.adoptions, 1)
 })

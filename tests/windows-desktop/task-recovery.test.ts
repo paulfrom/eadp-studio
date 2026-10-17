@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { studioToolGuard } from '../../packages/studio-plugin/src/host/adapters/platform/execution-guard.ts'
 import { registerHooks } from 'node:module'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
@@ -67,10 +68,10 @@ for (const failure of ['session', 'prompt'] as const) test(`failed ${failure} re
     assert.equal(splits.length, 1); assert.equal(splits[0]!.sessionId, task.sessionId)
     assert.equal(f.calls.prompts.at(-1), task.sessionId)
     assert.equal(f.calls.prompts.length, failure === 'prompt' ? 2 : 1)
-    await app.acceptCandidates(task.sessionId, output('候选一'))
+    await app.acceptSessionOutput(task.sessionId, output('候选一'))
     assert.equal((await rebooted.read()).candidates.length, 1)
     await app.command({ action: 'retryOperation', operationId: f.first.id })
-    await app.acceptCandidates(task.sessionId, output('重放不能覆盖'))
+    await app.acceptSessionOutput(task.sessionId, output('重放不能覆盖'))
     assert.equal(f.calls.prompts.length, failure === 'prompt' ? 2 : 1)
     assert.equal((await rebooted.read()).candidates[0]!.title, '候选一')
   } finally { await f.dispose() }
@@ -82,13 +83,13 @@ test('new confirmed versions have independent candidates and preserve adopted so
     const app = f.createApp()
     await app.command({ action: 'retryOperation', operationId: f.first.id })
     const oldTask = f.local.tasks.find(task => task.purpose === 'split')!
-    await app.acceptCandidates(oldTask.sessionId, output('旧候选'))
+    await app.acceptSessionOutput(oldTask.sessionId, output('旧候选'))
     f.local.candidates[0]!.selectedEntityId = 'adopted-requirement'; await f.store.save()
     f.nextVersion(2); const next = f.addOperation(2); await f.store.save()
     await app.command({ action: 'retryOperation', operationId: next.id })
     const newTask = f.local.tasks.filter(task => task.purpose === 'split').at(-1)!
     assert.notEqual(newTask.sessionId, oldTask.sessionId)
-    await app.acceptCandidates(newTask.sessionId, output('新候选'))
+    await app.acceptSessionOutput(newTask.sessionId, output('新候选'))
     assert.equal(f.local.candidates.length, 2)
     assert.equal(f.local.candidates[0]!.selectedEntityId, 'adopted-requirement')
     const current = f.local.candidates[1]! as unknown as Record<string, unknown>
@@ -102,7 +103,7 @@ test('late old-session output and old-operation retry cannot acquire the new con
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const oldTask = f.local.tasks.find(task => task.purpose === 'split')!
     f.nextVersion(2)
-    await app.acceptCandidates(oldTask.sessionId, output('迟到旧候选'))
+    await app.acceptSessionOutput(oldTask.sessionId, output('迟到旧候选'))
     assert.equal(f.local.candidates.length, 0)
     const prompts = f.calls.prompts.length
     await app.command({ action: 'retryOperation', operationId: f.first.id })
@@ -116,7 +117,7 @@ test('unadopted old candidates are hidden and rejected before any requirement cr
   try {
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
-    await app.acceptCandidates(task.sessionId, output('失效候选')); const id = f.local.candidates[0]!.id
+    await app.acceptSessionOutput(task.sessionId, output('失效候选')); const id = f.local.candidates[0]!.id
     f.nextVersion(2)
     assert.equal((await app.state()).candidates.length, 0)
     assert.equal((await app.command({ action: 'selectCandidate', candidateId: id, categoryId: 'cat' })).ok, false)
@@ -129,9 +130,9 @@ test('empty completed output is durable and malformed output can be corrected', 
   try {
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
-    await assert.rejects(app.acceptCandidates(task.sessionId, output('').replace('需求摘要', 'x')), /格式无效/)
-    await app.acceptCandidates(task.sessionId, '```eadp-candidates\n[]\n```')
-    await app.acceptCandidates(task.sessionId, output('完成后重放'))
+    await assert.rejects(app.acceptSessionOutput(task.sessionId, output('').replace('需求摘要', 'x')), /格式无效/)
+    await app.acceptSessionOutput(task.sessionId, '```eadp-candidates\n[]\n```')
+    await app.acceptSessionOutput(task.sessionId, output('完成后重放'))
     await app.command({ action: 'retryOperation', operationId: f.first.id })
     assert.equal(f.local.candidates.length, 0); assert.equal(f.calls.prompts.length, 1)
   } finally { await f.dispose() }
@@ -157,7 +158,7 @@ test('identical bytes with a different confirmation still invalidate old-session
     const app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
     f.remote.entities[0]!.current!.confirmationId = 'different-confirmation'
-    await app.acceptCandidates(task.sessionId, output('相同哈希的旧确认'))
+    await app.acceptSessionOutput(task.sessionId, output('相同哈希的旧确认'))
     assert.equal(f.local.candidates.length, 0)
   } finally { await f.dispose() }
 })
@@ -201,17 +202,17 @@ test('sent split resumes its original DSH handle after Host restart without anot
   try {
     const events = new Map<string, unknown[]>(), firstDsh = dshFixture(events)
     let app = f.createApp()
-    let sessions = new DshTaskSessions(firstDsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    let sessions = new DshTaskSessions(firstDsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     f.ports.session = (task, rules) => sessions.open(task, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
     const task = f.local.tasks.find(task => task.purpose === 'split')!
     assert.equal(firstDsh.counts.followups, 1); await sessions.dispose()
     const store = new StudioStore(f.storeRoot); store.useUser(1)
     const resumed = dshFixture(events); app = f.createApp(store)
-    sessions = new DshTaskSessions(resumed.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    sessions = new DshTaskSessions(resumed.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
     assert.deepEqual(resumed.counts, { creates: 0, resumes: 1, followups: 0 })
-    resumed.emit(task.sessionId, output('恢复后的候选')); await app.acceptCandidates(task.sessionId, '')
+    resumed.emit(task.sessionId, output('恢复后的候选')); await app.acceptSessionOutput(task.sessionId, '')
     assert.equal((await store.read()).candidates[0]!.title, '恢复后的候选')
     assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)
     await sessions.dispose()
@@ -225,12 +226,12 @@ test('persisted assistant output is replayed after restart without queue deadloc
     const task = f.local.tasks.find(task => task.purpose === 'split')!
     const events = new Map([[task.sessionId, [assistant(output('被中断输出'), true), assistant(output('持久候选'))]]])
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
-    const dsh = dshFixture(events), sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    const dsh = dshFixture(events), sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     f.ports.session = (next, rules) => sessions.open(next, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
-    await app.acceptCandidates(task.sessionId, '')
+    await app.acceptSessionOutput(task.sessionId, '')
     assert.equal((await store.read()).candidates[0]!.title, '持久候选')
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptCandidates(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
     assert.equal((await store.read()).candidates.length, 1); assert.equal(dsh.counts.followups, 0); assert.equal(dsh.counts.creates, 0)
     await sessions.dispose()
   } finally { await f.dispose() }
@@ -245,8 +246,8 @@ test('persisted output from a superseded confirmation is not replayed into curre
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
     const dsh = dshFixture(new Map([[task.sessionId, [assistant(output('过期持久输出'))]]]))
     let deliveries = 0
-    const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { deliveries++; return app.acceptCandidates(id, text) })
-    await sessions.open(task, '', undefined); await app.acceptCandidates(task.sessionId, '')
+    const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { deliveries++; return app.acceptSessionOutput(id, text) })
+    await sessions.open(task, '', undefined); await app.acceptSessionOutput(task.sessionId, '')
     assert.equal(deliveries, 1); assert.equal((await store.read()).candidates.length, 0); assert.equal(dsh.counts.followups, 0)
     await sessions.dispose()
   } finally { await f.dispose() }
@@ -279,7 +280,7 @@ test('sent recovery with unreadable history fails closed without creating or pro
   try {
     let app = f.createApp(); await app.command({ action: 'retryOperation', operationId: f.first.id })
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
-    const dsh = dshFixture(new Map()), sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    const dsh = dshFixture(new Map()), sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     f.ports.session = (task, rules) => sessions.open(task, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
     const result = await app.command({ action: 'retryOperation', operationId: f.first.id })
     assert.equal(result.ok, false)
@@ -298,11 +299,11 @@ test('a failed replay is retried from persisted events even when the DSH handle 
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
     const dsh = dshFixture(new Map([[task.sessionId, [assistant(output('可重放候选'))]]]))
     let attempts = 0
-    const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { attempts++; return attempts === 1 ? Promise.reject(new Error('injected delivery failure')) : app.acceptCandidates(id, text) })
+    const sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => { attempts++; return attempts === 1 ? Promise.reject(new Error('injected delivery failure')) : app.acceptSessionOutput(id, text) })
     f.ports.session = (next, rules) => sessions.open(next, rules, undefined)
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptCandidates(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
     assert.equal((await store.read()).candidates.length, 0)
-    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptCandidates(task.sessionId, '')
+    await app.command({ action: 'retryOperation', operationId: f.first.id }); await app.acceptSessionOutput(task.sessionId, '')
     assert.equal((await store.read()).candidates[0]!.title, '可重放候选'); assert.equal(attempts, 2)
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
     await sessions.dispose()
@@ -314,7 +315,7 @@ for (const status of ['pending', 'failed'] as const) test('durable request and r
   const f = await fixture()
   try {
     const events = new Map<string, unknown[]>(), firstDsh = dshFixture(events)
-    let app = f.createApp(), sessions = new DshTaskSessions(firstDsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    let app = f.createApp(), sessions = new DshTaskSessions(firstDsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     f.ports.session = (task, rules) => sessions.open(task, rules, undefined); f.ports.prompt = (id, text) => sessions.prompt(id, text)
     await app.command({ action: 'retryOperation', operationId: f.first.id })
     const task = f.local.tasks.find(task => task.purpose === 'split')!
@@ -323,9 +324,9 @@ for (const status of ['pending', 'failed'] as const) test('durable request and r
     task.split!.status = status; await f.store.save(); await sessions.dispose()
     events.get(task.sessionId)!.push(assistant(output('投递崩溃窗口候选')))
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
-    const dsh = dshFixture(events); sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptCandidates(id, text))
+    const dsh = dshFixture(events); sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
     assert.equal((await app.command({ action: 'retryOperation', operationId: f.first.id })).ok, true)
-    await app.acceptCandidates(task.sessionId, '')
+    await app.acceptSessionOutput(task.sessionId, '')
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
     assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)
     assert.equal((await store.read()).candidates[0]!.title, '投递崩溃窗口候选')
@@ -351,4 +352,34 @@ test('only an exact studio-task request suppresses split delivery', async () => 
     assert.equal(dsh.counts.followups, 1)
     await sessions.dispose()
   } finally { await f.dispose() }
+})
+
+
+test('review setup is read-only before the official Agent handle is published and cannot receive prototype capabilities', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-review-guard-'))
+  const disposers: Array<() => void> = []
+  try {
+    await writeFile(path.join(root, 'reviewed.md'), 'fixed candidate')
+    let creates = 0
+    const context = {
+      on: () => {}, effect: () => {},
+      sessionController: { inspect: async () => { throw new Error('new session') } },
+      agents: { create: async ({ setup }: { setup: (scope: unknown) => Promise<void> }) => {
+        creates++
+        await setup({ systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { disposers.push(register()) } })
+        const attempt = (name: string, file = 'reviewed.md') => studioToolGuard({ name, arguments: { file_path: file }, agent: { session: { header: { cwd: root } } } })
+        assert.equal(attempt('read'), undefined)
+        assert.ok(attempt('write')); assert.ok(attempt('edit')); assert.ok(attempt('bash')); assert.ok(attempt('read', '../outside'))
+        return { agent: { followup: () => {} }, dispose: async () => {} }
+      } },
+    }
+    const sessions = new DshTaskSessions(context as never, '', async () => {})
+    const task = { projectId: 'project', entityId: 'requirement', sessionId: 'review-session', worktree: root, purpose: 'review' as const, reviewId: 'review', inputHash: 'fixed' }
+    await assert.rejects(sessions.open(task, 'readonly', {} as never), /不能取得原型写入权限/)
+    assert.equal(creates, 0)
+    await sessions.open(task, 'readonly', undefined)
+    assert.equal(creates, 1)
+    await assert.rejects(sessions.open(task, 'readonly', {} as never), /不能取得原型写入权限/)
+    await sessions.dispose()
+  } finally { for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
 })

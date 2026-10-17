@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AdoptRequest, FixedReference } from '@eadp/contracts'
+import type { LocalReview } from './reviews.ts'
 import type { Candidate, LocalProject, TaskView } from '../../shared/studio.ts'
 
 export interface PendingOperation {
@@ -21,7 +22,7 @@ export interface ProjectInitialization {
 }
 export interface LocalState {
   clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
-  candidates: Candidate[]; operations: PendingOperation[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
+  candidates: Candidate[]; operations: PendingOperation[]; reviews: LocalReview[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
 }
 export class StudioStore {
   private value: LocalState | undefined
@@ -44,7 +45,7 @@ export class StudioStore {
       try { value = JSON.parse(await readFile(path.join(directory, 'studio-state.json'), 'utf8')) as LocalState }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('本地恢复记录无法读取，请保留现场并修复')
-        value = { clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], adoptions: [], projectInitializations: [] }
+        value = { clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [] }
       }
       if (userId !== this.userId) throw new Error('协同登录身份已变化，请重新查询。')
       this.value = value; return value

@@ -88,6 +88,10 @@ export class WorkspaceGit {
     return (await this.command(root, args)).stdout
   }
   async listFiles(root: string, commit: string): Promise<string[]> { return (await this.command(root, ['ls-tree', '-r', '--name-only', '-z', fixedSha(commit)])).stdout.split('\0').filter(Boolean) }
+  async changedFiles(root: string, baseSha: string, candidateSha: string): Promise<string[]> {
+    const result = await this.command(root, ['diff', '--name-only', '-z', '--no-renames', fixedSha(baseSha), fixedSha(candidateSha), '--'])
+    return result.stdout.split('\0').filter(Boolean).map(gitRelativePath)
+  }
   async commitFiles(root: string, files: readonly string[], message: string, identity: GitIdentity): Promise<string> {
     if (!files.length || !message.trim() || message.length > 500 || !identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交信息无效。')
     const paths = files.map(gitRelativePath)
