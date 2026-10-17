@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { reviewInputText } from '@eadp/contracts'
 import path from 'node:path'
 import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityView, FixedVersion, IntegrationView, OccupationToken, PrepareIntegrationRequest, ProjectState, ProjectView } from '@eadp/contracts'
 import type { Candidate, ConfirmationChoice, MaterialDraft, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
@@ -260,7 +261,6 @@ export class StudioApplication {
     if (expectedHash && draft.sha256 !== expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
     let candidateSha: string, paths: string[], checks: CheckEvidence
     const confirmations: Array<Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed' | 'metadata'>> = []
-    let inputHash: string
     const prepareBase = { idempotencyKey: key(), entityId: entity.id, token, expectedHead: remote.project.recognizedHead! }
     let batch: { expectedAssociationRevision: number; batchRequirementIds: string[] } | undefined
     if (purpose === 'material') {
@@ -276,16 +276,15 @@ export class StudioApplication {
       for (const value of drafts) { await this.ports.git.verifyFile(task.worktree, candidateSha, value.draft.path); confirmations.push({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: candidateSha, path: value.draft.path, sha256: value.draft.sha256 }, metadata: value.draft.metadata }) }
       checks = { candidateSha, passed: true, checks: drafts.flatMap(value => this.materialEvidence(candidateSha, value.draft).checks) }
       if (entity.kind === 'scenario' && entity.materialVersion > 0) batch = { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: frozen.map(value => value.id) }
-      inputHash = digest(JSON.stringify({ expectedHead: prepareBase.expectedHead, token, inputs: drafts.map(value => ({ entityId: value.entity.id, revision: value.entity.revision, sha256: value.draft.sha256 })), batch }))
     } else {
       if (entity.kind !== 'requirement' || !entity.current || task.inputHash !== entity.current.fixed.sha256 || draft.sha256 !== entity.current.fixed.sha256) throw new Error('原型输入已失效，请重新确认需求')
       const candidate = await this.candidateSha(task, prepareBase.expectedHead, file => file.startsWith('原型代码/'), [], '固定原型 ' + entity.id)
       candidateSha = candidate.sha; paths = candidate.changed; checks = await this.ports.checks(task, candidateSha)
       confirmations.push({ entityId: entity.id, expectedRevision: entity.revision, fixed: entity.current.fixed, metadata: entity.current.metadata })
-      inputHash = digest(JSON.stringify({ expectedHead: prepareBase.expectedHead, token, current: entity.current, prerequisites: entity.occupation!.prerequisiteBindings }))
     }
-    const review: ReviewCandidate = { projectId: remote.project.id, entityId: entity.id, purpose, candidateSha, inputHash, paths, checks, task }
     const prepare = { ...prepareBase, stage: purpose === 'prototype' ? 'prototype' as const : batch ? 'scenario-batch' as const : 'material' as const, sourceSha: candidateSha, candidateSha, allowedPaths: paths, checks, ...batch }
+    const inputHash = digest(reviewInputText({ ...prepare, confirmations }, entity))
+    const review: ReviewCandidate = { projectId: remote.project.id, entityId: entity.id, purpose, candidateSha, inputHash, paths, checks, task }
     return { task, draft, prepare, confirmations, review }
   }
   private async confirmMaterial(entityId: string, expectedHash: string, choice: ConfirmationChoice) {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile, realpath, writeFile, lstat, mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { isMaterialMetadata, type MaterialMetadata } from '@eadp/contracts'
+import { isConfirmedMaterialMetadata, isMaterialMetadata, type MaterialMetadata } from '@eadp/contracts'
 import type { MaterialDraft } from '../../../shared/studio.ts'
 
 export const digest = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
@@ -48,6 +48,7 @@ export async function saveMaterial(root: string, metadata: MaterialMetadata, bod
 }
 export function checkMaterial(draft: MaterialDraft): void {
   const m = draft.metadata
+  if (!isConfirmedMaterialMetadata(m)) throw new Error('请补充明确的业务依据后再确认材料')
   if (!m.coreRulesPresent || !m.acceptanceCriteriaPresent || m.openQuestions.some(q => q.blocking)) throw new Error('核心规则、验收条件或阻断待澄清项尚未解决')
   for (const heading of ['核心业务规则', '验收条件']) {
     const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

@@ -20,14 +20,19 @@ export const MaterialMetadataSchema = object({
   scenarioIds: Type.Array(IdSchema, { uniqueItems: true, maxItems: 100 }),
   prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }),
   sources: Type.Array(SourceSchema, { maxItems: 100 }),
-  businessEvidence: Type.Array(object({ label: text, reference: text }), { minItems: 1, maxItems: 100 }),
+  businessEvidence: Type.Array(object({ label: text, reference: text }), { maxItems: 100 }),
   coreRulesPresent: Type.Boolean(), acceptanceCriteriaPresent: Type.Boolean(),
   openQuestions: Type.Array(object({ blocking: Type.Boolean(), limitation: text, excludedScope: text }), { maxItems: 100 }),
   referencedAssets: Type.Array(SourceSchema, { maxItems: 100 }),
   applicability: Type.Optional(object({ status: Type.Literal('not-applicable'), reason: text })),
 });
 export type MaterialMetadata = Static<typeof MaterialMetadataSchema>;
-export const FixedManifestSchema = object({ schemaVersion: Type.Literal(1), metadata: MaterialMetadataSchema });
+const evidenceText = Type.String({ minLength: 1, maxLength: 500, pattern: '\\S' });
+export const ConfirmedMaterialMetadataSchema = object({ ...MaterialMetadataSchema.properties,
+  businessEvidence: Type.Array(object({ label: evidenceText, reference: evidenceText }), { minItems: 1, maxItems: 100 }),
+});
+export function isConfirmedMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(ConfirmedMaterialMetadataSchema, value); }
+export const FixedManifestSchema = object({ schemaVersion: Type.Literal(1), metadata: ConfirmedMaterialMetadataSchema });
 export type FixedManifest = Static<typeof FixedManifestSchema>;
 export function isFixedManifest(value: unknown): value is FixedManifest { return Value.Check(FixedManifestSchema, value); }
 export function isMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(MaterialMetadataSchema, value); }
@@ -61,7 +66,7 @@ export const CheckEvidenceSchema = object({
 });
 export type CheckEvidence = Static<typeof CheckEvidenceSchema>;
 const confirmationFields = {
-  entityId: IdSchema, expectedRevision: RevisionSchema, fixed: FixedReferenceSchema, metadata: MaterialMetadataSchema,
+  entityId: IdSchema, expectedRevision: RevisionSchema, fixed: FixedReferenceSchema, metadata: ConfirmedMaterialMetadataSchema,
   authorConfirmed: Type.Literal(true),
 };
 export const ConfirmationInputSchema = Type.Union([
@@ -84,6 +89,17 @@ export const PrepareIntegrationSchema = object({
   batchRequirementIds: Type.Optional(Type.Array(IdSchema, { maxItems: 100, uniqueItems: true })),
 });
 export type PrepareIntegrationRequest = Static<typeof PrepareIntegrationSchema>;
+/** Stable review input bytes shared by Host and API; object key order is not evidence. */
+export function reviewInputText(input: Pick<PrepareIntegrationRequest, 'stage' | 'expectedHead' | 'token' | 'expectedAssociationRevision' | 'batchRequirementIds'> & { confirmations: readonly Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>[] }, root: Pick<EntityView, 'current' | 'occupation'>): string {
+  const value = { expectedHead: input.expectedHead, token: input.token,
+    ...(input.stage === 'prototype' ? { current: root.current, prerequisites: root.occupation?.prerequisiteBindings } : {
+      inputs: input.confirmations.map(c => ({ entityId: c.entityId, revision: c.expectedRevision, sha256: c.fixed.sha256 })).sort((a, b) => a.entityId.localeCompare(b.entityId)),
+      ...(input.stage === 'scenario-batch' ? { batch: { expectedAssociationRevision: input.expectedAssociationRevision, batchRequirementIds: [...(input.batchRequirementIds ?? [])].sort() } } : {}),
+    }),
+  };
+  const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, item]) => [k, stable(item)])) : v;
+  return JSON.stringify(stable(value));
+}
 export const CompleteIntegrationSchema = object({ ...keyed, token: OccupationTokenSchema });
 export type CompleteIntegrationRequest = Static<typeof CompleteIntegrationSchema>;
 export const EligibilitySchema = object({ ...keyed, version: Type.Integer({ minimum: 1 }), enabled: Type.Boolean(), reason: text });

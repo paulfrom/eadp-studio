@@ -67,6 +67,17 @@ export function createStudioToolGuard(resolvePolicy: (cwd: string) => StudioExec
   let policy: StudioExecutionPolicy | undefined
   try { policy = resolvePolicy(cwd) } catch { return 'Agent 受管理执行范围无效。' }
   if (!policy) return 'Agent 尚未绑定工作台任务及允许的文件范围。'
+  if (execution.name === 'spawn_agent') {
+    const args = execution.arguments
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return '子 Agent 参数无效。'
+    const requested = (args as Record<string, unknown>).cwd
+    if (requested !== undefined && (typeof requested !== 'string' || !requested.trim() || requested.includes('\0'))) return '子 Agent 工作目录无效。'
+    try {
+      const current = canonical(cwd)
+      const target = requested === undefined ? current : canonical(path.resolve(current, requested as string))
+      if (target !== current || !statSync(target).isDirectory()) return '子 Agent 只能继承当前工作台任务目录。'
+    } catch { return '无法验证子 Agent 工作目录。' }
+  }
   if (CONTROL_TOOLS.has(execution.name)) return undefined
   if (!FILE_TOOLS.has(execution.name)) return '工作台禁止普通 Agent 执行任意命令、程序或宿主扩展操作；请使用工作台专用检查、预览及发布入口。'
   const args = execution.arguments as Record<string, unknown> | null

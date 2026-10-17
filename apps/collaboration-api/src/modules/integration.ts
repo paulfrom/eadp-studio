@@ -1,4 +1,6 @@
 import { canonical, requireCondition, validatePrerequisites } from '@eadp/asset-domain';
+import { createHash } from 'node:crypto';
+import { reviewInputText } from '@eadp/contracts';
 import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedVersion, IntegrationView, PrepareIntegrationRequest, ProjectView } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
@@ -29,7 +31,7 @@ export function validateIntegration(project: ProjectView, all: EntityView[], act
     const value = entity(prospective, confirmation.entityId), metadata = confirmation.metadata;
     if (confirmation.confirmationMethod === 'ai-assisted') {
       requireCondition(confirmation.reviewEvidence.candidateSha === input.candidateSha, 'REVIEW_CANDIDATE_MISMATCH', 'AI review must bind the exact author-confirmed candidate');
-      requireCondition(confirmation.reviewEvidence.inputHash === confirmation.fixed.sha256, 'REVIEW_INPUT_MISMATCH', 'AI review must bind the exact confirmed material input');
+      requireCondition(confirmation.reviewEvidence.inputHash === createHash('sha256').update(reviewInputText(input, root)).digest('hex'), 'REVIEW_INPUT_MISMATCH', 'AI review must bind the exact confirmed input and control context');
     }
     requireCondition(value.revision === confirmation.expectedRevision && metadata.entityId === value.id && metadata.kind === value.kind, 'CONFIRMATION_REVISION_CONFLICT', 'Confirmation entity, kind and revision must match');
     requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { afterEach, mock, test } from 'node:test';
 import { DomainError } from '@eadp/asset-domain';
+import { reviewInputText } from '@eadp/contracts';
 import type { EntityView, MaterialMetadata, PrepareIntegrationRequest, ProjectView } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
@@ -123,7 +124,7 @@ for (const stage of ['material', 'prototype'] as const) {
   test(`${stage} AI-assisted confirmation binds the reviewed candidate and exact input`, () => {
     const f = fixture(stage), confirmation = f.input.confirmations[0]!;
     f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence: {
-      candidateSha: candidate, inputHash: confirmation.fixed.sha256,
+      candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex'),
       reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64),
     } };
     validateIntegration(f.project, [f.entity], actor, f.input);
@@ -131,7 +132,7 @@ for (const stage of ['material', 'prototype'] as const) {
   for (const field of ['candidateSha', 'inputHash'] as const) {
     test(`${stage} rejects a review for another ${field}`, () => {
       const f = fixture(stage), confirmation = f.input.confirmations[0]!;
-      const reviewEvidence = { candidateSha: candidate, inputHash: confirmation.fixed.sha256,
+      const reviewEvidence = { candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex'),
         reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64) };
       reviewEvidence[field] = field === 'candidateSha' ? 'f'.repeat(40) : '0'.repeat(64);
       f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence };
@@ -139,4 +140,16 @@ for (const stage of ['material', 'prototype'] as const) {
         code(field === 'candidateSha' ? 'REVIEW_CANDIDATE_MISMATCH' : 'REVIEW_INPUT_MISMATCH'));
     });
   }
+  test(`${stage} review digest ignores JSON property order but rejects stale control context`, () => {
+    const f = fixture(stage), confirmation = f.input.confirmations[0]!;
+    const hash = () => createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex');
+    const original = hash();
+    f.input.token = Object.fromEntries(Object.entries(f.input.token).reverse()) as typeof f.input.token;
+    if (f.entity.current) f.entity.current = Object.fromEntries(Object.entries(f.entity.current).reverse()) as typeof f.entity.current;
+    assert.equal(hash(), original);
+    f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence: { candidateSha: candidate, inputHash: original, reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64) } };
+    validateIntegration(f.project, [f.entity], actor, f.input);
+    f.input.expectedHead = 'e'.repeat(40); f.project.recognizedHead = f.input.expectedHead;
+    assert.throws(() => validateIntegration(f.project, [f.entity], actor, f.input), code('REVIEW_INPUT_MISMATCH'));
+  });
 }

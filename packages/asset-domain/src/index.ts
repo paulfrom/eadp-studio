@@ -1,4 +1,4 @@
-import { isMaterialMetadata, type EntityView, type MaterialMetadata, type Prerequisite } from '@eadp/contracts';
+import { isConfirmedMaterialMetadata, type EntityView, type MaterialMetadata, type Prerequisite } from '@eadp/contracts';
 
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 409, public readonly details?: unknown) { super(message); }
@@ -22,7 +22,7 @@ export function parseMaterial(markdown: string): MaterialMetadata {
   requireCondition(matches.length === 1, 'INVALID_MATERIAL', 'One eadp-metadata JSON block is required', 422);
   let metadata: unknown;
   try { metadata = JSON.parse(matches[0]![1]!); } catch { throw new DomainError('INVALID_MATERIAL', 'Invalid material metadata JSON', 422); }
-  requireCondition(isMaterialMetadata(metadata), 'INVALID_MATERIAL', 'Material metadata does not match the contract', 422);
+  requireCondition(isConfirmedMaterialMetadata(metadata), 'INVALID_MATERIAL', 'Material metadata does not match the confirmation contract', 422);
   requireCondition(metadata.coreRulesPresent && metadata.acceptanceCriteriaPresent && !metadata.openQuestions.some(q => q.blocking), 'CORE_UNRESOLVED', 'Core business rules and acceptance criteria must be resolved', 422);
   for (const title of ['核心业务规则', '验收条件']) {
     const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
