@@ -1,16 +1,22 @@
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
 
+export type ConfirmationChoice = { method: 'direct' } | { method: 'ai-assisted'; reviewId: string; authorDisposition: string }
+export interface ReviewView {
+  id: string; entityId: string; purpose: 'material' | 'prototype'; candidateSha: string; inputHash: string;
+  status: 'pending' | 'reported' | 'failed'; summary?: string;
+  findings?: Array<{ severity: 'info' | 'warning' | 'blocking'; message: string }>; error?: string;
+}
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff'; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; reviewId?: string; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
 export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
 export interface StudioState {
   connected: boolean; account?: StudioUser;
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
   availableProjects: ProjectView[]; namespaces: NamespaceView[];
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;
-  collaboration?: ProjectState; drafts: MaterialDraft[]; tasks: TaskView[]; candidates: Candidate[];
+  collaboration?: ProjectState; reviews: ReviewView[]; drafts: MaterialDraft[]; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
 }
 export type StudioCommand =
@@ -25,10 +31,12 @@ export type StudioCommand =
   | { action: 'addCategory'; name: string }
   | { action: 'createMaterial'; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId: string; scenarioId?: string }
   | { action: 'saveMaterial'; entityId: string; body: string; metadata: MaterialMetadata }
-  | { action: 'startSession'; entityId: string; purpose: TaskView['purpose'] }
-  | { action: 'confirmMaterial'; entityId: string; expectedHash: string; method: 'direct' | 'ai-assisted' }
+  | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
+  | ({ action: 'confirmMaterial'; entityId: string; expectedHash: string } & ConfirmationChoice)
+  | { action: 'requestReview'; entityId: string; purpose: 'material' | 'prototype' }
+  | ({ action: 'confirmPrototype'; entityId: string } & ConfirmationChoice)
   | { action: 'selectCandidate'; candidateId: string; categoryId: string }
-  | { action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'confirmPrototype' | 'releaseOccupation'; entityId: string }
+  | { action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation'; entityId: string }
   | { action: 'setEligibility'; entityId: string; version: number; enabled: boolean; reason: string }
   | { action: 'adopt'; sourceProjectId: string; sourceEntityId: string; version: number; targetEntityId: string; reason: string }
   | { action: 'retryOperation'; operationId: string }
