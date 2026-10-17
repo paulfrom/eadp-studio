@@ -142,13 +142,18 @@ export class WorkspaceGit {
     const repository = await this.result(cwd, ['rev-parse', '--git-dir'])
     if (repository.exitCode === 128) return
     if (repository.exitCode !== 0) throw new Error('无法核对 Git 仓库配置。')
-    for (const scope of ['--local', '--worktree']) {
-      const config = await this.result(cwd, ['config', scope, '--no-includes', '--null', '--list'])
-      if (config.exitCode !== 0) throw new Error('无法核对项目 Git 配置。')
-      for (const item of config.stdout.split('\0').filter(Boolean)) {
-        const key = item.split('\n', 1)[0]!.toLowerCase()
-        if (/^(?:credential\.|url\.|include\.|includeif\.|filter\.|protocol\.|http\.|https\.)/.test(key) || /^core\.(?:hookspath|askpass|sshcommand|gitproxy)$/.test(key) || /^remote\..*\.(?:uploadpack|receivepack|proxy)$/.test(key)) throw new Error('项目 Git 配置含不允许的凭据命令、钩子、过滤器或地址重写，请保留现场并处理。')
-      }
+    // --show-scope reports only effective worktree configuration. Explicit
+    // --worktree fails in ordinary multi-worktree repos without worktreeConfig.
+    const config = await this.result(cwd, ['config', '--show-scope', '--no-includes', '--null', '--list'])
+    if (config.exitCode !== 0) throw new Error('无法核对项目 Git 配置。')
+    const entries = config.stdout.split('\0')
+    if (entries.pop() !== '' || entries.length % 2) throw new Error('项目 Git 配置结果无效。')
+    for (let index = 0; index < entries.length; index += 2) {
+      const scope = entries[index]!, item = entries[index + 1]!
+      if (!['system', 'global', 'local', 'worktree', 'command'].includes(scope)) throw new Error('项目 Git 配置范围无效。')
+      if (scope !== 'local' && scope !== 'worktree') continue
+      const key = item.split('\n', 1)[0]!.toLowerCase()
+      if (/^(?:credential\.|url\.|include\.|includeif\.|filter\.|protocol\.|http\.|https\.)/.test(key) || /^core\.(?:hookspath|askpass|sshcommand|gitproxy)$/.test(key) || /^remote\..*\.(?:uploadpack|receivepack|proxy)$/.test(key)) throw new Error('项目 Git 配置含不允许的凭据命令、钩子、过滤器或地址重写，请保留现场并处理。')
     }
   }
 }

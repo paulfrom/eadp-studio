@@ -3,6 +3,8 @@ import { cp, mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { createRequire } from 'node:module'
+import { OccupationTokenSchema } from '../../packages/contracts/src/index.ts'
 import type { EntityView, FixedVersion, PrepareIntegrationRequest, ProjectState } from '@eadp/contracts'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
@@ -12,6 +14,7 @@ import { digest, readMaterial, saveMaterial } from '../../packages/studio-plugin
 import { validateIntegration } from '../../apps/collaboration-api/src/modules/integration.ts'
 
 const head = 'a'.repeat(40), candidate = 'b'.repeat(40)
+const { Value } = createRequire(new URL('../../packages/contracts/package.json', import.meta.url))('@sinclair/typebox/value')
 const body = '# 材料\n\n## 核心业务规则\n\n用户按固定业务范围检查记录且保留审计依据。\n\n## 验收条件\n\n符合业务规则的记录可以保存，不符合的显示明确错误。\n'
 const entity = (id: string, kind: EntityView['kind'] = 'requirement'): EntityView => ({ id, kind, title: id, categoryId: 'cat', revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 })
 const metadata = (value: EntityView) => ({ entityId: value.id, kind: value.kind, title: value.title, categoryId: value.categoryId, scenarioIds: value.scenarioIds, prerequisites: [], sources: [], businessEvidence: [{ label: '合成测试业务依据', reference: 'synthetic:fixture' }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] })
@@ -38,6 +41,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const reviewTrees = new Map<string, string>()
   const failures = { adoptionResponse: false, successResponse: false, prompt: false, session: false }
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
+    if (input && 'token' in input) assert.equal(Value.Check(OccupationTokenSchema, input.token), true, 'Host writes must send the exact occupation token contract')
     if (method === 'GET' && route === '/v1/projects') return [project]
     if (method === 'GET' && route.endsWith('/versions')) return [source]
     if (method === 'GET' && route.includes('/operations/')) { const result = records.get(route.split('/').at(-1)!); if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404); return { result } }

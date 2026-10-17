@@ -42,7 +42,7 @@ async function fixture() {
     return { stdout: child.stdout ?? undefined, stderr: child.stderr ?? undefined, stdin: child.stdin ?? undefined, done, terminate: () => { child.kill() }, waitForExit: async () => { await done; return true } }
   } }
   let runtime: PlatformRuntime | undefined
-  const dispose = async () => { await runtime?.dispose(); for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }; await rm(directory, { recursive: true, force: true }) }
+  const dispose = async () => { await runtime?.dispose(); for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }; assert.equal(path.dirname(directory), path.resolve(tmpdir())); await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) }
   try {
     runtime = await testRuntime(directory, provider)
     const helper = path.join(directory, 'fixture-helper'), marker = path.join(directory, 'helper-used')
@@ -95,4 +95,26 @@ test('Git accepts backend HTTP/HTTPS URLs and refuses credential or SSH rewritin
   assert.equal(repositoryAddress('http://gitlab.example.test/team/project.git'), 'http://gitlab.example.test/team/project.git')
   assert.equal(repositoryAddress('https://gitlab.example.test/team/project.git'), 'https://gitlab.example.test/team/project.git')
   for (const value of ['https://token@gitlab.example.test/team/project.git', 'git@gitlab.example.test:team/project.git', 'file:///tmp/a.git', 'https://gitlab.example.test/team/project.git?token=x', 'https://gitlab.example.test/a/../project.git']) assert.throws(() => repositoryAddress(value))
+})
+
+test('linked worktrees support normal Git configuration and reject effective worktree injection', async () => {
+  const f = await fixture()
+  try {
+    const repo = path.join(f.directory, 'repo'), worktree = path.join(f.directory, 'task')
+    await f.git.init(repo, 'http://gitlab.example.test/team/project.git')
+    await writeFile(path.join(repo, 'safe.md'), 'synthetic\n')
+    const first = await f.git.commitFiles(repo, ['safe.md'], 'root', { name: 'Fixture', email: 'fixture@example.test' })
+    await f.git.createWorktree(repo, worktree, 'task', first)
+    assert.equal((await f.git.state(worktree)).head, first)
+    await writeFile(path.join(worktree, 'safe.md'), 'synthetic revised\n')
+    const next = await f.git.commitFiles(worktree, ['safe.md'], 'candidate', { name: 'Fixture', email: 'fixture@example.test' })
+    assert.deepEqual(await f.git.changedFiles(worktree, first, next), ['safe.md'])
+    execFileSync(f.runtime.executable('git'), ['config', '--local', 'extensions.worktreeConfig', 'true'], { cwd: repo, windowsHide: true })
+    assert.equal((await f.git.state(worktree)).head, next)
+    for (const [key, value] of [['credential.helper', '!echo forbidden'], ['include.path', path.join(f.directory, 'unread.config')], ['url.http://evil.test/.insteadOf', 'http://gitlab.example.test/']]) {
+      execFileSync(f.runtime.executable('git'), ['config', '--worktree', key!, value!], { cwd: worktree, windowsHide: true })
+      await assert.rejects(f.git.local(worktree, ['status', '--porcelain=v1']), /不允许的凭据命令/)
+      execFileSync(f.runtime.executable('git'), ['config', '--worktree', '--unset-all', key!], { cwd: worktree, windowsHide: true })
+    }
+  } finally { await f.dispose() }
 })

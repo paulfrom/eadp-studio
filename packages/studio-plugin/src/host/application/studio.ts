@@ -55,7 +55,8 @@ export class StudioApplication {
         const task = await this.designTask(context.remote, context.entity)
         if (command.metadata.entityId !== command.entityId || command.metadata.kind !== context.entity.kind) throw new Error('材料身份不能修改')
         if (!context.entity.frozenBy.length && (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites))) {
-          await this.api.request('PUT', this.route(context.remote.project.id, `/entities/${context.entity.id}/relations`), { idempotencyKey: key(), token: context.entity.occupation, scenarioIds: command.metadata.scenarioIds, prerequisites: command.metadata.prerequisites })
+          const fresh = await this.entity(command.entityId)
+          await this.api.request('PUT', this.route(context.remote.project.id, `/entities/${context.entity.id}/relations`), { idempotencyKey: key(), token: await this.requireOwned(fresh.entity), scenarioIds: command.metadata.scenarioIds, prerequisites: command.metadata.prerequisites })
         }
         await saveMaterial(task.worktree, command.metadata, command.body); break
       }
@@ -77,8 +78,8 @@ export class StudioApplication {
       case 'confirmPrototype': await this.confirmPrototype(command.entityId, command); break
       case 'releaseOccupation': {
         const { remote, entity } = await this.entity(command.entityId)
-        await this.requireOwned(entity)
-        await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/cancel`), { idempotencyKey: key(), token: entity.occupation, reason: '作者主动取消任务，保留本地草稿和代码现场' })
+        const token = await this.requireOwned(entity)
+        await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/cancel`), { idempotencyKey: key(), token, reason: '作者主动取消任务，保留本地草稿和代码现场' })
         await this.ports.stopPreview(); this.previewState = undefined; break
       }
       case 'setEligibility': {
@@ -157,7 +158,8 @@ export class StudioApplication {
   private async requireOwned(entity: EntityView): Promise<OccupationToken> {
     const account = await this.ports.account(); const state = await this.store.read(); const token = entity.occupation
     if (!token || token.ownerId !== account?.id || token.clientId !== state.clientId) throw new Error('此任务需要本人当前客户端的有效占用')
-    return token
+    const { occupationId, generation, taskId, clientId, expectedRevision } = token
+    return { occupationId, generation, taskId, clientId, expectedRevision }
   }
   private async identity() {
     const account = await this.requireAccount()
@@ -170,7 +172,7 @@ export class StudioApplication {
     const task = await this.designTask(remote, entity)
     if (scenarioId) {
       const fresh = await this.entity(entity.id); entity = fresh.entity
-      await this.api.request('PUT', this.route(remote.project.id, `/entities/${entity.id}/relations`), { idempotencyKey: key(), token: entity.occupation, scenarioIds: [scenarioId], prerequisites: [] })
+      await this.api.request('PUT', this.route(remote.project.id, `/entities/${entity.id}/relations`), { idempotencyKey: key(), token: await this.requireOwned(entity), scenarioIds: [scenarioId], prerequisites: [] })
     }
     await saveMaterial(task.worktree, initialMetadata(entity, scenarioId), starter(title)); return entity
   }
@@ -212,8 +214,8 @@ export class StudioApplication {
     if (entity.kind !== 'requirement' || !entity.current) throw new Error('请先确认唯一需求材料')
     const local = await this.store.read()
     if (entity.occupation?.purpose === 'design') {
-      await this.requireOwned(entity)
-      await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/cancel`), { idempotencyKey: key(), token: entity.occupation, reason: '设计材料已确认，转入原型生产' })
+      const token = await this.requireOwned(entity)
+      await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/cancel`), { idempotencyKey: key(), token, reason: '设计材料已确认，转入原型生产' })
       entity = (await this.entity(entity.id)).entity
     }
     if (!entity.occupation) entity = await this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: 'prototype' })

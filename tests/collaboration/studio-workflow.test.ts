@@ -104,7 +104,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /变化|新版本/)
   loseCompletion = true
   const lost = await app.command({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: state.drafts.find(draft => draft.entityId === scenario.entityId)!.sha256, method: 'direct' })
-  assert.equal(lost.ok, false); assert.equal(completionResponseLost, true)
+  assert.equal(lost.ok, false); assert.equal(completionResponseLost, true, JSON.stringify({ reply: lost, requests }))
   const operation = (await store.read()).operations[0]!
   state = await command({ action: 'retryOperation', operationId: operation.id })
   const split = (await store.read()).tasks.find(task => task.purpose === 'split')!
