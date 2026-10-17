@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { EntityView, Stage, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
+import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
+import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
 import { LoginDialog } from '../components/LoginDialog.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
@@ -19,7 +20,7 @@ const stages: Array<{ id: Stage; name: string; mark: string; description: string
   { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发' },
 ]
 
-const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [] })
+const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
 const stageIconPaths: Record<Stage, string> = {
   scenarios: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
   requirements: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
@@ -70,15 +71,17 @@ export function StudioPanel(props: StudioProps) {
   const openProjectDialog = async () => { setProjectDialog(true); await call({ action: 'namespaces' }) }
   const selected = entities.find(e => e.id === selectedId)
   const draft = state.drafts.find(d => d.entityId === selectedId)
-  const task = state.tasks.find(t => t.entityId === selectedId && t.purpose === (stage === 'prototype' ? 'prototype' : 'material'))
+  const purpose = stage === 'prototype' ? 'prototype' : 'material'
+  const task = state.tasks.find(t => t.entityId === selectedId && t.purpose === purpose)
+  const review = state.reviews.filter(item => item.entityId === selectedId && item.purpose === purpose).at(-1)
   const visible = entities.filter(e => e.kind === (stage === 'scenarios' ? 'scenario' : stage === 'handoffs' ? 'handoff' : 'requirement'))
     .filter(e => `${e.title} ${e.id}`.toLowerCase().includes(filter.toLowerCase()))
   const currentStage = stages.find(s => s.id === stage)!
   const categories = state.project?.categories ?? []
   const selectedCategory = category || categories[0]?.id || ''
   const selectStage = (next: Stage) => { setStage(next); setSelectedId(undefined); setFilter('') }
-  const confirm = () => draft && call({ action: 'confirmMaterial', entityId: draft.entityId, expectedHash: draft.sha256, method: 'direct' })
-  const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'confirmPrototype' | 'releaseOccupation') => {
+  const confirm = (choice: ConfirmationChoice) => draft && call({ action: 'confirmMaterial', entityId: draft.entityId, expectedHash: draft.sha256, ...choice })
+  const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
   return <div className={`${css.studio} studio-root flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
@@ -129,8 +132,9 @@ export function StudioPanel(props: StudioProps) {
           <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: stage === 'prototype' ? 'prototype' : 'material' })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
             {selected ? <><div className={css.contextStrip}><span>输入版本 {selected.materialVersion || '草稿'}</span><span>{selected.occupation ? `由 #${selected.occupation.ownerId} 处理中` : '尚未认领'}</span>{selected.frozenBy.length > 0 && <strong>场景联动冻结</strong>}</div>{task?.error && <div className={css.notice}>{task.error}</div>}
               {task ? <NativeConversation {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
-              {stage === 'prototype' && <div className={css.actionBar}><button disabled={busy} onClick={() => operation('claimPrototype')}>认领原型任务</button><button disabled={busy} onClick={() => operation('checkPrototype')}>运行工程检查</button><button disabled={busy} onClick={() => operation('startPreview')}>启动预览</button><button disabled={busy} onClick={() => operation('stopPreview')}>停止预览</button><button className={css.primary} disabled={busy} onClick={() => operation('confirmPrototype')}>确认当前需求完成</button></div>}
-              {stage !== 'prototype' && draft && <><div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>内容检查、Git 推送及后端接受后生效</small></div><button className={css.primary} disabled={busy} onClick={() => void confirm()}>确认材料</button></div><form className={css.naturalConfirm} onSubmit={e => { e.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { void confirm(); setNaturalConfirmation('') } else setError('请明确输入“确认当前材料”，操作仅绑定右侧已保存的版本。') }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={e => setNaturalConfirmation(e.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy}>发送确认</button></form></>}
+              {stage === 'prototype' && <div className={css.actionBar}><button disabled={busy} onClick={() => operation('claimPrototype')}>认领原型任务</button><button disabled={busy} onClick={() => operation('checkPrototype')}>运行工程检查</button><button disabled={busy} onClick={() => operation('startPreview')}>启动预览</button><button disabled={busy} onClick={() => operation('stopPreview')}>停止预览</button><button className={css.primary} disabled={busy} onClick={() => void call({ action: 'confirmPrototype', entityId: selected.id, method: 'direct' })}>确认当前需求完成</button></div>}
+              {stage !== 'prototype' && draft && <><div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>检查通过后，由你确认当前已保存的材料版本</small></div><button className={css.primary} disabled={busy} onClick={() => void confirm({ method: 'direct' })}>确认材料</button></div><form className={css.naturalConfirm} onSubmit={e => { e.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { void confirm({ method: 'direct' }); setNaturalConfirmation('') } else setError('请明确输入“确认当前材料”，操作仅绑定右侧已保存的版本。') }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={e => setNaturalConfirmation(e.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy}>发送确认</button></form></>}
+              {(purpose === 'prototype' || draft) && <ReviewPanel key={`${state.project.id}:${selected.id}:${purpose}`} review={review} purpose={purpose} busy={busy} onRequest={() => void call({ action: 'requestReview', entityId: selected.id, purpose })} onConfirm={choice => { if (purpose === 'prototype') void call({ action: 'confirmPrototype', entityId: selected.id, ...choice }); else void confirm(choice) }} />}
             </> : <Empty text="选择左侧资产，查看材料和协作状态。" />}
             {stage === 'scenarios' && state.candidates.some(c => c.scenarioId === selectedId) && <div className={css.candidates}><h3>AI 拆分的需求候选</h3>{state.candidates.filter(c => c.scenarioId === selectedId).map(c => <div key={c.id}><div><strong>{c.title}</strong><p>{c.summary}</p></div><button disabled={busy || !!c.selectedEntityId} onClick={() => void call({ action: 'selectCandidate', candidateId: c.id, categoryId: selectedCategory })}>{c.selectedEntityId ? '已选用' : '选用并完善'}</button></div>)}</div>}
           </section>
