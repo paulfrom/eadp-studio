@@ -27,6 +27,10 @@ export function validateIntegration(project: ProjectView, all: EntityView[], act
   const prospective = structuredClone(all);
   for (const confirmation of input.confirmations) {
     const value = entity(prospective, confirmation.entityId), metadata = confirmation.metadata;
+    if (confirmation.confirmationMethod === 'ai-assisted') {
+      requireCondition(confirmation.reviewEvidence.candidateSha === input.candidateSha, 'REVIEW_CANDIDATE_MISMATCH', 'AI review must bind the exact author-confirmed candidate');
+      requireCondition(confirmation.reviewEvidence.inputHash === confirmation.fixed.sha256, 'REVIEW_INPUT_MISMATCH', 'AI review must bind the exact confirmed material input');
+    }
     requireCondition(value.revision === confirmation.expectedRevision && metadata.entityId === value.id && metadata.kind === value.kind, 'CONFIRMATION_REVISION_CONFLICT', 'Confirmation entity, kind and revision must match');
     requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);
     requireCondition(project.categories.some(c => c.id === metadata.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');

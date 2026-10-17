@@ -118,3 +118,25 @@ test('prototype cannot whitelist a requirement MD to turn it into newly confirme
   f.input.confirmations[0]!.fixed.commitSha = candidate;
   assert.throws(() => validateIntegration(f.project, [f.entity], actor, f.input), code('PROTOTYPE_INPUT_CHANGED'));
 });
+
+for (const stage of ['material', 'prototype'] as const) {
+  test(`${stage} AI-assisted confirmation binds the reviewed candidate and exact input`, () => {
+    const f = fixture(stage), confirmation = f.input.confirmations[0]!;
+    f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence: {
+      candidateSha: candidate, inputHash: confirmation.fixed.sha256,
+      reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64),
+    } };
+    validateIntegration(f.project, [f.entity], actor, f.input);
+  });
+  for (const field of ['candidateSha', 'inputHash'] as const) {
+    test(`${stage} rejects a review for another ${field}`, () => {
+      const f = fixture(stage), confirmation = f.input.confirmations[0]!;
+      const reviewEvidence = { candidateSha: candidate, inputHash: confirmation.fixed.sha256,
+        reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64) };
+      reviewEvidence[field] = field === 'candidateSha' ? 'f'.repeat(40) : '0'.repeat(64);
+      f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence };
+      assert.throws(() => validateIntegration(f.project, [f.entity], actor, f.input),
+        code(field === 'candidateSha' ? 'REVIEW_CANDIDATE_MISMATCH' : 'REVIEW_INPUT_MISMATCH'));
+    });
+  }
+}
