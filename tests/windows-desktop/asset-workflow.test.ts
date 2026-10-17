@@ -9,7 +9,9 @@ import type { EntityView, FixedVersion, PrepareIntegrationRequest, ProjectState 
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
-import { CollaborationError, type CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
+import { CollaborationError, CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
+import { registerRoutes } from '../../apps/collaboration-api/src/routes.ts'
+import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { digest, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { validateIntegration } from '../../apps/collaboration-api/src/modules/integration.ts'
 
@@ -85,8 +87,30 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   } as unknown as HostPorts
   const app = (nextStore = store) => new StudioApplication(nextStore, api, ports)
   const adopt = { action: 'adopt' as const, sourceProjectId: 'source-project', sourceEntityId: 'source', version: 2, targetEntityId: value.id, reason: '依据目标业务调整验收条件' }
-  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt }
+  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt, api }
 }
+
+test('author handoff acknowledgement uses the actual API receipt route and current confirmation', async t => {
+  const f = await fixture(t, 'handoff'), app = f.app()
+  const Fastify = createRequire(new URL('../../apps/collaboration-api/package.json', import.meta.url))('fastify')
+  const server = Fastify({ ajv: { customOptions: { removeAdditional: false } } })
+  t.after(() => server.close())
+  const receipts: Array<{ projectId: string; entityId: string; input: unknown }> = []
+  registerRoutes(server, { auth: { authenticate: async () => ({ id: 1 }) }, receipt: async (_actor: unknown, projectId: string, entityId: string, input: unknown) => { receipts.push({ projectId, entityId, input }); return { id: 'receipt' } } } as never,
+    loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: 'synthetic' }))
+  const routed = new CollaborationClient('http://route.test', async () => 'synthetic', undefined, async (url, options) => {
+    const response = await server.inject({ method: options!.method, url: new URL(String(url)).pathname, headers: options!.headers, payload: options!.body })
+    return new Response(response.payload, { status: response.statusCode, headers: { 'content-type': 'application/json' } })
+  })
+  const original = f.api.request.bind(f.api)
+  f.api.request = (method, route, input) => method === 'POST' ? routed.request(method, route, input) : original(method, route, input)
+  assert.equal((await app.command({ action: 'acknowledgeHandoff', entityId: f.value.id, note: '已核对固定资料' })).ok, false)
+  f.value.current = { ...f.source, confirmationId: 'confirmed-handoff' }
+  const reply = await app.command({ action: 'acknowledgeHandoff', entityId: f.value.id, note: '已核对固定资料' })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  assert.equal(receipts.length, 1); assert.equal(receipts[0]!.entityId, f.value.id)
+  assert.equal((receipts[0]!.input as { confirmationId: string }).confirmationId, 'confirmed-handoff')
+})
 
 test('adoption success binds the accepted target confirmation and survives a lost response without duplicate acceptance', async t => {
   const f = await fixture(t)

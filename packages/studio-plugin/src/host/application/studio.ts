@@ -98,7 +98,7 @@ export class StudioApplication {
       case 'acknowledgeHandoff': {
         const { remote, entity } = await this.entity(command.entityId)
         if (entity.kind !== 'handoff' || !entity.current) throw new Error('交接材料尚未确认')
-        await this.api.request('POST', this.route(remote.project.id, `/handoffs/${entity.id}/receipt`), { idempotencyKey: key(), confirmationId: entity.current.confirmationId, note: command.note }); break
+        await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/receipts`), { idempotencyKey: key(), confirmationId: entity.current.confirmationId, note: command.note }); break
       }
       case 'publish': case 'revokePublication': {
         const { remote } = await this.selected(); const baseline = remote.baselines.find(b => b.id === remote.project.currentBaselineId)
