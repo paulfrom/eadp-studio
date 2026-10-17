@@ -31,7 +31,7 @@ export function validateIntegration(project: ProjectView, all: EntityView[], act
     requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);
     requireCondition(project.categories.some(c => c.id === metadata.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
     if (input.stage === 'prototype') {
-      requireCondition(value.current && value.completedVersion !== value.materialVersion && canonical(value.current.metadata) === canonical(metadata) && value.current.fixed.sha256 === confirmation.fixed.sha256, 'PROTOTYPE_INPUT_CHANGED', 'Prototype completion must bind its confirmed requirement material');
+      requireCondition(value.current && value.completedVersion !== value.materialVersion && canonical(value.current.metadata) === canonical(metadata) && canonical(value.current.fixed) === canonical(confirmation.fixed), 'PROTOTYPE_INPUT_CHANGED', 'Prototype completion must bind its confirmed requirement material');
     } else {
       if (value.kind !== 'requirement') requireCondition(metadata.prerequisites.length === 0 && metadata.scenarioIds.length === 0, 'INVALID_RELATIONS', 'Only requirements may declare scenarios and prerequisites', 422);
       for (const scenarioId of metadata.scenarioIds) {

@@ -34,6 +34,7 @@ export class GitLabContent {
     requireCondition(requiredChecks.every(name => input.checks.checks.some(c => c.name === name && c.passed)), 'CHECKS_REQUIRED', 'Required checks have not passed', 422, { requiredChecks });
     for (const path of input.allowedPaths) {
       repositoryPath(path);
+      if (input.stage === 'prototype') requireCondition(path.startsWith('原型代码/'), 'PROTOTYPE_PATH_SCOPE', 'Prototype integration can only change prototype source files', 422);
       if (input.stage !== 'prototype') requireCondition(/^(场景|需求)\/.+\.md$/.test(path) || path === 'project.assets.json' || /^(?:baseline\.[A-Za-z0-9_.-]+\.json|handoff\.[A-Za-z0-9_.-]+\.md)$/.test(path), 'MATERIAL_PATH_SCOPE', 'Material integration can only change controlled documents and evidence', 422);
     }
     const prefix = `/projects/${gitlabProjectId}/repository`;
@@ -49,8 +50,15 @@ export class GitLabContent {
     const shape = (diffs: Diff[]) => canonical(diffs.map(d => ({ old: d.old_path, path: d.new_path, deleted: d.deleted_file, renamed: d.renamed_file, diff: d.diff })).sort((a,b) => a.path.localeCompare(b.path)));
     requireCondition(shape(source.diffs) === shape(candidate.diffs), 'SOURCE_CANDIDATE_MISMATCH', 'Candidate must contain exactly the confirmed task source changes; rebase and recheck when the recognized head changes');
     for (const confirmation of input.confirmations) {
-      requireCondition(confirmation.fixed.commitSha === input.candidateSha && input.allowedPaths.includes(confirmation.fixed.path), 'FIXED_CANDIDATE_MISMATCH', 'Every confirmed document must bind a candidate path');
-      await this.verify(actor, gitlabProjectId, confirmation.fixed, confirmation.metadata);
+      if (input.stage === 'prototype') {
+        // The requirement remains the accepted input, not a newly confirmed document.
+        // Verify its fixed bytes and require the same bytes in the precise candidate.
+        await this.verify(actor, gitlabProjectId, confirmation.fixed, confirmation.metadata);
+        await this.verify(actor, gitlabProjectId, { ...confirmation.fixed, commitSha: input.candidateSha }, confirmation.metadata);
+      } else {
+        requireCondition(confirmation.fixed.commitSha === input.candidateSha && input.allowedPaths.includes(confirmation.fixed.path), 'FIXED_CANDIDATE_MISMATCH', 'Every confirmed document must bind a candidate path');
+        await this.verify(actor, gitlabProjectId, confirmation.fixed, confirmation.metadata);
+      }
     }
   }
   async verifyCorrection(actor: Actor, gitlabProjectId: number, expectedHead: string, correctedHead: string): Promise<void> {
