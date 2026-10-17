@@ -18,7 +18,7 @@ export function ProjectDialog({ busy, projects, namespaces, onClose, onSubmit }:
     <label>操作<select value={mode} onChange={event => setMode(event.target.value as 'open' | 'create')}><option value="open">打开已有项目</option><option value="create">新建项目</option></select></label>
     {mode === 'open' ? <><label>可用项目<select required value={projectId} onChange={event => setProjectId(event.target.value)}><option value="" disabled>选择后台登记的项目</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name} · {project.namespacePath}{project.initializationStatus === 'pending' ? '（待初始化，可继续）' : ''}</option>)}</select></label>{projects.length === 0 && <p>当前账号还没有可用项目。</p>}</> : <>
       <label>项目名称<input required autoFocus value={name} onChange={event => setName(event.target.value)} maxLength={200} placeholder="例如：采购协同工作台" /></label>
-      <label>群组<select required value={selectedNamespace} onChange={event => setNamespaceId(event.target.value)}><option value="" disabled>选择项目群组</option>{namespaces.map(namespace => <option key={namespace.id} value={namespace.id}>{namespace.fullPath} · {namespace.name}</option>)}</select></label>
+      <label>群组<select required value={selectedNamespace} onChange={event => setNamespaceId(event.target.value)}><option value="" disabled>{namespaces.length ? '选择项目群组' : '正在加载可建仓群组…'}</option>{namespaces.map(namespace => <option key={namespace.id} value={namespace.id}>{namespace.fullPath} · {namespace.name}</option>)}</select></label>
       <label>仓库路径<input required value={repositoryPath} onChange={event => setRepositoryPath(event.target.value)} maxLength={100} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="例如：procurement-studio" /></label>
       <p>后台创建私有仓库并授予当前用户权限；本机使用已配置的个人 Git 凭据推送首次提交。</p>
     </>}

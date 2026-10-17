@@ -15,6 +15,7 @@ export interface StudioState {
 }
 export type StudioCommand =
   | { action: 'state' }
+  | { action: 'namespaces' }
   | { action: 'login'; username: string; password: string }
   | { action: 'logout' }
   | { action: 'createProject'; name: string; namespaceId: number; path: string }

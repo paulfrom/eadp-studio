@@ -4,6 +4,7 @@ import { DomainError } from '@eadp/asset-domain';
 import { GitLab } from './gitlab.js';
 import type { Actor } from './session.js';
 import { loadConfig } from '../config.js';
+import { ReadThrough } from '../persistence/cache.js';
 
 const config = loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: 'synthetic-management-secret' });
 const gitlab = new GitLab(config);
@@ -266,4 +267,49 @@ test('the backend management credential is required and Studio publication IDs a
   assert.deepEqual([...local.publisherIds], [1]);
   let requested = false; mock.method(globalThis, 'fetch', async () => { requested = true; return json({}); });
   await assert.rejects(new GitLab(local).json('/user'), code('GITLAB_NOT_CONFIGURED')); assert.equal(requested, false);
+});
+
+test('the local cache serves repeated GitLab reads while creation authority and writes stay live', async () => {
+  const calls = fixture(path => {
+    if (path === '/users/42') return json(user);
+    if (path.startsWith('/groups?')) return json([namespaceGroup(1, 'developer')]);
+    if (path === '/groups/1/members/all/42') return json(member(40));
+    if (path === '/groups/1') return json(namespaceGroup(1, 'developer'));
+    if (path === '/projects/7/members/all/42') return json(member(40));
+    if (path === '/projects/7') return json(project);
+    throw new Error(`Unexpected path ${path}`);
+  });
+  const values = new Map<string, string>(), ttls: Array<[string, number]> = [];
+  const cached = new GitLab(config, new ReadThrough({
+    get: async key => values.get(key) ?? null,
+    set: async (key, value, ttlSeconds) => { values.set(key, value); ttls.push([key, ttlSeconds]); },
+    del: async key => { values.delete(key); },
+  }));
+  const expected = [{ id: 1, name: 'Group 1', fullPath: 'group-1' }];
+  assert.deepEqual(await cached.namespaces(actor), expected);
+  const discovered = calls.length;
+  assert.deepEqual(await cached.namespaces(actor), expected);
+  assert.equal(calls.length, discovered, 'a cached namespace list must not reach GitLab again');
+  assert.ok(ttls.some(([key, ttl]) => key.includes('namespaces:42') && ttl === 60));
+
+  await cached.authorize(actor, 7);
+  await cached.authorize(actor, 7);
+  const membershipReads = () => calls.filter(call => call.path === '/projects/7/members/all/42').length;
+  const projectReads = () => calls.filter(call => call.path === '/projects/7').length;
+  assert.equal(membershipReads(), 1);
+  assert.equal(projectReads(), 1);
+
+  await cached.authorize(actor, 7, true);
+  assert.equal(membershipReads(), 2);
+  assert.equal(projectReads(), 2);
+
+  const namespaceMembershipReads = () => calls.filter(call => call.path === '/groups/1/members/all/42').length;
+  const beforeNamespace = namespaceMembershipReads();
+  assert.deepEqual(await cached.namespace(actor, 1), expected[0]);
+  assert.equal(namespaceMembershipReads(), beforeNamespace + 1, 'project creation must revalidate the group live');
+
+  await cached.grantCreator(actor, 7);
+  const beforeGrantRead = membershipReads();
+  await cached.authorize(actor, 7);
+  assert.equal(membershipReads(), beforeGrantRead + 1, 'a completed grant must invalidate the cached membership');
 });

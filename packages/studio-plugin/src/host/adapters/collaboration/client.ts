@@ -22,11 +22,12 @@ export async function collaborationJson(response: Response): Promise<unknown> {
 export class CollaborationClient {
   private readonly origin: string
   constructor(baseUrl: string, private readonly accessToken: () => Promise<string>, private readonly unauthorized: ((token: string) => Promise<void>) | undefined, private readonly requestHttp: typeof fetch) { this.origin = collaborationOrigin(baseUrl) }
-  async request<T>(method: 'GET' | 'POST' | 'PUT', route: string, body?: object): Promise<T> {
+  /** The backend bounds each GitLab call, not the whole request; provisioning legitimately chains several. */
+  async request<T>(method: 'GET' | 'POST' | 'PUT', route: string, body?: object, timeoutMs = 60_000): Promise<T> {
     if (!route.startsWith('/v1/') || route.includes('\\') || route.split('/').some(part => part === '..' || part === '.')) throw new Error('协同操作路径无效')
     const token = await this.accessToken()
     const response = await this.requestHttp(`${this.origin}${route}`, {
-      method, redirect: 'error', signal: AbortSignal.timeout(20_000),
+      method, redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
       headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })

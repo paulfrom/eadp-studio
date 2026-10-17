@@ -55,16 +55,19 @@ export function StudioPanel(props: StudioProps) {
     finally { setBusy(false) }
   }, [props.call])
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false, timer: ReturnType<typeof setTimeout> | undefined
     const refresh = async () => {
       try { const result = await props.call({ action: 'state' }); if (!cancelled) { if (result.ok) setState(result.state); else if (result.code === 'LOGIN_REQUIRED') setState(disconnectedState()) } }
       catch { /* Explicit refresh reports failures without hiding the previous projection. */ }
+      // One request at a time. Queuing a refresh every few seconds would put
+      // every user action behind a growing backlog on a slow collaboration API.
+      finally { if (!cancelled) timer = setTimeout(() => { void refresh() }, 10_000) }
     }
     void refresh()
-    const timer = setInterval(() => { void refresh() }, 5000)
-    return () => { cancelled = true; clearInterval(timer) }
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [props.call])
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
+  const openProjectDialog = async () => { setProjectDialog(true); await call({ action: 'namespaces' }) }
   const selected = entities.find(e => e.id === selectedId)
   const draft = state.drafts.find(d => d.entityId === selectedId)
   const task = state.tasks.find(t => t.entityId === selectedId && t.purpose === (stage === 'prototype' ? 'prototype' : 'material'))
@@ -86,7 +89,7 @@ export function StudioPanel(props: StudioProps) {
           <div className="border-b border-slate-100 bg-slate-50/50 p-3">
             <label htmlFor="studio-project" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">工作空间 / 项目</label>
             <select id="studio-project" className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-            <button className="mt-2 w-full rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50" disabled={!state.connected} onClick={() => setProjectDialog(true)}>＋ 新建 / 获取项目</button>
+            <button className="mt-2 w-full rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50" disabled={!state.connected} onClick={() => void openProjectDialog()}>＋ 新建 / 获取项目</button>
           </div>
           <nav className="space-y-1 p-2">
             <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Studio Workspace</div>
@@ -113,7 +116,7 @@ export function StudioPanel(props: StudioProps) {
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.projectInitializations.map(operation => <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
-        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? setProjectDialog(true) : setLoginDialog(true)}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
+        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : setLoginDialog(true)}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}

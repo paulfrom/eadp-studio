@@ -148,3 +148,20 @@ test('template copying resumes identical partial bytes, refuses changed files an
     assert.equal(await readFile(path.join(destinationRoot, first.path), 'utf8'), 'preserve user change')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
+
+test('state polling never re-reads the namespace catalogue and the project dialog fetches it on demand', async () => {
+  const f = await fixture()
+  try {
+    const app = new StudioApplication(f.store, f.api, f.ports)
+    const polled = await app.command({ action: 'state' })
+    assert.equal(polled.ok, true)
+    assert.equal(f.calls.includes('GET /v1/namespaces'), false)
+    assert.deepEqual(polled.ok && polled.state.namespaces, [])
+    const offered = await app.command({ action: 'namespaces' })
+    assert.equal(offered.ok, true)
+    assert.deepEqual(offered.ok && offered.state.namespaces, [{ id: 7, name: '团队', fullPath: 'team' }])
+    const refreshed = await app.command({ action: 'state' })
+    assert.deepEqual(refreshed.ok && refreshed.state.namespaces, [{ id: 7, name: '团队', fullPath: 'team' }])
+    assert.equal(f.calls.filter(call => call === 'GET /v1/namespaces').length, 1)
+  } finally { await f.dispose() }
+})

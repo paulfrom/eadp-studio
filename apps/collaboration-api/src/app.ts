@@ -5,6 +5,7 @@ import { GitLab } from './auth/gitlab.js';
 import { SessionAuth } from './auth/session.js';
 import type { Config } from './config.js';
 import { createDatabase, type Database } from './persistence/database.js';
+import { createRedisCache, ReadThrough } from './persistence/cache.js';
 import { registerRoutes } from './routes.js';
 import { CollaborationService } from './service.js';
 
@@ -20,9 +21,10 @@ export function createApp(config: Config, database: Database = createDatabase(co
     return response.status(503).send({ error: { code: 'SERVICE_UNAVAILABLE', message: 'The operation could not be completed; query its idempotency key before retrying' } });
   });
   app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: { code: 'ROUTE_NOT_FOUND', message: 'API route was not found' } }));
-  const gitlab = new GitLab(config), auth = new SessionAuth(database, gitlab, config);
-  app.addHook('onReady', async () => { await auth.ensureTestUser(); });
+  const redis = config.redisUrl ? createRedisCache(config.redisUrl) : undefined;
+  const gitlab = new GitLab(config, new ReadThrough(redis?.cache)), auth = new SessionAuth(database, gitlab, config);
+  app.addHook('onReady', async () => { await auth.ensureTestUser(); void redis?.connect(); });
   registerRoutes(app, new CollaborationService(database, gitlab, new PublicationAuthorization(config), auth), config);
-  app.addHook('onClose', async () => { await database.end(); });
+  app.addHook('onClose', async () => { await database.end(); await redis?.close(); });
   return app;
 }

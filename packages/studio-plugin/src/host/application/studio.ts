@@ -15,6 +15,7 @@ const starter = (title: string) => `# ${title}\n\n## 业务背景\n\n请与 AI �
 export class StudioApplication {
   private queue: Promise<unknown> = Promise.resolve()
   private previewState: StudioState['preview']
+  private namespaces: NamespaceView[] = []
   private readonly projects: ProjectWorkspaces
   constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports) }
   async dispose(): Promise<void> { await this.projects.dispose() }
@@ -28,8 +29,9 @@ export class StudioApplication {
     if (!['state', 'login', 'logout'].includes(command.action)) await this.requireAccount()
     switch (command.action) {
       case 'state': break
-      case 'login': { await this.ports.stopPreview(); this.previewState = undefined; const identity = await this.ports.login(command.username, command.password); this.store.useUser(identity.user.id); break }
-      case 'logout': { try { await this.ports.logout() } finally { this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined } break }
+      case 'login': { await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []; const identity = await this.ports.login(command.username, command.password); this.store.useUser(identity.user.id); break }
+      case 'logout': { try { await this.ports.logout() } finally { this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.namespaces = [] } break }
+      case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
       case 'retryProjectInitialization': await this.projects.resume(command.operationId); break
@@ -108,7 +110,7 @@ export class StudioApplication {
     }
     this.store.useUser(account.id)
     const local = await this.store.read()
-    const [availableProjects, namespaces] = await Promise.all([this.api.request<ProjectView[]>('GET', '/v1/projects'), this.api.request<NamespaceView[]>('GET', '/v1/namespaces')])
+    const availableProjects = await this.api.request<ProjectView[]>('GET', '/v1/projects')
     const allowed = new Set(availableProjects.map(project => project.id))
     const projects = local.projects.filter(project => allowed.has(project.id))
     const selected = projects.find(project => project.id === local.selectedProjectId)
@@ -126,7 +128,7 @@ export class StudioApplication {
         drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
       }
     }
-    return { connected: true, account, projects, availableProjects, namespaces,
+    return { connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), drafts, tasks,
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),

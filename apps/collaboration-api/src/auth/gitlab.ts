@@ -1,6 +1,7 @@
 import { DomainError, repositoryPath, requireCondition } from '@eadp/asset-domain';
 import type { NamespaceView } from '@eadp/contracts';
 import type { Config } from '../config.js';
+import { ReadThrough } from '../persistence/cache.js';
 import type { Actor } from './session.js';
 
 export interface GitLabUser { id: number; username: string; state: 'active'; email?: string }
@@ -12,7 +13,9 @@ function record(value: unknown): value is Record<string, unknown> { return value
 function valid(condition: unknown): asserts condition { requireCondition(condition, 'GITLAB_INVALID_RESPONSE', 'GitLab returned an invalid response', 502); }
 function numericId(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
 export class GitLab {
-  constructor(private readonly config: Config) {}
+  constructor(private readonly config: Config, private readonly cache: ReadThrough = new ReadThrough()) {}
+  private key(suffix: string): string { return `eadp-studio:gitlab:${this.config.gitlabUrl}:${suffix}`; }
+  private memberKey(scope: 'projects' | 'groups', id: number, userId: number, inherited: boolean): string { return this.key(`member:${scope}:${id}:${userId}:${inherited ? 'all' : 'direct'}`); }
   private async read(response: Response, maximum: number): Promise<Uint8Array> {
     const reader = response.body?.getReader();
     requireCondition(reader, 'GITLAB_EMPTY_RESPONSE', 'GitLab returned an empty response', 502);
@@ -76,6 +79,11 @@ export class GitLab {
   }
   async user(id: number): Promise<GitLabUser> {
     requireCondition(numericId(id), 'GITLAB_BINDING_REQUIRED', 'A verified numeric GitLab user binding is required', 403);
+    const raw = await this.cache.load(this.key(`user:${id}`), 60, () => this.json<unknown>(`/users/${id}`)), user = this.checkedUser(raw);
+    valid(user.id === id); return user;
+  }
+  private async liveUser(id: number): Promise<GitLabUser> {
+    requireCondition(numericId(id), 'GITLAB_BINDING_REQUIRED', 'A verified numeric GitLab user binding is required', 403);
     const raw = await this.json<unknown>(`/users/${id}`), user = this.checkedUser(raw);
     valid(user.id === id); return user;
   }
@@ -110,12 +118,20 @@ export class GitLab {
     try { return await this.project(fullPath); } catch (error) { if (error instanceof DomainError && error.code === 'GITLAB_NOT_FOUND') return null; throw error; }
   }
   async authorize(actor: Pick<Actor, 'gitlabUserId'>, projectId: number, edit = false): Promise<GitLabProject> {
+    if (edit) {
+      await this.liveUser(actor.gitlabUserId);
+      const membership = await this.member('projects', projectId, actor.gitlabUserId);
+      requireCondition(this.active(membership, 30), 'PROJECT_EDIT_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
+      const project = await this.project(projectId);
+      valid(project.id === projectId);
+      requireCondition(project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
+      return project;
+    }
     await this.user(actor.gitlabUserId);
-    const membership = await this.member('projects', projectId, actor.gitlabUserId);
-    requireCondition(this.active(membership, edit ? 30 : 20), edit ? 'PROJECT_EDIT_DENIED' : 'GITLAB_READ_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
-    const project = await this.project(projectId);
+    const membership = await this.cache.load(this.memberKey('projects', projectId, actor.gitlabUserId, true), 30, () => this.member('projects', projectId, actor.gitlabUserId));
+    requireCondition(this.active(membership, 20), 'GITLAB_READ_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
+    const project = await this.cache.load(this.key(`project:${projectId}`), 30, () => this.project(projectId));
     valid(project.id === projectId);
-    if (edit) requireCondition(project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
     return project;
   }
   private groupPolicy(raw: unknown, id: number, accessLevel: number): NamespaceView | null {
@@ -136,21 +152,23 @@ export class GitLab {
   }
   async namespaces(actor: Actor): Promise<NamespaceView[]> {
     await this.user(actor.gitlabUserId);
-    const groups = await this.list('/groups?all_available=true'), seen = new Set<number>();
-    const ids = groups.map(raw => {
-      valid(record(raw) && numericId(raw.id) && !seen.has(raw.id)); seen.add(raw.id);
-      return raw.id;
+    return this.cache.load(this.key(`namespaces:${actor.gitlabUserId}`), 60, async () => {
+      const groups = await this.list('/groups?all_available=true'), seen = new Set<number>();
+      const ids = groups.map(raw => {
+        valid(record(raw) && numericId(raw.id) && !seen.has(raw.id)); seen.add(raw.id);
+        return raw.id;
+      });
+      const namespaces: Array<NamespaceView | null> = Array.from({ length: ids.length }, () => null);
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
+        while (next < ids.length) {
+          const index = next++;
+          const membership = await this.member('groups', ids[index]!, actor.gitlabUserId);
+          if (this.active(membership, 30)) namespaces[index] = this.groupPolicy(groups[index], ids[index]!, membership.access_level);
+        }
+      }));
+      return namespaces.filter((namespace): namespace is NamespaceView => namespace !== null);
     });
-    const namespaces: Array<NamespaceView | null> = Array.from({ length: ids.length }, () => null);
-    let next = 0;
-    await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
-      while (next < ids.length) {
-        const index = next++;
-        const membership = await this.member('groups', ids[index]!, actor.gitlabUserId);
-        if (this.active(membership, 30)) namespaces[index] = this.groupPolicy(groups[index], ids[index]!, membership.access_level);
-      }
-    }));
-    return namespaces.filter((namespace): namespace is NamespaceView => namespace !== null);
   }
   async namespace(actor: Actor, id: number): Promise<NamespaceView> {
     await this.user(actor.gitlabUserId);
@@ -161,13 +179,15 @@ export class GitLab {
     return this.checkedProject(await this.json('/projects', 'POST', { name, path, namespace_id: namespaceId, visibility: 'private', initialize_with_readme: false, description: marker }));
   }
   async grantCreator(actor: Actor, projectId: number): Promise<void> {
-    await this.user(actor.gitlabUserId);
+    await this.liveUser(actor.gitlabUserId);
     const effective = await this.member('projects', projectId, actor.gitlabUserId);
-    if (this.active(effective, 40)) return;
-    const direct = await this.member('projects', projectId, actor.gitlabUserId, false);
-    await this.json(`/projects/${projectId}/members${direct ? `/${actor.gitlabUserId}` : ''}`, direct ? 'PUT' : 'POST', { ...(direct ? {} : { user_id: actor.gitlabUserId }), access_level: 40 });
-    const granted = await this.member('projects', projectId, actor.gitlabUserId);
-    requireCondition(this.active(granted, 40), 'PROJECT_CREATOR_ASSIGNMENT_PENDING', 'GitLab creator membership has not been verified; retry the same project request', 503);
+    if (!this.active(effective, 40)) {
+      const direct = await this.member('projects', projectId, actor.gitlabUserId, false);
+      await this.json(`/projects/${projectId}/members${direct ? `/${actor.gitlabUserId}` : ''}`, direct ? 'PUT' : 'POST', { ...(direct ? {} : { user_id: actor.gitlabUserId }), access_level: 40 });
+      const granted = await this.member('projects', projectId, actor.gitlabUserId);
+      requireCondition(this.active(granted, 40), 'PROJECT_CREATOR_ASSIGNMENT_PENDING', 'GitLab creator membership has not been verified; retry the same project request', 503);
+    }
+    await this.cache.invalidate(this.memberKey('projects', projectId, actor.gitlabUserId, true));
   }
   async branchHead(actor: Actor, projectId: number, branch: string): Promise<string> {
     await this.authorize(actor, projectId);

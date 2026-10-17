@@ -47,7 +47,7 @@ export class ProjectWorkspaces {
       let project: ProjectView
       if (!operation.projectId) {
         // Exactly the original body and key survive a lost response or desktop restart.
-        project = await this.api.request<ProjectView>('POST', '/v1/projects', { idempotencyKey: operation.id, name: operation.name, namespaceId: operation.namespaceId, path: operation.path })
+        project = await this.api.request<ProjectView>('POST', '/v1/projects', { idempotencyKey: operation.id, name: operation.name, namespaceId: operation.namespaceId, path: operation.path }, 180_000)
         operation.projectId = project.id; operation.phase = 'initializing'; await this.store.save()
       } else project = await this.project(operation.projectId)
       if (project.initializationStatus === 'ready') { await this.openReady(project, operation); return }
@@ -85,7 +85,7 @@ export class ProjectWorkspaces {
         await this.ports.git.push(directory, operation.commitSha, project.stableBranch)
       }
       operation.phase = 'verifying'; await this.store.save()
-      project = await this.api.request<ProjectView>('POST', `/v1/projects/${encodeURIComponent(project.id)}/initialize`, { idempotencyKey: `${operation.id}-initialize`, commitSha: operation.commitSha })
+      project = await this.api.request<ProjectView>('POST', `/v1/projects/${encodeURIComponent(project.id)}/initialize`, { idempotencyKey: `${operation.id}-initialize`, commitSha: operation.commitSha }, 180_000)
       if (project.initializationStatus !== 'ready' || project.recognizedHead !== operation.commitSha) throw new Error('后台尚未接受首次提交，请保留现场并重新核对。')
       await this.bind(project, operation)
     } catch (error) { operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '项目初始化结果未知'; await this.store.save(); throw error }

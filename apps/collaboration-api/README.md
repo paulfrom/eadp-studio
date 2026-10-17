@@ -130,7 +130,9 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 
 ## Docker 运行与一键启动
 
-多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）；`compose.yml`（postgres:17 + api，默认端口 `6972:3001`）仅用于本机一键拉起，企业形态仍是独立 PostgreSQL + 本镜像。
+多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）；`compose.yml`（postgres:17 + redis:7 + api，默认端口 `6972:3001`）仅用于本机一键拉起，企业形态仍是独立 PostgreSQL + 本镜像。
+
+可选 `REDIS_URL` 启用本机 Redis 缓存 GitLab 读：用户身份（60s）、仓库成员（30s）、项目元数据（30s）、群组建仓选项（60s）；每次建仓仍实时复核用户与群组，写操作（`edit=true`）不读缓存。缓存不可用时自动退回远端读取，不影响协同正确性。
 
 ```sh
 ./start-backend.sh            # 需要 docker 与 compose 插件；读取 apps/collaboration-api/.env

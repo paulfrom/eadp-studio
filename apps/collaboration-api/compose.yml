@@ -14,6 +14,15 @@ services:
       timeout: 3s
       retries: 20
 
+  cache:
+    image: redis:7-alpine
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: ../..
@@ -21,12 +30,13 @@ services:
     environment:
       DATABASE_URL: postgresql://eadp:${EADP_DB_PASSWORD:-eadp-dev-password}@db:5432/eadp_studio
       PG_SSL: disable
+      REDIS_URL: ${REDIS_URL:-redis://cache:6379}
       GITLAB_URL: ${GITLAB_URL:?Set GITLAB_URL in apps/collaboration-api/.env or the environment}
       GITLAB_ALLOW_HTTP: ${GITLAB_ALLOW_HTTP:-}
       SEI_GITLAB_TOKEN: ${SEI_GITLAB_TOKEN:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-},db
+      NO_PROXY: ${NO_PROXY:-},db,cache
       HOST: 0.0.0.0
       PORT: 3001
       DESKTOP_UPDATE_MIN_VERSION: ${DESKTOP_UPDATE_MIN_VERSION:-}
@@ -37,6 +47,8 @@ services:
       - '${EADP_API_PORT:-6972}:3001'
     depends_on:
       db:
+        condition: service_healthy
+      cache:
         condition: service_healthy
 
 volumes:
