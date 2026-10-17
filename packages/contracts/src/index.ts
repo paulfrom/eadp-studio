@@ -60,11 +60,19 @@ export const CheckEvidenceSchema = object({
   checks: Type.Array(object({ name: text, passed: Type.Literal(true), evidenceHash: Type.String({ pattern: '^[a-f0-9]{64}$' }) }), { minItems: 1, maxItems: 100 }),
 });
 export type CheckEvidence = Static<typeof CheckEvidenceSchema>;
-export const ConfirmationInputSchema = object({
+const confirmationFields = {
   entityId: IdSchema, expectedRevision: RevisionSchema, fixed: FixedReferenceSchema, metadata: MaterialMetadataSchema,
-  confirmationMethod: Type.Union([Type.Literal('direct'), Type.Literal('ai-assisted')]),
   authorConfirmed: Type.Literal(true),
-});
+};
+export const ConfirmationInputSchema = Type.Union([
+  object({ ...confirmationFields, confirmationMethod: Type.Literal('direct') }),
+  object({ ...confirmationFields, confirmationMethod: Type.Literal('ai-assisted'), reviewEvidence: object({
+    candidateSha: ShaSchema,
+    inputHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+    reportHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+    dispositionHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+  }) }),
+]);
 export type ConfirmationInput = Static<typeof ConfirmationInputSchema>;
 export const PrepareIntegrationSchema = object({
   ...keyed, entityId: IdSchema, token: OccupationTokenSchema,
