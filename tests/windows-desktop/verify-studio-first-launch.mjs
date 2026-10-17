@@ -176,7 +176,8 @@ async function main() {
         const main = panel?.querySelector('main');
         const sidebar = panel?.querySelector('aside[aria-label="工作台导航"]');
         const navigation = [...(sidebar?.querySelectorAll('nav > button') ?? [])];
-        const stageLabels = navigation.map(button => [...button.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim());
+        // The direct spans contain the decorative icon, stage name, then chevron.
+        const stageLabels = navigation.map(button => text(button.querySelector(':scope > span:nth-of-type(2)')));
         const expectedStages = ${JSON.stringify(expectedStages)};
         const welcomeHeading = [...(main?.querySelectorAll('h2') ?? [])].find(element => text(element) === '从一个项目开始');
         const welcome = welcomeHeading?.parentElement;

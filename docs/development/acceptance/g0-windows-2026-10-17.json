@@ -1,0 +1,147 @@
+{
+  "date": "2026-10-17",
+  "sourceCommit": "78e9099c677f34c3e450009bc28a8384605f4738",
+  "scope": "Windows development-machine current-source build, win-unpacked fresh-profile startup and local-preview acceptance; read-only real backend smoke",
+  "completeG0Accepted": false,
+  "m1Allowed": false,
+  "releaseReady": false,
+  "build": {
+    "command": ".\\build-desktop.ps1",
+    "exitCode": 0,
+    "runId": "2026-10-17T05-27-19.833Z-v8Nvn1",
+    "sourceDirtyAtPackaging": false
+  },
+  "installer": {
+    "productName": "eadp studio",
+    "target": "win-x64",
+    "unsigned": true,
+    "path": "D:\\project\\ead\\eadp-e2e\\artifacts\\windows\\eadp-studio-0.2.1-alpha.4-win-x64-unsigned.exe",
+    "bytes": 351775156,
+    "sha256": "5b1ae6c1aeb458b7f6cc8d2e071d5b1194db7b8e64bad579321c977b115b46b3"
+  },
+  "asar": {
+    "path": "D:\\project\\ead\\eadp-e2e\\.local\\build\\dsh\\apps\\desktop\\.desktop-build\\targets\\win-x64\\unsigned-artifacts\\win-unpacked\\resources\\app.asar",
+    "bytes": 185165337,
+    "sha256": "97731d161cf9347240d8019d5d86ab2821ffed7ac4dd9c76eee5415e852ee6aa"
+  },
+  "sourceDigest": "7f0aaae136f784ddf369a6133bb389abe961a958989431eed4a7277e7c0fb887",
+  "product": {
+    "name": "eadp-studio",
+    "version": "0.2.1-alpha.4",
+    "appId": "io.github.paulfrom.eadp.studio",
+    "commit": "78e9099c677f34c3e450009bc28a8384605f4738"
+  },
+  "tests": {
+    "backendAndHost": {
+      "pass": 80,
+      "fail": 0,
+      "skip": 2
+    },
+    "platformPass": 47,
+    "totalPass": 127,
+    "isolatedPostgresqlSkip": 2,
+    "workspaceTypechecks": "passed",
+    "templateFrozenInstallAndCheck": "passed"
+  },
+  "firstLaunch": {
+    "result": ".local\\acceptance\\studio-first-launch-Xu9s5e\\result.json",
+    "checks": {
+      "singleVisibleMainPanel": true,
+      "interactive": true,
+      "fiveStageNavigation": true,
+      "disconnected": true,
+      "welcome": true,
+      "loginEntry": true,
+      "loginForm": true,
+      "hostState": true
+    },
+    "screenshot": "D:\\project\\ead\\eadp-e2e\\.local\\acceptance\\studio-first-launch-Xu9s5e\\studio.png",
+    "screenshotVisuallyReviewed": true,
+    "scope": "development-machine-fresh-application-data",
+    "cleanup": "owned-process-tree-terminated"
+  },
+  "nativePreview": {
+    "status": "passed",
+    "mockReady": true,
+    "guardInstalled": true,
+    "missingMockRejected": true,
+    "isolatedSecretRoundTrip": true,
+    "ownedPreviewProcessExited": true
+  },
+  "finalBundledRuntime": {
+    "status": "passed",
+    "tools": {
+      "node": {
+        "exitCode": 0,
+        "version": "v22.22.3",
+        "path": "D:\\project\\ead\\eadp-e2e\\.local\\build\\dsh\\apps\\desktop\\.desktop-build\\targets\\win-x64\\unsigned-artifacts\\win-unpacked\\resources\\runtime\\studio-tools\\node\\node-v22.22.3-win-x64\\node.exe"
+      },
+      "pnpm": {
+        "exitCode": 0,
+        "version": "11.28.5",
+        "path": "D:\\project\\ead\\eadp-e2e\\.local\\build\\dsh\\apps\\desktop\\.desktop-build\\targets\\win-x64\\unsigned-artifacts\\win-unpacked\\resources\\runtime\\studio-tools\\pnpm\\bin\\pnpm.mjs"
+      },
+      "git": {
+        "exitCode": 0,
+        "version": "git version 2.56.0.windows.2",
+        "path": "D:\\project\\ead\\eadp-e2e\\.local\\build\\dsh\\apps\\desktop\\.desktop-build\\targets\\win-x64\\unsigned-artifacts\\win-unpacked\\resources\\runtime\\studio-tools\\git\\cmd\\git.exe"
+      },
+      "ssh": {
+        "exitCode": 0,
+        "version": "OpenSSH_10.5p1, OpenSSL 3.5.9 29 Sep 2026",
+        "path": "D:\\project\\ead\\eadp-e2e\\.local\\build\\dsh\\apps\\desktop\\.desktop-build\\targets\\win-x64\\unsigned-artifacts\\win-unpacked\\resources\\runtime\\studio-tools\\git\\usr\\bin\\ssh.exe"
+      }
+    },
+    "environment": {
+      "canary": null,
+      "userProfile": null,
+      "gitConfig": "NUL"
+    },
+    "detachedDescendantExited": true
+  },
+  "realBackendReadOnly": {
+    "status": "pass",
+    "projectCount": 1,
+    "namespaceCount": 45,
+    "logoutPassed": true,
+    "revocationPassed": true,
+    "businessWrites": false,
+    "deployedSourceCommit": "not-attested-by-public-interfaces"
+  },
+  "findings": [
+    {
+      "id": "G0-20261017-01",
+      "priority": "P1",
+      "gate": "G0-4",
+      "status": "reproduced-unfixed",
+      "file": "apps/collaboration-api/src/auth/gitlab.ts",
+      "line": 174,
+      "cause": "namespace() uses the cached user state before management-token repository creation",
+      "reproduction": "real-product-classes-with-synthetic-upstream-and-memory-cache",
+      "actualGitLabBlockingVerified": false,
+      "externalWrites": false
+    }
+  ],
+  "pending": [
+    "G0-4 creation authorization fix and negative regression",
+    "G0-5 real desktop plus real backend five-stage, adoption and handoff workflow",
+    "current-source live-model approval/cancel/restart and authenticated business interaction",
+    "current Windows real PostgreSQL transactional business sequences"
+  ],
+  "excluded": [
+    "signing",
+    "upgrade/uninstall",
+    "clean-machine distribution",
+    "M2-2 remote publication"
+  ],
+  "review": {
+    "method": "independent AI subagent code and scope review; primary agent independently reran the synthetic authorization probe",
+    "humanIndependentAcceptance": false
+  },
+  "repositoryChanges": [
+    "tests/windows-desktop/verify-studio-first-launch.mjs: stage label extraction only",
+    "docs/development/acceptance/g0-windows-2026-10-17.md",
+    "docs/development/acceptance/g0-windows-2026-10-17.json"
+  ],
+  "verifiedAt": "2026-10-17T05:58:53.871Z"
+}
