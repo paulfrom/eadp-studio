@@ -5,7 +5,6 @@ import type { Config } from '../config.js';
 import type { Database } from '../persistence/database.js';
 import type { GitLab, GitLabUser } from './gitlab.js';
 
-const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 const testAccount = { id: 1, username: 'studioAdmin', name: '测试管理员', email: 'songlin.liu@changhong.com', password: 'admin@123', gitlabLookup: 'songlin.liu@changhong.com' };
 interface UserRow { id: string | number; username: string; name: string; email: string; admin: boolean; password_salt: string; password_hash: string; gitlab_user_id: string | number | null; gitlab_username: string | null; gitlab_email: string | null }
 export interface Actor extends StudioUser { sessionHash: string }
@@ -43,7 +42,7 @@ export class SessionAuth {
     remote = await this.gitlab.user(Number(row.gitlab_user_id));
     await this.database.query('UPDATE studio_users SET gitlab_username=$2,gitlab_email=$3 WHERE id=$1 AND gitlab_user_id=$4', [row.id, remote.username, remote.email ?? null, remote.id]);
     row.gitlab_username = remote.username; row.gitlab_email = remote.email ?? null;
-    const token = `studio_${randomBytes(32).toString('base64url')}`, expiresAt = new Date(Date.now() + sessionLifetimeMs).toISOString();
+    const token = `studio_${randomBytes(32).toString('base64url')}`, expiresAt = new Date(Date.now() + this.config.sessionTtlDays * 24 * 60 * 60 * 1000).toISOString();
     await this.database.query('INSERT INTO studio_sessions(token_hash,user_id,expires_at) VALUES($1,$2,$3)', [this.hash(token), row.id, expiresAt]);
     return { token, expiresAt, user: publicUser(row), gitlabOrigin: this.config.gitlabUrl };
   }

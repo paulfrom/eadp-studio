@@ -4,7 +4,7 @@
 
 ## 身份、凭据与权限
 
-工作台通过 `POST /v1/auth/login` 的 `{username,password}` 登录协同后端；后端签发有期限的 opaque Bearer 会话，保存会话哈希，`POST /v1/auth/logout` 撤销当前会话，`GET /v1/me` 查询可信身份。协同用户有独立 ID，不能将会话 token 当作 GitLab Git 凭据或把 GitLab 用户 ID 当作协同 ID。Host 通过安全设施保存协同会话，client、普通 Agent 和本机 Git 操作不取得后端管理 token。
+工作台通过 `POST /v1/auth/login` 的 `{username,password}` 登录协同后端；后端签发有期限的 opaque Bearer 会话，保存会话哈希，`POST /v1/auth/logout` 撤销当前会话，`GET /v1/me` 查询可信身份。会话寿命由后端 `STUDIO_SESSION_TTL_DAYS` 配置，默认 90 天；桌面端只把会话 token 缓存进系统安全存储，不写密码，也不在本机长期缓存任何长期刷新凭据。协同用户有独立 ID，不能将会话 token 当作 GitLab Git 凭据或把 GitLab 用户 ID 当作协同 ID。Host 通过安全设施保存协同会话，client、普通 Agent 和本机 Git 操作不取得后端管理 token。
 
 当前只预置一个测试管理员：显示名 `测试管理员`、用户名 `studioAdmin`、密码 `admin@123`，协同用户 ID 为 `1`，绑定定位值为既有 GitLab 账号 `songlin.liu@changhong.com`。后端首次成功登录时查询并进行唯一精确匹配，确认存在且有效后持久绑定 GitLab 数字用户 ID；之后不因登录或邮件变化自动改绑，不新建 GitLab 账号。该默认账号是本次测试入口，只证明单账号行为；多人实名身份、账号分配与真实管理员分权仍需独立验收，不能借它宣称完成。
 
