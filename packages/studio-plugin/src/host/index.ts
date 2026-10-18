@@ -4,7 +4,7 @@ import { composeStudio, type Config } from './composition.ts'
 import type { StudioCommand, StudioReply } from '../shared/studio.ts'
 
 export type { Config }
-export const inject = ['tools', 'agents', 'systemPrompt', 'sessionPersistence', 'subprocess', 'sessionController']
+export const inject = ['tools', 'agents', 'systemPrompt', 'sessionPersistence', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections']
 /** Remote is a trusted UI entry; these methods are never registered as Agent tools. */
 export class StudioService extends TypertRemoteService {
   private readonly application: ReturnType<typeof composeStudio>

@@ -119,6 +119,8 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-api-gateway',
   '@deepseek-ai/dsh-api-session-controller',
   '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-agent-preset-registry',
+  '@deepseek-ai/dsh-session-projection',
   '@deepseek-ai/dsh-session',
   '@deepseek-ai/dsh-system-prompt',
   '@deepseek-ai/dsh-tools',

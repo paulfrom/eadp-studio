@@ -5,7 +5,7 @@
   "references": [
     { "path": "../../../vendor/cordis" }, { "path": "../contracts" },
     { "path": "../../core/agent" }, { "path": "../../core/session" }, { "path": "../../core/system-prompt" },
-    { "path": "../../core/tools" }, { "path": "../../api/session-controller/tsconfig.host.json" },
+    { "path": "../../core/tools" }, { "path": "../../preset/agent-preset-registry" }, { "path": "../../session/session-projection" }, { "path": "../../api/session-controller/tsconfig.host.json" },
     { "path": "../../subprocess/subprocess" }, { "path": "../../llm/llm" }, { "path": "../../typert/protocol" }
   ]
 }

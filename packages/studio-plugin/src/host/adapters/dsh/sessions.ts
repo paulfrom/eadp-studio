@@ -3,9 +3,11 @@ import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentHandle, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
 import { materialPath } from '../assets/materials.ts'
@@ -33,6 +35,7 @@ export class DshTaskSessions {
       return task.sessionId
     }
     const setup: AgentSetup = async (scope) => {
+      await this.ctx.agentPresets.mount(scope, agentPreset)
       scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
       if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
       if (input) {
@@ -62,8 +65,10 @@ export class DshTaskSessions {
       if (task.purpose === 'split' && task.split?.status === 'sent' || task.purpose === 'handoff' && task.handoff?.status === 'sent' || task.purpose === 'review' && task.reviewSent) throw new Error('已发送的拆分会话无法读取，请保留现场后重试恢复', { cause: error })
       return undefined
     })
+    const selectedPreset = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values.agentPreset ?? undefined : undefined
+    const agentPreset = (await this.ctx.agentPresets.resolve(selectedPreset)).id
     if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, setup })
-    else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree }, setup })
+    else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, setup })
     this.handles.set(task.sessionId, handle)
     if ((task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') && inspection) {
       // Do not await application delivery: open runs inside its serialized command queue.

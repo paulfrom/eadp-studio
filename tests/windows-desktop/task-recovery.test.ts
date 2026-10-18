@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -9,7 +9,8 @@ import { registerHooks } from 'node:module'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 import type { PendingOperation } from '../../packages/studio-plugin/src/host/application/state.ts'
-import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
+import { initialMetadata, type HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
+import { saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import type { EntityView, IntegrationView, ProjectState } from '@eadp/contracts'
 
@@ -185,6 +186,8 @@ function dshFixture(events: Map<string, unknown[]>) {
   let listener: (session: { id: string }, event: unknown) => void = () => {}
   const counts = { creates: 0, resumes: 0, followups: 0 }
   const context = {
+    agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
+    sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
     on: (_event: string, callback: typeof listener) => { listener = callback }, effect: () => {},
     sessionController: { inspect: async (id: string) => { if (!events.has(id)) throw new Error('not persisted'); return { events: events.get(id) } } },
     agents: {
@@ -362,6 +365,8 @@ test('review setup is read-only before the official Agent handle is published an
     await writeFile(path.join(root, 'reviewed.md'), 'fixed candidate')
     let creates = 0
     const context = {
+      agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
+      sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
       on: () => {}, effect: () => {},
       sessionController: { inspect: async () => { throw new Error('new session') } },
       agents: { create: async ({ setup }: { setup: (scope: unknown) => Promise<void> }) => {
@@ -397,4 +402,79 @@ for (const reason of [{ kind: 'completed' }, { kind: 'error', error: { code: 'UN
     assert.equal(JSON.stringify(received).includes('provider body'), false)
     await sessions.dispose()
   } finally { await f.dispose() }
+})
+
+
+for (const action of ['claimPrototype', 'startSession'] as const) test(action + ' opens and restores prototype sessions with prototype rules, while materials retain their boundary', async () => {
+  const f = await fixture()
+  try {
+    const entity = f.remote.entities[0]!
+    entity.kind = 'requirement'
+    const worktree = path.join(f.root, 'prototype-task')
+    await mkdir(worktree)
+    const draft = await saveMaterial(worktree, initialMetadata(entity), '# 已确认需求\n')
+    entity.current!.fixed = { ...entity.current!.fixed, path: draft.path, sha256: draft.sha256 }
+    entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
+    const task = { projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype' as const, inputHash: draft.sha256, worktree }
+    f.local.tasks.push(task)
+    const rules: string[] = []
+    f.ports.session = async (_task, value) => { rules.push(value); return _task.sessionId }
+    await f.store.save()
+    const first = await f.createApp().command({ action, entityId: entity.id, ...(action === 'startSession' ? { purpose: 'prototype' as const } : {}) })
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(first.sessionId, task.sessionId)
+    assert.match(rules[0]!, /按已确认需求完成原型/)
+    assert.doesNotMatch(rules[0]!, /仅编辑|不得.*执行shell/)
+    const store = new StudioStore(f.storeRoot); store.useUser(1)
+    assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'prototype' })).ok, true)
+    assert.equal(rules[1], rules[0], 'all prototype entry points and restored tasks use the same rules')
+    entity.occupation.purpose = 'design'
+    const local = await store.read(); local.tasks.push({ ...task, purpose: 'material', sessionId: 'design-session' }); await store.save()
+    assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'material' })).ok, true)
+    assert.match(rules[2]!, /仅编辑 需求\/scenario.md/)
+    assert.match(rules[2]!, /不得自行确认、释放占用、修改Git\/模板规则或执行shell/)
+  } finally { await f.dispose() }
+})
+
+for (const restore of [false, true]) test('task sessions mount the resolved official preset before publishing ' + (restore ? 'resumed' : 'new') + ' Agents', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-preset-'))
+  const disposers: Array<() => void> = [], mounted: string[] = [], resolved: Array<string | undefined> = [], sections: string[] = []
+  let published = 0
+  const setupAgent = async (options: any) => {
+    if (!restore) assert.equal(options.meta.agentPreset, 'standard')
+    await options.setup({ systemPrompt: { section: ({ name }: { name: string }) => { sections.push(name) } }, effect: (register: () => () => void) => { disposers.push(register()) } })
+    assert.deepEqual(mounted, [restore ? 'selected' : 'standard'])
+    assert.ok(sections.includes('eadp-task'))
+    published++
+    return { agent: { followup: () => {} }, dispose: async () => {} }
+  }
+  const context = {
+    on: () => {}, effect: () => {},
+    sessionProjections: { restore: (_checkpoint: unknown, events: any[], _base: number, meta: any) => { assert.equal(meta.agentPreset, 'original'); assert.equal(events[0].data.agentPreset, 'selected'); return { snapshot: { values: { agentPreset: 'selected' } } } } },
+    agentPresets: { resolve: async (id?: string) => { resolved.push(id); return { id: id ?? 'standard' } }, mount: async (_scope: unknown, id: string) => { mounted.push(id) } },
+    sessionController: { inspect: async () => { if (!restore) throw new Error('new session'); return { meta: { agentPreset: 'original' }, inheritedEventCount: 0, events: [{ type: 'agent-preset/selected', data: { agentPreset: 'selected' } }] } } },
+    agents: { create: setupAgent, resume: setupAgent },
+  }
+  const sessions = new DshTaskSessions(context as never, '', async () => {})
+  try {
+    const task = { projectId: 'project', entityId: 'requirement', sessionId: 'session', worktree: root, purpose: 'material' as const, inputHash: '' }
+    await sessions.open(task, 'fixed rules', undefined)
+    await sessions.open(task, 'fixed rules', undefined)
+    assert.equal(published, 1, 'opening an existing handle does not remount its preset')
+    assert.deepEqual(resolved, [restore ? 'selected' : undefined])
+  } finally { await sessions.dispose(); for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
+})
+
+
+test('a broken official preset prevents publication and cannot fall through to a tool-less Agent', async () => {
+  let creates = 0
+  const sessions = new DshTaskSessions({ on: () => {}, effect: () => {},
+    sessionController: { inspect: async () => { throw new Error('new session') } },
+    agentPresets: { resolve: async () => { throw new Error('preset unavailable') } },
+    agents: { create: async () => { creates++; throw new Error('must not create') } },
+  } as never, '', async () => {})
+  try {
+    await assert.rejects(sessions.open({ projectId: 'project', entityId: 'requirement', sessionId: 'session', worktree: 'unused', purpose: 'material', inputHash: '' }, '', undefined), /preset unavailable/)
+    assert.equal(creates, 0)
+  } finally { await sessions.dispose() }
 })

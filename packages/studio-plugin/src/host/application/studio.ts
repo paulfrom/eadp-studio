@@ -10,6 +10,7 @@ import { StudioStore, type PendingOperation, type AdoptionOperation } from './st
 import { ProjectWorkspaces } from './projects.ts'
 import { AuthorReviews, type ReviewCandidate } from './reviews.ts'
 
+const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
 const key = (): string => randomUUID()
 const sameSource = (left: { projectId: string; entityId: string; version: number }, right: { projectId: string; entityId: string; version: number }) => left.projectId === right.projectId && left.entityId === right.entityId && left.version === right.version
 const starter = (title: string) => `# ${title}\n\n## 业务背景\n\n请与 AI 整理实际业务背景与使用者。\n\n## 核心业务规则\n\n待补充。\n\n## 验收条件\n\n待补充。\n\n## 限制与不适用范围\n\n待澄清。\n`
@@ -62,16 +63,19 @@ export class StudioApplication {
       }
       case 'startSession': {
         const { remote, entity } = await this.entity(command.entityId)
-        let task: TaskView
-        if (command.purpose === 'prototype') task = await this.prototypeTask(remote, entity)
-        else task = await this.designTask(remote, entity)
-        const draft = await readMaterial(task.worktree, entity.kind, entity.id)
-        sessionId = await this.ports.session(task, this.materialRules(draft))
+        if (command.purpose === 'prototype') {
+          const task = await this.prototypeTask(remote, entity)
+          sessionId = await this.ports.session(task, prototypeRules)
+        } else {
+          const task = await this.designTask(remote, entity)
+          const draft = await readMaterial(task.worktree, entity.kind, entity.id)
+          sessionId = await this.ports.session(task, this.materialRules(draft))
+        }
         break
       }
       case 'requestReview': { const snapshot = await this.prepareCandidate(command.entityId, command.purpose); await this.reviews.request(snapshot.review); break }
       case 'confirmMaterial': await this.confirmMaterial(command.entityId, command.expectedHash, command); break
-      case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'); break }
+      case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, prototypeRules); break }
       case 'checkPrototype': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const sha = (await this.ports.git.state(task.worktree)).head; await this.ports.checks(task, sha); break }
       case 'startPreview': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const result = await this.ports.preview(task); this.previewState = { entityId: entity.id, url: result.url }; break }
       case 'stopPreview': await this.ports.stopPreview(); this.previewState = undefined; break
