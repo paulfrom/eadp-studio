@@ -4,6 +4,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { StudioPanel } from './StudioPanel.tsx'
+import type { ThemeFace } from './theme.ts'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
@@ -18,7 +19,7 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' { interface Sess
 declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>> } } }
 
 /** The layout service and the slot registry are the only services this slice needs. */
-export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation']
+export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation', 'theme']
 
 const PANEL_ID = 'studio' as MainPanelId
 
@@ -31,9 +32,14 @@ function registerStudio(ctx: ClientContext): void {
       return result.value
     }
     const retainSession = (id: string) => ctx.sessions.retain(id as SessionId, { source: 'studio' })
+    const theme: ThemeFace = {
+      getSnapshot: () => ctx.theme.getTheme(),
+      setPreference: id => ctx.theme.setTheme(id),
+      subscribe: listener => ctx.on('theme/change', listener),
+    }
     const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
       children: { 'studio.session': { kind: 'single', scope: 'session' } },
-      inject: () => ({ call, retainSession }),
+      inject: () => ({ call, retainSession, theme }),
     }, StudioPanel)
     ctx.layout.selectPanel(PANEL_ID)
     return dispose

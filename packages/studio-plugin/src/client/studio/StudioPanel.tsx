@@ -5,12 +5,13 @@ import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply,
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
-import { LoginDialog } from '../components/LoginDialog.tsx'
+import { StudioSettings, type SettingsSection } from '../components/StudioSettings.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
+import type { ThemeFace } from '../theme.ts'
 import css from '../studio.module.css'
 import '../studio.tw.generated.css'
 
-export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference }
+export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference; theme: ThemeFace }
 export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace
 const stages: Array<{ id: Stage; name: string; mark: string; description: string }> = [
   { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依' },
@@ -21,16 +22,6 @@ const stages: Array<{ id: Stage; name: string; mark: string; description: string
 ]
 
 const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
-const stageIconPaths: Record<Stage, string> = {
-  scenarios: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
-  requirements: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
-  prototype: 'M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z',
-  baselines: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-  handoffs: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
-}
-function StageIcon({ path }: { path: string }) {
-  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d={path} /></svg>
-}
 export function StudioPanel(props: StudioProps) {
   const [state, setState] = useState<StudioState>(disconnectedState)
   const [stage, setStage] = useState<Stage>('scenarios')
@@ -38,18 +29,21 @@ export function StudioPanel(props: StudioProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
-  const [loginDialog, setLoginDialog] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('account')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [filter, setFilter] = useState('')
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState('')
   const [newCategory, setNewCategory] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
   const [naturalConfirmation, setNaturalConfirmation] = useState('')
+  const openSettings = (section: SettingsSection) => { setSettingsSection(section); setSettingsOpen(true) }
   const call = useCallback(async (command: StudioCommand) => {
     setError(''); setBusy(true)
     try {
       const result = await props.call(command)
-      if (!result.ok) { if (result.code === 'LOGIN_REQUIRED') { setState(disconnectedState()); setSelectedId(undefined); setLoginDialog(true) }; throw new Error(result.message) }
+      if (!result.ok) { if (result.code === 'LOGIN_REQUIRED') { setState(disconnectedState()); setSelectedId(undefined); openSettings('account') }; throw new Error(result.message) }
       setState(result.state)
       return result
     } catch (err) { setError(err instanceof Error ? err.message : '操作未完成，请重新查询状态'); return undefined }
@@ -84,34 +78,44 @@ export function StudioPanel(props: StudioProps) {
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
-  return <div className={`${css.studio} studio-root flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#f4f6fa] antialiased`} data-studio-panel="studio">
-    <StudioTopbar state={state} busy={busy} onRefresh={() => void call({ action: 'state' })} />
-    <div className="flex flex-1 overflow-hidden">
-      <aside className="flex w-52 flex-shrink-0 flex-col justify-between border-r border-slate-200 bg-white" aria-label="工作台导航">
-        <div>
-          <div className="border-b border-slate-100 bg-slate-50/50 p-3">
-            <label htmlFor="studio-project" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">工作空间 / 项目</label>
-            <select id="studio-project" className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-            <button className="mt-2 w-full rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-50" disabled={!state.connected} onClick={() => void openProjectDialog()}>＋ 新建 / 获取项目</button>
+  const submitLogin = async (username: string, password: string) => { if (await call({ action: 'login', username, password })) { setSettingsOpen(false); setSelectedId(undefined) } }
+  const submitLogout = async () => { setState(disconnectedState()); setSelectedId(undefined); await call({ action: 'logout' }); setSettingsOpen(false) }
+  return <div className={`${css.studio} studio-root`} data-studio-panel="studio">
+    <StudioTopbar state={state} busy={busy} onRefresh={() => void call({ action: 'state' })} stage={stage} stages={stages} onSelectStage={selectStage} theme={props.theme} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
+    <div className={css.shell}>
+      <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
+        <div className={css.projectBox}>
+          <div className={css.fieldLabel}>工作空间 / 项目</div>
+          <div className={css.selectWrap}>
+            <select id="studio-project" className={css.projectSelect} aria-label="选择项目" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <svg className={css.chevron} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M6 9l6 6 6-6" /></svg>
           </div>
-          <nav className="space-y-1 p-2">
-            <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Studio Workspace</div>
-            {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`flex w-full items-center space-x-2.5 rounded-md px-3 py-2 text-left text-[11px] transition-colors ${stage === item.id ? 'bg-[#1e40af] font-semibold text-white shadow-sm' : 'font-medium text-slate-600 hover:bg-slate-100/80'}`} onClick={() => selectStage(item.id)}>
-              <span className={stage === item.id ? 'text-white' : 'text-slate-400'}><StageIcon path={stageIconPaths[item.id]} /></span>
-              <span>{item.name}</span>
-              <span className={`ml-auto ${stage === item.id ? 'text-indigo-200' : 'text-slate-300'}`}>›</span>
-            </button>)}
-          </nav>
+          <button className={css.ghostBtnFull} disabled={!state.connected} onClick={() => void openProjectDialog()}>＋ 新建 / 获取项目</button>
         </div>
-        <div className="flex flex-shrink-0 items-center justify-between border-t border-slate-200 bg-slate-50/70 p-3">
-          <div className="flex min-w-0 items-center space-x-2">
-            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-[11px] text-slate-600">{state.account?.name?.slice(0, 1) ?? 'S'}</div>
-            <div className="min-w-0 leading-tight">
-              <div className="truncate text-[11px] font-medium text-slate-800">{state.account?.name ?? '登录协同工作台'}</div>
-              <div className="truncate font-mono text-[9px] text-slate-500">{state.account ? `@${state.account.username} · GitLab @${state.account.gitlabUsername}` : '登录后查看可用项目'}</div>
+        <nav className={css.stageNav} aria-label="Studio 工作区">
+          <div className={css.navCaption}>Studio Workspace</div>
+          {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`${css.stage} ${stage === item.id ? css.active : ''}`} onClick={() => selectStage(item.id)}>
+            <span className={css.stageMark}>{item.mark}</span>
+            <span className={css.stageLabel}>{item.name}</span>
+            <svg className={css.stageChev} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M9 6l6 6-6 6" /></svg>
+          </button>)}
+        </nav>
+        <div className={css.railFoot}>
+          <button className={css.settingsEntry} onClick={() => openSettings('account')} title="设置 (Ctrl+,)">
+            <svg className={css.settingsIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={16} height={16}><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.55 1z" /></svg>
+            <span>设置</span>
+            <span className={css.settingsShortcut}>Ctrl ,</span>
+          </button>
+          <div className={css.accountRow}>
+            <div className={css.account}>
+              <span className={`${css.avatar} ${state.account ? css.accent : ''}`}>{state.account?.name?.slice(0, 1) ?? 'S'}</span>
+              <div className={css.accountText}>
+                <div className={css.accountName}>{state.account?.name ?? '登录协同工作台'}</div>
+                <div className={css.accountSub}>{state.account ? `@${state.account.username} · 协同账号` : '登录后查看可用项目'}</div>
+              </div>
             </div>
+            {!state.account && <button className={css.loginBtn} onClick={() => openSettings('account')}>登录</button>}
           </div>
-          <button className="rounded p-1 text-[10px] text-slate-400 transition-colors hover:bg-slate-200/60 hover:text-slate-700" onClick={() => { if (state.connected) { setState(disconnectedState()); setSelectedId(undefined); void call({ action: 'logout' }) } else setLoginDialog(true) }}>{state.connected ? '退出' : '登录'}</button>
         </div>
       </aside>
       <main className={css.main}>
@@ -119,7 +123,7 @@ export function StudioPanel(props: StudioProps) {
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.projectInitializations.map(operation => <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
-        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : setLoginDialog(true)}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
+        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : openSettings('account')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
@@ -144,7 +148,7 @@ export function StudioPanel(props: StudioProps) {
         </div>}
         {stage === 'prototype' && state.project && <div className={css.publication}><span>发布项目当前已确认基线</span><button disabled={busy} onClick={() => void call({ action: 'publish' })}>部署到远端</button><button disabled={busy} onClick={() => void call({ action: 'revokePublication' })}>撤回当前站点</button></div>}
       </main>
-    </div>{loginDialog && <LoginDialog busy={busy} error={error} onClose={() => setLoginDialog(false)} onSubmit={async (username, password) => { if (await call({ action: 'login', username, password })) { setLoginDialog(false); setSelectedId(undefined) } }} />}{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
+    </div>{settingsOpen && <StudioSettings section={settingsSection} onSectionChange={setSettingsSection} onClose={() => setSettingsOpen(false)} state={state} busy={busy} error={error} theme={props.theme} onLogin={submitLogin} onLogout={submitLogout} onRefresh={() => void call({ action: 'state' })} />}{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
   </div>
 }
 function Empty({ text }: { text: string }) { return <div className={css.empty}>{text}</div> }

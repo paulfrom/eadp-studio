@@ -116,6 +116,7 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-session',
   '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-client-ui-theme',
   '@deepseek-ai/dsh-api-gateway',
   '@deepseek-ai/dsh-api-session-controller',
   '@deepseek-ai/dsh-agent',

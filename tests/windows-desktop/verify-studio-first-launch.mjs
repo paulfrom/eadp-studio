@@ -7,7 +7,7 @@ import { parseArgs, promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const repository = path.resolve(import.meta.dirname, '../..')
-// Product assertions from client/studio/StudioPanel.tsx and components/LoginDialog.tsx.
+// Product assertions from client/studio/StudioPanel.tsx and components/StudioSettings.tsx.
 const expectedStages = ['项目场景', '需求协同', '原型展示', '基线确认', '交接清单']
 const usage = 'node tests/windows-desktop/verify-studio-first-launch.mjs --exe <absolute packaged .exe> [--timeout-ms 120000] [--screenshot]'
 
@@ -183,9 +183,11 @@ async function main() {
         const welcome = welcomeHeading?.parentElement;
         const loginEntry = [...(main?.querySelectorAll('button') ?? [])].find(button => text(button) === '登录协同工作台');
         const accountLogin = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button) === '登录');
+        const settingsEntry = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button).startsWith('设置'));
+        const sidebarLogout = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button) === '退出');
         const newProject = [...(sidebar?.querySelectorAll('button') ?? [])].find(button => text(button) === '＋ 新建 / 获取项目');
         const project = sidebar?.querySelector('#studio-project');
-        const dialog = panel?.querySelector('dialog[open][aria-labelledby="studio-login-title"]');
+        const dialog = panel?.querySelector('dialog[open][aria-labelledby="studio-settings-title"]');
         const form = dialog?.querySelector('form');
         const username = form?.querySelector('input[autocomplete="username"]');
         const password = form?.querySelector('input[type="password"]');
@@ -214,17 +216,18 @@ async function main() {
             && navigation[0]?.getAttribute('aria-current') === 'page' && text(main?.querySelector('h1')) === expectedStages[0],
           disconnected: !!main && text(main.querySelector('header')).includes('等待连接')
             && visible(accountLogin) && !accountLogin.disabled && visible(newProject) && newProject.disabled
+            && visible(settingsEntry) && !sidebarLogout
             && !!project && project.value === '' && project.options.length === 1,
           welcome: visible(welcomeHeading) && text(welcome).includes('登录协同工作台，创建或打开项目。')
             && text(welcome).includes('场景、需求与原型将在这里持续沉淀。') && text(welcome).includes('一个项目，对应一个 Git 仓库'),
           loginEntry: visible(loginEntry) && !loginEntry.disabled,
           refreshBusy: [...(panel?.querySelectorAll('header button') ?? [])].find(button => text(button) === '刷新')?.disabled !== false,
           alerts: [...(panel?.querySelectorAll('[role="alert"]') ?? [])].map(element => text(element)),
-          loginDialog: { visible: visible(dialog), title: text(dialog?.querySelector('#studio-login-title')),
+          loginDialog: { visible: visible(dialog), title: text(dialog?.querySelector('#studio-settings-title')),
             readable,
             emptyUsername: visible(username) && username.required && username.type === 'text' && username.value === '',
-            emptyPassword: visible(password) && password.required && password.autocomplete === 'off' && password.value === '',
-            submitReady: visible(submit) && !submit.disabled && text(submit) === '登录' },
+            emptyPassword: visible(password) && password.required && password.autocomplete === 'current-password' && password.value === '',
+            submitReady: visible(submit) && !submit.disabled && text(submit) === '登录协同工作台' },
           bounds: bounds?.toJSON(), mainBounds: mainBounds?.toJSON(), viewport: { width: innerWidth, height: innerHeight } };
       })()` })
       if (evaluation.exceptionDetails) throw new Error('Studio DOM evaluation failed.')
@@ -234,7 +237,7 @@ async function main() {
         interactive: result.dom.interactive,
         fiveStageNavigation: result.dom.fiveStageNavigation, disconnected: result.dom.disconnected,
         welcome: result.dom.welcome, loginEntry: result.dom.loginEntry,
-        loginForm: result.dom.loginDialog.visible && result.dom.loginDialog.title === '登录协同工作台'
+        loginForm: result.dom.loginDialog.visible && result.dom.loginDialog.title === '设置'
           && result.dom.loginDialog.emptyUsername && result.dom.loginDialog.emptyPassword && result.dom.loginDialog.submitReady && result.dom.loginDialog.readable,
         hostState: hostRefreshRequested && Date.now() - hostRefreshStartedAt >= 200 && !result.dom.refreshBusy && result.dom.alerts.length === 0,
       }
@@ -272,7 +275,7 @@ async function main() {
         const stable = await client.request('Runtime.evaluate', { returnByValue: true, expression: `(() => {
           const panel = document.querySelector('[data-studio-panel="studio"]');
           return !!panel && !panel.closest('[inert]') && document.visibilityState === 'visible'
-            && !!panel.querySelector('dialog[open][aria-labelledby="studio-login-title"]')
+            && !!panel.querySelector('dialog[open][aria-labelledby="studio-settings-title"]')
             && !document.querySelector('[role="dialog"][aria-modal="true"]');
         })()` })
         if (stable.exceptionDetails || stable.result.value !== true) { await delay(250); continue }
