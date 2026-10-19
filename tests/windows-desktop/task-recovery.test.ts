@@ -194,6 +194,7 @@ function dshFixture(events: Map<string, unknown[]>) {
     on: (event: string, callback: typeof listener) => { if (event === 'session/event') listener = callback; return () => {} }, effect: () => {},
     sessionController: { inspect: async (id: string) => { if (!events.has(id)) throw new Error('not persisted'); return { events: events.get(id) } } },
     agents: {
+      get: () => undefined,
       create: async ({ sessionId }: { sessionId: string }) => { counts.creates++; events.set(sessionId, []); return handle(sessionId) },
       resume: async ({ resumeSessionId }: { resumeSessionId: string }) => { assert.ok(events.has(resumeSessionId)); counts.resumes++; return handle(resumeSessionId) },
     },
@@ -373,7 +374,7 @@ test('review setup is read-only before the official Agent handle is published an
       sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
       on: () => () => {}, effect: () => {},
       sessionController: { inspect: async () => { throw new Error('new session') } },
-      agents: { create: async ({ setup }: { setup: (scope: unknown, agent: unknown) => Promise<void> }) => {
+      agents: { get: () => undefined, create: async ({ setup }: { setup: (scope: unknown, agent: unknown) => Promise<void> }) => {
         creates++
         const agent = { session: { header: { cwd: root } }, followup: () => {} }
         await setup({ systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { disposers.push(register()) } }, agent)
@@ -464,7 +465,7 @@ for (const restore of [false, true]) test('task sessions mount the resolved offi
     agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
     agentPresets: { resolve: async (id?: string) => { resolved.push(id); return { id: id ?? 'standard' } }, mount: async (_scope: unknown, id: string) => { mounted.push(id) } },
     sessionController: { inspect: async () => { if (!restore) throw new Error('new session'); return { meta: { agentPreset: 'original' }, inheritedEventCount: 0, events: [{ type: 'agent-preset/selected', data: { agentPreset: 'selected' } }] } } },
-    agents: { create: setupAgent, resume: setupAgent },
+    agents: { get: () => undefined, create: setupAgent, resume: setupAgent },
   }
   const sessions = new DshTaskSessions(context as never, '', async () => {})
   try {
@@ -489,4 +490,33 @@ test('a broken official preset prevents publication and cannot fall through to a
     await assert.rejects(sessions.open({ projectId: 'project', entityId: 'requirement', sessionId: 'session', worktree: 'unused', purpose: 'material', inputHash: '' }, '', undefined), /preset unavailable/)
     assert.equal(creates, 0)
   } finally { await sessions.dispose() }
+})
+
+test('an already live conversation Agent is reused and receives the Studio task scope', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-live-reuse-'))
+  await mkdir(path.join(root, '需求'), { recursive: true })
+  await writeFile(path.join(root, '需求', 'entity.md'), '# entity\n')
+  const live = {
+    session: { header: { id: 'live-session', cwd: root }, requestHeader: () => undefined },
+    ctx: { systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { register() } },
+    followup: () => {},
+  }
+  const context = {
+    on: () => () => {}, effect: () => {},
+    sessionProjections: { restore: () => ({ snapshot: { values: {} } }) },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
+    agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
+    sessionController: { inspect: async () => { throw new Error('new session') } },
+    agents: {
+      get: (id: string) => id === 'live-session' ? live : undefined,
+      create: async () => { throw new Error('must reuse the live Agent') },
+      resume: async () => { throw new Error('must not open a second write handle') },
+    },
+  }
+  const sessions = new DshTaskSessions(context as never, '', async () => {})
+  try {
+    await sessions.open({ projectId: 'project', entityId: 'entity', sessionId: 'live-session', worktree: root, purpose: 'material', inputHash: '' }, 'fixed rules', undefined)
+    assert.equal(studioToolGuard({ name: 'write', arguments: { file_path: '需求/entity.md' }, agent: live }), undefined)
+    assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: '需求/other.md' }, agent: live }))
+  } finally { await sessions.dispose(); await rm(root, { recursive: true, force: true }) }
 })

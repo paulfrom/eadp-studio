@@ -16,6 +16,8 @@ import { inheritStudioExecutionScope, registerStudioExecutionScope } from '../pl
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.js'
 import { readTemplateManifest } from '../../prototype/template.js'
 
+const configuredAgents = new WeakSet<object>()
+
 export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly durableSessions = new Set<string>()
@@ -46,11 +48,23 @@ export class DshTaskSessions {
       return task.sessionId
     }
     const projections = this.ctx.sessionProjections, defaultModel = this.ctx.agentDefaultModel
-    const setup: AgentSetup = async (scope, agent) => {
-      // Use the official request/prompt installer. Read live durable intent so an
-      // API model switch and Studio followups share one selection, including a
-      // pending default effort that must clear an earlier explicit effort.
-      installModelSelection(scope, {
+    const sessionId = task.sessionId as SessionId
+    let handle: AgentHandle
+    const inspection = await this.ctx.sessionController.inspect(sessionId).catch(error => {
+      if (task.purpose === 'split' && task.split?.status === 'sent' || task.purpose === 'handoff' && task.handoff?.status === 'sent' || task.purpose === 'review' && task.reviewSent) throw new Error('已发送的拆分会话无法读取，请保留现场后重试恢复', { cause: error })
+      return undefined
+    })
+    const restored = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values : undefined
+    const selectedPreset = restored?.agentPreset ?? undefined
+    const restoredSelection = restored?.modelSelection?.next ?? restored?.modelSelection?.lastUsed ?? undefined
+    const agentPreset = (await this.ctx.agentPresets.resolve(selectedPreset)).id
+    const agentOptions = restoredSelection ? { provider: restoredSelection.provider, model: restoredSelection.model } : this.ctx.agentDefaultModel.currentSelection()
+    const configure = async (scope: Context, agent: AgentHandle['agent'], installModel: boolean): Promise<void> => {
+      if (configuredAgents.has(agent)) return
+      // The conversation surface may already hold the live write handle. Reuse
+      // that exact Agent and attach Studio's task boundary instead of opening a
+      // second handle, which the session store rejects.
+      if (installModel) installModelSelection(scope, {
         get current() {
           const state = projections.stateOf(agent.session, 'modelSelection')
           if (state === undefined) throw new Error('任务会话缺少 modelSelection 投影')
@@ -69,13 +83,12 @@ export class DshTaskSessions {
         const manifest = await readTemplateManifest(this.manifestPath)
         scope.effect(() => registerStudioExecutionScope(task.worktree, {
           readRoot: task.worktree,
-            writablePaths: (manifest.contract.writablePrefixes ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
-            writablePrefixes: (manifest.contract.writablePrefixes ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
+          writablePaths: (manifest.contract.writablePrefixes ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
+          writablePrefixes: (manifest.contract.writablePrefixes ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
           protectedPaths: manifest.contract.protectedPaths.map(p => `原型代码/${p}`),
         }, agent), 'studio: prototype file boundary')
         const binding = await loadPrototypeRules(input, { load: async request => {
           scope.systemPrompt.section({ name: 'eadp-template-rules', order: 60, text: request.content, interpolate: false })
-          // Registration is synchronous and scope-owned before the Agent is published.
           return { loaded: true, sessionId: task.sessionId, sha256: request.sha256, entrypoint: 'AgentRegistry.setup → systemPrompt.section' }
         } })
         this.bindings.set(task.sessionId, binding)
@@ -85,19 +98,14 @@ export class DshTaskSessions {
         const kind = task.purpose === 'handoff' ? 'handoff' : (await readFile(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => 'scenario' as const, () => 'requirement' as const))
         scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: task.purpose === 'split' ? [] : [materialPath(kind, task.entityId)] }, agent), 'studio: material file boundary')
       }
+      configuredAgents.add(agent)
     }
-    const sessionId = task.sessionId as SessionId
-    let handle: AgentHandle
-    const inspection = await this.ctx.sessionController.inspect(sessionId).catch(error => {
-      if (task.purpose === 'split' && task.split?.status === 'sent' || task.purpose === 'handoff' && task.handoff?.status === 'sent' || task.purpose === 'review' && task.reviewSent) throw new Error('已发送的拆分会话无法读取，请保留现场后重试恢复', { cause: error })
-      return undefined
-    })
-    const restored = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values : undefined
-    const selectedPreset = restored?.agentPreset ?? undefined
-    const restoredSelection = restored?.modelSelection?.next ?? restored?.modelSelection?.lastUsed ?? undefined
-    const agentPreset = (await this.ctx.agentPresets.resolve(selectedPreset)).id
-    const agentOptions = restoredSelection ? { provider: restoredSelection.provider, model: restoredSelection.model } : this.ctx.agentDefaultModel.currentSelection()
-    if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
+    const setup: AgentSetup = async (scope, agent) => { await configure(scope, agent, true) }
+    const live = this.ctx.agents.get(sessionId)
+    if (live) {
+      await configure(live.ctx, live, false)
+      handle = { agent: live, dispose: async () => {} }
+    } else if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, agentOptions, setup })
     this.handles.set(task.sessionId, handle)
     if ((task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') && inspection) {
