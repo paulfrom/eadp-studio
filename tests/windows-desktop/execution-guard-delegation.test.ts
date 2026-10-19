@@ -14,9 +14,9 @@ async function fixture(t: test.TestContext) {
   await writeFile(path.join(outside, 'probe.txt'), 'OUTSIDE SNAPSHOT')
   await symlink(current, path.join(root, 'same-directory'), process.platform === 'win32' ? 'junction' : 'dir')
   await symlink(outside, path.join(current, 'external-link'), process.platform === 'win32' ? 'junction' : 'dir')
-  const dispose = registerStudioExecutionScope(current, { readRoot: current, writablePaths: [] })
-  t.after(async () => { dispose(); assert.equal(path.dirname(root), path.resolve(tmpdir())); await rm(root, { recursive: true, force: true }) })
   const agent = { session: { header: { cwd: current } } }
+  const dispose = registerStudioExecutionScope(current, { readRoot: current, writablePaths: [] }, agent)
+  t.after(async () => { dispose(); assert.equal(path.dirname(root), path.resolve(tmpdir())); await rm(root, { recursive: true, force: true }) })
   const attempt = (args: unknown) => studioToolGuard({ name: 'spawn_agent', arguments: args, agent })
   return { root, current, outside, nested, agent, attempt }
 }

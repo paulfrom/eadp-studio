@@ -1,12 +1,14 @@
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-interface GuardExecution { readonly name: string; readonly arguments: unknown; readonly agent?: { readonly session: { readonly header: { readonly cwd?: string } } } }
+interface StudioExecutionAgent { readonly session: { readonly header: { readonly cwd?: string } } }
+interface GuardExecution { readonly name: string; readonly arguments: unknown; readonly agent?: StudioExecutionAgent }
 const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep'])
 const CONTROL_TOOLS = new Set(['ask_user_question', 'todo_write', 'update_plan', 'set_todo', 'list_agents', 'spawn_agent', 'send_message', 'wait_agent', 'close_agent'])
 export interface StudioExecutionPolicy { readRoot: string; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[] }
-const scopes = new Map<string, StudioExecutionPolicy>()
-export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy): () => void {
+interface ExecutionScope { readonly cwd: string; readonly policy: StudioExecutionPolicy; active: boolean; readonly parent?: ExecutionScope }
+const scopes = new WeakMap<StudioExecutionAgent, ExecutionScope>()
+export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy, agent: StudioExecutionAgent): () => void {
   const key = canonical(cwd)
   const prepared: StudioExecutionPolicy = {
     ...policy,
@@ -17,8 +19,22 @@ export function registerStudioExecutionScope(cwd: string, policy: StudioExecutio
   }
   if (path.parse(prepared.readRoot).root === prepared.readRoot) throw new Error('Agent 读取范围不能是整个文件系统根。')
   if (!under(prepared.readRoot, key)) throw new Error('Agent 工作目录必须位于受管理读取范围。')
-  scopes.set(key, prepared)
-  return () => { if (scopes.get(key) === prepared) scopes.delete(key) }
+  if (!agent?.session.header.cwd || canonical(agent.session.header.cwd) !== key) throw new Error('Agent 身份与任务工作目录不一致。')
+  if (scopes.has(agent)) throw new Error('Agent 已绑定工作台任务范围。')
+  const binding: ExecutionScope = { cwd: key, policy: prepared, active: true }
+  scopes.set(agent, binding)
+  return () => { binding.active = false; if (scopes.get(agent) === binding) scopes.delete(agent) }
+}
+function active(binding: ExecutionScope): boolean { return binding.active && (!binding.parent || active(binding.parent)) }
+/** Only the Host's verified live registry parent/child edge may call this. */
+export function inheritStudioExecutionScope(parent: StudioExecutionAgent, child: StudioExecutionAgent): (() => void) | undefined {
+  const source = scopes.get(parent)
+  if (!source || !active(source)) return undefined
+  if (!child.session.header.cwd || canonical(child.session.header.cwd) !== source.cwd) throw new Error('子 Agent 只能继承当前工作台任务目录。')
+  if (scopes.has(child)) throw new Error('子 Agent 已绑定工作台任务范围。')
+  const binding: ExecutionScope = { cwd: source.cwd, policy: source.policy, active: true, parent: source }
+  scopes.set(child, binding)
+  return () => { binding.active = false; if (scopes.get(child) === binding) scopes.delete(child) }
 }
 function canonical(value: string): string {
   const suffix: string[] = []
@@ -60,12 +76,15 @@ function noEscapingLinks(root: string, target: string): void {
 }
 
 /** Install with the actual DSH ctx.tools.guard(); guards are monotonic after approval policies. */
-export function createStudioToolGuard(resolvePolicy: (cwd: string) => StudioExecutionPolicy | undefined = cwd => scopes.get(canonical(cwd))): (execution: Readonly<GuardExecution>) => string | undefined {
+export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) => string | undefined {
   return execution => {
   const cwd = execution.agent?.session.header.cwd
   if (!cwd || !path.isAbsolute(cwd)) return 'Agent 尚未绑定受管理项目目录。'
   let policy: StudioExecutionPolicy | undefined
-  try { policy = resolvePolicy(cwd) } catch { return 'Agent 受管理执行范围无效。' }
+  try {
+    const binding = execution.agent && scopes.get(execution.agent)
+    if (binding && active(binding) && binding.cwd === canonical(cwd)) policy = binding.policy
+  } catch { return 'Agent 受管理执行范围无效。' }
   if (!policy) return 'Agent 尚未绑定工作台任务及允许的文件范围。'
   if (execution.name === 'spawn_agent') {
     const args = execution.arguments

@@ -34,23 +34,45 @@ test('Windows reuses the native caption row instead of reserving a second Studio
 test('shared toolbar keeps the live project, preview target and refresh action', async () => {
   const source = await readFile(path.join(client, 'components/StudioTopbar.tsx'), 'utf8')
   const render = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
-  const Component = new Function('React', 'css', `${compile(source)}; return StudioTopbar`)({ createElement: render }, new Proxy({}, { get: (_, key) => key }))
-  const find = (tree, type) => tree.type === type ? tree : tree.children.filter(Boolean).filter(child => typeof child === 'object').map(child => find(child, type)).find(Boolean)
+  const Component = new Function('React', 'css', 'useState', 'useEffect', 'useRef', 'useSyncExternalStore', `${compile(source)}; return StudioTopbar`)(
+    { createElement: render },
+    new Proxy({}, { get: (_, key) => key }),
+    initial => [initial, () => {}],
+    () => {},
+    current => ({ current }),
+    (_subscribe, getSnapshot) => getSnapshot(),
+  )
+  const findAll = (tree, type) => [
+    ...(tree.type === type ? [tree] : []),
+    ...tree.children.filter(Boolean).filter(child => typeof child === 'object').flatMap(child => findAll(child, type)),
+  ]
+  const find = (tree, type) => findAll(tree, type)[0]
   const texts = tree => typeof tree === 'object' ? tree.children.map(texts).join('') : tree ?? ''
+  const props = state => ({
+    state,
+    busy: state.busy === true,
+    onRefresh: state.onRefresh,
+    stage: 'scenarios',
+    stages: [{ id: 'scenarios', name: '场景' }],
+    onSelectStage() {},
+    theme: { subscribe: () => () => {}, getSnapshot: () => ({ preference: 'system' }) },
+    sidebarCollapsed: false,
+    onToggleSidebar() {},
+  })
   let refreshed = 0
-  const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, preview: { url: 'http://127.0.0.1:4321' } }
-  const header = Component({ state, busy: false, onRefresh: () => { refreshed++ } })
+  const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, preview: { url: 'http://127.0.0.1:4321' }, onRefresh: () => { refreshed++ } }
+  const header = Component(props(state))
   assert.equal(header.type, 'header')
   assert.match(texts(header), /EADP Studio采购项目.*main（已同步）.*本地原型.*刷新/)
   assert.equal(find(header, 'a').props.href, state.preview.url)
   assert.equal(find(header, 'a').props.rel, 'noreferrer')
-  find(header, 'button').props.onClick()
+  findAll(header, 'button').find(button => texts(button) === '刷新').props.onClick()
   assert.equal(refreshed, 1)
-  const busy = Component({ state: { connected: false }, busy: true, onRefresh() {} })
-  assert.equal(find(busy, 'button').props.disabled, true)
+  const busy = Component(props({ connected: false, busy: true, onRefresh() {} }))
+  assert.equal(findAll(busy, 'button').find(button => texts(button) === '刷新').props.disabled, true)
   assert.match(texts(busy), /项目工作台.*工作空间.*原型未运行/)
   const panel = await readFile(path.join(client, 'studio/StudioPanel.tsx'), 'utf8')
-  assert.match(panel, /<StudioTopbar state=\{state\} busy=\{busy\} onRefresh=\{\(\) => void call\(\{ action: 'state' \}\)\}/)
+  assert.match(panel, /<StudioTopbar state=\{state\} busy=\{busy\}[\s\S]*stage=\{stage\}[\s\S]*theme=\{props\.theme\}/)
   assert.doesNotMatch(panel, /EADP Studio|原型未运行/, 'the second inline toolbar has been removed')
 })
 

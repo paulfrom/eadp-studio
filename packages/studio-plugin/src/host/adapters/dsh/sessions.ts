@@ -1,17 +1,18 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentHandle, AgentSetup } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, type AgentHandle, type AgentSetup } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
 import { materialPath } from '../assets/materials.ts'
-import { registerStudioExecutionScope } from '../platform/execution-guard.js'
+import { inheritStudioExecutionScope, registerStudioExecutionScope } from '../platform/execution-guard.js'
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.js'
 import { readTemplateManifest } from '../../prototype/template.js'
 
@@ -19,8 +20,18 @@ export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly durableSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
+  private readonly releaseInheritance: () => void
   constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>) {
     ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
+    this.releaseInheritance = ctx.on('agent/created', ({ agent }) => {
+      const parentId = agent.session.header.parentSession
+      const parent = parentId === undefined ? undefined : ctx.agents.get(parentId)
+      // Durable lineage alone is not authority: the registry must attest that
+      // this exact live Agent was created by this exact live parent.
+      if (parent && ctx.agents.get(agent.id) === agent && ctx.agents.isOwnedBy(agent.id, parent)) {
+        agent.ctx.effect(() => inheritStudioExecutionScope(parent, agent) ?? (() => {}), 'studio: inherited task file boundary')
+      }
+    })
     ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
@@ -34,7 +45,23 @@ export class DshTaskSessions {
       }
       return task.sessionId
     }
-    const setup: AgentSetup = async (scope) => {
+    const projections = this.ctx.sessionProjections, defaultModel = this.ctx.agentDefaultModel
+    const setup: AgentSetup = async (scope, agent) => {
+      // Use the official request/prompt installer. Read live durable intent so an
+      // API model switch and Studio followups share one selection, including a
+      // pending default effort that must clear an earlier explicit effort.
+      installModelSelection(scope, {
+        get current() {
+          const state = projections.stateOf(agent.session, 'modelSelection')
+          if (state === undefined) throw new Error('任务会话缺少 modelSelection 投影')
+          if (state.pending !== null) return { provider: state.pending.provider, model: state.pending.model, ...(state.pending.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(state.pending.reasoningEffort) }) }
+          const header = agent.session.requestHeader()
+          if (header === undefined) return defaultModel.currentSelection()
+          const { provider, model, reasoningEffort } = header.config
+          return { provider, model, ...(reasoningEffort === undefined || header.adapterDefaults?.reasoningEffort === true ? {} : { reasoningEffort }) }
+        },
+        assembled: undefined,
+      })
       await this.ctx.agentPresets.mount(scope, agentPreset)
       scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
       if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
@@ -45,7 +72,7 @@ export class DshTaskSessions {
             writablePaths: (manifest.contract.writablePrefixes ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
             writablePrefixes: (manifest.contract.writablePrefixes ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
           protectedPaths: manifest.contract.protectedPaths.map(p => `原型代码/${p}`),
-        }), 'studio: prototype file boundary')
+        }, agent), 'studio: prototype file boundary')
         const binding = await loadPrototypeRules(input, { load: async request => {
           scope.systemPrompt.section({ name: 'eadp-template-rules', order: 60, text: request.content, interpolate: false })
           // Registration is synchronous and scope-owned before the Agent is published.
@@ -53,10 +80,10 @@ export class DshTaskSessions {
         } })
         this.bindings.set(task.sessionId, binding)
       } else if (task.purpose === 'review') {
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: [] }), 'studio: readonly fixed review boundary')
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: [] }, agent), 'studio: readonly fixed review boundary')
       } else {
         const kind = task.purpose === 'handoff' ? 'handoff' : (await readFile(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => 'scenario' as const, () => 'requirement' as const))
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: task.purpose === 'split' ? [] : [materialPath(kind, task.entityId)] }), 'studio: material file boundary')
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: task.purpose === 'split' ? [] : [materialPath(kind, task.entityId)] }, agent), 'studio: material file boundary')
       }
     }
     const sessionId = task.sessionId as SessionId
@@ -65,10 +92,13 @@ export class DshTaskSessions {
       if (task.purpose === 'split' && task.split?.status === 'sent' || task.purpose === 'handoff' && task.handoff?.status === 'sent' || task.purpose === 'review' && task.reviewSent) throw new Error('已发送的拆分会话无法读取，请保留现场后重试恢复', { cause: error })
       return undefined
     })
-    const selectedPreset = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values.agentPreset ?? undefined : undefined
+    const restored = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values : undefined
+    const selectedPreset = restored?.agentPreset ?? undefined
+    const restoredSelection = restored?.modelSelection?.next ?? restored?.modelSelection?.lastUsed ?? undefined
     const agentPreset = (await this.ctx.agentPresets.resolve(selectedPreset)).id
-    if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, setup })
-    else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, setup })
+    const agentOptions = restoredSelection ? { provider: restoredSelection.provider, model: restoredSelection.model } : this.ctx.agentDefaultModel.currentSelection()
+    if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
+    else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, agentOptions, setup })
     this.handles.set(task.sessionId, handle)
     if ((task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') && inspection) {
       // Do not await application delivery: open runs inside its serialized command queue.
@@ -107,6 +137,6 @@ export class DshTaskSessions {
     }
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task' } }))
   }
-  async dispose(): Promise<void> { const handles = [...this.handles.values()]; this.handles.clear(); this.durableSessions.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
+  async dispose(): Promise<void> { this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.durableSessions.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
 }
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task' } } }

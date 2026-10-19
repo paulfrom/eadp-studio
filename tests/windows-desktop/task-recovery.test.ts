@@ -14,9 +14,11 @@ import { saveMaterial } from '../../packages/studio-plugin/src/host/adapters/ass
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import type { EntityView, IntegrationView, ProjectState } from '@eadp/contracts'
 
-// Isolate the unrelated DSH message factory; session inspect/resume and application code are real.
-const llmFactory = 'data:text/javascript,' + encodeURIComponent('export const createUserMessage = value => value')
-const hooks = registerHooks({ resolve(specifier, context, nextResolve) { return specifier === '@deepseek-ai/dsh-llm' ? { url: llmFactory, shortCircuit: true } : nextResolve(specifier, context) } })
+// Recovery tests isolate DSH message factories and installer registration.
+// task-presets-runtime verifies the actual scoped assembly/request middleware.
+const llmFactory = 'data:text/javascript,' + encodeURIComponent('export const createUserMessage = value => value; export const ReasoningEffortId = value => value')
+const agentFactory = 'data:text/javascript,' + encodeURIComponent('export const installModelSelection = () => () => {}')
+const hooks = registerHooks({ resolve(specifier, context, nextResolve) { const url = specifier === '@deepseek-ai/dsh-llm' ? llmFactory : specifier === '@deepseek-ai/dsh-agent' ? agentFactory : undefined; return url ? { url, shortCircuit: true } : nextResolve(specifier, context) } })
 const { DshTaskSessions } = await import('../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts')
 hooks.deregister()
 
@@ -186,9 +188,10 @@ function dshFixture(events: Map<string, unknown[]>) {
   let listener: (session: { id: string }, event: unknown) => void = () => {}
   const counts = { creates: 0, resumes: 0, followups: 0 }
   const context = {
+    agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
     agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
     sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
-    on: (_event: string, callback: typeof listener) => { listener = callback }, effect: () => {},
+    on: (event: string, callback: typeof listener) => { if (event === 'session/event') listener = callback; return () => {} }, effect: () => {},
     sessionController: { inspect: async (id: string) => { if (!events.has(id)) throw new Error('not persisted'); return { events: events.get(id) } } },
     agents: {
       create: async ({ sessionId }: { sessionId: string }) => { counts.creates++; events.set(sessionId, []); return handle(sessionId) },
@@ -365,17 +368,19 @@ test('review setup is read-only before the official Agent handle is published an
     await writeFile(path.join(root, 'reviewed.md'), 'fixed candidate')
     let creates = 0
     const context = {
-      agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
+      agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
+    agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
       sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
-      on: () => {}, effect: () => {},
+      on: () => () => {}, effect: () => {},
       sessionController: { inspect: async () => { throw new Error('new session') } },
-      agents: { create: async ({ setup }: { setup: (scope: unknown) => Promise<void> }) => {
+      agents: { create: async ({ setup }: { setup: (scope: unknown, agent: unknown) => Promise<void> }) => {
         creates++
-        await setup({ systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { disposers.push(register()) } })
-        const attempt = (name: string, file = 'reviewed.md') => studioToolGuard({ name, arguments: { file_path: file }, agent: { session: { header: { cwd: root } } } })
+        const agent = { session: { header: { cwd: root } }, followup: () => {} }
+        await setup({ systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { disposers.push(register()) } }, agent)
+        const attempt = (name: string, file = 'reviewed.md') => studioToolGuard({ name, arguments: { file_path: file }, agent })
         assert.equal(attempt('read'), undefined)
         assert.ok(attempt('write')); assert.ok(attempt('edit')); assert.ok(attempt('bash')); assert.ok(attempt('read', '../outside'))
-        return { agent: { followup: () => {} }, dispose: async () => {} }
+        return { agent, dispose: async () => {} }
       } },
     }
     const sessions = new DshTaskSessions(context as never, '', async () => {})
@@ -438,19 +443,25 @@ for (const action of ['claimPrototype', 'startSession'] as const) test(action + 
 
 for (const restore of [false, true]) test('task sessions mount the resolved official preset before publishing ' + (restore ? 'resumed' : 'new') + ' Agents', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-preset-'))
-  const disposers: Array<() => void> = [], mounted: string[] = [], resolved: Array<string | undefined> = [], sections: string[] = []
+  const disposers: Array<() => void> = [], mounted: string[] = [], resolved: Array<string | undefined> = [], sections: string[] = [], variables: string[] = []
   let published = 0
   const setupAgent = async (options: any) => {
+    assert.deepEqual(options.agentOptions, restore ? { provider: 'deepseek-account', model: 'deepseek-flash' } : { provider: 'default-provider', model: 'default-model' }, 'real request routing belongs to AgentOptions')
     if (!restore) assert.equal(options.meta.agentPreset, 'standard')
-    await options.setup({ systemPrompt: { section: ({ name }: { name: string }) => { sections.push(name) } }, effect: (register: () => () => void) => { disposers.push(register()) } })
+    const agent = { session: { header: { cwd: root } }, followup: () => {} }
+    await options.setup({
+      systemPrompt: { section: ({ name }: { name: string }) => { sections.push(name) }, variable: (name: string) => { variables.push(name); return () => {} } },
+      effect: (register: () => () => void) => { disposers.push(register()) },
+    }, agent)
     assert.deepEqual(mounted, [restore ? 'selected' : 'standard'])
     assert.ok(sections.includes('eadp-task'))
     published++
-    return { agent: { followup: () => {} }, dispose: async () => {} }
+    return { agent, dispose: async () => {} }
   }
   const context = {
-    on: () => {}, effect: () => {},
-    sessionProjections: { restore: (_checkpoint: unknown, events: any[], _base: number, meta: any) => { assert.equal(meta.agentPreset, 'original'); assert.equal(events[0].data.agentPreset, 'selected'); return { snapshot: { values: { agentPreset: 'selected' } } } } },
+    on: () => () => {}, effect: () => {},
+    sessionProjections: { restore: (_checkpoint: unknown, events: any[], _base: number, meta: any) => { assert.equal(meta.agentPreset, 'original'); assert.equal(events[0].data.agentPreset, 'selected'); return { checkpoint: { modelSelection: { val: { pending: { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'high' }, lastUsed: null } } }, snapshot: { values: { agentPreset: 'selected', ...(restore ? { modelSelection: { next: { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'high' } } } : {}) } } } } },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
     agentPresets: { resolve: async (id?: string) => { resolved.push(id); return { id: id ?? 'standard' } }, mount: async (_scope: unknown, id: string) => { mounted.push(id) } },
     sessionController: { inspect: async () => { if (!restore) throw new Error('new session'); return { meta: { agentPreset: 'original' }, inheritedEventCount: 0, events: [{ type: 'agent-preset/selected', data: { agentPreset: 'selected' } }] } } },
     agents: { create: setupAgent, resume: setupAgent },
@@ -462,13 +473,14 @@ for (const restore of [false, true]) test('task sessions mount the resolved offi
     await sessions.open(task, 'fixed rules', undefined)
     assert.equal(published, 1, 'opening an existing handle does not remount its preset')
     assert.deepEqual(resolved, [restore ? 'selected' : undefined])
+    assert.deepEqual(variables, [], 'official loop owns provider/model prompt variables')
   } finally { await sessions.dispose(); for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
 })
 
 
 test('a broken official preset prevents publication and cannot fall through to a tool-less Agent', async () => {
   let creates = 0
-  const sessions = new DshTaskSessions({ on: () => {}, effect: () => {},
+  const sessions = new DshTaskSessions({ on: () => () => {}, effect: () => {},
     sessionController: { inspect: async () => { throw new Error('new session') } },
     agentPresets: { resolve: async () => { throw new Error('preset unavailable') } },
     agents: { create: async () => { creates++; throw new Error('must not create') } },

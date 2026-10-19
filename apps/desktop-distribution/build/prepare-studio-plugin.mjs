@@ -26,6 +26,7 @@ import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
 import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
+import { STUDIO_MODEL_SELECTION_EDITS } from './model-selection-edits.mjs'
 import { STUDIO_TYPERT_EDIT } from './studio-typert-edits.mjs'
 import { STUDIO_TEMPLATE_EDIT, STUDIO_TEMPLATE_FILES, STUDIO_TEMPLATE_TRANSFORM_EDITS } from './studio-template-edits.mjs'
 
@@ -63,6 +64,7 @@ const UPSTREAM_EDITS = [
   STUDIO_PACK_CONCURRENCY_EDIT,
   STUDIO_PACKAGE_SET_TAR_EDIT,
   STUDIO_TYPERT_EDIT,
+  ...STUDIO_MODEL_SELECTION_EDITS,
   STUDIO_TEMPLATE_EDIT,
   ...STUDIO_TEMPLATE_TRANSFORM_EDITS,
   {
@@ -120,6 +122,7 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-api-gateway',
   '@deepseek-ai/dsh-api-session-controller',
   '@deepseek-ai/dsh-agent',
+  '@deepseek-ai/dsh-agent-default-model',
   '@deepseek-ai/dsh-agent-preset-registry',
   '@deepseek-ai/dsh-session-projection',
   '@deepseek-ai/dsh-session',

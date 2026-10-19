@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { createStudioToolGuard } from '../../packages/studio-plugin/src/host/adapters/platform/execution-guard.ts';
+import { createStudioToolGuard, registerStudioExecutionScope } from '../../packages/studio-plugin/src/host/adapters/platform/execution-guard.ts';
 import { copyTemplate, verifyPrototypeContract, verifyTemplate } from '../../packages/studio-plugin/src/host/prototype/template.ts';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -28,13 +28,16 @@ async function putRoutes(project, routes) {
 
 test('Agent can edit route data, but cannot restore executable route configuration', async t => {
   const { project } = await fixture(t);
-  const guard = createStudioToolGuard(() => ({
+  const agent = { session: { header: { cwd: project } } };
+  const release = registerStudioExecutionScope(project, {
     readRoot: project,
     writablePaths: manifest.contract.writablePrefixes.filter(p => !p.endsWith('/')),
     writablePrefixes: manifest.contract.writablePrefixes.filter(p => p.endsWith('/')).map(p => p.slice(0, -1)),
     protectedPaths: manifest.contract.protectedPaths,
-  }));
-  const write = file_path => guard({ name: 'write', arguments: { file_path }, agent: { session: { header: { cwd: project } } } });
+  }, agent);
+  t.after(() => release());
+  const guard = createStudioToolGuard();
+  const write = file_path => guard({ name: 'write', arguments: { file_path }, agent });
   assert.ok(write('config/router.config.ts'));
   assert.equal(write('config/routes.json'), undefined);
   assert.ok(write('config/load-routes.ts'));
