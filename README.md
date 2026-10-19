@@ -2,29 +2,33 @@
 
 人与 AI Agent 协作整理业务材料和演示成果的桌面工作台。
 
-研发仓库：`git@github.com:paulfrom/eadp-studio.git`。Linux 与 Windows 共享同一源码基线、规划、配置和任务交接；依赖、上游缓存和运行现场各自生成。
+研发仓库：`git@github.com:paulfrom/eadp-studio.git`。Linux 与 Windows 共享同一源码基线；依赖、上游缓存和运行现场各自生成。
 
-## 当前状态
+## 当前实现
 
-当前业务托管为 GitLab，工作台只登录协同后端；后端绑定既有 GitLab 账号并按真实成员权限管理建仓/分配，Host 使用本机用户 Git 凭据初始化/push，后端核验后 ready。默认测试入口与接口见 [API README](apps/collaboration-api/README.md)，决策与证据边界见 [ADR 0003](docs/adr/0003-studio-auth-and-project-provisioning.md) 和 [本次交接](docs/development/handoffs/studio-auth-projects.md)。旧 OAuth 仅存 [legacy-oauth 归档](gitlab/legacy-oauth/README.md)，当前 GitLab 管理 API 继续使用。
+- `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型认领/检查/预览/确认、复用资格与采用、交接回执、发布/撤回和主题设置。
+- `apps/collaboration-api/`：Fastify + PostgreSQL 协同后端。实现协同会话、GitLab 账号绑定与成员权限校验、项目建仓/初始化、固定 Git 正文读取校验、持久占用、集成、复用记录、发布授权和桌面更新检查。
+- `packages/asset-domain/`、`packages/contracts/`：资产领域模型与跨端契约。
+- `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。
+- `apps/desktop-distribution/`：固定 DSH 版本、装配 Studio 插件和模板、生成 Windows 未签名安装包。
+- `gitlab/legacy-oauth/`：已停用的 GitLab OAuth 直登源码归档，不参与构建，也不作为当前运行路径。
 
-已落实单仓库开发布局、Git 属性、独立模板快照及校验、模板 `AGENT.md` 规则契约、固定 DSH 归档获取入口。已有 Studio Host/client、协同 API 与发行装配编码；模板规则加载、执行保护、Windows 发行和真实协同按对应门槛继续验证，不代表 G0 总体通过。实际进展见 [G0 交接](docs/development/handoffs/g0-remaining.md)，早期准备见 [开发准备交接](docs/development/handoffs/repository-setup.md) 与 [模板规则交接](docs/development/handoffs/template-rules.md)。
+本仓库只保留与当前实现直接相关的文档：本 README、`CONTEXT.md`、`docs/adr/` 以及各代码目录的 README。历史验收、交接、计划和设计过程文档已删除；计划文档后续重写后再加入。
 
 ## 文件位置
 
 | 路径 | 内容 |
 | --- | --- |
-| `packages/studio-plugin/` | Studio Host/client 插件源码与随包模板 |
-| `apps/collaboration-api/` | 协同登录、绑定成员授权、GitLab 建仓及持久协同 API |
-| `gitlab/legacy-oauth/` | 旧直接 OAuth 登录源码/证据归档，不进入构建 |
-| `apps/desktop-distribution/` | 固定上游版本及发行装配脚本 |
-| `.local/upstream/dsh/` | 获取成功后生成的本机 DSH 源码，不提交 |
-| `scripts/` | 可实际运行的开发准备与校验脚本 |
-| `docs/development/` | 开发环境和任务交接 |
+| `packages/studio-plugin/` | Studio Host/client 插件源码、随包模板及其构建输入 |
+| `apps/collaboration-api/` | 协同登录、GitLab 绑定、建仓初始化及持久协同 API |
+| `packages/asset-domain/` | 场景、需求、原型、交接和复用领域模型 |
+| `packages/contracts/` | API 与客户端共享的 TypeBox 契约 |
+| `apps/desktop-distribution/` | 固定上游版本、发行装配脚本和发布锁 |
+| `scripts/` | 仓库校验、DSH 获取、桌面开发与打包入口 |
 | `docs/adr/`、`CONTEXT.md` | 架构决策及领域定义 |
-| `dsh_eadp_studio_plan/` | 产品设计、实施任务与验收要求 |
+| `gitlab/legacy-oauth/` | 旧直接 OAuth 登录源码归档，不进入构建 |
 
-`asset-domain`、`contracts` 与协同 API 已按实际任务建立；后续模块随实际需求加入，不预建空实现。用户项目的 `场景/`、`需求/`、`原型代码/` 属于产品运行时管理的业务工程，不混入本研发仓库。
+用户项目中的 `场景/`、`需求/`、`原型代码/` 属于产品运行时管理的业务工程，不混入本研发仓库。
 
 ## 开发准备
 
@@ -38,7 +42,7 @@ cd eadp-studio
 bash scripts/setup-linux.sh
 ```
 
-[setup-linux.sh](scripts/setup-linux.sh) 从根 `package.json` 读取 Node/pnpm 准入范围，依次检查仓库、冻结安装根 workspace 依赖、获取并完整解包固定 DSH 源码。仅准备校验归档时使用 `bash scripts/setup-linux.sh --archive-only`；参数说明见 `--help`。脚本不安装系统工具、模板或 DSH 依赖。后续执行 DSH 构建时，另按固定上游自身的工具契约准备；工作台开发准入与上游要求分别核验。
+`setup-linux.sh` 从根 `package.json` 读取 Node/pnpm 准入范围，依次检查仓库、冻结安装根 workspace 依赖、获取并完整解包固定 DSH 源码。仅准备校验归档时使用 `bash scripts/setup-linux.sh --archive-only`；参数说明见 `--help`。脚本不安装系统工具、模板或 DSH 依赖。后续执行 DSH 构建时，另按固定上游自身的工具契约准备。
 
 Windows 工作站使用现有 Node 入口：
 
@@ -50,7 +54,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 node scripts/fetch-dsh.mjs --archive-only
 ```
 
-满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力；当前开发机已验证完整解包。Linux 原生完整准备与运行仍待实际验证，准备入口不代表 G0 或桌面发行验收通过。
+满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力。
 
 ## 本地桌面开发与调试
 
@@ -82,8 +86,8 @@ pnpm dev:desktop
 
 Electron-builder 工具缓存固定在主 checkout 的 `.local/cache/electron-builder`，由入口创建并通过其官方 `ELECTRON_BUILDER_CACHE` 变量传给打包进程，避免其他应用留下的全局缓存状态干扰本仓库构建。
 
-2026-10-16 已通过完整脚本实际生成 alpha.4 安装包，入口退出码为 `0`，最终随包内容校验通过；产物哈希、源码工作区状态和未安装验证边界见[源码构建验收](docs/development/acceptance/eadp-studio-source-build-2026-10-16.md)。
-
 当前入口生成未签名的开发安装包；签名、升级发布及干净机发行验收仍遵循独立门槛。产品使用稳定 App ID `io.github.paulfrom.eadp.studio`、`eadp-studio://` 协议和 `%USERPROFILE%\.eadp-studio` 数据根，Electron 数据位于 `%APPDATA%\eadp studio`。旧 DSH 数据不迁移。配置及验证细节见 [桌面构建说明](apps/desktop-distribution/build/README.md)。
 
-环境准备及换机步骤见 [setup.md](docs/development/setup.md)。后续开发从 [G0 编码启动](dsh_eadp_studio_plan/08-G0编码启动.md) 继续。
+## 验证边界
+
+仓库自检使用 `node scripts/check-repository.mjs`。Windows 原生首启检查和桌面插件运行时回归见 [Windows 原生首启检查](tests/windows-desktop/README.md)。本地 TypeScript、合成数据和开发机检查不能替代真实企业 GitLab、真实多人协同、Windows 安装发行和生产验收。

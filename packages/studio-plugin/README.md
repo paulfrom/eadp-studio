@@ -1,19 +1,22 @@
 # Studio plugin
 
-本包承载 DSH Host/client 插件。当前已导入 `assets/prototype-template/` 源码快照、具体 `AGENT.md` 及同级文件清单；规则加载与执行保护仍待验证。
+本包承载 DSH Host/client 插件，以及随包的原型模板快照。
 
 ## 入口
 
 | 半边 | 源 | 产物 | 说明 |
 | --- | --- | --- | --- |
-| Host | `src/host/index.ts` | `lib/index.js` | 官方 Host 插件入口；最小切片暂为空 `apply` |
-| client | `src/client/index.ts`、`src/client/StudioPanel.tsx` | `lib/client.js` | 注册满窗 `main` 槽位面板并选中 |
+| Host | `src/host/index.ts` | `lib/index.js` | 注册 `studio` Typert Remote 服务，注册为 Agent 工具以外的工作台入口 |
+| client | `src/client/index.ts`、`src/client/StudioPanel.tsx` | `lib/client.js` | 注册满窗 `main` 槽位面板并选中，注入会话保留与主题能力 |
 
-`package.json` 声明 `dsh.client.platform = 'web'` 与 `exports["./client"]`，由上游 `ctx.clientModules` 扫描并注入启动图。业务模块后续按 `06-代码架构` 落在 `src/host/application/`、`src/host/adapters/` 与 `src/client/features/`。
+`package.json` 声明 `dsh.client.platform = 'web'` 与 `exports["./client"]`，由上游 `ctx.clientModules` 扫描并注入启动图。
 
-## 构建
+## 已实现范围
 
-本包不在产品根 workspace 直接构建：client bundle 必须复用固定上游 `packages/client/tsdown.client.ts` 预设，该预设依赖上游仓库内模块。装配方式、目标位置和依赖注入见 [`build/README.md`](build/README.md) 与 `apps/desktop-distribution/build/`。
+- 工作台命令：登录/退出、项目列表/创建/打开/初始化重试、分类、场景/需求/交接材料、AI 辅助评审、原型认领/检查/预览/确认、复用资格与采用、交接回执、发布/撤回。
+- Host 适配：本地原子状态、需求工作树与 Git、协同 API 客户端、DSH 会话、执行范围保护、模板生成与校验、预览和发布。
+- 随包模板：`assets/prototype-template/` 源码快照、`AGENT.md` 规则契约及同级文件清单；模板依赖、锁定和运行规则独立维护。
+- 构建输入与装配方式见 [`build/README.md`](build/README.md) 和 `apps/desktop-distribution/build/`。
 
 模板保留自己的依赖、锁定和运行规则，不作为根 workspace 子包安装。生成的用户业务原型不放入本包。
 
