@@ -43,6 +43,7 @@ const buildTree = path.join(sharedRoot, '.local/build/dsh')
 const productPlugin = path.join(repo, 'packages/studio-plugin')
 const assembledPlugin = path.join(buildTree, 'packages/eadp/studio-plugin')
 const assembledContracts = path.join(buildTree, 'packages/eadp/contracts')
+const assembledDomain = path.join(buildTree, 'packages/eadp/asset-domain')
 const packedPluginDirectory = path.join(sharedRoot, '.local/build/packed-studio')
 
 /**
@@ -108,6 +109,7 @@ export const studioStagingPaths = [...new Set([
   'tsconfig.host.json', 'tsconfig.client.json',
   ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
+  ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/asset-domain/${file}`),
 ])]
 
 /** Upstream workspace packages the assembled plugin needs to compile and bundle. */
@@ -240,18 +242,20 @@ async function referencePlugin(incremental = false) {
     }
     await writeFile(target, source)
   }
-  const target = assembledContracts
-  if (incremental) await removeDeletedSourceOutputs(path.join(repo, 'packages/contracts/src'), target)
+  for (const name of ['contracts', 'asset-domain']) {
+  const target = path.join(buildTree, 'packages/eadp', name)
+  if (incremental) await removeDeletedSourceOutputs(path.join(repo, `packages/${name}/src`), target)
   await rm(incremental ? path.join(target, 'src') : target, { recursive: true, force: true })
   await mkdir(target, { recursive: true })
-  await cp(path.join(repo, 'packages/contracts/src'), path.join(target, 'src'), { recursive: true })
-  const manifest = JSON.parse(await readFile(path.join(repo, 'packages/contracts/package.json'), 'utf8'))
+  await cp(path.join(repo, `packages/${name}/src`), path.join(target, 'src'), { recursive: true })
+  const manifest = JSON.parse(await readFile(path.join(repo, `packages/${name}/package.json`), 'utf8'))
   manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
   manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' } }
   manifest.files = ['lib/index.js', 'lib/types/**/*.d.ts', 'lib/types/**/*.d.ts.map', 'lib/types/**/*.js', 'lib/types/**/*.js.map']
   delete manifest.scripts
   await writeFile(path.join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(path.join(target, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src'] }, null, 2) + '\n')
+  await writeFile(path.join(target, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src'], ...(name === 'asset-domain' ? { references: [{ path: '../contracts' }] } : {}) }, null, 2) + '\n')
+  }
 }
 
 async function verifyBuildOutput() {
@@ -261,6 +265,7 @@ async function verifyBuildOutput() {
     }
   }
   if (!(await exists(path.join(assembledContracts, 'lib/index.js')))) throw new Error('Expected contracts production build output is missing.')
+  if (!(await exists(path.join(assembledDomain, 'lib/index.js')))) throw new Error('Expected asset-domain production build output is missing.')
   await recordStudioBuild(assembledPlugin, repo)
   await verifyStudioPlugin(assembledPlugin, repo)
 }
@@ -295,7 +300,8 @@ async function packPlugin() {
   await mkdir(packedPluginDirectory, { recursive: true })
   runPnpm('pack', assembledPlugin)
   runPnpm('pack', assembledContracts)
-  console.log(`Packed the plugin and contracts into ${path.relative(sharedRoot, packedPluginDirectory)}`)
+  runPnpm('pack', assembledDomain)
+  console.log(`Packed the plugin, contracts and asset-domain into ${path.relative(sharedRoot, packedPluginDirectory)}`)
 }
 
 export async function stageStudioPlugin({ incremental = false } = {}) {

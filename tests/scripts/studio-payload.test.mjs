@@ -71,7 +71,7 @@ test('current source receipt detects stale bundles and omitted generated Remote 
   const repo = path.join(root, 'repo'), plugin = path.join(root, 'plugin')
   const put = async (base, filename, bytes) => { await mkdir(path.dirname(path.join(base, filename)), { recursive: true }); await writeFile(path.join(base, filename), bytes) }
   try {
-    for (const filename of ['packages/studio-plugin/src/index.ts', 'packages/studio-plugin/build/config.ts', 'packages/contracts/src/index.ts', 'packages/studio-plugin/package.json', 'packages/contracts/package.json', 'packages/studio-plugin/cordis.patch.yml']) await put(repo, filename, 'current')
+    for (const filename of ['packages/studio-plugin/src/index.ts', 'packages/studio-plugin/build/config.ts', 'packages/contracts/src/index.ts', 'packages/asset-domain/src/index.ts', 'packages/studio-plugin/package.json', 'packages/contracts/package.json', 'packages/asset-domain/package.json', 'packages/studio-plugin/cordis.patch.yml']) await put(repo, filename, 'current')
     const template = JSON.stringify({ files: [{ path: 'AGENT.md', sha256: createHash('sha256').update('rules').digest('hex') }], addedFiles: [] })
     await put(repo, 'packages/studio-plugin/assets/prototype-template.manifest.json', template)
     await put(plugin, 'assets/prototype-template.manifest.json', template)
@@ -108,10 +108,12 @@ test('old minimal Host is rejected even though both bundle filenames exist', () 
 })
 
 test('contracts used by material validation belong to the production package closure', () => {
-  const source = { name: '@eadp-studio/studio-plugin', files: ['lib/index.js'], devDependencies: { '@eadp/contracts': 'workspace:*', '@tailwindcss/cli': '^4' } }
+  const source = { name: '@eadp-studio/studio-plugin', files: ['lib/index.js'], devDependencies: { '@eadp/contracts': 'workspace:*', '@eadp/asset-domain': 'workspace:*', '@tailwindcss/cli': '^4' } }
   const manifest = productionPluginManifest(source)
   assert.equal(manifest.dependencies['@eadp/contracts'], 'workspace:*')
   assert.equal(manifest.devDependencies['@eadp/contracts'], undefined)
+  assert.equal(manifest.dependencies['@eadp/asset-domain'], 'workspace:*')
+  assert.equal(manifest.devDependencies['@eadp/asset-domain'], undefined)
   assert.equal(manifest.devDependencies['@tailwindcss/cli'], undefined)
   assert.ok(manifest.files.includes('studio-build.json'))
   assert.equal(source.devDependencies['@eadp/contracts'], 'workspace:*')

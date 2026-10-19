@@ -10,8 +10,9 @@ const json = async filename => JSON.parse(await readFile(filename, 'utf8'))
 
 export function productionPluginManifest(source) {
   const manifest = structuredClone(source)
-  manifest.dependencies = { ...manifest.dependencies, '@eadp/contracts': 'workspace:*' }
+  manifest.dependencies = { ...manifest.dependencies, '@eadp/contracts': 'workspace:*', '@eadp/asset-domain': 'workspace:*' }
   delete manifest.devDependencies?.['@eadp/contracts']
+  delete manifest.devDependencies?.['@eadp/asset-domain']
   delete manifest.devDependencies?.['@tailwindcss/cli']
   manifest.files = [...new Set([...(manifest.files ?? []), 'studio-build.json'])]
   return manifest
@@ -64,10 +65,10 @@ async function verifyFiles(root, files) {
 /** Hash the exact staged product inputs, excluding generated output and machine dependencies. */
 export async function studioSourceDigest(repo) {
   const entries = []
-  for (const directory of ['packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/contracts/src']) {
+  for (const directory of ['packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/contracts/src', 'packages/asset-domain/src']) {
     for (const file of await inventory(path.join(repo, directory))) entries.push([`${directory}/${file.path}`, file.sha256])
   }
-  for (const filename of ['packages/studio-plugin/package.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/contracts/package.json']) {
+  for (const filename of ['packages/studio-plugin/package.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/contracts/package.json', 'packages/asset-domain/package.json']) {
     entries.push([filename, hash(await readFile(path.join(repo, filename)))])
   }
   return hash(JSON.stringify(entries.sort(([a], [b]) => a.localeCompare(b, 'en'))))
@@ -92,6 +93,7 @@ async function verifyStudioPluginFiles(pluginRoot) {
   }
   const manifest = await json(path.join(pluginRoot, 'package.json'))
   if (!manifest.dependencies?.['@eadp/contracts']) throw new Error('Studio production dependency closure omits @eadp/contracts.')
+  if (!manifest.dependencies?.['@eadp/asset-domain']) throw new Error('Studio production dependency closure omits @eadp/asset-domain.')
   const template = await json(path.join(pluginRoot, 'assets/prototype-template.manifest.json'))
   for (const file of [...template.files, ...template.addedFiles]) {
     const filename = safeRelative(file.path)
@@ -127,4 +129,7 @@ export async function verifyStudioDistribution(pluginRoot, runtimeRoot, repo) {
   await readFile(contracts)
   const contractsRequire = createRequire(contracts)
   await readFile(contractsRequire.resolve('@sinclair/typebox'))
+  const domain = require.resolve('@eadp/asset-domain')
+  await readFile(domain)
+  await readFile(createRequire(domain).resolve('@eadp/contracts'))
 }

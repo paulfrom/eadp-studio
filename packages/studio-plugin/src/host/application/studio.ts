@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { reviewInputText } from '@eadp/contracts'
+import { canonical, prototypeBindings } from '@eadp/asset-domain'
 import path from 'node:path'
 import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityView, FixedVersion, IntegrationView, OccupationToken, PrepareIntegrationRequest, ProjectState, ProjectView } from '@eadp/contracts'
 import type { Candidate, ConfirmationChoice, MaterialDraft, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
@@ -73,6 +74,7 @@ export class StudioApplication {
         }
         break
       }
+      case 'restoreSession': sessionId = await this.restoreSession(command.sessionId); break
       case 'requestReview': { const snapshot = await this.prepareCandidate(command.entityId, command.purpose); await this.reviews.request(snapshot.review); break }
       case 'confirmMaterial': await this.confirmMaterial(command.entityId, command.expectedHash, command); break
       case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, prototypeRules); break }
@@ -164,6 +166,32 @@ export class StudioApplication {
     if (!token || token.ownerId !== account?.id || token.clientId !== state.clientId) throw new Error('此任务需要本人当前客户端的有效占用')
     const { occupationId, generation, taskId, clientId, expectedRevision } = token
     return { occupationId, generation, taskId, clientId, expectedRevision }
+  }
+  /** Reopen an existing task before the native client can promote its persisted Session. */
+  private async restoreSession(sessionId: string): Promise<string> {
+    const local = await this.store.read()
+    const task = local.tasks.find(value => value.sessionId === sessionId && value.projectId === local.selectedProjectId)
+    if (!task || !['material', 'handoff', 'prototype'].includes(task.purpose)) throw new Error('未找到当前项目可恢复的工作台任务')
+    const { remote, entity } = await this.entity(task.entityId)
+    const expectedPurpose = task.purpose === 'prototype' ? 'prototype' : entity.kind === 'handoff' ? 'handoff' : 'material'
+    if (task.purpose !== expectedPurpose || task.purpose === 'prototype' && entity.kind !== 'requirement') throw new Error('会话任务类型与当前资产不一致')
+    let owner = entity
+    if (entity.frozenBy.length) {
+      if (task.purpose !== 'material' || entity.kind !== 'requirement' || entity.completedVersion === entity.materialVersion && entity.materialVersion > 0) throw new Error('冻结需求不能恢复此任务')
+      const batch = remote.entities.find((value): value is EntityView => 'title' in value && value.kind === 'scenario' && value.occupation?.purpose === 'scenario-batch' && entity.frozenBy.includes(value.occupation.occupationId))
+      if (!batch) throw new Error('关联场景修订批次已失效')
+      owner = batch
+    }
+    const token = await this.requireOwned(owner)
+    const occupation = owner.occupation!
+    const expectedOccupation = task.purpose === 'prototype' ? 'prototype' : owner.kind === 'scenario' && owner.materialVersion ? 'scenario-batch' : 'design'
+    if (occupation.purpose !== expectedOccupation || occupation.inputVersion !== owner.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
+    if (path.resolve(task.worktree) !== path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)) throw new Error('会话现场与当前任务占用不一致')
+    if (task.inputHash !== (entity.current?.fixed.sha256 ?? '') || task.purpose === 'prototype' && !entity.current) throw new Error('需求或材料已修订，旧会话输入已失效')
+    if (task.purpose === 'prototype' && canonical(prototypeBindings(entity, remote.entities.filter((value): value is EntityView => 'title' in value))) !== canonical(occupation.prerequisiteBindings)) throw new Error('前置需求固定完成依据已变化，旧原型会话输入已失效')
+    const draft = await readMaterial(task.worktree, entity.kind, entity.id)
+    if (task.purpose === 'prototype' && draft.sha256 !== task.inputHash) throw new Error('原型现场需求与固定输入不一致')
+    return this.ports.session(task, task.purpose === 'prototype' ? prototypeRules : this.materialRules(draft))
   }
   private async identity() {
     const account = await this.requireAccount()

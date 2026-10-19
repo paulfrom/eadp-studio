@@ -136,7 +136,7 @@ export function StudioPanel(props: StudioProps) {
           </section>
           <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: taskPurpose })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
             {selected ? <><div className={css.contextStrip}><span>输入版本 {selected.materialVersion || '草稿'}</span><span>{selected.occupation ? `由 #${selected.occupation.ownerId} 处理中` : '尚未认领'}</span>{selected.frozenBy.length > 0 && <strong>场景联动冻结</strong>}</div>{task?.error && <div className={css.notice}>{task.error}</div>}
-              {task ? <NativeConversation {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
+              {task ? <NativeConversation key={task.sessionId} {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
               {stage === 'prototype' && <div className={css.actionBar}><button disabled={busy} onClick={() => operation('claimPrototype')}>认领原型任务</button><button disabled={busy} onClick={() => operation('checkPrototype')}>运行工程检查</button><button disabled={busy} onClick={() => operation('startPreview')}>启动预览</button><button disabled={busy} onClick={() => operation('stopPreview')}>停止预览</button><button className={css.primary} disabled={busy} onClick={() => void call({ action: 'confirmPrototype', entityId: selected.id, method: 'direct' })}>确认当前需求完成</button></div>}
               {stage !== 'prototype' && draft && <><div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>检查通过后，由你确认当前已保存的材料版本</small></div><button className={css.primary} disabled={busy} onClick={() => void confirm({ method: 'direct' })}>确认材料</button></div><form className={css.naturalConfirm} onSubmit={e => { e.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { void confirm({ method: 'direct' }); setNaturalConfirmation('') } else setError('请明确输入“确认当前材料”，操作仅绑定右侧已保存的版本。') }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={e => setNaturalConfirmation(e.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy}>发送确认</button></form></>}
               {(purpose === 'prototype' || draft) && <ReviewPanel key={`${state.project.id}:${selected.id}:${purpose}`} review={review} purpose={purpose} busy={busy} onRequest={() => void call({ action: 'requestReview', entityId: selected.id, purpose })} onConfirm={choice => { if (purpose === 'prototype') void call({ action: 'confirmPrototype', entityId: selected.id, ...choice }); else void confirm(choice) }} />}
@@ -156,8 +156,25 @@ function Empty({ text }: { text: string }) { return <div className={css.empty}>{
 function NativeConversation(props: StudioProps & { sessionId: string }) {
   const [reference, setReference] = useState<SessionReference>()
   const [error, setError] = useState('')
-  useEffect(() => { const ref = props.retainSession(props.sessionId); setReference(ref); setError(''); void ref.ready.catch(() => setError('会话恢复失败，请使用“恢复对话”重试')); return () => ref.release() }, [props.sessionId, props.retainSession])
-  if (error) return <div role="alert" className={css.error}>{error}</div>
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let cancelled = false, retained: SessionReference | undefined
+    setReference(undefined); setError('')
+    void (async () => {
+      const result = await props.call({ action: 'restoreSession', sessionId: props.sessionId })
+      if (cancelled) return
+      if (!result.ok) throw new Error(result.message)
+      if (result.sessionId !== props.sessionId) throw new Error('工作台恢复了其他会话，请重新选择任务')
+      retained = props.retainSession(props.sessionId)
+      await retained.ready
+      if (!cancelled) setReference(retained)
+    })().catch(err => {
+      retained?.release(); retained = undefined
+      if (!cancelled) setError(err instanceof Error ? err.message : '会话恢复失败，请重试')
+    })
+    return () => { cancelled = true; retained?.release(); retained = undefined }
+  }, [props.sessionId, props.call, props.retainSession, attempt])
+  if (error) return <div role="alert" className={css.error}>{error}<button onClick={() => setAttempt(value => value + 1)}>重试恢复对话</button></div>
   if (!reference) return <Empty text="正在恢复原生会话…" />
   const Provider = props.SessionProvider
   return <div className={css.nativeConversation}><Provider session={reference}>{props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })}</Provider></div>

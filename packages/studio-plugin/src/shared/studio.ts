@@ -32,6 +32,7 @@ export type StudioCommand =
   | { action: 'createMaterial'; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId: string; scenarioId?: string }
   | { action: 'saveMaterial'; entityId: string; body: string; metadata: MaterialMetadata }
   | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
+  | { action: 'restoreSession'; sessionId: string }
   | ({ action: 'confirmMaterial'; entityId: string; expectedHash: string } & ConfirmationChoice)
   | { action: 'requestReview'; entityId: string; purpose: 'material' | 'prototype' }
   | ({ action: 'confirmPrototype'; entityId: string } & ConfirmationChoice)

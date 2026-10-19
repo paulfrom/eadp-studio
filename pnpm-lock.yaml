@@ -67,6 +67,9 @@ importers:
         specifier: 8.11.2
         version: 8.11.2
     devDependencies:
+      '@eadp/asset-domain':
+        specifier: workspace:*
+        version: link:../asset-domain
       '@eadp/contracts':
         specifier: workspace:*
         version: link:../contracts
