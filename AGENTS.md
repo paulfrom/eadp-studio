@@ -10,15 +10,8 @@
 7. 先考察成熟产品和已验证模式，再实施。
 
 ## 仓库边界
-
-- 唯一研发远程为 `git@github.com:paulfrom/eadp-studio.git`。两工作站各自 clone，同一任务分支交接，不建长期 OS 分支。
-- 阅读 `CONTEXT.md`、`docs/adr/` 与当前任务计划；历史计划文档已移除，后续计划重写后再加入。
 - 根 `AGENTS.md` 是研发规则；模板所需 `AGENT.md` 是另一契约。前者不能替代后者。
-- 随包模板在 `packages/studio-plugin/assets/prototype-template/`，依赖和规则独立；修改后维护同级 manifest。不修改仓库外原始模板。
 - DSH 版本由 `apps/desktop-distribution/release.lock.json` 固定，源码通过获取脚本生成于忽略的 `.local/upstream/dsh/`。必要发行改动放在 `apps/desktop-distribution/build/`，不修改缓存冒充维护成果。
-- 产品源码、模板源码和架构决策记录入 Git；依赖、上游缓存、凭证、运行数据和完整 AI 过程不入 Git。
-- Windows/Linux 分别安装依赖。Windows 原生构建、签名、安装及插件宿主验收不能由 Linux 或浏览器结果代替。
-- 不机械创建全部规划空目录，不虚构 DSH API，不复制 Agent loop。当前实现不代表目标环境验收通过。
 
 ## Codebase Knowledge Graph
 

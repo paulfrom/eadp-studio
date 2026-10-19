@@ -18,8 +18,6 @@
 - 随包模板：`assets/prototype-template/` 源码快照、`AGENT.md` 规则契约及同级文件清单；模板依赖、锁定和运行规则独立维护。
 - 构建输入与装配方式见 [`build/README.md`](build/README.md) 和 `apps/desktop-distribution/build/`。
 
-模板保留自己的依赖、锁定和运行规则，不作为根 workspace 子包安装。生成的用户业务原型不放入本包。
-
 ## Studio 外壳样式
 
 `src/client/studio/StudioPanel.tsx` 导入的 `../studio.tw.generated.css` 是构建产物（gitignored）：由 `@tailwindcss/cli` 从 `src/client/studio.tw.css`（拆分导入、无 preflight、无前缀）预编译生成。装配脚本 `apps/desktop-distribution/build/prepare-studio-plugin.mjs` 在复制插件源码前自动生成；手工改动外壳工具类后需重新运行装配。
