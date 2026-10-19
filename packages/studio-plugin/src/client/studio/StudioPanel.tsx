@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
+import { MaterialCatalog } from '../components/MaterialCatalog.tsx'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
@@ -11,14 +12,14 @@ import type { ThemeFace } from '../theme.ts'
 import css from '../studio.module.css'
 import '../studio.tw.generated.css'
 
-export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference; theme: ThemeFace }
+export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference; openHostSettings(section?: string): void; theme: ThemeFace }
 export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace
-const stages: Array<{ id: Stage; name: string; mark: string; description: string }> = [
-  { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依' },
-  { id: 'requirements', name: '需求协同', mark: '02', description: '明确规则、前置与验收条件' },
-  { id: 'prototype', name: '原型展示', mark: '03', description: '与 AI 一起把需求变为可操作的演示' },
-  { id: 'baselines', name: '基线确认', mark: '04', description: '查看已接受的原型版本与确认依据' },
-  { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发' },
+const stages: Array<{ id: Stage; name: string; mark: string; description: string; icon: string[] }> = [
+  { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依', icon: ['M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'] },
+  { id: 'requirements', name: '需求协同', mark: '02', description: '明确规则、前置与验收条件', icon: ['M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z'] },
+  { id: 'prototype', name: '原型展示', mark: '03', description: '与 AI 一起把需求变为可操作的演示', icon: ['M15 12a3 3 0 11-6 0 3 3 0 016 0z', 'M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'] },
+  { id: 'baselines', name: '基线确认', mark: '04', description: '查看已接受的原型版本与确认依据', icon: ['M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'] },
+  { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发', icon: ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'] },
 ]
 
 const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
@@ -33,9 +34,8 @@ export function StudioPanel(props: StudioProps) {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('account')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [filter, setFilter] = useState('')
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState('')
-  const [newCategory, setNewCategory] = useState('')
+  const [materialCollapsed, setMaterialCollapsed] = useState(false)
+  const [candidateCategory, setCandidateCategory] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
   const [naturalConfirmation, setNaturalConfirmation] = useState('')
   const openSettings = (section: SettingsSection) => { setSettingsSection(section); setSettingsOpen(true) }
@@ -73,8 +73,9 @@ export function StudioPanel(props: StudioProps) {
     .filter(e => `${e.title} ${e.id}`.toLowerCase().includes(filter.toLowerCase()))
   const currentStage = stages.find(s => s.id === stage)!
   const categories = state.project?.categories ?? []
-  const selectedCategory = category || categories[0]?.id || ''
-  const selectStage = (next: Stage) => { setStage(next); setSelectedId(undefined); setFilter('') }
+  const selectedCategory = candidateCategory || categories[0]?.id || ''
+  const materialStage = stage === 'scenarios' || stage === 'requirements'
+  const selectStage = (next: Stage) => { setStage(next); setSelectedId(undefined); setFilter(''); setMaterialCollapsed(false) }
   const confirm = (choice: ConfirmationChoice) => draft && call({ action: 'confirmMaterial', entityId: draft.entityId, expectedHash: draft.sha256, ...choice })
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
@@ -85,42 +86,43 @@ export function StudioPanel(props: StudioProps) {
     <StudioTopbar state={state} busy={busy} onRefresh={() => void call({ action: 'state' })} stage={stage} stages={stages} onSelectStage={selectStage} theme={props.theme} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
     <div className={css.shell}>
       <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
-        <div className={css.projectBox}>
-          <div className={css.fieldLabel}>工作空间 / 项目</div>
-          <div className={css.selectWrap}>
-            <select id="studio-project" className={css.projectSelect} aria-label="选择项目" value={state.selectedProjectId ?? ''} onChange={e => { setSelectedId(undefined); void call({ action: 'selectProject', projectId: e.target.value }) }}><option value="" disabled>选择项目</option>{state.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
-            <svg className={css.chevron} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M6 9l6 6 6-6" /></svg>
-          </div>
-          <button className={css.ghostBtnFull} disabled={!state.connected} onClick={() => void openProjectDialog()}>＋ 新建 / 获取项目</button>
-        </div>
+        <button className={css.repoBox} disabled={!state.connected} onClick={() => void openProjectDialog()} title="切换、新建或获取项目">
+          <span className={css.repoMark} aria-hidden="true">&lt;/&gt;</span>
+          <span className={css.repoText}>
+            <strong>{state.project?.name ?? '选择项目'}</strong>
+            <small>{state.project ? <><span className={state.connected ? css.repoReady : css.repoOff} />{state.project.stableBranch} • {state.connected ? '已同步' : '未连接'}</> : '登录后查看可用项目'}</small>
+          </span>
+          <svg className={css.repoChevron} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
+        </button>
         <nav className={css.stageNav} aria-label="Studio 工作区">
-          <div className={css.navCaption}>Studio Workspace</div>
-          {stages.map(item => <button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`${css.stage} ${stage === item.id ? css.active : ''}`} onClick={() => selectStage(item.id)}>
-            <span className={css.stageMark}>{item.mark}</span>
-            <span className={css.stageLabel}>{item.name}</span>
-            <svg className={css.stageChev} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M9 6l6 6-6 6" /></svg>
-          </button>)}
+          <div className={css.navCaption}>Studio Navigation</div>
+          {stages.flatMap(item => {
+            const chip = stage === item.id && materialStage && selected ? <div className={css.stageChip} key={`${item.id}-chip`}>
+              <span>{selected.id}</span>
+              <button onClick={() => setSelectedId(undefined)} aria-label={`返回${item.name}列表`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M19 12H5m0 0l6 6m-6-6l6-6" /></svg>
+              </button>
+            </div> : null
+            return [<button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`${css.stage} ${stage === item.id ? css.active : ''}`} onClick={() => selectStage(item.id)}>
+              <svg className={css.stageIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}>{item.icon.map((d, index) => <path key={index} d={d} />)}</svg>
+              <span className={css.stageLabel}>{item.name}</span>
+              <svg className={css.stageChev} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M9 6l6 6-6 6" /></svg>
+            </button>, chip]
+          })}
         </nav>
         <div className={css.railFoot}>
-          <button className={css.settingsEntry} onClick={() => openSettings('account')} title="设置 (Ctrl+,)">
-            <svg className={css.settingsIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={16} height={16}><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.55 1z" /></svg>
-            <span>设置</span>
-            <span className={css.settingsShortcut}>Ctrl ,</span>
+          <button className={css.accountRow} onClick={() => openSettings('account')} title="用户账号与偏好设置">
+            <span className={`${css.avatar} ${state.account ? css.accent : ''}`}>{state.account ? state.account.name.slice(0, 1) || '@' : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}</span>
+            <span className={css.accountText}>
+              <span className={css.accountName}>{state.account?.name ?? '登录协同工作台'}</span>
+              <span className={css.accountSub}>{state.account ? `@${state.account.gitlabUsername} @ GitLab` : '登录后查看可用项目'}</span>
+            </span>
+            <svg className={css.accountGear} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.55 1z" /></svg>
           </button>
-          <div className={css.accountRow}>
-            <div className={css.account}>
-              <span className={`${css.avatar} ${state.account ? css.accent : ''}`}>{state.account?.name?.slice(0, 1) ?? 'S'}</span>
-              <div className={css.accountText}>
-                <div className={css.accountName}>{state.account?.name ?? '登录协同工作台'}</div>
-                <div className={css.accountSub}>{state.account ? `@${state.account.username} · 协同账号` : '登录后查看可用项目'}</div>
-              </div>
-            </div>
-            {!state.account && <button className={css.loginBtn} onClick={() => openSettings('account')}>登录</button>}
-          </div>
         </div>
       </aside>
       <main className={css.main}>
-        <header className={css.pageHeader}><div><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
+        <header className={css.pageHeader}><div>{materialStage && selected && <button className={css.backToList} onClick={() => setSelectedId(undefined)}>← 返回{currentStage.name}列表</button>}<p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.projectInitializations.map(operation => <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
@@ -128,12 +130,10 @@ export function StudioPanel(props: StudioProps) {
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
-        </div> : <div className={css.workspace}>
-          <section className={css.catalog} aria-label="资产列表"><div className={css.catalogHeader}><strong>{stage === 'scenarios' ? '场景' : stage === 'handoffs' ? '清单' : '需求'}目录</strong><span>{visible.length}</span></div><input className={css.search} placeholder="搜索标题或编号…" aria-label="搜索资产" value={filter} onChange={e => setFilter(e.target.value)} />
+        </div> : materialStage && !selected ? <MaterialCatalog key={`${state.project.id}:${stage}`} entities={visible} drafts={state.drafts} categories={categories} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} busy={busy} call={call} onSelect={id => { setSelectedId(id); setActiveTab('material'); setMaterialCollapsed(false) }} /> : <div className={`${css.workspace} ${materialStage ? css.materialWorkspace : ''} ${materialStage && materialCollapsed ? css.materialCollapsed : ''}`}>
+          {!materialStage && <section className={css.catalog} aria-label="资产列表"><div className={css.catalogHeader}><strong>{stage === 'handoffs' ? '清单' : '需求'}目录</strong><span>{visible.length}</span></div><input className={css.search} placeholder="搜索标题或编号…" aria-label="搜索资产" value={filter} onChange={e => setFilter(e.target.value)} />
             <div className={css.assetList}>{visible.map(e => <button key={e.id} className={`${css.assetItem} ${selectedId === e.id ? css.selectedAsset : ''}`} onClick={() => { setSelectedId(e.id); setActiveTab('material') }}><small>{e.id}</small><strong>{e.title}</strong><div><span className={e.confirmationStatus === 'confirmed' ? css.success : css.muted}>{e.confirmationStatus === 'confirmed' ? '材料已确认' : '草稿'}</span><span>{e.occupation ? '处理中' : '空闲'}</span></div></button>)}{visible.length === 0 && <Empty text="还没有资产" />}</div>
-            {stage !== 'prototype' && stage !== 'handoffs' && <form className={css.addMaterial} onSubmit={async e => { e.preventDefault(); const r = await call({ action: 'createMaterial', kind: stage === 'scenarios' ? 'scenario' : 'requirement', title, categoryId: selectedCategory }); if (r) setTitle('') }}><label>新增{stage === 'scenarios' ? '场景' : '需求'}<input required value={title} onChange={e => setTitle(e.target.value)} placeholder="输入标题" maxLength={150} /></label><select aria-label="业务分类" value={selectedCategory} onChange={e => setCategory(e.target.value)}><option value="" disabled>选择业务分类</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className={css.primary} disabled={busy || !selectedCategory}>＋ 新增</button></form>}
-            <details className={css.categoryForm}><summary>维护项目分类</summary><form onSubmit={async e => { e.preventDefault(); if (await call({ action: 'addCategory', name: newCategory })) setNewCategory('') }}><input required aria-label="新分类名称" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="例如：采购、库存" /><button disabled={busy}>添加</button></form></details>
-          </section>
+          </section>}
           <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: taskPurpose })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
             {selected ? <><div className={css.contextStrip}><span>输入版本 {selected.materialVersion || '草稿'}</span><span>{selected.occupation ? `由 #${selected.occupation.ownerId} 处理中` : '尚未认领'}</span>{selected.frozenBy.length > 0 && <strong>场景联动冻结</strong>}</div>{task?.error && <div className={css.notice}>{task.error}</div>}
               {task ? <NativeConversation key={task.sessionId} {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
@@ -141,15 +141,16 @@ export function StudioPanel(props: StudioProps) {
               {stage !== 'prototype' && draft && <><div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>检查通过后，由你确认当前已保存的材料版本</small></div><button className={css.primary} disabled={busy} onClick={() => void confirm({ method: 'direct' })}>确认材料</button></div><form className={css.naturalConfirm} onSubmit={e => { e.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { void confirm({ method: 'direct' }); setNaturalConfirmation('') } else setError('请明确输入“确认当前材料”，操作仅绑定右侧已保存的版本。') }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={e => setNaturalConfirmation(e.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy}>发送确认</button></form></>}
               {(purpose === 'prototype' || draft) && <ReviewPanel key={`${state.project.id}:${selected.id}:${purpose}`} review={review} purpose={purpose} busy={busy} onRequest={() => void call({ action: 'requestReview', entityId: selected.id, purpose })} onConfirm={choice => { if (purpose === 'prototype') void call({ action: 'confirmPrototype', entityId: selected.id, ...choice }); else void confirm(choice) }} />}
             </> : <Empty text="选择左侧资产，查看材料和协作状态。" />}
-            {stage === 'scenarios' && state.candidates.some(c => c.scenarioId === selectedId) && <div className={css.candidates}><h3>AI 拆分的需求候选</h3>{state.candidates.filter(c => c.scenarioId === selectedId).map(c => <div key={c.id}><div><strong>{c.title}</strong><p>{c.summary}</p></div><button disabled={busy || !!c.selectedEntityId} onClick={() => void call({ action: 'selectCandidate', candidateId: c.id, categoryId: selectedCategory })}>{c.selectedEntityId ? '已选用' : '选用并完善'}</button></div>)}</div>}
+            {stage === 'scenarios' && state.candidates.some(c => c.scenarioId === selectedId) && <div className={css.candidates}><h3>AI 拆分的需求候选</h3><select aria-label="候选需求业务分类" value={selectedCategory} onChange={e => setCandidateCategory(e.target.value)}>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>{state.candidates.filter(c => c.scenarioId === selectedId).map(c => <div key={c.id}><div><strong>{c.title}</strong><p>{c.summary}</p></div><button disabled={busy || !selectedCategory || !!c.selectedEntityId} onClick={() => void call({ action: 'selectCandidate', candidateId: c.id, categoryId: selectedCategory })}>{c.selectedEntityId ? '已选用' : '选用并完善'}</button></div>)}</div>}
           </section>
-          <aside className={css.inspector} aria-label="材料与固定版本"><div className={css.tabs}><button aria-selected={activeTab === 'material'} onClick={() => setActiveTab('material')}>材料内容</button><button aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>确认与复用</button></div>{activeTab === 'material' ? draft ? <MaterialEditor key={`${draft.entityId}:${draft.sha256}`} draft={draft} categories={categories} entities={entities} busy={busy} onSave={(body, metadata) => call({ action: 'saveMaterial', entityId: draft.entityId, body, metadata })} /> : <Empty text="材料保存在项目 Git 仓库中。" /> : selected && <VersionPanel entity={selected} entities={entities} projectId={state.project.id} busy={busy} call={call} />}
+          <aside className={`${css.inspector} ${materialStage && materialCollapsed ? css.hiddenMaterial : ''}`} aria-label="材料与固定版本"><div className={css.tabs}>{materialStage && <button onClick={() => setMaterialCollapsed(true)} aria-label="收起材料面板">收起 →</button>}<button aria-selected={activeTab === 'material'} onClick={() => setActiveTab('material')}>材料内容</button><button aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>确认与复用</button></div>{activeTab === 'material' ? draft ? <MaterialEditor key={`${draft.entityId}:${draft.sha256}`} draft={draft} categories={categories} entities={entities} busy={busy} onSave={(body, metadata) => call({ action: 'saveMaterial', entityId: draft.entityId, body, metadata })} /> : <Empty text="材料保存在项目 Git 仓库中。" /> : selected && <VersionPanel entity={selected} entities={entities} projectId={state.project.id} busy={busy} call={call} />}
             {selected?.occupation && <button className={css.release} disabled={busy} onClick={() => operation('releaseOccupation')}>取消本人任务并释放占用</button>}{stage === 'handoffs' && selected?.current && <button disabled={busy} onClick={() => void call({ action: 'acknowledgeHandoff', entityId: selected.id, note: '已收悉固定交接材料' })}>研发收悉</button>}
           </aside>
+          {materialStage && materialCollapsed && <button className={css.restoreMaterial} onClick={() => setMaterialCollapsed(false)}>← 展开材料</button>}
         </div>}
         {stage === 'prototype' && state.project && <div className={css.publication}><span>发布项目当前已确认基线</span><button disabled={busy} onClick={() => void call({ action: 'publish' })}>部署到远端</button><button disabled={busy} onClick={() => void call({ action: 'revokePublication' })}>撤回当前站点</button></div>}
       </main>
-    </div>{settingsOpen && <StudioSettings section={settingsSection} onSectionChange={setSettingsSection} onClose={() => setSettingsOpen(false)} state={state} busy={busy} error={error} theme={props.theme} onLogin={submitLogin} onLogout={submitLogout} onRefresh={() => void call({ action: 'state' })} />}{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
+    </div>{settingsOpen && <StudioSettings section={settingsSection} onSectionChange={setSettingsSection} onClose={() => setSettingsOpen(false)} state={state} busy={busy} error={error} theme={props.theme} onLogin={submitLogin} onLogout={submitLogout} onRefresh={() => void call({ action: 'state' })} onOpenHostSettings={props.openHostSettings} />}{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
   </div>
 }
 function Empty({ text }: { text: string }) { return <div className={css.empty}>{text}</div> }

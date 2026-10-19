@@ -19,8 +19,9 @@ import { runPnpm } from './run-pnpm.mjs'
 import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
 import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
-import { STUDIO_FRAME_EDIT } from './studio-frame-edits.mjs'
+import { STUDIO_FRAME_EDIT, STUDIO_SIDEBAR_CSS_EDIT } from './studio-frame-edits.mjs'
 import { STUDIO_TITLEBAR_EDIT } from './studio-titlebar-edits.mjs'
+import { STUDIO_SETTINGS_BRIDGE_EDIT } from './studio-settings-bridge-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
@@ -56,7 +57,9 @@ const UPSTREAM_EDITS = [
   ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
   STUDIO_FRAME_EDIT,
+  STUDIO_SIDEBAR_CSS_EDIT,
   STUDIO_TITLEBAR_EDIT,
+  STUDIO_SETTINGS_BRIDGE_EDIT,
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,

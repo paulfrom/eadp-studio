@@ -108,3 +108,18 @@ test('login distinguishes timeout, connection, response and local storage failur
     assert.equal(String(error).includes(privateText), false); return true
   })
 })
+
+test('a malformed local cache clears itself and presents signed-out instead of blocking every state poll', async () => {
+  for (const malformed of [
+    { origin: 'http://other.example.test', token, expiresAt: result.expiresAt, userId: 1 },
+    { origin: 'http://studio.example.test', token: 'not-a-studio-session', expiresAt: result.expiresAt, userId: 1 },
+    { origin: 'http://studio.example.test', token, expiresAt: 'not-a-date', userId: 1 },
+    { origin: 'http://studio.example.test', token },
+  ]) {
+    const credentials = new Secrets(); credentials.value = malformed
+    const session = new CollaborationSession('http://studio.example.test', credentials, async () => json(profile))
+    assert.equal(await session.current(), undefined)
+    assert.equal(credentials.value, undefined)
+    await assert.rejects(session.getAccessToken(), /请先登录/)
+  }
+})

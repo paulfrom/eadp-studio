@@ -1,4 +1,4 @@
-/** Studio owns the whole frame; the shell sidebar column closes while its main panel is active. */
+/** Studio owns the whole frame: the shell sidebar column collapses to zero width while its main panel is active. */
 
 const pairs = [
   [
@@ -6,7 +6,7 @@ const pairs = [
   const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0`,
     `  const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
   const activePanelId = usePanelInfo(info => info.activePanelId)
-  // Studio ships its own navigation column; the shell sidebar closes while it is active.
+  // Studio ships its own navigation column; the shell sidebar collapses while it is active.
   const sidebarCollapsed = activePanelId === 'studio' || (narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0)`,
   ],
   [
@@ -16,32 +16,55 @@ const pairs = [
     || darwin
     || document.documentElement.hasAttribute('data-windows-titlebar') ? 0 : SIDEBAR_COLLAPSED`,
   ],
-  [
-    `      <div className={css.sidebarCol}>
-        {sidebar}
-      </div>`,
-    `      <div className={css.sidebarCol}>
-        {activePanelId !== 'studio' && sidebar}
-      </div>`,
-  ],
 ]
 
-/** Hide the shell sidebar while the Studio main panel is active; replay idempotently. */
+/**
+ * Collapse the shell sidebar while the Studio main panel is active. The sidebar
+ * stays mounted at zero width (clipped by its column) so slots rendered inside
+ * it — chiefly the shared settings dialog — can still open while Studio owns
+ * the frame; replay idempotently.
+ */
 export const STUDIO_FRAME_EDIT = {
   file: 'packages/client/ui-layout/src/client/AppFrame.tsx',
   pairs,
   apply(source) {
-    if (pairs.every(([, after]) => source.includes(after))) {
-      if (pairs.some(([before, after]) => source.includes(before) || source.split(after).length !== 2)) {
-        throw new Error('Studio frame edit anchor duplicated')
-      }
-      return source
-    }
-    let next = source
     for (const [before, after] of pairs) {
-      if (next.split(before).length !== 2) throw new Error('Studio frame edit anchor missing or duplicated')
-      next = next.replace(before, after)
+      if (source.includes(after)) continue
+      if (source.split(before).length !== 2) throw new Error('Studio frame edit anchor missing or duplicated')
+      source = source.replace(before, after)
     }
-    return next
+    return source
+  },
+}
+
+const sidebarPairs = [
+  [
+    `:global(html[data-windows-titlebar]:has([data-sidebar-collapsed='true'])) {
+  --dsh-windows-menu-start: 84px;
+}`,
+    `:global(html[data-windows-titlebar]:has([data-sidebar-collapsed='true'])) {
+  --dsh-windows-menu-start: 84px;
+}
+
+/* Studio owns the frame with its own caption controls; the zero-width shell
+   sidebar stays mounted so its settings dialog remains openable, but its fixed
+   caption toggle must not draw over the Studio one. */
+:global([data-windows-titlebar]:has([data-studio-panel='studio'])) .toggle {
+  display: none;
+}`,
+  ],
+]
+
+/** Hide the shell sidebar's fixed caption toggle while the Studio panel is active; replay idempotently. */
+export const STUDIO_SIDEBAR_CSS_EDIT = {
+  file: 'packages/client/ui-sidebar/src/client/SidebarRoot.module.css',
+  pairs: sidebarPairs,
+  apply(source) {
+    for (const [before, after] of sidebarPairs) {
+      if (source.includes(after)) continue
+      if (source.split(before).length !== 2) throw new Error('Studio sidebar CSS edit anchor missing or duplicated')
+      source = source.replace(before, after)
+    }
+    return source
   },
 }

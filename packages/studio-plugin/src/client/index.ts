@@ -32,6 +32,10 @@ function registerStudio(ctx: ClientContext): void {
       return result.value
     }
     const retainSession = (id: string) => ctx.sessions.retain(id as SessionId, { source: 'studio' })
+    const openHostSettings = (section?: string) => {
+      // Bridged by the product settings edit; a no-op where it is absent (pure web).
+      window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: section ? { section } : {} }))
+    }
     const theme: ThemeFace = {
       getSnapshot: () => ctx.theme.getTheme(),
       setPreference: id => ctx.theme.setTheme(id),
@@ -39,7 +43,7 @@ function registerStudio(ctx: ClientContext): void {
     }
     const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
       children: { 'studio.session': { kind: 'single', scope: 'session' } },
-      inject: () => ({ call, retainSession, theme }),
+      inject: () => ({ call, retainSession, openHostSettings, theme }),
     }, StudioPanel)
     ctx.layout.selectPanel(PANEL_ID)
     return dispose

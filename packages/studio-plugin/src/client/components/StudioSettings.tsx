@@ -42,6 +42,7 @@ export function StudioSettings(props: {
   onLogin(username: string, password: string): Promise<void>
   onLogout(): Promise<void>
   onRefresh(): void
+  onOpenHostSettings(section?: string): void
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const [username, setUsername] = useState('')
@@ -71,7 +72,7 @@ export function StudioSettings(props: {
           {section === 'account' && <AccountSection {...props} username={username} password={password} setUsername={setUsername} setPassword={setPassword} submitLogin={submitLogin} account={account} />}
           {section === 'appearance' && <AppearanceSection preference={preference} snapshotPreference={snapshot.preference} setPreference={props.theme.setPreference} />}
           {section === 'connection' && <ConnectionSection state={props.state} onRefresh={props.onRefresh} />}
-          {section === 'models' && <ModelsSection />}
+          {section === 'models' && <ModelsSection onOpenHost={() => { props.onClose(); props.onOpenHostSettings('models') }} />}
           {section === 'about' && <AboutSection state={props.state} preference={preference} />}
         </div>
       </div>
@@ -162,9 +163,13 @@ function ConnectionSection(props: { state: StudioState; onRefresh(): void }) {
   </>
 }
 
-function ModelsSection() {
+function ModelsSection(props: { onOpenHost(): void }) {
   return <>
-    <p className={css.sectionIntro}>模型由桌面宿主统一配置，工作台不另建模型接入层，也不保存密钥。</p>
+    <p className={css.sectionIntro}>模型与密钥由桌面宿主统一配置，工作台不另建模型接入层，也不保存密钥。</p>
+    <div className={css.settingRow}>
+      <div className={css.settingText}><div className={css.settingTitle}>宿主模型设置</div><div className={css.settingDesc}>在桌面宿主设置中配置模型接入、密钥与可用模型清单；变更对工作台会话立即生效。</div></div>
+      <button className={css.ghostBtn} onClick={props.onOpenHost}>打开宿主模型设置</button>
+    </div>
     <div className={css.note}><Icon name="info" /><span>模型调用沿用宿主既有审批与取消管线；工作台只绑定当前任务、材料与输入版本，不复制 Agent loop。</span></div>
   </>
 }

@@ -119,7 +119,9 @@ export class CollaborationSession {
     await this.writes
     const value = await this.credentials.read(KEY) as SavedSession | undefined
     if (!value) return undefined
-    if (value.origin !== this.origin || typeof value.token !== 'string' || !/^studio_[A-Za-z0-9_-]{43}$/.test(value.token) || typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt)) || !positiveId(value.userId)) throw new Error('本机协同会话无效，请退出后重新登录。')
+    // A cache that no longer matches this deployment is unusable data, not a
+    // reason to block every state poll: clear it and fall back to signed-out.
+    if (value.origin !== this.origin || typeof value.token !== 'string' || !/^studio_[A-Za-z0-9_-]{43}$/.test(value.token) || typeof value.expiresAt !== 'string' || !Number.isFinite(Date.parse(value.expiresAt)) || !positiveId(value.userId)) { await this.invalidate(); return undefined }
     return value
   }
 }
