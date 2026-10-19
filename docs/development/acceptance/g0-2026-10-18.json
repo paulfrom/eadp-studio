@@ -167,7 +167,11 @@
     "runtimeManifestUnchanged": true,
     "templateManifestUnchanged": true,
     "containsScopeFix": true,
-    "evidence": ".local/acceptance/g0-20261018/regression/recovery-package-20261019-030223/result.json"
+    "evidence": ".local/acceptance/g0-20261018/regression/recovery-package-20261019-030223/result.json",
+    "sourceHead": "586e8c02a44474b0d15ff47e19ed046964a12c30",
+    "sourceDirty": false,
+    "verificationEvidence": ".local/acceptance/g0-20261018/regression/recovery-package-20261019-030957/result.json",
+    "verifiedAgainstCleanCommit": true
   },
   "latestRegression": {
     "backend": "55/55",
@@ -188,5 +192,6 @@
     "hostStateError": "协同身份暂时无法核对，请检查网络。",
     "effect": "New package stays on collaboration login; task restore, approval, cancel, handoff and preview cannot be completed natively.",
     "classification": "external service blocker, not a code failure"
-  }
+  },
+  "fixCommit": "586e8c02a44474b0d15ff47e19ed046964a12c30"
 }
