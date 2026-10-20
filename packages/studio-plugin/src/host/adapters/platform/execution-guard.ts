@@ -3,9 +3,9 @@ import path from 'node:path'
 
 interface StudioExecutionAgent { readonly session: { readonly header: { readonly cwd?: string } } }
 interface GuardExecution { readonly name: string; readonly arguments: unknown; readonly agent?: StudioExecutionAgent }
-const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep'])
+const FILE_TOOLS = new Set(['read', 'read_image', 'write', 'edit', 'glob', 'grep'])
 const CONTROL_TOOLS = new Set(['ask_user_question', 'todo_write', 'update_plan', 'set_todo', 'list_agents', 'spawn_agent', 'send_message', 'wait_agent', 'close_agent'])
-export interface StudioExecutionPolicy { readRoot: string; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[] }
+export interface StudioExecutionPolicy { readRoot: string; readPaths?: () => readonly string[]; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[] }
 interface ExecutionScope { readonly cwd: string; readonly policy: StudioExecutionPolicy; active: boolean; readonly parent?: ExecutionScope }
 const scopes = new WeakMap<StudioExecutionAgent, ExecutionScope>()
 export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy, agent: StudioExecutionAgent): () => void {
@@ -106,6 +106,8 @@ export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) =
     const root = canonical(policy.readRoot)
     if (!statSync(root).isDirectory()) return '项目目录不可用。'
     const target = canonical(path.resolve(cwd, value))
+    // Host imports live outside Git; only exact selected files are readable.
+    if ((execution.name === 'read' || execution.name === 'read_image') && policy.readPaths?.().some(filename => path.isAbsolute(filename) && canonical(filename) === target) && statSync(target).isFile()) return undefined
     const relative = path.relative(root, target)
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || relative.split(path.sep).some(part => part.toLowerCase() === '.git')) return '普通 Agent 只能访问当前项目目录中的业务文件。'
     if (execution.name === 'write' || execution.name === 'edit') {

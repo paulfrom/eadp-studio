@@ -4,5 +4,48 @@
 # loads the Studio plugin without any user action. The plugin's client half is
 # discovered through its package.json `dsh.client` declaration.
 - insert:
+    - id: preset-eadp-scenario
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: eadp-scenario
+        name: 项目场景助手
+        description: 只读理解当前场景与资料，输出由作者采纳的结构化建议。
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是项目场景设计助手。围绕当前场景的目标、范围、角色、流程、业务规则、异常和验收条件协助作者整理业务设计。
+                读取每次请求提供的最新场景、固定模板和已读资料，只输出结构化建议或明确问题。不得直接修改任何文件、运行命令或自行确认场景。
+                资料文件尚未读取时不得引用其内容；图片必须使用 read_image，并遵守当前模型实际支持的输入能力。作者采纳建议后，由工作台执行受控写入。
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              read: true
+              readImage: true
+              write: false
+              edit: false
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
     - id: studio-plugin
       name: '@eadp-studio/studio-plugin'

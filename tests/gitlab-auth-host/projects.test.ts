@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
@@ -37,6 +38,11 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
     }
     if (route === '/v1/projects') return currentUser?.id === 1 ? [project] : []
     if (route === '/v1/namespaces') return [{ id: 7, name: '团队', fullPath: 'team' }]
+    if (method === 'GET' && route === '/v1/projects/project-1/templates') {
+      const file = '.template/default.md'
+      const bytes = await readFile(path.join(workspaceRoot, 'users/1/project-project-1', file))
+      return { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: { commitSha: sha, path: file, sha256: createHash('sha256').update(bytes).digest('hex') } }] }
+    }
     return { project, entities: [], baselines: [], integrations: [] }
   } } as unknown as CollaborationClient
   const ports = {
@@ -54,12 +60,14 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
       commitFiles: async (directory: string, _files: string[], _message: string, identity: object) => {
         ++commits; assert.deepEqual(identity, { name: user.name, email: user.gitlabEmail })
         const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8'))
-        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'] })
+        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } })
+        assert.ok(_files.includes('.template/default.md'), 'initial commit must include the declared default template')
+        assert.match(await readFile(path.join(directory, '.template/default.md'), 'utf8'), /目标与范围/)
         localHead = sha; return sha
       },
       push: async () => { ++pushes; remoteHead = sha; if (failure === 'push-response' && !failed) { failed = true; throw new Error('推送响应丢失') } },
     },
-    gitLocal: async () => 'project.assets.json\0.gitattributes\0场景/.gitkeep\0需求/.gitkeep\0原型代码/package.json\0',
+    gitLocal: async () => 'project.assets.json\0.gitattributes\0.template/default.md\0场景/.gitkeep\0需求/.gitkeep\0原型代码/package.json\0',
     installTemplate: async (directory: string) => { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'package.json'), '{}\n') },
   } as unknown as HostPorts
   const store = new StudioStore(storeRoot); store.useUser(user.id)
@@ -136,9 +144,29 @@ test('signed-out and other users never receive old local projects, tasks or pend
   } finally { await f.dispose() }
 })
 
+test('late image read evidence is rejected immediately after the account changes, before the next state poll', async () => {
+  const f = await fixture()
+  try {
+    await f.service.create(command)
+    const local = await f.store.read(), sourcePath = path.join(f.store.directory, 'scenario-sources', 'image.png')
+    const source = { id: 'image', name: 'image.png', format: 'png', sha256: 'a'.repeat(64), status: 'failed' as const, ranges: [] as string[], text: '', selected: true, formal: false }
+    local.tasks.push({ projectId: 'project-1', entityId: 'scene', sessionId: 'user-one-session', purpose: 'material', inputHash: '', worktree: local.projects[0]!.directory })
+    local.scenarios.push({ projectId: 'project-1', entityId: 'scene', sources: [source], sourcePaths: { image: sourcePath }, suggestions: [] })
+    await f.store.save()
+    const app = new StudioApplication(f.store, f.api, f.ports)
+    const before = await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8')
+    f.setUser({ ...user, id: 2, username: 'other' })
+    await app.acceptSessionOutput('user-one-session', { kind: 'source-read', path: sourcePath, attachmentId: 'old-user-attachment', ranges: ['image:1'] })
+    assert.equal(source.status, 'failed', 'late output cannot mutate the previous account while polling has not switched store scope')
+    const firstUser = new StudioStore(f.storeRoot); firstUser.useUser(1)
+    assert.equal(await readFile(path.join(firstUser.directory, 'studio-state.json'), 'utf8'), before)
+    assert.deepEqual((await firstUser.read()).scenarios[0]!.sources[0]!.ranges, [])
+  } finally { await f.dispose() }
+})
+
 test('template copying resumes identical partial bytes, refuses changed files and preserves the original', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-template-resume-'))
-  const templateRoot = path.resolve('packages/studio-plugin/assets/prototype-template'), manifestPath = `${templateRoot}.manifest.json`, destinationRoot = path.join(root, 'prototype')
+  const templateRoot = path.resolve(import.meta.dirname, '../../packages/studio-plugin/assets/prototype-template'), manifestPath = `${templateRoot}.manifest.json`, destinationRoot = path.join(root, 'prototype')
   try {
     const manifest = await verifyTemplate(templateRoot, manifestPath), first = [...manifest.files, ...manifest.addedFiles][0]!
     await mkdir(path.dirname(path.join(destinationRoot, first.path)), { recursive: true }); await writeFile(path.join(destinationRoot, first.path), await readFile(path.join(templateRoot, first.path)))

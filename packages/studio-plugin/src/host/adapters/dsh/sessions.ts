@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { access } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection, type AgentHandle, type AgentSetup } from '@deepseek-ai/dsh-agent'
@@ -17,14 +17,17 @@ import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdenti
 import { readTemplateManifest } from '../../prototype/template.js'
 
 const configuredAgents = new WeakSet<object>()
+export type ScenarioContextReader = (task: TaskView, signal: AbortSignal) => Promise<{ text: string; readPaths: string[] }>
 
 export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
   private readonly durableSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
+  private readonly imageCalls = new Map<string, string>()
+  private readonly releaseOutput: () => void
   private readonly releaseInheritance: () => void
-  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>) {
-    ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
+  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader) {
+    this.releaseOutput = ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
     this.releaseInheritance = ctx.on('agent/created', ({ agent }) => {
       const parentId = agent.session.header.parentSession
       const parent = parentId === undefined ? undefined : ctx.agents.get(parentId)
@@ -38,10 +41,13 @@ export class DshTaskSessions {
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
     if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
+    const scenarioTask = task.scenarioRepair === true || task.purpose === 'material' && await access(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => true, () => false)
+    if (scenarioTask && input) throw new Error('场景会话不能取得原型写入权限')
+    const replay = task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
     if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
     if (this.handles.has(task.sessionId)) {
       if (input) await this.bind(task, input)
-      if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') {
+      if (this.durableSessions.has(task.sessionId)) {
         const inspection = await this.ctx.sessionController.inspect(task.sessionId as SessionId)
         for (const event of inspection.events) this.enqueueOutput(task.sessionId, event)
       }
@@ -57,7 +63,7 @@ export class DshTaskSessions {
     const restored = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values : undefined
     const selectedPreset = restored?.agentPreset ?? undefined
     const restoredSelection = restored?.modelSelection?.next ?? restored?.modelSelection?.lastUsed ?? undefined
-    const agentPreset = (await this.ctx.agentPresets.resolve(selectedPreset)).id
+    const agentPreset = (await this.ctx.agentPresets.resolve(scenarioTask ? 'eadp-scenario' : selectedPreset)).id
     const agentOptions = restoredSelection ? { provider: restoredSelection.provider, model: restoredSelection.model } : this.ctx.agentDefaultModel.currentSelection()
     const configure = async (scope: Context, agent: AgentHandle['agent'], installModel: boolean): Promise<void> => {
       if (configuredAgents.has(agent)) return
@@ -78,6 +84,20 @@ export class DshTaskSessions {
       })
       await this.ctx.agentPresets.mount(scope, agentPreset)
       scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
+      let readPaths: string[] = []
+      if (scenarioTask && this.scenarioContext) {
+        let latest = ''
+        // Required runtime context is refreshed after native request preparation
+        // and persisted by the loop for composer sends, repairs, and retries.
+        scope.systemPrompt.context({ name: 'eadp-scenario', order: 80, required: true, interpolate: false, text: () => latest })
+        scope.on('agent/request', async ({ signal }, next) => {
+          const current = await this.scenarioContext!(task, signal)
+          signal.throwIfAborted()
+          latest = current.text
+          readPaths = current.readPaths
+          return next()
+        })
+      }
       if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
       if (input) {
         const manifest = await readTemplateManifest(this.manifestPath)
@@ -93,10 +113,10 @@ export class DshTaskSessions {
         } })
         this.bindings.set(task.sessionId, binding)
       } else if (task.purpose === 'review') {
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: [] }, agent), 'studio: readonly fixed review boundary')
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: [] }, agent), 'studio: readonly fixed review boundary')
       } else {
-        const kind = task.purpose === 'handoff' ? 'handoff' : (await readFile(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => 'scenario' as const, () => 'requirement' as const))
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, writablePaths: task.purpose === 'split' ? [] : [materialPath(kind, task.entityId)] }, agent), 'studio: material file boundary')
+        const kind = task.purpose === 'handoff' ? 'handoff' : (await access(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => 'scenario' as const, () => 'requirement' as const))
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: task.purpose === 'split' || kind === 'scenario' ? [] : [materialPath(kind, task.entityId)] }, agent), 'studio: material file boundary')
       }
       configuredAgents.add(agent)
     }
@@ -108,7 +128,7 @@ export class DshTaskSessions {
     } else if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, agentOptions, setup })
     this.handles.set(task.sessionId, handle)
-    if ((task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') && inspection) {
+    if (replay && inspection) {
       // Do not await application delivery: open runs inside its serialized command queue.
       for (const event of inspection.events) this.enqueueOutput(task.sessionId, event)
     }
@@ -116,9 +136,28 @@ export class DshTaskSessions {
   }
   private enqueueOutput(sessionId: string, event: SessionEvent): void {
     let output: SessionOutput
-    if (event.type === 'turn/end') output = { kind: 'turn-ended', reason: event.data.reason.kind }
+    const callKey = (id: string) => `${sessionId}:${id}`
+    if (event.type === 'tool/call') {
+      if (event.data.name === 'read_image') {
+        try {
+          const args: unknown = JSON.parse(event.data.arguments)
+          if (args && typeof args === 'object' && 'file_path' in args && typeof args.file_path === 'string') this.imageCalls.set(callKey(event.data.callId), args.file_path)
+        } catch { /* Invalid tool arguments never establish reading evidence. */ }
+      }
+      return
+    }
+    if (event.type === 'tool/result') {
+      const requestedPath = this.imageCalls.get(callKey(event.data.message.toolCallId))
+      this.imageCalls.delete(callKey(event.data.message.toolCallId))
+      const image = event.data.message.content.find(part => part.type === 'image')
+      if (!requestedPath || event.data.message.isError || image?.type !== 'image') return
+      output = { kind: 'source-read', path: requestedPath, attachmentId: image.attachment.attachmentId,
+        ranges: [`image:1 (${image.attachment.width}×${image.attachment.height}); attachment:${image.attachment.attachmentId}`] }
+    }
+    else if (event.type === 'turn/end') output = { kind: 'turn-ended', reason: event.data.reason.kind }
     else if (event.type === 'assistant/message' && !event.data.interrupted) output = { kind: 'assistant', content: event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n') }
     else return
+    if (Number.isSafeInteger(event.seq)) output.seq = event.seq
     void this.onOutput(sessionId, output).catch(() => { /* Persisted events remain available for the next recovery attempt. */ })
   }
 
@@ -145,6 +184,10 @@ export class DshTaskSessions {
     }
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task' } }))
   }
-  async dispose(): Promise<void> { this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.durableSessions.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
+  /** Use the same cancellation command as DSH's native conversation surface. */
+  async cancel(sessionId: string): Promise<void> {
+    if (this.ctx.agents.get(sessionId as SessionId)) this.ctx.sessionController.cancel({ sessionId: sessionId as SessionId })
+  }
+  async dispose(): Promise<void> { this.releaseOutput(); this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
 }
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task' } } }

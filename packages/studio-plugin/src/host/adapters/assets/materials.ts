@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import { readFile, realpath, writeFile, lstat, mkdir } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFile, realpath, writeFile, lstat, mkdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { isConfirmedMaterialMetadata, isMaterialMetadata, type MaterialMetadata } from '@eadp/contracts'
 import type { MaterialDraft } from '../../../shared/studio.ts'
@@ -33,26 +33,30 @@ export function parseMaterial(bytes: Buffer, relative: string): MaterialDraft {
   const metadata: unknown = JSON.parse(match[1]!)
   if (!isMaterialMetadata(metadata)) throw new Error('材料元数据无效')
   if (materialPath(metadata.kind, metadata.entityId) !== relative) throw new Error('材料身份与路径不一致')
-  return { entityId: metadata.entityId, metadata, body: text.slice(match[0].length).trimStart(), sha256: digest(bytes), path: relative }
+  const remainder = text.slice(match[0].length)
+  return { entityId: metadata.entityId, metadata, body: remainder.startsWith('\n') ? remainder.slice(1) : remainder, sha256: digest(bytes), path: relative }
 }
 export async function readMaterial(root: string, kind: MaterialMetadata['kind'], id: string): Promise<MaterialDraft> {
   const relative = materialPath(kind, id)
   return parseMaterial(await readFile(await containedFile(root, relative)), relative)
 }
-export async function saveMaterial(root: string, metadata: MaterialMetadata, body: string): Promise<MaterialDraft> {
+export function materialText(metadata: MaterialMetadata, body: string): string {
   if (!isMaterialMetadata(metadata) || body.length > 1_000_000) throw new Error('材料内容无效或过大')
+  return `\`\`\`eadp-metadata\n${JSON.stringify(metadata, null, 2)}\n\`\`\`\n\n${body.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '')}`
+}
+/** Writes in the target directory so readers never observe a partially written material. */
+export async function atomicWriteFile(target: string, bytes: string | Uint8Array): Promise<void> {
+  const temporary = `${target}.${randomUUID()}.tmp`
+  try { await writeFile(temporary, bytes, { flag: 'wx' }); await rename(temporary, target) }
+  finally { await rm(temporary, { force: true }) }
+}
+export async function saveMaterial(root: string, metadata: MaterialMetadata, body: string): Promise<MaterialDraft> {
   const relative = materialPath(metadata.kind, metadata.entityId)
-  const text = `\`\`\`eadp-metadata\n${JSON.stringify(metadata, null, 2)}\n\`\`\`\n\n${body.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '').trim()}\n`
-  await writeFile(await containedFile(root, relative, true), text, 'utf8')
+  await atomicWriteFile(await containedFile(root, relative, true), materialText(metadata, body))
   return readMaterial(root, metadata.kind, metadata.entityId)
 }
 export function checkMaterial(draft: MaterialDraft): void {
   const m = draft.metadata
   if (!isConfirmedMaterialMetadata(m)) throw new Error('请补充明确的业务依据后再确认材料')
   if (!m.coreRulesPresent || !m.acceptanceCriteriaPresent || m.openQuestions.some(q => q.blocking)) throw new Error('核心规则、验收条件或阻断待澄清项尚未解决')
-  for (const heading of ['核心业务规则', '验收条件']) {
-    const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const content = new RegExp(`^#{1,3} ${escaped}\\s*\\n([\\s\\S]*?)(?=^#{1,3} |$)`, 'm').exec(draft.body)?.[1]?.trim()
-    if (!content || content.length < 8 || /^(待补充|TODO|TBD|暂无)/i.test(content)) throw new Error(`请补充明确的${heading}`)
-  }
 }

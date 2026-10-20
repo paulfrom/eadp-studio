@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -14,6 +15,9 @@ import type { StudioCommand, TaskView } from '../../packages/studio-plugin/src/s
 async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 'handoff' = 'material') {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-cold-conversation-'))
   t.after(() => rm(root, { recursive: true, force: true }))
+  const templateBody = '# 场景模板\n\n## 目标与范围\n'
+  const template = { id: 'default', name: '默认场景模板', fixed: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: createHash('sha256').update(templateBody).digest('hex') } }
+  await mkdir(path.join(root, '.template')); await writeFile(path.join(root, template.fixed.path), templateBody)
   const storeRoot = path.join(root, 'state'), store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
   const entity: EntityView = { id: 'asset', kind: purpose === 'handoff' ? 'handoff' : 'requirement', title: '恢复材料', categoryId: 'cat', revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0,
@@ -29,10 +33,10 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
   const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: 'studio-existing', purpose, inputHash: entity.current?.fixed.sha256 ?? '', worktree }
   local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id; local.tasks.push(task); await store.save()
   const sessions: TaskView[] = [], requests: string[] = [], active = new Set<string>()
-  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; throw new Error(route) } } as unknown as CollaborationClient
-  const ports = { account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (value: TaskView) => { sessions.push(value); active.add(value.sessionId); return value.sessionId }, git: { fetchCommit: async () => {}, readBlob: async (_root: string, _sha: string, file: string) => readFile(path.join(worktree, file)) } } as unknown as HostPorts
+  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') return { defaultTemplateId: template.id, templates: [template] }; throw new Error(route) } } as unknown as CollaborationClient
+  const ports = { account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (value: TaskView) => { sessions.push(value); active.add(value.sessionId); return value.sessionId }, git: { fetchCommit: async () => {}, readBlob: async (_root: string, _sha: string, file: string) => readFile(path.join(file.startsWith('.template/') ? root : worktree, file)) } } as unknown as HostPorts
   const reboot = () => { const next = new StudioStore(storeRoot); next.useUser(1); return new StudioApplication(next, api, ports) }
-  return { store, local, task, entity, remote, sessions, requests, active, reboot }
+  return { store, local, task, entity, remote, sessions, requests, active, reboot, template }
 }
 
 const restore = (app: StudioApplication, sessionId = 'studio-existing') => app.command({ action: 'restoreSession', sessionId } as StudioCommand)
@@ -76,7 +80,8 @@ test('unknown and fixed read-only task sessions cannot use the writable conversa
 })
 
 test('frozen requirement resumes only through its current owned scenario batch worktree', async t => {
-  const f = await fixture(t), batch: EntityView = { ...f.entity, id: 'scenario', kind: 'scenario', materialVersion: 1, frozenBy: [], occupation: { ...f.entity.occupation!, entityId: 'scenario', purpose: 'scenario-batch', inputVersion: 1 } }
+  const f = await fixture(t), batch: EntityView = { ...f.entity, id: 'scenario', kind: 'scenario', templateId: f.template.id, templateRef: f.template.fixed, code: 'SC-001', sequence: 1, materialVersion: 1, frozenBy: [], occupation: { ...f.entity.occupation!, entityId: 'scenario', purpose: 'scenario-batch', inputVersion: 1 } }
+  delete batch.categoryId
   f.entity.frozenBy = ['owned']; delete f.entity.occupation; f.remote.entities.push(batch)
   f.local.tasks.push({ ...f.task, entityId: batch.id, sessionId: 'studio-scenario' })
   await saveMaterial(f.task.worktree, initialMetadata(batch), '# 场景批次\n\n正文。')

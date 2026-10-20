@@ -55,6 +55,7 @@
     "@tailwindcss/cli": "^4.3.3"
   },
   "dependencies": {
+    "pdfjs-dist": "6.3.289",
     "undici": "8.11.2"
   }
 }

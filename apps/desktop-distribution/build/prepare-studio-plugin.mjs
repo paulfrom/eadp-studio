@@ -111,7 +111,7 @@ const UPSTREAM_EDITS = [
 export const studioStagingPaths = [...new Set([
   ...UPSTREAM_EDITS.map(edit => edit.file),
   ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
-  'tsconfig.host.json', 'tsconfig.client.json',
+  'tsconfig.host.json', 'tsconfig.client.json', 'tsconfig.base.json',
   ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/asset-domain/${file}`),
@@ -125,6 +125,7 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-session',
   '@deepseek-ai/dsh-client-ui-conversation',
+  '@deepseek-ai/dsh-client-ui-primitives',
   '@deepseek-ai/dsh-client-ui-theme',
   '@deepseek-ai/dsh-client-ui-settings',
   '@deepseek-ai/dsh-client-ui-sidebar',
@@ -134,12 +135,20 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-agent',
   '@deepseek-ai/dsh-agent-default-model',
   '@deepseek-ai/dsh-agent-preset-registry',
+  '@deepseek-ai/dsh-agent-preset',
+  '@deepseek-ai/dsh-persona',
+  '@deepseek-ai/dsh-tool-fs',
+  '@deepseek-ai/dsh-tool-fs-search',
+  '@deepseek-ai/dsh-compaction-basic',
+  '@deepseek-ai/dsh-command-compact',
+  '@deepseek-ai/dsh-compaction-tool-result-pruner',
   '@deepseek-ai/dsh-session-projection',
   '@deepseek-ai/dsh-session',
   '@deepseek-ai/dsh-system-prompt',
   '@deepseek-ai/dsh-tools',
   '@deepseek-ai/dsh-subprocess',
   '@deepseek-ai/dsh-llm',
+  '@deepseek-ai/dsh-office-to-pdf',
   '@deepseek-ai/dsh-typert-protocol',
 ]
 
@@ -237,6 +246,19 @@ async function placePlugin(incremental = false) {
 }
 
 async function referencePlugin(incremental = false) {
+  // Typert's source-only pass must resolve product domain packages just like upstream packages.
+  const baseTarget = path.join(buildTree, 'tsconfig.base.json')
+  let baseSource = await readFile(baseTarget, 'utf8')
+  for (const name of ['contracts', 'asset-domain']) {
+    const alias = `"@eadp/${name}": ["./packages/eadp/${name}/src/index.ts"]`
+    if (!baseSource.includes(alias)) {
+      const marker = '"paths": {'
+      if (!baseSource.includes(marker)) throw new Error('DSH base configuration has no source paths block.')
+      baseSource = baseSource.replace(marker, `${marker}\n      ${alias},`)
+    }
+  }
+  await writeFile(baseTarget, baseSource)
+
   for (const face of ['host', 'client']) {
     const target = path.join(buildTree, `tsconfig.${face}.json`)
     const reference = `./packages/eadp/studio-plugin/tsconfig.${face}.json`

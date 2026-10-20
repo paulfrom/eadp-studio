@@ -17,11 +17,11 @@
 | 授权修复控制 | 记录用户授权动作、起始及当前 hash、累计轮数、暂停、显式续接、终止和完成。单任务最多三轮，续接不得复用旧用户动作；确认必须匹配最终修复 hash。占用结束或并发目录编辑撤销未完成授权。后台不执行 AI。 |
 | 既有后续能力 | 原型完成、基线、复用资格与采用、交接回执改用明确字段保存，保留原有业务规则。 |
 
-请求、类型与状态以 [共享契约](../../../packages/contracts/src/index.ts)为准。旧桌面端尚未适配这些契约，须完成下节后才能进行桌面与新后端联调，不以兼容层维持旧请求。
+请求、类型与状态以 [共享契约](../../../packages/contracts/src/index.ts)为准。桌面与 Host 已按这些契约改造；本轮不连接真实服务执行操作验收，不保留旧请求兼容层。
 
 ## 桌面端修正
 
-以下仍待实施：
+2026-10-21 已完成下列代码改造，本轮只执行类型、自动化测试及构建校验：
 
 1. 新建场景只输入名称，消费编号及模板绑定；项目初始化写入默认模板与清单，适配需求固定来源及新的确认请求。
 2. 列表信息、筛选、统计与分页；双栏 AI／Markdown 工作区、确认版只读查看及修订影响确认。
@@ -30,7 +30,7 @@
 5. 模板设置、发布预览、历史绑定切换及本机结构检查开关。
 6. 正式依据归档、门禁展示、授权修复执行与显式补答续接、确认结果未知核对及确认后选择拆分。
 
-完成后执行 Host、真实资料／模型、真实协同及 Windows 桌面验收，逐项记录 S01—S38 的完整证据。
+本轮覆盖 Host 文件／版本规则、真实 PDF 文本提取引擎、原生 DSH 插件组合及客户端状态控制器的代码验证。依用户限定，不进行视觉、真实模型、真实协同或 Windows 桌面操作验收；S01—S38 的完整产品验收仍未执行，不能据此宣布阶段一整体验收通过。
 
 ## 后端验证
 
@@ -47,3 +47,52 @@
 | `tests/collaboration/backend-scenarios.test.ts` | 编号并发／故障／跨项目、新建去分类、固定内容接受与未知结果、资料阻断、固定场景来源、批次冻结、模板发布／切换、修复额度／续接／撤销，以及原型／复用／交接回归。 |
 
 后三个套件用 `STUDIO_TEST_DATABASE_URL` 分别指向命名符合 `eadp_auth_check_*` 的新库，通过 `pnpm --filter @eadp/collaboration-api exec tsx --test <测试路径>` 执行。未设置数据库变量时的跳过不计入通过。
+
+## 桌面与 Host 公共模块设计（2026-10-20—21）
+
+本轮实施依据已确认场景方案；按用户要求仅执行代码校验，不执行视觉、真实模型或桌面操作验收。
+
+- `shared/scenarios.ts` 定义场景工作区、资料读取、建议批次、门禁、冲突和可信 UI 命令。普通 Agent 输出不具备保存、确认或续接授权。
+- `ScenarioDocumentService` 统一按文件串行写入、expectedHash 校验、操作幂等、原子替换及冲突现场；建议解析与应用使用同一保存服务，避免手工保存和采纳形成两套文件规则。
+- 场景工作区服务负责只读固定版本、显式修订、会话历史、资料选择与建议状态；模板发布与修复状态分别封装，StudioApplication 只组合服务及既有 Git 集成链路。
+- 客户端分离稳定的原生会话容器、800ms 自动保存 Hook、文档编辑器、建议／资料／门禁面板。导航先 flush；保存失败保留当前输入；轮询不得按文件 hash 重挂载编辑器或原生会话。
+- AI 继续使用 DSH Agent、模型投影、会话持久化和 conversation 槽。普通场景会话只读，每轮按当前 MD、固定模板及实际已读资料刷新上下文；授权修复也由 Host 校验候选并写入。
+- 固定 Git 内容按不可变引用缓存；目录查询不逐项装载场景正文。输入编辑与轮询分离；保存不触发模型请求；AI 生成不占用 Host 命令队列等待完成。
+
+
+## DSH 能力复用与流畅度
+
+参照 `release.lock.json` 固定版本中的成熟插件：`plan-mode` 的 scoped Agent 事件、`system-prompt` 的 required runtime context、`session-controller` 的原生会话／取消及模型投影、`tool-fs/read-image` 的真实附件读取、`office-to-pdf` 的共享有界转换队列，以及 Document Preview 使用的同版 pdfjs 引擎。
+
+- 产品 patch 声明 `eadp-scenario` 原生 preset，复用 persona、read、read_image、glob、grep、compaction 与 `/compact`；不装配 shell、文件写入或子 Agent 工具。普通会话及授权修复均由 Host 执行受 hash 约束的写入。
+- 场景恢复历史会话时，每轮上下文按当前有效占用定位当前 Markdown 和模板，原生会话身份与历史不变；模型选择及取消继续由 DSH 提供。
+- 800ms 自动保存串行提交；原生会话稳定挂载；资料／建议／门禁面板使用稳定回调和 memo；轮询带动作代次检查，避免旧响应覆盖新状态。
+- Office 转换与 PDF 提取在命令队列之外执行，结果按原账号、项目、资料身份及 hash 短暂入队交付。IPC 投影不携带未使用的抽取全文。
+- 场景文件观察器监听父目录，支持原子替换；并发编辑及时撤销授权修复。保存／采纳的幂等记录、冲突两份及临时资料位于 Git 外的用户本地目录。
+- 正式依据只归档用户选择；取消选择后只清理工作台登记、未跟踪且未被任何材料引用的文件，历史已跟踪依据保持不变。模板发布使用独立 worktree，固定材料缓存只接收已校验 hash 的内容。
+
+资料读取限制以实际结果展示：PDF／Office 提取仅声明已读文字和页范围，图片／图表／公式语义不冒充完整读取；扫描 PDF 无文字时失败。图片导入后须有原生 `read_image` 的真实图片附件结果才记录已读，模型不支持图片或工具失败时不记录成功。
+
+
+## 本轮代码校验结果（2026-10-21）
+
+| 校验 | 执行与结果 |
+| --- | --- |
+| 原生装配 | `node apps/desktop-distribution/build/prepare-studio-plugin.mjs --dev-stage` 通过；仅写忽略的装配树，未修改上游缓存。 |
+| Host／Client 类型 | 在 `.local/build/dsh` 执行 `node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.host.json packages/eadp/studio-plugin/tsconfig.client.json`，通过。 |
+| Typert | 同目录执行 `node --import tsx/esm scripts/generate-typert.ts`，成功生成 31 个原生契约产物；装配维护产品领域包的源码路径映射。 |
+| 两端打包 | 同目录执行 `node --experimental-transform-types node_modules/tsdown/dist/run.mjs --config-loader native --config packages/eadp/studio-plugin/tsdown.config.ts --env.DSH_BUILD_FACE host` 及 `client`，均通过。 |
+| 自动化代码测试 | 使用 `apps/collaboration-api/node_modules/.bin/tsx --test` 合并运行下表入口，179 通过、0 失败、1 跳过。真实 DSH resolver 用例设置 `EADP_TEST_DSH_ROOT` 指向装配树后通过；跳过项为已有构建脚本中缺少本地固定归档样本的缓存破损用例，不计入通过。 |
+| 仓库约束 | `pnpm check:repository` 与 `git diff --check` 通过，49 个随包模板文件 hash 保持一致。 |
+
+| 自动化入口 | 覆盖 |
+| --- | --- |
+| `tests/windows-desktop/scenario-documents.test.ts`、`material-draft.test.ts` | 版本受控保存、幂等与冲突双份、建议范围／重叠／模板／hash、业务门禁和正式依据。 |
+| `tests/windows-desktop/scenario-orchestration.test.ts`、`scenario-file-observer.test.ts` | 只读与显式修订、历史会话当前上下文、资料离队交付、依据安全清理、模板隔离，以及修复额度／补答／并发／取消／丢响应／重放恢复。 |
+| `tests/windows-desktop/scenario-dsh-adapter.test.ts`、`tests/scripts/scenario-preset.test.mjs` | 实际 PDF 引擎、Office 服务边界、原生模型／上下文／图片附件证据，以及实际原生 preset 的只读工具和压缩插件。 |
+| `tests/scenario-client/draft-buffer.test.ts`、`material-editor.test.mjs`、`tests/scripts/studio-conversation-restoration.test.mjs`、`studio-task-purpose.test.mjs` | 800ms 保存、并发与失败保护、稳定会话挂载、目录筛选排序及冻结关系控件。 |
+| `tests/windows-desktop/task-recovery.test.ts`、`asset-workflow.test.ts`、`conversation-restoration.test.ts`、`login-reply.test.ts`、`tests/gitlab-auth-host/projects.test.ts` | 原操作恢复、固定材料确认／评审／采用、同批来源新版本、会话授权和账号隔离。 |
+| `tests/windows-desktop/execution-scope-identity.test.ts`、`execution-guard-delegation.test.ts` | Agent 精确文件权限、原生 cwd 和委派边界。 |
+| `tests/scripts/studio-payload.test.mjs`、`studio-typert-edits.test.mjs`、`studio-packaging-edits.test.mjs` | 插件载荷、原生类型生成锚点及发行装配规则。 |
+
+本轮未启动桌面、不进行截图或交互走查、不调用真实模型、不连接真实业务仓库进行确认或发布；上述代码结果不能替代 S01—S38 产品验收或 Windows 发行验收。

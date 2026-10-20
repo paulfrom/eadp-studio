@@ -1,14 +1,16 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ProjectState, ProjectView } from '@eadp/contracts'
+import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
 import type { StudioCommand } from '../../shared/studio.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import { StudioStore, type ProjectInitialization } from './state.ts'
 
 const exists = async (target: string) => stat(target).then(() => true, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false })
-const expectedManifest = (project: ProjectView) => ({ schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories: ['场景', '需求', '原型代码'] })
+const defaultScenarioTemplate = { id: 'default', name: '默认场景模板', path: '.template/default.md' }
+const defaultScenarioTemplateBody = "# 场景名称\n\n## 目标与范围\n\n<!-- 说明业务目标、适用范围及不适用范围，明确本场景为后续细化需求提供的共同业务边界。 -->\n\n## 角色\n\n<!-- 说明参与角色、业务职责及交互关系；保留用户明确提供的约束，不把 AI 推导的实现直接写成既定前提。 -->\n\n## 流程\n\n<!-- 整理触发条件、业务步骤及结果；可以表达分支、退回、重试与循环，并说明相应业务条件。 -->\n\n## 业务规则\n\n<!-- 记录可判断的业务规则与用户明确约束，可用稳定编号及 GIVEN / WHEN / THEN 辅助表达。 -->\n\n## 异常\n\n<!-- 说明异常触发条件、业务影响、处理路径及恢复条件，区分已明确规则与仍待澄清的问题。 -->\n\n## 验收条件\n\n<!-- 描述能够由用户判断的业务结果与验收条件，覆盖主要路径、边界及异常；必要时关联对应业务规则。 -->\n\n## 依据\n\n<!-- 记录用户选定的正式依据及来源；来源、归档相对路径、文件 hash 和引用范围随材料保存，依据文件随同一 Git 提交归档。会话及未选定的临时资料保持本地，不自动成为正式依据。 -->\n\n## 待澄清项\n\n<!-- 列明问题及其影响。使核心规则或验收条件不能判断的问题阻断确认；非阻断项须明确保留限制及不适用范围，不把假设写成已解决结论。 -->\n"
+const expectedManifest = (project: ProjectView) => ({ schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: defaultScenarioTemplate.id, templates: [defaultScenarioTemplate] } })
 async function writeInitialFile(target: string, value: string): Promise<void> {
   try { await writeFile(target, value, { flag: 'wx' }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; if ((await lstat(target)).isSymbolicLink() || await readFile(target, 'utf8') !== value) throw new Error('初始化文件已被修改，请保留并核对原现场。') }
@@ -17,6 +19,7 @@ async function writeInitialFile(target: string, value: string): Promise<void> {
 /** Backend owns repository provisioning. This service owns only attributable local Git workspaces. */
 export class ProjectWorkspaces {
   private readonly caches = new Map<string, string>()
+  private readonly fixedBytes = new Map<string, Uint8Array>()
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) {}
   async create(command: Extract<StudioCommand, { action: 'createProject' }>): Promise<void> {
     if (!command.name.trim() || command.name.length > 200 || !Number.isSafeInteger(command.namespaceId) || command.namespaceId <= 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(command.path) || command.path.length > 100) throw new Error('请填写项目名称、群组和有效的仓库路径。')
@@ -90,8 +93,11 @@ export class ProjectWorkspaces {
       await this.bind(project, operation)
     } catch (error) { operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '项目初始化结果未知'; await this.store.save(); throw error }
   }
-  async readFixed(projectId: string, commitSha: string, relativePath: string): Promise<Uint8Array> {
+  async readFixed(projectId: string, commitSha: string, relativePath: string, expectedHash?: string): Promise<Uint8Array> {
     const project = await this.project(projectId)
+    const cacheKey = `${this.store.directory}:${projectId}:${commitSha}:${relativePath}`
+    const cached = this.fixedBytes.get(cacheKey)
+    if (cached && expectedHash && createHash('sha256').update(cached).digest('hex') === expectedHash) return new Uint8Array(cached)
     if (project.initializationStatus !== 'ready') throw new Error('项目尚未完成初始化。')
     const local = await this.store.read(), opened = local.projects.find(p => p.id === project.id)
     let directory = opened?.directory
@@ -108,9 +114,15 @@ export class ProjectWorkspaces {
       }
     }
     await this.ports.git.fetchCommit(directory, commitSha)
-    return new Uint8Array(await this.ports.git.readBlob(directory, commitSha, relativePath))
+    const bytes = new Uint8Array(await this.ports.git.readBlob(directory, commitSha, relativePath))
+    if (this.fixedBytes.size >= 128) this.fixedBytes.delete(this.fixedBytes.keys().next().value!)
+    if (expectedHash) {
+      if (createHash('sha256').update(bytes).digest('hex') !== expectedHash) throw new Error('固定材料哈希校验失败')
+      this.fixedBytes.set(cacheKey, bytes)
+    }
+    return new Uint8Array(bytes)
   }
-  async dispose(): Promise<void> { const owned = [...this.caches.values()]; this.caches.clear(); await Promise.all(owned.map(directory => rm(directory, { recursive: true, force: true }))) }
+  async dispose(): Promise<void> { const owned = [...this.caches.values()]; this.caches.clear(); this.fixedBytes.clear(); await Promise.all(owned.map(directory => rm(directory, { recursive: true, force: true }))) }
   private async project(id: string): Promise<ProjectView> { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id)) throw new Error('项目身份无效。'); return (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(id)}`)).project }
   private async ownedDirectory(project: ProjectView, operation: ProjectInitialization): Promise<string> {
     const account = await this.ports.account(); if (!account) throw new Error('请先登录协同工作台。')
@@ -133,6 +145,8 @@ export class ProjectWorkspaces {
   }
   private async initializeFiles(directory: string, project: ProjectView): Promise<void> {
     for (const name of ['场景', '需求']) { const target = path.join(directory, name); await mkdir(target, { recursive: true }); if ((await lstat(target)).isSymbolicLink()) throw new Error('初始化目录不能为符号链接。'); await writeInitialFile(path.join(target, '.gitkeep'), '') }
+    const templates = path.join(directory, '.template'); await mkdir(templates, { recursive: true }); if ((await lstat(templates)).isSymbolicLink()) throw new Error('模板目录不能为符号链接。')
+    await writeInitialFile(path.join(templates, 'default.md'), defaultScenarioTemplateBody)
     const prototype = path.join(directory, '原型代码')
     await this.ports.installTemplate(prototype)
     await writeInitialFile(path.join(directory, '.gitattributes'), '*.md text eol=lf\n*.json text eol=lf\n*.ts text eol=lf\n*.tsx text eol=lf\n')
@@ -151,9 +165,9 @@ export class ProjectWorkspaces {
   }
   private async verifyFixedManifest(directory: string, project: ProjectView, commitSha: string): Promise<void> { this.checkManifest(JSON.parse((await this.ports.git.readBlob(directory, commitSha, 'project.assets.json')).toString('utf8')), project) }
   private checkManifest(value: unknown, project: ProjectView): void {
-    if (!value || typeof value !== 'object') throw new Error('项目清单无效。')
+    if (!isProjectManifest(value)) throw new Error('项目清单无效。')
     const actual = value as Record<string, unknown>
-    for (const [key, expected] of Object.entries(expectedManifest(project))) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
+    for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
   }
   private async openReady(project: ProjectView, operation: ProjectInitialization): Promise<void> {
     const local = await this.store.read(), existing = local.projects.find(p => p.id === project.id)

@@ -59,7 +59,7 @@ export class AuthorReviews {
       }
       await this.store.save(); return true
     }
-    if (review.ended) return true
+    if (output.kind !== 'assistant' || review.ended) return true
     const content = output.content
     const matches = [...content.matchAll(new RegExp(String.fromCharCode(96).repeat(3) + 'eadp-review\\s*\\n([\\s\\S]*?)\\n' + String.fromCharCode(96).repeat(3), 'g'))]
     if (!matches.length) return true

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
-import { cp, mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createRequire } from 'node:module'
 import { OccupationTokenSchema } from '../../packages/contracts/src/index.ts'
-import type { EntityView, FixedVersion, PrepareIntegrationRequest, ProjectState } from '@eadp/contracts'
+import type { EntityView, FixedVersion, MaterialMetadata, PrepareIntegrationRequest, ProjectState } from '@eadp/contracts'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
-import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
+import { initialMetadata, type HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { CollaborationError, CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import { registerRoutes } from '../../apps/collaboration-api/src/routes.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
@@ -18,23 +18,45 @@ import { validateIntegration } from '../../apps/collaboration-api/src/modules/in
 const head = 'a'.repeat(40), candidate = 'b'.repeat(40)
 const { Value } = createRequire(new URL('../../packages/contracts/package.json', import.meta.url))('@sinclair/typebox/value')
 const body = '# 材料\n\n## 核心业务规则\n\n用户按固定业务范围检查记录且保留审计依据。\n\n## 验收条件\n\n符合业务规则的记录可以保存，不符合的显示明确错误。\n'
-const entity = (id: string, kind: EntityView['kind'] = 'requirement'): EntityView => ({ id, kind, title: id, categoryId: 'cat', revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 })
-const metadata = (value: EntityView) => ({ entityId: value.id, kind: value.kind, title: value.title, categoryId: value.categoryId, scenarioIds: value.scenarioIds, prerequisites: [], sources: [], businessEvidence: [{ label: '合成测试业务依据', reference: 'synthetic:fixture' }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] })
+const templateBody = '## 目标与范围\n\n## 业务规则\n\n## 验收条件\n'
+const templateRef = { commitSha: head, path: '.template/default.md', sha256: digest(templateBody) }
+const evidencePath = '.eadp/evidence/fixture/approved.txt'
+const evidenceBody = '合成业务访谈：用户按固定业务范围检查记录并保留审计依据。\n'
+const evidence = { label: '合成测试业务依据', reference: 'synthetic:fixture', files: [{ path: evidencePath, sha256: digest(evidenceBody) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }
+const entity = (id: string, kind: EntityView['kind'] = 'requirement'): EntityView => ({ id, kind, title: id,
+  ...(kind === 'scenario' ? { templateId: 'default', templateRef } : { categoryId: 'cat' }),
+  revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active',
+  scenarioIds: kind === 'requirement' ? ['origin'] : [],
+  ...(kind === 'requirement' ? { scenarioSources: [{ projectId: 'project', entityId: 'origin', version: 1 }] } : {}),
+  prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 })
+const metadata = (value: EntityView): MaterialMetadata => ({ ...initialMetadata(value, value.scenarioIds,
+  value.scenarioIds.map(entityId => ({ projectId: 'project', entityId, version: 1 }))),
+  businessEvidence: [evidence], coreRulesPresent: true, acceptanceCriteriaPresent: true })
+async function fixedFiles(directory: string): Promise<void> {
+  await mkdir(path.dirname(path.join(directory, evidencePath)), { recursive: true })
+  await writeFile(path.join(directory, evidencePath), evidenceBody)
+  await mkdir(path.join(directory, '.template'), { recursive: true })
+  await writeFile(path.join(directory, templateRef.path), templateBody)
+}
 async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirement') {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-asset-workflow-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
   const local = await store.read(), value = entity('target', kind), worktree = path.join(root, 'task')
   await mkdir(worktree)
+  await fixedFiles(worktree)
   value.occupation = { occupationId: 'occupation', generation: 1, taskId: 'task', clientId: local.clientId, expectedRevision: 1, entityId: value.id, ownerId: 1, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' }
   const project = { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: head, revision: 1, categories: [{ id: 'cat', name: '测试' }] }
-  const remote: ProjectState = { project, entities: [value], integrations: [], baselines: [] }
+  const origin = entity('origin', 'scenario'); origin.materialVersion = 1; origin.confirmationStatus = 'confirmed'; origin.taskStatus = 'idle'
+  const originDraft = await saveMaterial(worktree, metadata(origin), body)
+  origin.current = { version: 1, fixed: { commitSha: head, path: originDraft.path, sha256: originDraft.sha256 }, metadata: originDraft.metadata, confirmationId: 'origin-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+  const remote: ProjectState = { project, entities: [value, origin], integrations: [], baselines: [] }
   local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id
   local.tasks.push({ projectId: project.id, entityId: value.id, worktree, purpose: kind === 'handoff' ? 'handoff' : 'material', inputHash: '', sessionId: 'material-session' })
   await saveMaterial(worktree, metadata(value), body)
   await store.save()
-  const sourceEntity = entity('source'), sourceMetadata = metadata(sourceEntity)
-  const sourceDirectory = path.join(root, 'source'); await mkdir(sourceDirectory)
+  const sourceEntity = entity('source'), sourceMetadata = { ...metadata(sourceEntity), sources: [{ projectId: 'source-project', entityId: 'origin', version: 1 }] }
+  const sourceDirectory = path.join(root, 'source'); await mkdir(sourceDirectory); await fixedFiles(sourceDirectory)
   const sourceDraft = await saveMaterial(sourceDirectory, sourceMetadata, body)
   local.projects.push({ id: 'source-project', name: '来源项目', directory: sourceDirectory, repositoryUrl: project.repositoryUrl }); await store.save()
   const source: FixedVersion = { version: 2, fixed: { commitSha: head, path: sourceDraft.path, sha256: sourceDraft.sha256 }, metadata: sourceMetadata, confirmationId: 'source-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
@@ -45,6 +67,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
     if (input && 'token' in input) assert.equal(Value.Check(OccupationTokenSchema, input.token), true, 'Host writes must send the exact occupation token contract')
     if (method === 'GET' && route === '/v1/projects') return [project]
+    if (method === 'GET' && route.endsWith('/templates')) return { acceptedHead: project.recognizedHead, defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: templateRef }] }
     if (method === 'GET' && route.endsWith('/versions')) return [source]
     if (method === 'GET' && route.includes('/operations/')) { const result = records.get(route.split('/').at(-1)!); if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404); return { result } }
     if (method === 'GET' && route.includes('/integrations/')) return remote.integrations.find(integration => integration.id === route.split('/').at(-1))
@@ -67,12 +90,22 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     }
     if (method === 'POST' && route.endsWith('/integrations')) {
       const prepared = input as unknown as PrepareIntegrationRequest; calls.prepared.push(prepared)
-      validateIntegration(project, remote.entities as EntityView[], { id: 1 } as never, prepared)
+      assert.notEqual(prepared.stage, 'template', 'material workflow must not publish project configuration')
+      if (prepared.stage === 'template') throw new Error('Unexpected template integration')
+      const materials = new Map<string, MaterialMetadata>()
+      for (const confirmation of prepared.confirmations) {
+        const target = remote.entities.find(entity => entity.id === confirmation.entityId) as EntityView
+        const fixedDraft = await readMaterial(worktree, target.kind, target.id)
+        assert.equal(fixedDraft.sha256, confirmation.fixed.sha256, 'backend verification reads the exact fixed material bytes')
+        assert.equal('metadata' in confirmation, false, 'confirmation controls cannot carry business content')
+        materials.set(confirmation.entityId, fixedDraft.metadata)
+      }
+      validateIntegration(project, remote.entities as EntityView[], { id: 1 } as never, prepared, materials)
       const accepted = { id: 'integration', entityId: value.id, ownerId: 1, status: 'accepted' as const, sourceSha: candidate, expectedHead: head, candidateSha: candidate, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
       remote.integrations.push(accepted); records.set(prepared.idempotencyKey, accepted)
       if (prepared.stage !== 'prototype') for (const item of prepared.confirmations) {
         const changed = remote.entities.find(e => e.id === item.entityId) as EntityView
-        changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: item.metadata, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
+        changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: materials.get(item.entityId)!, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
       }
       return accepted
     }
@@ -87,7 +120,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   } as unknown as HostPorts
   const app = (nextStore = store) => new StudioApplication(nextStore, api, ports)
   const adopt = { action: 'adopt' as const, sourceProjectId: 'source-project', sourceEntityId: 'source', version: 2, targetEntityId: value.id, reason: '依据目标业务调整验收条件' }
-  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt, api }
+  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt, api, ports }
 }
 
 test('author handoff acknowledgement uses the actual API receipt route and current confirmation', async t => {
@@ -155,14 +188,14 @@ test('scenario revision confirms every unstarted frozen requirement atomically a
   completed.materialVersion = 2; completed.completedVersion = 2
   unrelated.scenarioIds = [f.value.id]
   f.remote.entities.push(unstarted, completed, unrelated)
-  await saveMaterial(f.worktree, metadata(unstarted), body)
+  await saveMaterial(f.worktree, { ...metadata(unstarted), sources: [{ projectId: 'project', entityId: f.value.id, version: 2 }] }, body)
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
   const reply = await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })
   assert.equal(reply.ok, true, JSON.stringify(reply))
   const request = f.calls.prepared[0]!
   assert.deepEqual(request.batchRequirementIds?.sort(), ['completed', 'unstarted'])
   assert.deepEqual(request.confirmations.map(item => item.entityId).sort(), ['target', 'unstarted'])
-  assert.deepEqual([...f.calls.commits[0]!].sort(), ['场景/target.md', '需求/unstarted.md'])
+  assert.deepEqual([...f.calls.commits[0]!].sort(), [evidencePath, '场景/target.md', '需求/unstarted.md'].sort())
   assert.ok(request.confirmations.every(item => item.fixed.commitSha === candidate))
 })
 
@@ -184,7 +217,7 @@ test('a confirmed target without the exact adopted source cannot report reuse su
   const f = await fixture(t)
   assert.equal((await f.app().command(f.adopt)).ok, true)
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  const checked = await saveMaterial(f.worktree, { ...draft.metadata, sources: [], coreRulesPresent: true, acceptanceCriteriaPresent: true }, draft.body)
+  const checked = await saveMaterial(f.worktree, { ...draft.metadata, sources: draft.metadata.sources.filter(source => source.projectId === 'project' && draft.metadata.scenarioIds.includes(source.entityId)), coreRulesPresent: true, acceptanceCriteriaPresent: true }, draft.body)
   assert.equal((await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: checked.sha256, method: 'direct' })).ok, true)
   assert.equal(f.calls.successEffects, 0)
 })
@@ -376,4 +409,57 @@ for (const reason of ['error', 'aborted']) test('a valid-looking report followed
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
   assert.equal(review.status, 'failed')
   assert.equal(f.calls.prepared.length, 0)
+})
+
+test('explicit scenario revision binds unfinished requirements to the next scene version and preserves other sources and completed materials', async t => {
+  const f = await fixture(t, 'scenario'), app = f.app()
+  const current = await readMaterial(f.worktree, 'scenario', f.value.id)
+  f.value.materialVersion = 1; f.value.confirmationStatus = 'confirmed'; f.value.taskStatus = 'idle'
+  f.value.current = { version: 1, fixed: { commitSha: head, path: current.path, sha256: current.sha256 }, metadata: current.metadata, confirmationId: 'scene-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+  delete f.value.occupation
+  const related = entity('unfinished'), completed = entity('already-completed')
+  for (const requirement of [related, completed]) {
+    requirement.scenarioIds = [f.value.id, 'origin']
+    requirement.scenarioSources = [{ projectId: 'project', entityId: f.value.id, version: 1 }, { projectId: 'project', entityId: 'origin', version: 1 }]
+  }
+  const provenance = { projectId: 'source-project', entityId: 'source', version: 2 }
+  const previous = await saveMaterial(f.worktree, { ...metadata(related), sources: [...related.scenarioSources!, provenance] }, body + '\n作者保留的业务细节。')
+  const finished = await saveMaterial(f.worktree, metadata(completed), body + '\n已完成需求保持固定。')
+  completed.materialVersion = 2; completed.completedVersion = 2; completed.confirmationStatus = 'confirmed'
+  completed.current = { version: 2, fixed: { commitSha: head, path: finished.path, sha256: finished.sha256 }, metadata: finished.metadata, confirmationId: 'completed-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+  f.remote.entities.push(related, completed)
+  const original = f.api.request.bind(f.api), claims: Array<Record<string, unknown>> = []
+  f.api.request = async (method, route, input) => {
+    if (method === 'GET' && route.endsWith('/revision-impact')) return { requirements: [related, completed] }
+    if (method === 'POST' && route.endsWith(`/entities/${f.value.id}/claim`)) {
+      claims.push(input!)
+      assert.equal(input!.purpose, 'scenario-batch')
+      assert.equal(input!.expectedRevision, f.value.revision)
+      f.value.revision++; f.value.generation++
+      f.value.occupation = { occupationId: 'revision-occupation', generation: f.value.generation, taskId: String(input!.taskId), clientId: String(input!.clientId), expectedRevision: f.value.revision, entityId: f.value.id, ownerId: 1, purpose: 'scenario-batch', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
+      for (const requirement of [related, completed]) requirement.frozenBy = ['revision-occupation']
+      return f.value
+    }
+    return original(method, route, input)
+  }
+  const state = f.ports.git.state.bind(f.ports.git)
+  f.ports.git.createWorktree = async (_root, directory) => { await cp(f.worktree, directory, { recursive: true }) }
+  f.ports.git.state = async directory => directory.includes(`${path.sep}worktrees${path.sep}`) ? { head, dirty: true, branch: 'studio/revision' } : state(directory)
+  const impact = await app.command({ action: 'scenarioRevisionImpact', entityId: f.value.id })
+  assert.equal(impact.ok, true, JSON.stringify(impact))
+  assert.equal(claims.length, 0, 'viewing the impact cannot claim or freeze anything')
+  assert.equal(f.value.occupation, undefined)
+  const reply = await app.command({ action: 'startScenarioRevision', entityId: f.value.id, expectedRevision: f.value.revision, expectedAssociationRevision: f.value.associationRevision })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  assert.equal(claims.length, 1)
+  const task = (await f.store.read()).tasks.findLast(task => task.entityId === f.value.id && task.purpose === 'material')!
+  assert.notEqual(task.worktree, f.worktree)
+  const rebound = await readMaterial(task.worktree, 'requirement', related.id)
+  assert.deepEqual(rebound.metadata.sources.filter(source => source.projectId === 'project' && source.entityId === f.value.id), [{ projectId: 'project', entityId: f.value.id, version: 2 }])
+  assert.deepEqual(rebound.metadata.sources.filter(source => source.entityId !== f.value.id), previous.metadata.sources.filter(source => source.entityId !== f.value.id))
+  assert.deepEqual(rebound.metadata.scenarioIds, [f.value.id, 'origin'])
+  assert.equal(rebound.body, previous.body)
+  assert.equal((await readMaterial(task.worktree, 'requirement', completed.id)).sha256, finished.sha256)
+  assert.equal((await readMaterial(f.worktree, 'requirement', related.id)).sha256, previous.sha256, 'the old task material remains intact')
+  assert.equal(f.value.current!.fixed.sha256, current.sha256, 'the accepted scene stays fixed while its revision is edited')
 })

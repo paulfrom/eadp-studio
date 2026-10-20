@@ -17,6 +17,7 @@ import { CollaborationTransport } from './adapters/collaboration/transport.js'
 import { WorkspaceGit } from './adapters/workspace/git.js'
 import { studioToolGuard } from './adapters/platform/execution-guard.js'
 import { DshTaskSessions } from './adapters/dsh/sessions.ts'
+import { readScenarioSource } from './adapters/dsh/scenario-sources.ts'
 import { checkStaticPreview } from './adapters/dsh/browser-check.ts'
 import { copyTemplate } from './prototype/template.js'
 import { installPrototypeDependencies, runPrototypeChecks, type PrototypeCheckResult } from './prototype/checks.js'
@@ -48,7 +49,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')
   const store = new StudioStore(stateDirectory)
   let app: StudioApplication
-  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content))
+  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal))
   const checkResults = new Map<string, PrototypeCheckResult>()
   let preview: PrototypePreview | undefined
   const prototypeInput = async (task: TaskView, sourceSha?: string): Promise<PrototypeTaskIdentity> => ({ prototypeRoot: path.join(task.worktree, '原型代码'), manifestPath, assetId: task.entityId, requirementId: task.entityId, sessionId: task.sessionId, sourceSha: sourceSha ?? (await git.state(task.worktree)).head })
@@ -112,7 +113,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
-    prompt: (id, text) => sessions.prompt(id, text), checks: runChecks,
+    prompt: (id, text) => sessions.prompt(id, text), cancelSession: id => sessions.cancel(id), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
     preview: async task => {
         try {
           const { input, binding } = await bind(task)

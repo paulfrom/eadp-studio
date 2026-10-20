@@ -6,6 +6,7 @@ import type { StudioCommand, StudioReply, StudioState } from '../../shared/studi
 import type { ThemeFace } from '../theme.ts'
 import studioCss from '../studio.module.css'
 import css from './sections.module.css'
+import { ScenarioTemplateSettings } from './ScenarioTemplateSettings.tsx'
 
 /** Faces the Studio settings sections act through (wired from the client context). */
 export interface StudioSettingsFaces {
@@ -64,6 +65,7 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
 /** Section descriptors registered by the client half; ids must not collide with native sections. */
 export const settingsSections: Array<{ id: string; order: number; label: string; component: (props: SectionProps) => ReactNode }> = [
   { id: 'studio-collab', order: -9, label: '协同账号', component: CollabAccountSection },
+  { id: 'studio-scenario-templates', order: 4, label: '场景模板', component: ScenarioTemplateSection },
   { id: 'studio-appearance', order: 5, label: '外观', component: AppearanceSection },
   { id: 'studio-connection', order: 6, label: '协同连接', component: ConnectionSection },
   { id: 'studio-about', order: 200, label: '关于', component: AboutSection },
@@ -196,4 +198,9 @@ function AboutSection(props: SectionProps) {
     </div>
     <div className={css.note}><Icon name="info" /><span>业务资产保存在项目 Git 仓库；协同后端只持久保存身份、会话与控制元数据，不托管正文。</span></div>
   </Section>
+}
+
+function ScenarioTemplateSection(props: SectionProps) {
+  const { state, setState, loadError, refresh } = useStudioState(props.call)
+  return <Section>{loadError && <p role="alert" className={css.inlineError}>{loadError}<button onClick={refresh}>重试</button></p>}<ScenarioTemplateSettings state={state} call={props.call} onState={setState} /></Section>
 }

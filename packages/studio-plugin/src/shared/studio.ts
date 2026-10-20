@@ -1,4 +1,7 @@
+import type { ScenarioCommand, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
+
+export interface ScenarioTemplateCatalog { acceptedHead: string; defaultTemplateId: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
 
 export type ConfirmationChoice = { method: 'direct' } | { method: 'ai-assisted'; reviewId: string; authorDisposition: string }
 export interface ReviewView {
@@ -9,17 +12,17 @@ export interface ReviewView {
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
 export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
 export interface StudioState {
   connected: boolean; account?: StudioUser;
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
   availableProjects: ProjectView[]; namespaces: NamespaceView[];
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;
-  collaboration?: ProjectState; reviews: ReviewView[]; drafts: MaterialDraft[]; tasks: TaskView[]; candidates: Candidate[];
+  scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; scenarioTemplates?: ScenarioTemplateCatalog; reviews: ReviewView[]; drafts: MaterialDraft[]; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
 }
-export type StudioCommand =
+export type StudioCommand = ScenarioCommand
   | { action: 'state' }
   | { action: 'namespaces' }
   | { action: 'login'; username: string; password: string }
@@ -29,7 +32,8 @@ export type StudioCommand =
   | { action: 'retryProjectInitialization'; operationId: string }
   | { action: 'selectProject'; projectId: string }
   | { action: 'addCategory'; name: string }
-  | { action: 'createMaterial'; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId: string; scenarioId?: string }
+  | { action: 'bindScenarioTemplate'; entityId: string; templateId: string }
+  | { action: 'createMaterial'; operationId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId?: string; scenarioIds?: string[] }
   | { action: 'saveMaterial'; entityId: string; body: string; metadata: MaterialMetadata }
   | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
   | { action: 'restoreSession'; sessionId: string }
@@ -46,3 +50,5 @@ export type StudioCommand =
   | { action: 'publish' | 'revokePublication' }
 export type StudioReply = { ok: true; state: StudioState; sessionId?: string } | { ok: false; message: string; code: string }
 export type { EntityView, MaterialMetadata }
+
+export type * from './scenarios.ts'
