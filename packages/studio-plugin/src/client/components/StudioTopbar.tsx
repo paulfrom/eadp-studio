@@ -1,41 +1,22 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { Stage, StudioState } from '../../shared/studio.ts'
-import type { ThemeFace } from '../theme.ts'
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { topbarItems, type MenuEntry, type TopbarContext, type TopbarFaces, type TopbarItem } from '../topbar/items.tsx'
 import css from '../studio.module.css'
 
 /**
- * Windows: the studio identity and sidebar toggle join the official caption
- * (menus and window controls stay native); web keeps one in-flow toolbar.
+ * Windows: identity AND actions share the official caption band (menus and
+ * window controls stay native; the toolbar row disappears). Web keeps one
+ * in-flow toolbar with the same declarative items.
  */
-export function StudioTopbar({ state, busy, onRefresh, stage, stages, onSelectStage, theme, sidebarCollapsed, onToggleSidebar }: {
-  state: StudioState
-  busy: boolean
-  onRefresh(): void
-  stage: Stage
-  stages: ReadonlyArray<{ id: Stage; name: string }>
-  onSelectStage(stage: Stage): void
-  theme: ThemeFace
+export function StudioTopbar({ faces, sidebarCollapsed, onToggleSidebar }: {
+  faces: TopbarFaces
   sidebarCollapsed: boolean
   onToggleSidebar(): void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const snapshot = useSyncExternalStore(theme.subscribe, theme.getSnapshot)
   // The desktop preload fixes the caption mode before the first paint.
   const [captioned] = useState(() => typeof document !== 'undefined' && document.documentElement.hasAttribute('data-windows-titlebar'))
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false) }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false) }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', escape)
-    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', escape) }
-  }, [menuOpen])
-  const pick = (run: () => void) => () => { run(); setMenuOpen(false) }
-  const themeItems: Array<{ id: 'system' | 'light' | 'dark'; name: string }> = [
-    { id: 'system', name: '主题：跟随系统' }, { id: 'light', name: '主题：浅色' }, { id: 'dark', name: '主题：深色' },
-  ]
-  const preference = snapshot.preference
+  const snapshot = useSyncExternalStore(faces.theme.subscribe, faces.theme.getSnapshot)
+  const context: TopbarContext = { captioned, preference: snapshot.preference, toggleSidebar: onToggleSidebar }
+  const items = topbarItems(faces, context)
   const identity = <>
     <button type="button" className={css.captionToggle} aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} onClick={onToggleSidebar}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden="true" width={15} height={15}><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" x2="9" y1="3" y2="21" /></svg>
@@ -43,30 +24,61 @@ export function StudioTopbar({ state, busy, onRefresh, stage, stages, onSelectSt
     <span className={css.captionText}>
       <span className={css.captionBrand}>EADP Studio</span>
       <span className={css.captionSep}>/</span>
-      <span className={css.captionProject} title={state.project?.name}>{state.project?.name ?? '项目工作台'}</span>
-      <span className={css.captionBranch}><span className={state.connected ? css.captionConnected : css.captionDisconnected} />{state.project?.stableBranch ?? '工作空间'}{state.connected ? '（已同步）' : ''}</span>
+      <span className={css.captionProject} title={faces.state.project?.name}>{faces.state.project?.name ?? '项目工作台'}</span>
+      <span className={css.captionBranch}><span className={faces.state.connected ? css.captionConnected : css.captionDisconnected} />{faces.state.project?.stableBranch ?? '工作空间'}{faces.state.connected ? '（已同步）' : ''}</span>
     </span>
   </>
+  const actions = <ItemList items={items} />
   return <>
-    {captioned && <div className={css.captionIdentity}>{identity}</div>}
-    <header className={css.topbar} aria-label="项目工作台工具栏">
-      {!captioned && <div className={css.topbarIdentity}>{identity}</div>}
-      <div className={css.topbarActions}>
-        {state.preview ? <a href={state.preview.url} target="_blank" rel="noreferrer">● 本地原型 ↗</a> : <span className={css.topbarPreview}>原型未运行</span>}
-        <div className={css.viewMenuWrap} ref={menuRef}>
-          <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>视图</button>
-          {menuOpen && <div className={css.viewMenu} role="menu" aria-label="视图">
-            <div className={css.viewMenuLabel}>工作区</div>
-            {stages.map(item => <button key={item.id} role="menuitem" className={css.viewMenuItem} onClick={pick(() => onSelectStage(item.id))}><span className={css.check}>{stage === item.id ? '✓' : ''}</span><span className={css.label}>{item.name}</span></button>)}
-            <div className={css.viewMenuSep} />
-            <div className={css.viewMenuLabel}>主题</div>
-            {themeItems.map(item => <button key={item.id} role="menuitem" className={css.viewMenuItem} onClick={pick(() => theme.setPreference(item.id))}><span className={css.check}>{preference === item.id ? '✓' : ''}</span><span className={css.label}>{item.name}</span></button>)}
-            {!captioned && <><div className={css.viewMenuSep} />
-              <button role="menuitem" className={css.viewMenuItem} onClick={pick(onToggleSidebar)}><span className={css.check}>{sidebarCollapsed ? '✓' : ''}</span><span className={css.label}>折叠侧栏</span></button></>}
-          </div>}
-        </div>
-        <button type="button" onClick={onRefresh} disabled={busy}>刷新</button>
-      </div>
-    </header>
+    <div className={css.captionIdentity}>
+      {identity}
+      {captioned && <div className={css.captionActions}>{actions}</div>}
+    </div>
+    {!captioned && <header className={css.topbar} aria-label="项目工作台工具栏">
+      <div className={css.topbarIdentity}>{identity}</div>
+      <div className={css.topbarActions}>{actions}</div>
+    </header>}
   </>
+}
+
+function ItemList({ items }: { items: ReadonlyArray<TopbarItem> }) {
+  return <>{items.filter(item => item.visible !== false).map(item => <TopbarEntry key={item.id} item={item} />)}</>
+}
+
+function TopbarEntry({ item }: { item: TopbarItem }) {
+  if (item.href !== undefined) return <a href={item.href} target="_blank" rel="noreferrer" title={item.title}>{item.label}</a>
+  if (item.items !== undefined) return <Menu item={item} />
+  return <button type="button" className={item.primary ? css.primaryAction : undefined} disabled={item.disabled} title={item.title} onClick={item.run}>{item.label}</button>
+}
+
+function Menu({ item }: { item: TopbarItem }) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false) }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', escape)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', escape) }
+  }, [open])
+  return <div className={css.viewMenuWrap} ref={menuRef}>
+    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(expanded => !expanded)}>{item.label}</button>
+    {open && <div className={css.viewMenu} role="menu" aria-label={item.label}>
+      <MenuList items={item.items} onPick={() => setOpen(false)} />
+    </div>}
+  </div>
+}
+
+function MenuList({ items, onPick }: { items: ReadonlyArray<MenuEntry> | undefined; onPick(): void }): ReactNode {
+  return <>{items?.map(entry => {
+    if ('kind' in entry) {
+      if (entry.kind === 'sep') return <div key={entry.id} className={css.viewMenuSep} />
+      return <div key={entry.id} className={css.viewMenuLabel}>{entry.label}</div>
+    }
+    if (entry.visible === false) return null
+    return <button key={entry.id} role="menuitem" className={css.viewMenuItem} disabled={entry.disabled} onClick={() => { entry.run?.(); onPick() }}>
+      <span className={css.check}>{entry.checked ? '✓' : ''}</span><span className={css.label}>{entry.label}</span>
+    </button>
+  })}</>
 }

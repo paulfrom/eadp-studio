@@ -1,5 +1,7 @@
 # 协同 API
 
+阶段一场景的目标数据库结构见[协同后台数据库设计](../../docs/design/scenarios/01-scenarios-database.md)与[建表 SQL](../../docs/design/scenarios/schema.sql)。本次交付独立目标 DDL；当前运行时仍使用下述 `db/schema.sql`，不表示目标结构已接入或阶段一功能通过验收。
+
 Fastify + PostgreSQL 模块化单体。工作台只登录本协同后端，使用独立协同用户和会话；后端将用户持久绑定到已存在的 GitLab 数字用户 ID，并按该用户的实际成员权限授权。每个项目只登记一个 GitLab 仓库及一条稳定分支。正文只保存在 Git，业务 API 的 JSON schema 拒绝正文及未知字段。旧 GitLab OAuth 直登源码和旧证据仅作 [legacy-oauth 归档](../../gitlab/legacy-oauth/README.md)，GitLab 管理 API 仍是当前实现。
 
 ## 本机运行

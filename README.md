@@ -2,8 +2,6 @@
 
 人与 AI Agent 协作整理业务材料和演示成果的桌面工作台。
 
-研发仓库：`git@github.com:paulfrom/eadp-studio.git`。Linux 与 Windows 共享同一源码基线；依赖、上游缓存和运行现场各自生成。
-
 ## 当前实现
 
 - `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型认领/检查/预览/确认、复用资格与采用、交接回执、发布/撤回和主题设置。
@@ -11,9 +9,6 @@
 - `packages/asset-domain/`、`packages/contracts/`：资产领域模型与跨端契约。
 - `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。
 - `apps/desktop-distribution/`：固定 DSH 版本、装配 Studio 插件和模板、生成 Windows 未签名安装包。
-- `gitlab/legacy-oauth/`：已停用的 GitLab OAuth 直登源码归档，不参与构建，也不作为当前运行路径。
-
-本仓库只保留与当前实现直接相关的文档：本 README、`CONTEXT.md`、`docs/adr/` 以及各代码目录的 README。历史验收、交接、计划和设计过程文档已删除；计划文档后续重写后再加入。
 
 ## 文件位置
 
@@ -25,8 +20,8 @@
 | `packages/contracts/` | API 与客户端共享的 TypeBox 契约 |
 | `apps/desktop-distribution/` | 固定上游版本、发行装配脚本和发布锁 |
 | `scripts/` | 仓库校验、DSH 获取、桌面开发与打包入口 |
-| `docs/adr/`、`CONTEXT.md` | 架构决策及领域定义 |
-| `gitlab/legacy-oauth/` | 旧直接 OAuth 登录源码归档，不进入构建 |
+| `CONTEXT.md` | 架构决策及领域定义 |
+|                              |                                                   |
 
 用户项目中的 `场景/`、`需求/`、`原型代码/` 属于产品运行时管理的业务工程，不混入本研发仓库。
 
@@ -80,14 +75,10 @@ pnpm dev:desktop
 ./build-desktop.ps1
 ```
 
-也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包输出到 `artifacts/windows/eadp-studio-<版本>-win-x64-unsigned.exe`，同时输出绝对路径、SHA256 和同名 `.json` 记录。
+也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包输出到 `artifacts/windows/eadp-studio.exe`，同时输出绝对路径、SHA256 和同名 `.json` 记录。
 
 构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
 
 Electron-builder 工具缓存固定在主 checkout 的 `.local/cache/electron-builder`，由入口创建并通过其官方 `ELECTRON_BUILDER_CACHE` 变量传给打包进程，避免其他应用留下的全局缓存状态干扰本仓库构建。
 
 当前入口生成未签名的开发安装包；签名、升级发布及干净机发行验收仍遵循独立门槛。产品使用稳定 App ID `io.github.paulfrom.eadp.studio`、`eadp-studio://` 协议和 `%USERPROFILE%\.eadp-studio` 数据根，Electron 数据位于 `%APPDATA%\eadp studio`。旧 DSH 数据不迁移。配置及验证细节见 [桌面构建说明](apps/desktop-distribution/build/README.md)。
-
-## 验证边界
-
-仓库自检使用 `node scripts/check-repository.mjs`。Windows 原生首启检查和桌面插件运行时回归见 [Windows 原生首启检查](tests/windows-desktop/README.md)。本地 TypeScript、合成数据和开发机检查不能替代真实企业 GitLab、真实多人协同、Windows 安装发行和生产验收。

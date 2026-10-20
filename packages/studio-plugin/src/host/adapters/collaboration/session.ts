@@ -4,6 +4,11 @@ import { CollaborationError, collaborationJson, collaborationOrigin } from './cl
 
 interface SavedSession { origin: string; token: string; expiresAt: string; userId: number }
 const KEY = 'collaboration-session'
+/** Identity verification rides a network round trip; consecutive commands within
+ *  this window reuse the last verified identity instead of re-hitting /v1/me
+ *  (the workbench polls state every 10s and every command ends in one). A real
+ *  auth change still surfaces through the API 401 path and local expiry. */
+const IDENTITY_VERIFY_TTL_MS = 30_000
 const positiveId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0
 class LoginFailure extends Error {}
 const loginFailures: Readonly<Record<string, string>> = {
@@ -42,6 +47,7 @@ export class CollaborationSession {
   private generation = 0
   private writes: Promise<unknown> = Promise.resolve()
   private loginController: AbortController | undefined
+  private verified?: { identity: StudioIdentity; token: string; at: number } | undefined
   constructor(baseUrl: string, private readonly credentials: SecretStore, private readonly request: typeof fetch) { this.origin = collaborationOrigin(baseUrl) }
   async login(username: string, password: string): Promise<StudioIdentity> {
     if (!username.trim() || username.length > 100 || !password || password.length > 200) throw new Error('请输入有效的协同用户名和密码。')
@@ -82,8 +88,9 @@ export class CollaborationSession {
   }
   async current(): Promise<StudioIdentity | undefined> {
     const session = await this.saved()
-    if (!session) return undefined
+    if (!session) { this.verified = undefined; return undefined }
     if (Date.parse(session.expiresAt) <= Date.now()) { await this.invalidate(); return undefined }
+    if (this.verified && this.verified.token === session.token && Date.now() - this.verified.at < IDENTITY_VERIFY_TTL_MS) return this.verified.identity
     const generation = this.generation
     let response: Response
     try { response = await this.request(`${this.origin}/v1/me`, { headers: { authorization: `Bearer ${session.token}` }, signal: AbortSignal.timeout(20_000), redirect: 'error' }) }
@@ -93,6 +100,7 @@ export class CollaborationSession {
     const profile = identity(await collaborationJson(response))
     if (generation !== this.generation) return undefined
     if (profile.user.id !== session.userId) { await this.invalidate(); throw new Error('协同会话身份不一致，请重新登录。') }
+    this.verified = { identity: profile, token: session.token, at: Date.now() }
     return profile
   }
   async logout(): Promise<void> {
@@ -113,7 +121,7 @@ export class CollaborationSession {
   async invalidate(): Promise<void> { this.cancel(); await this.mutate(() => this.credentials.delete(KEY)) }
   async invalidateToken(token: string): Promise<void> { const generation = this.generation, current = await this.saved(); if (generation === this.generation && current?.token === token) await this.invalidate() }
   dispose(): void { this.cancel() }
-  private cancel(): void { ++this.generation; this.loginController?.abort(); this.loginController = undefined }
+  private cancel(): void { ++this.generation; this.loginController?.abort(); this.loginController = undefined; this.verified = undefined }
   private mutate(action: () => Promise<void>): Promise<void> { const result = this.writes.then(action); this.writes = result.catch(() => undefined); return result }
   private async saved(): Promise<SavedSession | undefined> {
     await this.writes

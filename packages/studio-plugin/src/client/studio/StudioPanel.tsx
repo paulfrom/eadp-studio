@@ -6,13 +6,18 @@ import { MaterialCatalog } from '../components/MaterialCatalog.tsx'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
-import { StudioSettings, type SettingsSection } from '../components/StudioSettings.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
 import type { ThemeFace } from '../theme.ts'
 import css from '../studio.module.css'
 import '../studio.tw.generated.css'
 
-export interface StudioFace { call(command: StudioCommand): Promise<StudioReply>; retainSession(id: string): SessionReference; openHostSettings(section?: string): void; theme: ThemeFace }
+export interface StudioFace {
+  call(command: StudioCommand): Promise<StudioReply>
+  retainSession(id: string): SessionReference
+  openSettings(section?: string): void
+  startSession(): void
+  theme: ThemeFace
+}
 export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace
 const stages: Array<{ id: Stage; name: string; mark: string; description: string; icon: string[] }> = [
   { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依', icon: ['M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'] },
@@ -30,20 +35,17 @@ export function StudioPanel(props: StudioProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('account')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [filter, setFilter] = useState('')
   const [materialCollapsed, setMaterialCollapsed] = useState(false)
   const [candidateCategory, setCandidateCategory] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
   const [naturalConfirmation, setNaturalConfirmation] = useState('')
-  const openSettings = (section: SettingsSection) => { setSettingsSection(section); setSettingsOpen(true) }
   const call = useCallback(async (command: StudioCommand) => {
     setError(''); setBusy(true)
     try {
       const result = await props.call(command)
-      if (!result.ok) { if (result.code === 'LOGIN_REQUIRED') { setState(disconnectedState()); setSelectedId(undefined); openSettings('account') }; throw new Error(result.message) }
+      if (!result.ok) { if (result.code === 'LOGIN_REQUIRED') { setState(disconnectedState()); setSelectedId(undefined); props.openSettings('studio-collab') }; throw new Error(result.message) }
       setState(result.state)
       return result
     } catch (err) { setError(err instanceof Error ? err.message : '操作未完成，请重新查询状态'); return undefined }
@@ -51,15 +53,28 @@ export function StudioPanel(props: StudioProps) {
   }, [props.call])
   useEffect(() => {
     let cancelled = false, timer: ReturnType<typeof setTimeout> | undefined
+    // The poll owns transport-failure surfacing: user actions report their own
+    // errors, so the banner only takes a poll failure when nothing is showing,
+    // and a recovered poll clears only the message the poll itself set.
+    let pollError = ''
     const refresh = async () => {
-      try { const result = await props.call({ action: 'state' }); if (!cancelled) { if (result.ok) setState(result.state); else if (result.code === 'LOGIN_REQUIRED') setState(disconnectedState()) } }
+      try { const result = await props.call({ action: 'state' }); if (!cancelled) {
+        if (result.ok || result.code === 'LOGIN_REQUIRED') {
+          if (result.ok) setState(result.state); else setState(disconnectedState())
+          const reported = pollError
+          if (reported) { pollError = ''; setError(previous => previous === reported ? '' : previous) }
+        } else { pollError = result.message; setError(previous => previous || result.message) }
+      } }
       catch { /* Explicit refresh reports failures without hiding the previous projection. */ }
       // One request at a time. Queuing a refresh every few seconds would put
       // every user action behind a growing backlog on a slow collaboration API.
       finally { if (!cancelled) timer = setTimeout(() => { void refresh() }, 10_000) }
     }
     void refresh()
-    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+    // Settings sections announce login/logout so the workbench reflects them instantly.
+    const onStateChanged = () => { void refresh() }
+    window.addEventListener('eadp:studio-state-changed', onStateChanged)
+    return () => { cancelled = true; if (timer) clearTimeout(timer); window.removeEventListener('eadp:studio-state-changed', onStateChanged) }
   }, [props.call])
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const openProjectDialog = async () => { setProjectDialog(true); await call({ action: 'namespaces' }) }
@@ -80,10 +95,8 @@ export function StudioPanel(props: StudioProps) {
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
-  const submitLogin = async (username: string, password: string) => { if (await call({ action: 'login', username, password })) { setSettingsOpen(false); setSelectedId(undefined) } }
-  const submitLogout = async () => { setState(disconnectedState()); setSelectedId(undefined); await call({ action: 'logout' }); setSettingsOpen(false) }
   return <div className={`${css.studio} studio-root`} data-studio-panel="studio">
-    <StudioTopbar state={state} busy={busy} onRefresh={() => void call({ action: 'state' })} stage={stage} stages={stages} onSelectStage={selectStage} theme={props.theme} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
+    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => void call({ action: 'state' }), selectStage, startSession: props.startSession, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
     <div className={css.shell}>
       <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
         <button className={css.repoBox} disabled={!state.connected} onClick={() => void openProjectDialog()} title="切换、新建或获取项目">
@@ -111,7 +124,7 @@ export function StudioPanel(props: StudioProps) {
           })}
         </nav>
         <div className={css.railFoot}>
-          <button className={css.accountRow} onClick={() => openSettings('account')} title="用户账号与偏好设置">
+          <button className={css.accountRow} onClick={() => props.openSettings('studio-collab')} title="用户账号与偏好设置">
             <span className={`${css.avatar} ${state.account ? css.accent : ''}`}>{state.account ? state.account.name.slice(0, 1) || '@' : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>}</span>
             <span className={css.accountText}>
               <span className={css.accountName}>{state.account?.name ?? '登录协同工作台'}</span>
@@ -126,7 +139,7 @@ export function StudioPanel(props: StudioProps) {
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.projectInitializations.map(operation => <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
-        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : openSettings('account')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
+        {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : props.openSettings('studio-collab')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
@@ -150,7 +163,7 @@ export function StudioPanel(props: StudioProps) {
         </div>}
         {stage === 'prototype' && state.project && <div className={css.publication}><span>发布项目当前已确认基线</span><button disabled={busy} onClick={() => void call({ action: 'publish' })}>部署到远端</button><button disabled={busy} onClick={() => void call({ action: 'revokePublication' })}>撤回当前站点</button></div>}
       </main>
-    </div>{settingsOpen && <StudioSettings section={settingsSection} onSectionChange={setSettingsSection} onClose={() => setSettingsOpen(false)} state={state} busy={busy} error={error} theme={props.theme} onLogin={submitLogin} onLogout={submitLogout} onRefresh={() => void call({ action: 'state' })} onOpenHostSettings={props.openHostSettings} />}{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
+    </div>{projectDialog && <ProjectDialog busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (await call(command)) setProjectDialog(false) }} />}
   </div>
 }
 function Empty({ text }: { text: string }) { return <div className={css.empty}>{text}</div> }

@@ -1,9 +1,16 @@
-/** EADP Studio client half: registers the full-window Studio main panel. */
+/** EADP Studio client half: the full-window main panel, its sidebar return row, and the settings sections inside the host settings dialog. */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the `settings.section` / `sidebar.panellist` slot declarations
+// and the ctx.uiWorkspace merge into this program.
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { StudioPanel } from './StudioPanel.tsx'
+import { StudioPanelIcon } from './panelIcon.tsx'
+import { settingsSections, type StudioSettingsFaces } from './settings/sections.tsx'
 import type { ThemeFace } from './theme.ts'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
@@ -18,42 +25,81 @@ declare module '@deepseek-ai/dsh-client-ui-slots' { interface SlotMap { 'studio.
 declare module '@deepseek-ai/dsh-api-session-controller/client' { interface SessionReferenceSourceMap { studio: unknown } }
 declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>> } } }
 
-/** The layout service and the slot registry are the only services this slice needs. */
-export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation', 'theme']
+/** The layout service, the slot registry, the native session navigator and the theme are the services this slice needs. */
+export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation', 'theme', 'uiWorkspace']
 
 const PANEL_ID = 'studio' as MainPanelId
 
+/** Typed studio command channel shared by the panel and the settings sections. */
+function studioCall(ctx: ClientContext): (command: StudioCommand) => Promise<StudioReply> {
+  return async command => {
+    const result = await ctx.remote.studio.command(command)
+    if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
+    return result.value
+  }
+}
+
+function themeFace(ctx: ClientContext): ThemeFace {
+  return {
+    getSnapshot: () => ctx.theme.getTheme(),
+    setPreference: id => ctx.theme.setTheme(id),
+    subscribe: listener => ctx.on('theme/change', listener),
+  }
+}
+
+/** Open the host settings dialog (bridged by the product settings edit; a no-op where it is absent). */
+function openSettings(section?: string): void {
+  window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: section ? { section } : {} }))
+}
+
+/** Studio sections inside the host settings dialog — the single settings surface (design 00, 2026-10-20 revision). */
+function registerSettingsSections(ctx: ClientContext): void {
+  const faces: StudioSettingsFaces = { call: studioCall(ctx), theme: themeFace(ctx) }
+  for (const section of settingsSections) {
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: section.id,
+      order: section.order,
+      label: section.label,
+      inject: () => faces,
+    }, section.component))
+  }
+}
+
+/** The native sidebar's global panel row: the way back to the workbench from the host UI. */
+function registerPanelRow(ctx: ClientContext): void {
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist',
+    id: PANEL_ID,
+    order: 0,
+    label: 'EADP Studio',
+  }, StudioPanelIcon))
+}
+
 /** Mount the Studio panel and make it the selected main panel. */
-function registerStudio(ctx: ClientContext): void {
-  ctx.slots.inject('main', () => {
-    const call = async (command: StudioCommand): Promise<StudioReply> => {
-      const result = await ctx.remote.studio.command(command)
-      if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
-      return result.value
-    }
-    const retainSession = (id: string) => ctx.sessions.retain(id as SessionId, { source: 'studio' })
-    const openHostSettings = (section?: string) => {
-      // Bridged by the product settings edit; a no-op where it is absent (pure web).
-      window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: section ? { section } : {} }))
-    }
-    const theme: ThemeFace = {
-      getSnapshot: () => ctx.theme.getTheme(),
-      setPreference: id => ctx.theme.setTheme(id),
-      subscribe: listener => ctx.on('theme/change', listener),
-    }
-    const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
-      children: { 'studio.session': { kind: 'single', scope: 'session' } },
-      inject: () => ({ call, retainSession, openHostSettings, theme }),
-    }, StudioPanel)
-    ctx.layout.selectPanel(PANEL_ID)
-    return dispose
-  })
+function registerStudio(ctx: ClientContext): () => void {
+  const call = studioCall(ctx)
+  const retainSession = (id: string) => ctx.sessions.retain(id as SessionId, { source: 'studio' })
+  const startSession = () => ctx.uiWorkspace.startSession()
+  const theme = themeFace(ctx)
+  const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
+    children: { 'studio.session': { kind: 'single', scope: 'session' } },
+    inject: () => ({ call, retainSession, openSettings, startSession, theme }),
+  }, StudioPanel)
+  ctx.layout.selectPanel(PANEL_ID)
+  return dispose
 }
 
 /** Mount the generated namespace before waiting for the UI's Remote dependency. */
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(studioRemote)
-  const ui = ctx.inject(['remote.studio'], registerStudio)
+  registerPanelRow(ctx)
+  // `remote.studio` is only addressable inside a fiber that declares it, so the
+  // settings sections' command channel must be built in the same fiber as the panel.
+  const ui = ctx.inject(['remote.studio'], (injected: ClientContext) => {
+    registerSettingsSections(injected)
+    return registerStudio(injected)
+  })
   try { await ui } catch (error) { await ui.dispose(); await disposeRemote(); throw error }
   return async () => { await ui.dispose(); await disposeRemote() }
 }

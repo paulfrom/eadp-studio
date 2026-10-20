@@ -35,7 +35,16 @@ export class StudioApplication {
     if (!['state', 'login', 'logout'].includes(command.action)) await this.requireAccount()
     switch (command.action) {
       case 'state': break
-      case 'login': { await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []; const identity = await this.ports.login(command.username, command.password); this.store.useUser(identity.user.id); break }
+      case 'login': {
+        await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []
+        const identity = await this.ports.login(command.username, command.password)
+        this.store.useUser(identity.user.id)
+        // Login's contract is authentication, not a full projection: the reply
+        // only needs connected+account, and a projection failure must not mask
+        // an already-stored successful login. The workbench refreshes its own
+        // full state right after.
+        return { ok: true, state: { connected: true, account: identity.user, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] } }
+      }
       case 'logout': { try { await this.ports.logout() } finally { this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.namespaces = [] } break }
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break

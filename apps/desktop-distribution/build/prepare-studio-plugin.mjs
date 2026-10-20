@@ -22,6 +22,7 @@ import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { STUDIO_FRAME_EDIT, STUDIO_SIDEBAR_CSS_EDIT } from './studio-frame-edits.mjs'
 import { STUDIO_TITLEBAR_EDIT } from './studio-titlebar-edits.mjs'
 import { STUDIO_SETTINGS_BRIDGE_EDIT } from './studio-settings-bridge-edits.mjs'
+import { STUDIO_SETTINGS_SECTIONS_EDIT } from './studio-settings-sections-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
 import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
@@ -60,6 +61,7 @@ const UPSTREAM_EDITS = [
   STUDIO_SIDEBAR_CSS_EDIT,
   STUDIO_TITLEBAR_EDIT,
   STUDIO_SETTINGS_BRIDGE_EDIT,
+  STUDIO_SETTINGS_SECTIONS_EDIT,
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
@@ -124,6 +126,9 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-client-ui-session',
   '@deepseek-ai/dsh-client-ui-conversation',
   '@deepseek-ai/dsh-client-ui-theme',
+  '@deepseek-ai/dsh-client-ui-settings',
+  '@deepseek-ai/dsh-client-ui-sidebar',
+  '@deepseek-ai/dsh-client-ui-workspace',
   '@deepseek-ai/dsh-api-gateway',
   '@deepseek-ai/dsh-api-session-controller',
   '@deepseek-ai/dsh-agent',

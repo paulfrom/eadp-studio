@@ -32,6 +32,18 @@ test('login sends the password once to the backend, stores only its session and 
   assert.deepEqual(calls, ['http://studio.example.test/v1/auth/login', 'http://studio.example.test/v1/me'])
 })
 
+test('consecutive identity checks within the TTL reuse the verified identity instead of re-hitting /v1/me', async () => {
+  const credentials = new Secrets(); credentials.value = { origin: 'http://studio.example.test', token, expiresAt: result.expiresAt, userId: 1 }
+  const calls: string[] = []
+  const session = new CollaborationSession('http://studio.example.test', credentials, async url => { calls.push(String(url)); return json(profile) })
+  assert.deepEqual(await session.current(), profile)
+  assert.deepEqual(await session.current(), profile)
+  assert.deepEqual(calls, ['http://studio.example.test/v1/me'])
+  await session.logout()
+  assert.equal(await session.current(), undefined)
+  assert.deepEqual(calls, ['http://studio.example.test/v1/me', 'http://studio.example.test/v1/auth/logout'])
+})
+
 test('invalid credentials and malformed sessions never persist a password or token', async () => {
   for (const response of [json({ error: { message: 'fixture-password' } }, 401), json({ ...result, token: 'not-a-studio-session' }), json({ ...result, user: { ...user, email: undefined } })]) {
     const credentials = new Secrets(), session = new CollaborationSession('http://studio.example.test', credentials, async () => response)

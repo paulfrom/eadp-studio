@@ -14,30 +14,41 @@ const { JSDOM } = requireBuild('jsdom')
 const menuSource = await readFile(path.join(repo, '.local/upstream/dsh', STUDIO_TITLEBAR_EDIT.file), 'utf8')
 
 function compile(source) {
-  return typescript.transpileModule(source.replace(/^import .+\n/gm, '').replace(/export function /g, 'function '), {
+  // Type-only modules still emit `export {};` to stay ESM; a Function body cannot contain it.
+  return typescript.transpileModule(source
+    .replace(/^import .+\n/gm, '')
+    .replace(/export function /g, 'function '), {
     compilerOptions: { jsx: typescript.JsxEmit.React, target: typescript.ScriptTarget.ES2022 },
-  }).outputText
+  }).outputText.replace(/^export \{\};\n?/gm, '')
 }
 
-test('Windows reuses the native caption row instead of reserving a second Studio row', () => {
-  const desktopRule = styles.match(/:global\(html\[data-windows-titlebar\]\) \.topbar\s*\{([^}]+)\}/)?.[1]
-  assert.ok(desktopRule, 'Studio header needs Windows caption integration')
-  assert.match(desktopRule, /position:\s*fixed/)
-  assert.match(desktopRule, /top:\s*0/)
-  assert.match(desktopRule, /height:\s*var\(--dsh-windows-titlebar-height\)/)
-  assert.match(desktopRule, /left:\s*calc\(var\(--dsh-windows-menu-start, 48px\) \+ var\(--dsh-windows-menu-width\)/)
-  assert.match(desktopRule, /right:\s*calc\(100% - env\(titlebar-area-width\)\)/)
-  assert.match(desktopRule, /-webkit-app-region:\s*drag/)
+test('Windows merges identity and actions into the native caption row; the toolbar row is web-only', () => {
+  assert.match(styles, /\.captionIdentity \{[^}]*position:\s*fixed/)
+  assert.match(styles, /\.captionIdentity \{[^}]*height:\s*var\(--dsh-windows-titlebar-height/)
+  assert.match(styles, /\.captionIdentity \{[^}]*right:\s*150px/, 'the window controls keep their reserved space')
+  assert.match(styles, /\.captionIdentity \.captionText \{[^}]*margin-left:\s*calc\(var\(--dsh-windows-menu-start/)
+  assert.match(styles, /\.captionIdentity \.captionText \{[^}]*-webkit-app-region:\s*drag/)
+  assert.match(styles, /\.captionActions \{[^}]*-webkit-app-region:\s*no-drag/)
+  assert.match(styles, /\.captionActions \.primaryAction \{[^}]*background:\s*var\(--accent\)/)
+  assert.match(styles, /\.topbarActions \.primaryAction \{[^}]*background:\s*var\(--accent\)/)
+  assert.doesNotMatch(styles, /:global\(html\[data-windows-titlebar\]\) \.topbar/, 'the old caption-repositioning block is gone — the toolbar row only renders on web')
   assert.match(styles, /\.topbar\s+:is\(button, a\)\s*\{[^}]*-webkit-app-region:\s*no-drag/)
 })
 
 test('shared toolbar keeps the live project, preview target and refresh action', async () => {
   const source = await readFile(path.join(client, 'components/StudioTopbar.tsx'), 'utf8')
-  const render = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
-  const Component = new Function('React', 'css', 'useState', 'useEffect', 'useRef', 'useSyncExternalStore', `${compile(source)}; return StudioTopbar`)(
-    { createElement: render },
-    new Proxy({}, { get: (_, key) => key }),
-    initial => [initial, () => {}],
+  const itemsSource = await readFile(path.join(client, 'topbar/items.tsx'), 'utf8')
+  const render = (type, props, ...children) => typeof type === 'function'
+    ? type({ ...(props ?? {}), children })
+    : { type, props: props ?? {}, children: children.flat(Infinity) }
+  const React = { createElement: render, Fragment: 'fragment' }
+  const styleProxy = new Proxy({}, { get: (_, key) => key })
+  const { topbarItems } = new Function('React', `${compile(itemsSource)}; return { topbarItems }`)(React)
+  const Component = new Function('React', 'css', 'topbarItems', 'useState', 'useEffect', 'useRef', 'useSyncExternalStore', `${compile(source)}; return StudioTopbar`)(
+    React,
+    styleProxy,
+    topbarItems,
+    initial => [typeof initial === 'function' ? initial() : initial, () => {}],
     () => {},
     current => ({ current }),
     (_subscribe, getSnapshot) => getSnapshot(),
@@ -48,32 +59,41 @@ test('shared toolbar keeps the live project, preview target and refresh action',
   ]
   const find = (tree, type) => findAll(tree, type)[0]
   const texts = tree => typeof tree === 'object' ? tree.children.map(texts).join('') : tree ?? ''
-  const props = state => ({
+  const faces = state => ({
     state,
     busy: state.busy === true,
-    onRefresh: state.onRefresh,
+    theme: { subscribe: () => () => {}, getSnapshot: () => ({ preference: 'system' }) },
     stage: 'scenarios',
     stages: [{ id: 'scenarios', name: '场景' }],
-    onSelectStage() {},
-    theme: { subscribe: () => () => {}, getSnapshot: () => ({ preference: 'system' }) },
-    sidebarCollapsed: false,
-    onToggleSidebar() {},
+    refresh: state.onRefresh,
+    selectStage() {},
+    startSession() {},
+    openSettings() {},
   })
   let refreshed = 0
   const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, preview: { url: 'http://127.0.0.1:4321' }, onRefresh: () => { refreshed++ } }
-  const header = Component(props(state))
-  assert.equal(header.type, 'header')
-  assert.match(texts(header), /EADP Studio采购项目.*main（已同步）.*本地原型.*刷新/)
+  // Web (non-captioned) renders the single in-flow toolbar row.
+  const header = find(Component({ faces: faces(state), sidebarCollapsed: false, onToggleSidebar() {} }), 'header')
+  assert.ok(header, 'the web fallback renders the in-flow toolbar')
+  assert.match(texts(header), /EADP Studio.*采购项目.*main（已同步）.*本地原型.*刷新/)
   assert.equal(find(header, 'a').props.href, state.preview.url)
   assert.equal(find(header, 'a').props.rel, 'noreferrer')
   findAll(header, 'button').find(button => texts(button) === '刷新').props.onClick()
   assert.equal(refreshed, 1)
-  const busy = Component(props({ connected: false, busy: true, onRefresh() {} }))
+  const busy = find(Component({ faces: faces({ connected: false, busy: true, onRefresh() {} }), sidebarCollapsed: false, onToggleSidebar() {} }), 'header')
   assert.equal(findAll(busy, 'button').find(button => texts(button) === '刷新').props.disabled, true)
-  assert.match(texts(busy), /项目工作台.*工作空间.*原型未运行/)
+  assert.match(texts(busy), /项目工作台.*工作空间/)
   const panel = await readFile(path.join(client, 'studio/StudioPanel.tsx'), 'utf8')
-  assert.match(panel, /<StudioTopbar state=\{state\} busy=\{busy\}[\s\S]*stage=\{stage\}[\s\S]*theme=\{props\.theme\}/)
-  assert.doesNotMatch(panel, /EADP Studio|原型未运行/, 'the second inline toolbar has been removed')
+  assert.match(panel, /<StudioTopbar faces=\{\{ state[\s\S]*startSession: props\.startSession[\s\S]*openSettings: props\.openSettings/)
+  assert.doesNotMatch(panel, /EADP Studio/, 'the workbench title lives in the declarative identity, not the panel')
+})
+
+test('the new-session command is the declarative primary action; the sidebar panel row exists', async () => {
+  const source = await readFile(path.join(client, 'topbar/items.tsx'), 'utf8')
+  assert.match(source, /id: 'new-session', label: '新建会话', primary: true/, 'new session is the primary caption action')
+  assert.match(source, /startSession\(\)/)
+  const panelIcon = await readFile(path.join(client, 'panelIcon.tsx'), 'utf8')
+  assert.match(panelIcon, /sidebar\.panellist/)
 })
 
 test('caption geometry follows the actual localized menu and releases its observer on dispose', () => {
