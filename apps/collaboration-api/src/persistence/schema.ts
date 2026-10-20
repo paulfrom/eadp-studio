@@ -1,8 +1,14 @@
 import { readFile } from 'node:fs/promises';
+import { requireCondition } from '@eadp/asset-domain';
 import type { Transaction } from './database.js';
 
 export async function schemaApplied(c: Transaction): Promise<boolean> {
-  return ((await c.query("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='studio_users'")).rowCount ?? 0) > 0;
+  const present = ((await c.query("SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='studio_users'")).rowCount ?? 0) > 0;
+  if (!present) return false;
+  const columns = (await c.query<{ table_name: string; column_name: string }>("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND table_name LIKE 'studio_%'")).rows;
+  const has = (table: string, column: string) => columns.some(row => row.table_name === table && row.column_name === column);
+  requireCondition(has('studio_projects', 'state') && has('studio_entities', 'code') && has('studio_entity_numbers', 'request_hash') && has('studio_confirmations', 'stage') && has('studio_entity_scenario_sources', 'scenario_confirmation_id') && !has('studio_entities', 'data') && !has('studio_projects', 'data') && !has('studio_confirmations', 'metadata'), 'SCHEMA_MODEL_MISMATCH', 'The database does not use the current relational model; initialize a new database with the maintained schema', 500);
+  return true;
 }
 
 export async function applySchema(c: Transaction): Promise<void> {

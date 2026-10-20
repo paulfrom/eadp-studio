@@ -15,27 +15,45 @@ export const SourceSchema = object({ projectId: IdSchema, entityId: IdSchema, ve
 export type AssetSource = Static<typeof SourceSchema>;
 export const PrerequisiteSchema = object({ requirementId: IdSchema, version: Type.Integer({ minimum: 1 }) });
 export type Prerequisite = Static<typeof PrerequisiteSchema>;
-export const MaterialMetadataSchema = object({
-  entityId: IdSchema, kind: EntityKindSchema, title: text, categoryId: IdSchema,
+export const Sha256Schema = Type.String({ pattern: '^[a-f0-9]{64}$' });
+export const MaterialFileSchema = object({ path: Type.String({ minLength: 1, maxLength: 400 }), sha256: Sha256Schema });
+export type MaterialFile = Static<typeof MaterialFileSchema>;
+const evidenceText = Type.String({ minLength: 1, maxLength: 500, pattern: '\\S' });
+const businessEvidenceSchema = object({ label: evidenceText, reference: evidenceText,
+  files: Type.Array(MaterialFileSchema, { minItems: 1, maxItems: 100 }),
+  ranges: Type.Array(object({ path: Type.String({ minLength: 1, maxLength: 400 }), startLine: Type.Integer({ minimum: 1 }), endLine: Type.Integer({ minimum: 1 }) }), { minItems: 1, maxItems: 100 }),
+});
+const metadataFields = {
+  entityId: IdSchema, title: text, summary: Type.Optional(Type.String({ maxLength: 2000 })),
+  categoryId: Type.Optional(IdSchema), templateId: Type.Optional(IdSchema), templateRef: Type.Optional(FixedReferenceSchema),
   scenarioIds: Type.Array(IdSchema, { uniqueItems: true, maxItems: 100 }),
-  prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }),
-  sources: Type.Array(SourceSchema, { maxItems: 100 }),
-  businessEvidence: Type.Array(object({ label: text, reference: text }), { maxItems: 100 }),
+  prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }), sources: Type.Array(SourceSchema, { maxItems: 100 }),
+  businessEvidence: Type.Array(businessEvidenceSchema, { maxItems: 100 }),
+  files: Type.Optional(Type.Array(MaterialFileSchema, { maxItems: 1000 })),
   coreRulesPresent: Type.Boolean(), acceptanceCriteriaPresent: Type.Boolean(),
   openQuestions: Type.Array(object({ blocking: Type.Boolean(), limitation: text, excludedScope: text }), { maxItems: 100 }),
   referencedAssets: Type.Array(SourceSchema, { maxItems: 100 }),
-  applicability: Type.Optional(object({ status: Type.Literal('not-applicable'), reason: text })),
-});
+  applicability: Type.Optional(object({ status: Type.Literal('not-applicable'), reason: evidenceText })),
+};
+const scenarioMetadata = { ...metadataFields, kind: Type.Literal('scenario'), categoryId: Type.Optional(Type.Never()), templateId: IdSchema, templateRef: FixedReferenceSchema, applicability: Type.Optional(Type.Never()) };
+const otherMetadata = { ...metadataFields, kind: Type.Union([Type.Literal('requirement'), Type.Literal('baseline'), Type.Literal('handoff')]), categoryId: IdSchema };
+export const MaterialMetadataSchema = Type.Union([object(scenarioMetadata), object(otherMetadata)]);
 export type MaterialMetadata = Static<typeof MaterialMetadataSchema>;
-const evidenceText = Type.String({ minLength: 1, maxLength: 500, pattern: '\\S' });
-export const ConfirmedMaterialMetadataSchema = object({ ...MaterialMetadataSchema.properties,
-  businessEvidence: Type.Array(object({ label: evidenceText, reference: evidenceText }), { minItems: 1, maxItems: 100 }),
-});
+export const ConfirmedMaterialMetadataSchema = Type.Union([
+  object({ ...scenarioMetadata, businessEvidence: Type.Array(businessEvidenceSchema, { minItems: 1, maxItems: 100 }) }),
+  object({ ...otherMetadata, businessEvidence: Type.Array(businessEvidenceSchema, { minItems: 1, maxItems: 100 }) }),
+]);
 export function isConfirmedMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(ConfirmedMaterialMetadataSchema, value); }
 export const FixedManifestSchema = object({ schemaVersion: Type.Literal(1), metadata: ConfirmedMaterialMetadataSchema });
 export type FixedManifest = Static<typeof FixedManifestSchema>;
 export function isFixedManifest(value: unknown): value is FixedManifest { return Value.Check(FixedManifestSchema, value); }
 export function isMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(MaterialMetadataSchema, value); }
+export const ScenarioTemplateCatalogSchema = object({ defaultTemplateId: IdSchema, templates: Type.Array(object({ id: IdSchema, name: text, path: Type.String({ minLength: 1, maxLength: 400 }) }), { minItems: 1, maxItems: 100 }) });
+export type ScenarioTemplateCatalog = Static<typeof ScenarioTemplateCatalogSchema>;
+export const ProjectManifestSchema = object({ schemaVersion: Type.Literal(1), projectId: IdSchema, gitlabProjectId: Type.Integer({ minimum: 1 }), repositoryUrl: text, stableBranch: text,
+  directories: Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('原型代码')]), scenarioTemplates: ScenarioTemplateCatalogSchema });
+export type ProjectManifest = Static<typeof ProjectManifestSchema>;
+export function isProjectManifest(value: unknown): value is ProjectManifest { return Value.Check(ProjectManifestSchema, value); }
 export const OccupationTokenSchema = object({ occupationId: IdSchema, generation: Type.Integer({ minimum: 1 }), taskId: IdSchema, clientId: IdSchema, expectedRevision: RevisionSchema });
 export type OccupationToken = Static<typeof OccupationTokenSchema>;
 const keyed = { idempotencyKey: IdSchema };
@@ -52,45 +70,47 @@ export const InitializeProjectSchema = object({ ...keyed, commitSha: ShaSchema }
 export type InitializeProjectRequest = Static<typeof InitializeProjectSchema>;
 export const CategorySchema = object({ ...keyed, categoryId: IdSchema, name: text, expectedRevision: RevisionSchema });
 export type CategoryRequest = Static<typeof CategorySchema>;
-export const ReserveEntitySchema = object({ ...keyed, kind: EntityKindSchema, title: text, categoryId: IdSchema, sourceCandidateId: Type.Optional(IdSchema), batch: Type.Optional(object({ scenarioId: IdSchema, token: OccupationTokenSchema })) });
+const reserveFields = { ...keyed, title: text, sourceCandidateId: Type.Optional(IdSchema), batch: Type.Optional(object({ scenarioId: IdSchema, token: OccupationTokenSchema })) };
+export const ReserveEntitySchema = Type.Union([
+  object({ ...reserveFields, kind: Type.Literal('scenario'), categoryId: Type.Optional(Type.Never()), templateId: Type.Optional(IdSchema), templateRef: Type.Optional(FixedReferenceSchema), sources: Type.Optional(Type.Never()) }),
+  object({ ...reserveFields, kind: Type.Literal('requirement'), categoryId: IdSchema, templateId: Type.Optional(Type.Never()), templateRef: Type.Optional(Type.Never()), sources: Type.Array(SourceSchema, { minItems: 1, maxItems: 100 }) }),
+  object({ ...reserveFields, kind: Type.Union([Type.Literal('baseline'), Type.Literal('handoff')]), categoryId: IdSchema, templateId: Type.Optional(Type.Never()), templateRef: Type.Optional(Type.Never()), sources: Type.Optional(Type.Array(SourceSchema, { maxItems: 100 })) }),
+]);
 export type ReserveEntityRequest = Static<typeof ReserveEntitySchema>;
 export const ClaimSchema = object({ ...keyed, expectedRevision: RevisionSchema, taskId: IdSchema, clientId: IdSchema, purpose: Type.Union([Type.Literal('design'), Type.Literal('prototype'), Type.Literal('scenario-batch')]) });
 export type ClaimRequest = Static<typeof ClaimSchema>;
 export const ReleaseSchema = object({ ...keyed, token: OccupationTokenSchema, reason: text });
 export type ReleaseRequest = Static<typeof ReleaseSchema>;
-export const UpdateRelationsSchema = object({ ...keyed, token: OccupationTokenSchema, scenarioIds: Type.Array(IdSchema, { uniqueItems: true, maxItems: 100 }), prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }) });
+export const UpdateEntitySchema = object({ ...keyed, token: OccupationTokenSchema, title: text, summary: Type.Optional(Type.String({ maxLength: 2000 })) });
+export type UpdateEntityRequest = Static<typeof UpdateEntitySchema>;
+export const UpdateRelationsSchema = object({ ...keyed, token: OccupationTokenSchema, sources: Type.Array(SourceSchema, { minItems: 1, maxItems: 100 }), scenarioIds: Type.Array(IdSchema, { uniqueItems: true, maxItems: 100 }), prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }) });
 export type UpdateRelationsRequest = Static<typeof UpdateRelationsSchema>;
 export const CheckEvidenceSchema = object({
   candidateSha: ShaSchema, passed: Type.Literal(true),
   checks: Type.Array(object({ name: text, passed: Type.Literal(true), evidenceHash: Type.String({ pattern: '^[a-f0-9]{64}$' }) }), { minItems: 1, maxItems: 100 }),
 });
 export type CheckEvidence = Static<typeof CheckEvidenceSchema>;
-const confirmationFields = {
-  entityId: IdSchema, expectedRevision: RevisionSchema, fixed: FixedReferenceSchema, metadata: ConfirmedMaterialMetadataSchema,
-  authorConfirmed: Type.Literal(true),
-};
+const confirmationFields = { entityId: IdSchema, expectedRevision: RevisionSchema, fixed: FixedReferenceSchema, readHash: Sha256Schema, authorConfirmed: Type.Literal(true) };
 export const ConfirmationInputSchema = Type.Union([
   object({ ...confirmationFields, confirmationMethod: Type.Literal('direct') }),
-  object({ ...confirmationFields, confirmationMethod: Type.Literal('ai-assisted'), reviewEvidence: object({
-    candidateSha: ShaSchema,
-    inputHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
-    reportHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
-    dispositionHash: Type.String({ pattern: '^[a-f0-9]{64}$' }),
-  }) }),
+  object({ ...confirmationFields, confirmationMethod: Type.Literal('ai-assisted'), reviewEvidence: object({ candidateSha: ShaSchema, inputHash: Sha256Schema, reportHash: Sha256Schema, dispositionHash: Sha256Schema }) }),
+  object({ ...confirmationFields, confirmationMethod: Type.Literal('ai-repair'), repairTaskId: IdSchema }),
 ]);
 export type ConfirmationInput = Static<typeof ConfirmationInputSchema>;
-export const PrepareIntegrationSchema = object({
-  ...keyed, entityId: IdSchema, token: OccupationTokenSchema,
+const integrationFields = { ...keyed, sourceSha: ShaSchema, expectedHead: ShaSchema, candidateSha: ShaSchema,
+  allowedPaths: Type.Array(Type.String({ minLength: 1, maxLength: 400 }), { minItems: 1, maxItems: 3000, uniqueItems: true }), checks: CheckEvidenceSchema };
+export const MaterialIntegrationSchema = object({ ...integrationFields, entityId: IdSchema, token: OccupationTokenSchema,
   stage: Type.Union([Type.Literal('material'), Type.Literal('prototype'), Type.Literal('scenario-batch')]),
-  sourceSha: ShaSchema, expectedHead: ShaSchema, candidateSha: ShaSchema,
-  allowedPaths: Type.Array(Type.String({ minLength: 1, maxLength: 400 }), { minItems: 1, maxItems: 3000, uniqueItems: true }),
-  checks: CheckEvidenceSchema, confirmations: Type.Array(ConfirmationInputSchema, { minItems: 1, maxItems: 100 }),
-  expectedAssociationRevision: Type.Optional(RevisionSchema),
-  batchRequirementIds: Type.Optional(Type.Array(IdSchema, { maxItems: 100, uniqueItems: true })),
+  confirmations: Type.Array(ConfirmationInputSchema, { minItems: 1, maxItems: 100 }),
+  expectedAssociationRevision: Type.Optional(RevisionSchema), batchRequirementIds: Type.Optional(Type.Array(IdSchema, { maxItems: 100, uniqueItems: true })),
 });
+export type MaterialIntegrationRequest = Static<typeof MaterialIntegrationSchema>;
+export const TemplateIntegrationSchema = object({ ...integrationFields, stage: Type.Literal('template'), expectedProjectRevision: RevisionSchema });
+export type TemplateIntegrationRequest = Static<typeof TemplateIntegrationSchema>;
+export const PrepareIntegrationSchema = Type.Union([MaterialIntegrationSchema, TemplateIntegrationSchema]);
 export type PrepareIntegrationRequest = Static<typeof PrepareIntegrationSchema>;
 /** Stable review input bytes shared by Host and API; object key order is not evidence. */
-export function reviewInputText(input: Pick<PrepareIntegrationRequest, 'stage' | 'expectedHead' | 'token' | 'expectedAssociationRevision' | 'batchRequirementIds'> & { confirmations: readonly Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>[] }, root: Pick<EntityView, 'current' | 'occupation'>): string {
+export function reviewInputText(input: Pick<MaterialIntegrationRequest, 'stage' | 'expectedHead' | 'token' | 'expectedAssociationRevision' | 'batchRequirementIds'> & { confirmations: readonly Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>[] }, root: Pick<EntityView, 'current' | 'occupation'>): string {
   const value = { expectedHead: input.expectedHead, token: input.token,
     ...(input.stage === 'prototype' ? { current: root.current, prerequisites: root.occupation?.prerequisiteBindings } : {
       inputs: input.confirmations.map(c => ({ entityId: c.entityId, revision: c.expectedRevision, sha256: c.fixed.sha256 })).sort((a, b) => a.entityId.localeCompare(b.entityId)),
@@ -100,7 +120,7 @@ export function reviewInputText(input: Pick<PrepareIntegrationRequest, 'stage' |
   const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, item]) => [k, stable(item)])) : v;
   return JSON.stringify(stable(value));
 }
-export const CompleteIntegrationSchema = object({ ...keyed, token: OccupationTokenSchema });
+export const CompleteIntegrationSchema = object({ ...keyed, token: Type.Optional(OccupationTokenSchema) });
 export type CompleteIntegrationRequest = Static<typeof CompleteIntegrationSchema>;
 export const EligibilitySchema = object({ ...keyed, version: Type.Integer({ minimum: 1 }), enabled: Type.Boolean(), reason: text });
 export type EligibilityRequest = Static<typeof EligibilitySchema>;
@@ -123,19 +143,20 @@ export interface OccupationView extends OccupationToken {
   prerequisiteBindings: Array<{ requirementId: string; version: number; confirmationId: string; integrationSha: string }>;
   createdAt: string;
 }
+export interface AuditIdentity { id: number; account: string; name: string; at: string }
 export interface FixedVersion {
   version: number; fixed: FixedReference; metadata: MaterialMetadata; confirmationId: string;
   confirmedBy: number; confirmedAt: string; reuse: { enabled: boolean; reason: string };
-  prototypeBaselineId?: string;
+  prototypeBaselineId?: string; title?: string; summary?: string; applicability?: 'applicable' | 'not-applicable'; applicabilityReason?: string; readHash?: string;
 }
 export interface EntityView {
-  id: string; kind: EntityKind; title: string; categoryId: string; revision: number; generation: number;
+  id: string; kind: EntityKind; title: string; categoryId?: string; sequence?: number; code?: string; templateId?: string; templateRef?: FixedReference; summary?: string; creator?: AuditIdentity; lastEditor?: AuditIdentity; revision: number; generation: number;
   materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; taskStatus: 'idle' | 'active' | 'aborted' | 'completed';
-  scenarioIds: string[]; prerequisites: Prerequisite[]; current?: FixedVersion; authorId: number;
+  scenarioIds: string[]; scenarioSources?: AssetSource[]; files?: string[]; prerequisites: Prerequisite[]; current?: FixedVersion; authorId: number;
   occupation?: OccupationView; frozenBy: string[]; associationRevision: number; completedVersion?: number; completionConfirmationId?: string; completedIntegrationSha?: string;
   completions?: Array<{ version: number; confirmationId: string; integrationSha: string; baselineId: string }>;
 }
-export interface EntityOccupancyView { id: string; kind: EntityKind; revision: number; taskStatus: EntityView['taskStatus']; occupation?: OccupationView }
+export type EntityOccupancyView = Pick<EntityView, 'id' | 'kind' | 'title' | 'summary' | 'sequence' | 'code' | 'creator' | 'lastEditor' | 'authorId' | 'revision' | 'confirmationStatus' | 'materialVersion' | 'taskStatus' | 'occupation' | 'frozenBy' | 'associationRevision'>;
 export interface ProjectView {
   id: string; gitlabProjectId: number; repositoryUrl: string; stableBranch: string; name: string;
   namespaceId: number; namespacePath: string; initializationStatus: 'pending' | 'ready';
@@ -144,10 +165,25 @@ export interface ProjectView {
 }
 export interface ProjectState { project: ProjectView; entities: Array<EntityView | EntityOccupancyView>; integrations: IntegrationView[]; baselines: BaselineView[] }
 export interface IntegrationView {
-  id: string; entityId: string; ownerId: number; status: 'prepared' | 'accepted' | 'aborted';
+  id: string; entityId?: string; ownerId: number; status: 'prepared' | 'accepted' | 'aborted';
   sourceSha: string; expectedHead: string; candidateSha: string; stage: PrepareIntegrationRequest['stage'];
   confirmationIds?: string[]; baselineId?: string; createdAt: string;
 }
 export interface BaselineView { id: string; entityId: string; version: number; commitSha: string; confirmationId: string; createdAt: string }
 export interface ConfirmationEvent { id: string; projectId: string; entityId: string; version: number; fixed: FixedReference; revision: number; confirmedBy: number; confirmedAt: string }
 export interface ApiError { error: { code: string; message: string; details?: unknown } }
+
+export const BindTemplateSchema = object({ ...keyed, token: OccupationTokenSchema, templateId: IdSchema, templateRef: FixedReferenceSchema });
+export type BindTemplateRequest = Static<typeof BindTemplateSchema>;
+const repairFields = { ...keyed, token: OccupationTokenSchema };
+export const RepairStartSchema = object({ ...repairFields, userActionId: IdSchema, startHash: Sha256Schema });
+export type RepairStartRequest = Static<typeof RepairStartSchema>;
+export const RepairTerminationReasonSchema = Type.Union([Type.Literal('cancelled'), Type.Literal('concurrent-edit'), Type.Literal('missing-evidence'), Type.Literal('no-improvement'), Type.Literal('round-limit')]);
+export const RepairEventSchema = Type.Union([
+  object({ ...repairFields, type: Type.Literal('round'), expectedHash: Sha256Schema, hashAfter: Sha256Schema, improved: Type.Boolean() }),
+  object({ ...repairFields, type: Type.Literal('pause'), expectedHash: Sha256Schema, reason: Type.Literal('business-answer-required') }),
+  object({ ...repairFields, type: Type.Literal('resume'), expectedHash: Sha256Schema, userActionId: IdSchema }),
+  object({ ...repairFields, type: Type.Literal('terminate'), expectedHash: Sha256Schema, reason: RepairTerminationReasonSchema }),
+]);
+export type RepairEventRequest = Static<typeof RepairEventSchema>;
+export interface RepairTaskView { id: string; entityId: string; occupationId: string; userActionId: string; startHash: string; currentHash: string; status: 'active' | 'paused' | 'terminated' | 'completed'; roundsUsed: number; terminationReason?: Static<typeof RepairTerminationReasonSchema> | 'completed' | 'occupation-ended'; createdBy: number; createdAt: string }

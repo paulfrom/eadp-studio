@@ -4,12 +4,18 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 export const fixtureToken = 'synthetic-management-credential'
 export const boundUser = { id: 701, username: 'songlin.liu', email: 'songlin.liu@changhong.com', name: 'Songlin Liu', state: 'active' }
+export const defaultTemplate = Buffer.from('## 目标与范围\n\n## 角色\n\n## 流程\n\n## 业务规则\n\n## 异常\n\n## 验收条件\n\n## 依据\n\n## 待澄清项\n')
+export const templateCatalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景', path: '.template/default.md' }] }
+export interface FixtureDiff { old_path: string; new_path: string; deleted_file: boolean; renamed_file: boolean; diff: string }
 
 export interface RemoteProject {
   id: number; name: string; path: string; path_with_namespace: string; description: string;
   namespace: { id: number; full_path: string }; http_url_to_repo: string; ssh_url_to_repo: string;
   default_branch: string | null; empty_repo: boolean; visibility: string;
   memberLevel: number; directMember: boolean; head: string | null; manifest?: object;
+  snapshots?: Map<string, Map<string, Uint8Array>>;
+  commits?: Map<string, string[]>;
+  comparisons?: Map<string, FixtureDiff[]>;
 }
 
 export async function gitlabFixture() {
@@ -90,10 +96,20 @@ export async function gitlabFixture() {
         const refs = url.searchParams.getAll('refs[]')
         return send(response, 200, { id: refs[0] ?? project.head })
       }
-      if (action === 'repository/compare') return send(response, 200, { compare_timeout: false, compare_same_ref: false, diffs: [] })
-      if (action.startsWith('repository/commits/')) return send(response, 200, { id: project.head, parent_ids: controls.wrongRootParent ? ['b'.repeat(40)] : controls.commitParent ? [controls.commitParent] : [] })
+      if (action === 'repository/compare') return send(response, 200, { compare_timeout: false, compare_same_ref: false, diffs: project.comparisons?.get(`${url.searchParams.get('from')}:${url.searchParams.get('to')}`) ?? [] })
+      if (action.startsWith('repository/commits/')) {
+        const sha = action.slice('repository/commits/'.length)
+        return send(response, 200, { id: sha, parent_ids: project.commits?.get(sha) ?? (controls.wrongRootParent ? ['b'.repeat(40)] : controls.commitParent ? [controls.commitParent] : []) })
+      }
+      if (action.startsWith('repository/files/') && action.endsWith('/raw')) {
+        const path = action.slice('repository/files/'.length, -'/raw'.length), ref = url.searchParams.get('ref')!
+        const bytes = project.snapshots ? project.snapshots.get(ref)?.get(path) : path === 'project.assets.json' ? Buffer.from(JSON.stringify(project.manifest ?? {}) + '\n') : path === '.template/default.md' ? defaultTemplate : undefined
+        if (!bytes) return send(response, 404, { message: 'File not found at fixed commit' })
+        response.writeHead(200, { 'content-type': 'application/octet-stream' }).end(bytes)
+        return
+      }
       if (action === 'repository/tree') {
-        const entries = ['场景', '需求', '原型代码'].map(name => ({ id: 'c'.repeat(40), name, path: name, type: 'tree', mode: '040000' }))
+        const entries = ['场景', '需求', '原型代码', '.template'].map(name => ({ id: 'c'.repeat(40), name, path: name, type: 'tree', mode: '040000' }))
         const manifestBytes = Buffer.from(JSON.stringify(project.manifest ?? {}) + '\n')
         const manifestId = createHash('sha1').update(`blob ${manifestBytes.length}\0`).update(manifestBytes).digest('hex')
         return send(response, 200, [...entries, { id: manifestId, name: 'project.assets.json', path: 'project.assets.json', type: 'blob', mode: '100644' }])
@@ -106,7 +122,7 @@ export async function gitlabFixture() {
     return send(response, 404, { message: 'Unknown test fixture route' })
   }
   function publicProject(project: RemoteProject) {
-    const { memberLevel: _level, directMember: _direct, head: _head, manifest: _manifest, ...value } = project
+    const { memberLevel: _level, directMember: _direct, head: _head, manifest: _manifest, snapshots: _snapshots, commits: _commits, comparisons: _comparisons, ...value } = project
     return { ...value, permissions: { project_access: { access_level: 50 } } }
   }
   const server = createServer((request, response) => { void handle(request, response).catch(() => send(response, 500, { message: 'GitLab fixture rejected a request' })) })

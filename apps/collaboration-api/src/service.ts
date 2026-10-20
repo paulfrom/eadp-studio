@@ -1,5 +1,5 @@
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { AdoptRequest, AdoptionSuccessRequest, CategoryRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
+import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, CategoryRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import { SessionAuth, type Actor } from './auth/session.js';
 import { Projects } from './projects.js';
@@ -10,6 +10,8 @@ import * as repository from './persistence/repository.js';
 import * as occupations from './modules/occupations.js';
 import * as integration from './modules/integration.js';
 import * as reuse from './modules/reuse.js';
+import * as repairs from './modules/repairs.js';
+import * as templates from './modules/templates.js';
 import { visibleEntity } from './modules/visibility.js';
 
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
@@ -17,8 +19,23 @@ export class CollaborationService {
   readonly content: GitLabContent;
   readonly projects: Projects;
   constructor(readonly database: Database, readonly gitlab: GitLab, readonly publication: PublicationAuthorization, readonly auth: SessionAuth) { this.content = new GitLabContent(gitlab); this.projects = new Projects(database, gitlab); }
+  /** Give every persistence operation the authenticated audit identity and a Git-backed material reader. */
+  private async transact<T>(actor: StudioUser, action: (c: Transaction) => Promise<T>): Promise<T> {
+    return transaction(this.database, c => {
+      const materials = new Map<string, Promise<MaterialMetadata>>();
+      return repository.withContext({ actor, loadMaterial: (projectId, fixed) => {
+        const key = `${projectId}:${canonical(fixed)}`;
+        let material = materials.get(key);
+        if (!material) {
+          material = repository.project(c, projectId).then(project => this.content.verify(actor, project.gitlabProjectId, fixed));
+          materials.set(key, material);
+        }
+        return material;
+      } }, () => action(c));
+    });
+  }
   async authorize(actor: Actor, projectId: string, edit = false) {
-    const project = await transaction(this.database, c => repository.project(c, projectId));
+    const project = await this.transact(actor, c => repository.project(c, projectId));
     const remote = await this.gitlab.authorize(actor, project.gitlabProjectId, edit);
     this.boundRepository(project, remote); repository.assertProjectReady(project); return project;
   }
@@ -26,7 +43,7 @@ export class CollaborationService {
     requireCondition(remote.http_url_to_repo === project.repositoryUrl && remote.namespace.id === project.namespaceId && remote.namespace.full_path === project.namespacePath, 'PROJECT_REPOSITORY_CHANGED', 'The registered GitLab repository path changed', 409);
   }
   async mutate<T>(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }, change: Mutation<T>, extraProjectIds: string[] = []): Promise<T> {
-    return transaction(this.database, async c => {
+    return this.transact(actor, async c => {
       for (const id of [...new Set([projectId, ...extraProjectIds])].sort()) await repository.project(c, id, true);
       const project = await repository.project(c, projectId); repository.assertProjectReady(project);
       const previous = await repository.previous(c, projectId, actor, action, input);
@@ -37,13 +54,13 @@ export class CollaborationService {
     });
   }
   async replay(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }) {
-    return transaction(this.database, c => repository.previous(c, projectId, actor, action, input));
+    return this.transact(actor, c => repository.previous(c, projectId, actor, action, input));
   }
   async listProjects(actor: Actor) {
-    const rows = await this.database.query<{ data: ProjectView }>('SELECT data FROM studio_projects ORDER BY id');
+    const projects = await this.transact(actor, c => repository.listProjects(c));
     const visible: ProjectView[] = [];
-    for (const row of rows.rows) {
-      try { const remote = await this.gitlab.authorize(actor, row.data.gitlabProjectId); this.boundRepository(row.data, remote); visible.push(row.data); }
+    for (const project of projects) {
+      try { const remote = await this.gitlab.authorize(actor, project.gitlabProjectId); this.boundRepository(project, remote); visible.push(project); }
       catch (error) { if ((error as { code?: string }).code !== 'GITLAB_READ_DENIED') throw error; }
     }
     return visible;
@@ -51,13 +68,13 @@ export class CollaborationService {
   async createProject(actor: Actor, input: CreateProjectRequest) { return this.projects.create(actor, input); }
   async initializeProject(actor: Actor, projectId: string, input: InitializeProjectRequest) { return this.projects.initialize(actor, projectId, input); }
   async state(actor: Actor, projectId: string): Promise<ProjectState> {
-    const bound = await transaction(this.database, c => repository.project(c, projectId));
+    const bound = await this.transact(actor, c => repository.project(c, projectId));
     const remote = await this.gitlab.authorize(actor, bound.gitlabProjectId); this.boundRepository(bound, remote);
-    return transaction(this.database, async c => {
+    return this.transact(actor, async c => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
-      const integrations = (await c.query<{ data: integration.StoredIntegration }>('SELECT data FROM studio_integrations WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => integration.publicIntegration(r.data));
-      const baselines = (await c.query('SELECT data FROM studio_baselines WHERE project_id=$1 ORDER BY id', [projectId])).rows.map(r => r.data);
+      const integrations = await repository.listIntegrations(c, projectId);
+      const baselines = await repository.listBaselines(c, projectId);
       return { project, entities: entities.map(entity => visibleEntity(entity, actor)), integrations, baselines };
     });
   }
@@ -72,18 +89,52 @@ export class CollaborationService {
     });
   }
   async reserve(actor: Actor, projectId: string, input: ReserveEntityRequest) {
-    await this.authorize(actor, projectId, true);
+    const bound = await this.authorize(actor, projectId, true);
+    const replay = await this.replay(actor, projectId, 'entity.reserve', input);
+    if (replay.found) return replay.result as EntityView;
+    let template: { templateId: string; templateRef: FixedReference } | undefined;
+    if (input.kind === 'scenario') {
+      requireCondition(!input.categoryId && !input.batch, 'INVALID_SCENARIO_FIELDS', 'Scenarios do not use categories or a parent batch', 422);
+      const catalog = await this.content.loadProjectTemplates(actor, bound.gitlabProjectId, bound.recognizedHead!);
+      const selected = catalog.templates.find(t => t.id === (input.templateId ?? catalog.defaultTemplateId));
+      requireCondition(selected, 'TEMPLATE_NOT_FOUND', 'Select an accepted project scenario template', 422);
+      requireCondition(!input.templateRef || canonical(input.templateRef) === canonical(selected.fixed), 'TEMPLATE_VERSION_MISMATCH', 'New scenarios bind the selected accepted project template');
+      template = { templateId: selected.id, templateRef: selected.fixed };
+    }
+    const number = input.kind === 'scenario' ? await repository.reserveScenarioNumber(this.database, projectId, actor, input) : undefined;
     return this.mutate(actor, projectId, 'entity.reserve', input, async (c, project, all) => {
-      requireCondition(project.categories.some(x => x.id === input.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
-      const value: EntityView = { id: repository.newId(), kind: input.kind, title: input.title, categoryId: input.categoryId, revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: actor.id, frozenBy: [], associationRevision: 0 };
+      requireCondition(project.recognizedHead === bound.recognizedHead, 'INTEGRATION_HEAD_CHANGED', 'Refresh accepted project configuration before creating a material');
+      if (input.kind !== 'scenario') requireCondition(project.categories.some(x => x.id === input.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
+      const sources = input.kind === 'requirement' ? input.sources : [];
+      if (input.kind === 'requirement') {
+        requireCondition(sources.length > 0 && new Set(sources.map(s => s.entityId)).size === sources.length, 'SCENARIO_SOURCE_REQUIRED', 'A requirement must bind one or more distinct accepted scenario versions', 422);
+        for (const source of sources) {
+          requireCondition(source.projectId === projectId, 'SCENARIO_SOURCE_REQUIRED', 'Requirement scenario sources must belong to the same project', 422);
+          const scene = repository.entity(all, source.entityId);
+          requireCondition(scene.kind === 'scenario' && scene.materialVersion >= source.version && source.version > 0, 'SCENARIO_VERSION_MISMATCH', 'Requirement sources must identify accepted scenario versions');
+          await reuse.fixedVersion(c, projectId, scene.id, source.version);
+        }
+      }
+      const value: EntityView = { id: number?.id ?? repository.newId(), kind: input.kind, title: input.title,
+        ...(input.kind !== 'scenario' ? { categoryId: input.categoryId } : {}),
+        ...(number ? { sequence: number.sequence, code: number.code } : {}), ...template,
+        revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle',
+        scenarioIds: sources.map(s => s.entityId), ...(sources.length ? { scenarioSources: sources } : {}),
+        prerequisites: [], authorId: actor.id, frozenBy: [], associationRevision: 0 };
       if (input.batch) {
         requireCondition(input.kind === 'requirement', 'INVALID_BATCH_ENTITY', 'Only a new requirement may be reserved in a scenario batch');
         const scene = repository.entity(all, input.batch.scenarioId), occupation = occupations.assertOccupation(scene, input.batch.token, actor);
         requireCondition(occupation.purpose === 'scenario-batch', 'BATCH_REQUIRED', 'Scenario batch occupation is required');
-        value.frozenBy = [occupation.occupationId]; value.scenarioIds = [scene.id]; scene.associationRevision++;
-        await repository.saveEntity(c, projectId, scene);
+        requireCondition(value.scenarioIds.includes(scene.id), 'SCENARIO_SOURCE_REQUIRED', 'The batch scenario must be one of the accepted fixed sources');
+        value.frozenBy = [occupation.occupationId];
       }
-      await repository.saveEntity(c, projectId, value); return value;
+      for (const sceneId of value.scenarioIds) {
+        const scene = repository.entity(all, sceneId);
+        requireCondition(!scene.occupation || scene.occupation.occupationId === value.frozenBy[0], 'SCENARIO_FROZEN', 'A source scenario is being revised');
+        scene.associationRevision++; await repository.saveEntity(c, projectId, scene);
+      }
+      await repository.saveEntity(c, projectId, value);
+      return repository.entity(await repository.entities(c, projectId), value.id);
     });
   }
   async claim(actor: Actor, projectId: string, id: string, input: ClaimRequest) {
@@ -99,33 +150,93 @@ export class CollaborationService {
     await this.authorize(actor, projectId, true);
     return this.mutate(actor, projectId, `relations.write:${id}`, input, (c, _p, all) => occupations.updateRelations(c, projectId, all, id, actor, input));
   }
-  async verifySources(actor: Actor, projectId: string, input: PrepareIntegrationRequest) {
-    for (const confirmation of input.confirmations) for (const source of confirmation.metadata.sources) {
+  async updateEntity(actor: Actor, projectId: string, id: string, input: UpdateEntityRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `entity.update:${id}`, input, async (c, _project, all) => {
+      const value = repository.entity(all, id), occupation = occupations.assertOccupation(value, input.token, actor);
+      requireCondition(occupation.purpose !== 'prototype', 'DESIGN_OCCUPATION_REQUIRED', 'Directory updates require a material design occupation');
+      occupations.assertNotFrozen(value);
+      requireCondition(!(await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' AND occupation_id=$2", [projectId, occupation.occupationId])).rowCount,
+        'INTEGRATION_PENDING', 'Reconcile the prepared confirmation before changing directory fields');
+      await repairs.invalidateEntityRepairs(c, projectId, id, actor);
+      value.title = input.title; if (input.summary !== undefined) value.summary = input.summary;
+      value.revision++; occupation.expectedRevision = value.revision;
+      await repository.saveEntity(c, projectId, value);
+      return repository.entity(await repository.entities(c, projectId), value.id);
+    });
+  }
+  async revisionImpact(actor: Actor, projectId: string, id: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, async c => {
+      const all = await repository.entities(c, projectId), scenario = repository.entity(all, id);
+      requireCondition(scenario.kind === 'scenario' && scenario.materialVersion > 0, 'CONFIRMED_SCENARIO_REQUIRED', 'Revision impact requires an accepted scenario');
+      return { entityId: id, expectedRevision: scenario.revision, associationRevision: scenario.associationRevision,
+        requirements: all.filter(value => value.kind === 'requirement' && value.scenarioIds.includes(id)).map(value => ({ id: value.id, title: value.title,
+          materialVersion: value.materialVersion, taskStatus: value.taskStatus, frozenBy: value.frozenBy,
+          ...(value.occupation ? { occupation: value.occupation } : {}) })) };
+    });
+  }
+  async projectTemplates(actor: Actor, projectId: string) {
+    const project = await this.authorize(actor, projectId);
+    return { acceptedHead: project.recognizedHead, ...await this.content.loadProjectTemplates(actor, project.gitlabProjectId, project.recognizedHead!) };
+  }
+  async bindTemplate(actor: Actor, projectId: string, id: string, input: BindTemplateRequest) {
+    const project = await this.authorize(actor, projectId, true);
+    const action = `scenario.template:${id}`, replay = await this.replay(actor, projectId, action, input);
+    if (replay.found) return replay.result;
+    await templates.verifyBinding(this.gitlab, this.content, actor, project, input);
+    return this.mutate(actor, projectId, action, input, async (c, current, all) => {
+      requireCondition(current.recognizedHead === project.recognizedHead, 'INTEGRATION_HEAD_CHANGED', 'Refresh accepted project history before switching templates');
+      await templates.bind(c, projectId, repository.entity(all, id), actor, input);
+      return repository.entity(await repository.entities(c, projectId), id);
+    });
+  }
+  async startRepair(actor: Actor, projectId: string, id: string, input: RepairStartRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `repair.start:${id}`, input, (c, _p, all) => repairs.start(c, projectId, repository.entity(all, id), actor, input));
+  }
+  async repairEvent(actor: Actor, projectId: string, id: string, input: RepairEventRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `repair.event:${id}`, input, async (c, _p, all) => {
+      const repair = await repairs.task(c, projectId, id);
+      return repairs.event(c, projectId, repository.entity(all, repair.entityId), id, actor, input);
+    });
+  }
+  async getRepair(actor: Actor, projectId: string, id: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, async c => {
+      const value = await repairs.task(c, projectId, id);
+      requireCondition(value.createdBy === actor.id, 'REPAIR_NOT_FOUND', 'Repair authorization was not found', 404);
+      return value;
+    });
+  }
+  async verifySources(actor: Actor, projectId: string, input: MaterialIntegrationRequest, materials: Map<string, MaterialMetadata>) {
+    for (const confirmation of input.confirmations) for (const source of materials.get(confirmation.entityId)!.sources) {
       // A requirement's fixed scenario input is provenance, not package adoption.
-      if (source.projectId === projectId && confirmation.metadata.scenarioIds.includes(source.entityId)) {
-        const pendingScene = input.confirmations.find(x => x.entityId === source.entityId && x.metadata.kind === 'scenario');
+      if (source.projectId === projectId && materials.get(confirmation.entityId)!.scenarioIds.includes(source.entityId)) {
+        const pendingScene = input.confirmations.find(x => x.entityId === source.entityId && materials.get(x.entityId)?.kind === 'scenario');
         if (pendingScene) {
-          const matches = await transaction(this.database, async c => repository.entity(await repository.entities(c, projectId), source.entityId).materialVersion + 1 === source.version);
+          const matches = await this.transact(actor, async c => repository.entity(await repository.entities(c, projectId), source.entityId).materialVersion + 1 === source.version);
           requireCondition(matches, 'SCENARIO_VERSION_MISMATCH', 'Batch scenario source must bind the new fixed version');
           continue;
         }
-        const version = await transaction(this.database, c => reuse.fixedVersion(c, projectId, source.entityId, source.version));
+        const version = await this.transact(actor, c => reuse.fixedVersion(c, projectId, source.entityId, source.version));
         requireCondition(version.metadata.kind === 'scenario', 'SCENARIO_VERSION_MISMATCH', 'Scenario input source must identify an accepted scenario');
         continue;
       }
       const sourceProject = await this.authorize(actor, source.projectId);
-      const version = await transaction(this.database, c => reuse.fixedVersion(c, source.projectId, source.entityId, source.version));
-      await this.content.verify(actor, sourceProject.gitlabProjectId, version.fixed, version.metadata);
+      const version = await this.transact(actor, c => reuse.fixedVersion(c, source.projectId, source.entityId, source.version));
+      await this.content.verify(actor, sourceProject.gitlabProjectId, version.fixed, { entityId: source.entityId, kind: version.metadata.kind });
       if (input.stage === 'prototype') continue;
-      const inherited = await transaction(this.database, async c => {
+      const inherited = await this.transact(actor, async c => {
         const all = await repository.entities(c, projectId), value = repository.entity(all, confirmation.entityId);
         if (value.current?.metadata.sources.some(s => canonical(s) === canonical(source))) return true;
         if (input.stage === 'scenario-batch' && source.projectId === projectId) {
           const original = repository.entity(all, source.entityId);
           if (original.completedVersion === source.version && original.frozenBy.includes(input.token.occupationId)) return true;
         }
-        const adoptions = (await c.query<{ data: reuse.AdoptionRecord }>('SELECT data FROM studio_adoptions WHERE target_project_id=$1', [projectId])).rows;
-        return adoptions.some(r => r.data.targetEntityId === value.id && r.data.targetTaskId === input.token.taskId && canonical(r.data.source) === canonical(source));
+        const adoptions = await repository.listAdoptions(c, projectId);
+        return adoptions.some(r => r.targetEntityId === value.id && r.targetTaskId === input.token.taskId && canonical(r.source) === canonical(source));
       });
       requireCondition(inherited, 'ADOPTION_REQUIRED', 'New reuse sources must have an accepted adoption for the target task');
     }
@@ -134,26 +245,27 @@ export class CollaborationService {
     const project = await this.authorize(actor, projectId, true), action = 'integration.prepare';
     const replay = await this.replay(actor, projectId, action, input); if (replay.found) return replay.result;
     requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before integration');
-    await this.content.verifyCandidate(actor, project.gitlabProjectId, input);
-    await this.verifySources(actor, projectId, input);
-    return this.mutate(actor, projectId, action, input, (c, p, all) => integration.prepare(c, p, all, actor, input));
+    const materials = await this.content.verifyCandidate(actor, project.gitlabProjectId, input);
+    if (input.stage !== 'template') await this.verifySources(actor, projectId, input, materials);
+    return this.mutate(actor, projectId, action, input, (c, p, all) => integration.prepare(c, p, all, actor, input, materials));
   }
   async complete(actor: Actor, projectId: string, id: string, input: CompleteIntegrationRequest) {
     const project = await this.authorize(actor, projectId, true), action = `integration.complete:${id}`;
     const replay = await this.replay(actor, projectId, action, input); if (replay.found) return replay.result;
-    const operation = await transaction(this.database, c => integration.getIntegration(c, projectId, id));
-    requireCondition(canonical(input.token) === canonical(operation.request.token), 'STALE_OCCUPATION', 'Completion must use the original integration occupation');
+    const operation = await this.transact(actor, c => integration.getIntegration(c, projectId, id));
+    requireCondition(operation.ownerId === actor.id, 'INTEGRATION_OWNER_REQUIRED', 'Complete the integration using its original authenticated user', 403);
+    requireCondition(operation.request.stage === 'template' ? !input.token : canonical(input.token) === canonical(operation.request.token), 'STALE_OCCUPATION', 'Completion must use the original integration occupation');
     requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === operation.candidateSha, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch has not reached the exact prepared candidate');
-    await this.content.verifyCandidate(actor, project.gitlabProjectId, operation.request);
-    return this.mutate(actor, projectId, action, input, async (c, p, all) => integration.complete(c, p, all, actor, await integration.getIntegration(c, projectId, id)));
+    const materials = await this.content.verifyCandidate(actor, project.gitlabProjectId, operation.request);
+    if (operation.request.stage !== 'template') await this.verifySources(actor, projectId, operation.request, materials);
+    return this.mutate(actor, projectId, action, input, async (c, p, all) => integration.complete(c, p, all, actor, await integration.getIntegration(c, projectId, id), materials));
   }
-  async getIntegration(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return transaction(this.database, async c => integration.publicIntegration(await integration.getIntegration(c, projectId, id))); }
+  async getIntegration(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return this.transact(actor, async c => integration.publicIntegration(await integration.getIntegration(c, projectId, id))); }
   async operation(actor: Actor, projectId: string, key: string) {
     await this.authorize(actor, projectId);
-    const row = (await this.database.query<{ actor_id: string; action: string; result: unknown }>('SELECT actor_id,action,result FROM studio_operations WHERE project_id=$1 AND key=$2', [projectId, key])).rows[0];
-    requireCondition(row && Number(row.actor_id) === actor.id, 'OPERATION_NOT_FOUND', 'Operation result is not known for this actor', 404); return { action: row.action, result: row.result };
+    return this.transact(actor, c => repository.operation(c, projectId, key, actor));
   }
-  async versions(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return transaction(this.database, c => reuse.versions(c, projectId, id)); }
+  async versions(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return this.transact(actor, c => reuse.versions(c, projectId, id)); }
   async eligibility(actor: Actor, projectId: string, id: string, input: EligibilityRequest) {
     await this.authorize(actor, projectId, true);
     return this.mutate(actor, projectId, `eligibility.write:${id}`, input, (c, _p, all) => reuse.eligibility(c, projectId, all, id, actor, input.version, input.enabled, input.reason));
@@ -161,11 +273,11 @@ export class CollaborationService {
   async adopt(actor: Actor, projectId: string, input: AdoptRequest) {
     await this.authorize(actor, projectId, true); const sourceProject = await this.authorize(actor, input.source.projectId);
     const action = 'reuse.adopt', replay = await this.replay(actor, projectId, action, input); if (replay.found) return replay.result;
-    const source = await transaction(this.database, c => reuse.fixedVersion(c, input.source.projectId, input.source.entityId, input.source.version));
-    await this.content.verify(actor, sourceProject.gitlabProjectId, source.fixed, source.metadata);
+    const source = await this.transact(actor, c => reuse.fixedVersion(c, input.source.projectId, input.source.entityId, input.source.version));
+    await this.content.verify(actor, sourceProject.gitlabProjectId, source.fixed, { entityId: input.source.entityId, kind: source.metadata.kind });
     return this.mutate(actor, projectId, action, input, (c, _p, all) => reuse.adopt(c, projectId, all, actor, input), [input.source.projectId]);
   }
-  async listAdoptions(actor: Actor, projectId: string) { await this.authorize(actor, projectId); return (await this.database.query('SELECT data FROM studio_adoptions WHERE target_project_id=$1 ORDER BY id', [projectId])).rows.map(r => r.data); }
+  async listAdoptions(actor: Actor, projectId: string) { await this.authorize(actor, projectId); return this.transact(actor, c => repository.listAdoptions(c, projectId)); }
   async adoptionSuccess(actor: Actor, projectId: string, id: string, input: AdoptionSuccessRequest) {
     await this.authorize(actor, projectId, true); return this.mutate(actor, projectId, `reuse.success:${id}`, input, c => reuse.adoptionSuccess(c, projectId, id, actor, input));
   }
@@ -177,7 +289,7 @@ export class CollaborationService {
     await this.content.verifyCorrection(actor, project.gitlabProjectId, input.expectedHead, input.correctedHead);
     return this.mutate(actor, projectId, action, input, async (c, p) => {
       requireCondition(p.recognizedHead === input.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized integration head changed');
-      await c.query("UPDATE studio_integrations SET status='aborted',data=jsonb_set(data,'{status}','\"aborted\"') WHERE project_id=$1 AND status='prepared'", [projectId]);
+      await c.query("UPDATE studio_integrations SET status='aborted',last_editor_id=$2,last_editor_account=$3,last_editor_name=$4,last_edited_date=now() WHERE project_id=$1 AND status='prepared'", [projectId, actor.id, actor.username, actor.name]);
       p.recognizedHead = input.correctedHead; p.revision++; await repository.saveProject(c, p);
       await repository.audit(c, projectId, actor, 'integration.reconciled', { expectedHead: input.expectedHead, correctedHead: input.correctedHead, reason: input.reason }); return p;
     });
@@ -187,8 +299,10 @@ export class CollaborationService {
     return this.mutate(actor, projectId, `handoff.receive:${id}`, input, async (c, _p, all) => {
       const value = repository.entity(all, id); requireCondition(value.kind === 'handoff' && value.current?.confirmationId === input.confirmationId, 'HANDOFF_CONFIRMATION_REQUIRED', 'Receipt requires the current accepted handoff');
       const receipt = { id: repository.newId(), entityId: id, confirmationId: input.confirmationId, actorId: actor.id, note: input.note, receivedAt: repository.now() };
-      const result = await c.query('INSERT INTO studio_handoff_receipts(id,project_id,entity_id,confirmation_id,actor_id,note) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(project_id,entity_id,confirmation_id,actor_id) DO NOTHING RETURNING id', [receipt.id, projectId, id, input.confirmationId, actor.id, input.note]);
-      if (!result.rowCount) return (await c.query('SELECT id,entity_id AS "entityId",confirmation_id AS "confirmationId",actor_id AS "actorId",note,created_at AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 AND confirmation_id=$3 AND actor_id=$4', [projectId, id, input.confirmationId, actor.id])).rows[0];
+      const result = await c.query(`INSERT INTO studio_handoff_receipts(id,project_id,entity_id,confirmation_id,note,creator_id,creator_account,creator_name)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(project_id,entity_id,confirmation_id,creator_id) DO NOTHING RETURNING id`,
+      [receipt.id, projectId, id, input.confirmationId, input.note, actor.id, actor.username, actor.name]);
+      if (!result.rowCount) return (await c.query('SELECT id,entity_id AS "entityId",confirmation_id AS "confirmationId",creator_id::integer AS "actorId",note,created_date AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 AND confirmation_id=$3 AND creator_id=$4', [projectId, id, input.confirmationId, actor.id])).rows[0];
       return receipt;
     });
   }
@@ -196,7 +310,7 @@ export class CollaborationService {
     this.publication.assertPublisher(actor.id);
     const project = await this.authorize(actor, projectId, true);
     requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
-    return transaction(this.database, async c => {
+    return this.transact(actor, async c => {
       const current = await repository.project(c, projectId, true);
       repository.assertProjectReady(current);
       requireCondition(current.currentBaselineId === input.baselineId && current.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Publication requires the current accepted prototype baseline');
@@ -208,14 +322,14 @@ export class CollaborationService {
   }
   async publicationCurrent(authorization: string | undefined, projectId: string) {
     const claims = this.publication.verify(authorization, projectId);
-    const actor = await this.auth.boundUser(claims.actorId), bound = await transaction(this.database, c => repository.project(c, projectId));
+    const actor = await this.auth.boundUser(claims.actorId), bound = await this.transact(actor, c => repository.project(c, projectId));
     const remote = await this.gitlab.authorize(actor, bound.gitlabProjectId); this.boundRepository(bound, remote);
-    return transaction(this.database, async c => {
+    return this.transact(actor, async c => {
       const project = await repository.project(c, projectId, true);
       repository.assertProjectReady(project);
       requireCondition(project.currentBaselineId === claims.baselineId && project.recognizedHead === claims.acceptedHead, 'PUBLICATION_CONTEXT_CHANGED', 'The accepted baseline or integration head changed; request a new publication authorization');
       requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
-      const baseline = (await c.query<{ data: { id: string; commitSha: string; confirmationId: string } }>('SELECT data FROM studio_baselines WHERE id=$1 AND project_id=$2', [claims.baselineId, projectId])).rows[0]?.data;
+      const baseline = await repository.baseline(c, projectId, claims.baselineId);
       requireCondition(baseline, 'BASELINE_NOT_FOUND', 'Accepted baseline was not found', 404);
       return { baselineId: baseline.id, commitSha: baseline.commitSha, acceptedHead: project.recognizedHead, completionEvidence: baseline.confirmationId };
     });

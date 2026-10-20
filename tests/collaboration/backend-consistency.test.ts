@@ -8,19 +8,17 @@ import { SessionAuth, type Actor } from '../../apps/collaboration-api/src/auth/s
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
 import { CollaborationService } from '../../apps/collaboration-api/src/service.ts'
-import type { EntityView, FixedVersion, ProjectView } from '../../packages/contracts/src/index.ts'
-import { boundUser, fixtureToken, gitlabFixture } from './gitlab-fixture.ts'
+import type { EntityView } from '../../packages/contracts/src/index.ts'
+import { fixtureToken, gitlabFixture, templateCatalog } from './gitlab-fixture.ts'
 
 // Run only against a new, disposable database named eadp_auth_check_*.
 // STUDIO_TEST_DATABASE_URL=... pnpm --dir apps/collaboration-api exec tsx --test ../../tests/collaboration/backend-consistency.test.ts
-// Service-level consistency checks use synthetic actors; studio_users stays untouched.
 const databaseUrl = process.env.STUDIO_TEST_DATABASE_URL
 const initialSha = 'a'.repeat(40)
 const key = () => randomUUID()
-const keys = (value: object) => Object.keys(value).sort()
 const errorCode = (error: unknown) => (error as { code?: string }).code
 
-test('A07 claim head gate and A08 entity visibility projection hold on a real isolated PostgreSQL database', { skip: !databaseUrl }, async t => {
+test('A07 claim head gates and A08 shared draft directories hold on isolated PostgreSQL', { skip: !databaseUrl }, async t => {
   assert.match(new URL(databaseUrl!).pathname, /^\/eadp_auth_check_[a-z0-9]+$/, 'This suite only accepts its disposable database namespace')
   const gitlab = await gitlabFixture()
   t.after(() => gitlab.close())
@@ -28,49 +26,45 @@ test('A07 claim head gate and A08 entity visibility projection hold on a real is
   const database = createDatabase(config)
   t.after(() => database.end())
   await database.query(await readFile(new URL('../../apps/collaboration-api/db/schema.sql', import.meta.url), 'utf8'))
-  const gitlabAuth = new GitLab(config)
-  const service = new CollaborationService(database, gitlabAuth, new PublicationAuthorization(config), new SessionAuth(database, gitlabAuth, config))
-  const actor = (id: number, admin: boolean): Actor => ({
-    id, username: `synthetic-${id}`, name: `Synthetic ${id}`, email: `synthetic-${id}@fixture.invalid`,
-    admin, gitlabUserId: boundUser.id, gitlabUsername: boundUser.username, sessionHash: `synthetic-session-${id}`,
-  })
-  const author = actor(1, true), other = actor(2, false), administrator = actor(3, true)
-  const projectId = 'g0-consistency-project'
-  const gitlabProjectId = 5001
-  gitlab.projects.set(gitlabProjectId, {
-    id: gitlabProjectId, name: 'consistency', path: 'consistency', path_with_namespace: 'delivery/consistency', description: '',
-    namespace: { id: 42, full_path: 'delivery' }, http_url_to_repo: `${gitlab.origin}/delivery/consistency.git`,
-    ssh_url_to_repo: 'git@fixture.invalid:delivery/consistency.git', default_branch: 'main', empty_repo: false,
-    visibility: 'private', memberLevel: 30, directMember: true, head: initialSha,
-  })
-  const seeded: ProjectView = {
-    id: projectId, gitlabProjectId, repositoryUrl: `${gitlab.origin}/delivery/consistency.git`, stableBranch: 'main',
-    name: '一致性验证', namespaceId: 42, namespacePath: 'delivery', initializationStatus: 'ready',
-    revision: 0, recognizedHead: initialSha, categories: [{ id: 'cat-1', name: '业务分类' }],
-  }
-  await database.query('INSERT INTO studio_projects(id,gitlab_project_id,data) VALUES($1,$2,$3)', [projectId, gitlabProjectId, seeded])
-  const remote = () => gitlab.projects.get(gitlabProjectId)!
+  const gitlabAuth = new GitLab(config), auth = new SessionAuth(database, gitlabAuth, config)
+  await auth.ensureTestUser()
+  const login = await auth.login({ username: 'studioAdmin', password: 'admin@123' })
+  const author = await auth.authenticate(`Bearer ${login.token}`)
+  const service = new CollaborationService(database, gitlabAuth, new PublicationAuthorization(config), auth)
+  // Other identities exercise read projections only; the deployment's single-user constraint stays intact.
+  const other: Actor = { ...author, id: 2, username: 'reader', name: 'Reader', admin: false }
+  const administrator: Actor = { ...other, id: 3, username: 'administrator', name: 'Administrator', admin: true }
+  const created = await service.createProject(author, { idempotencyKey: key(), name: '一致性验证', namespaceId: 42, path: 'backend-consistency' })
+  const projectId = created.id, remote = gitlab.projects.get(created.gitlabProjectId)!
+  remote.head = initialSha; remote.empty_repo = false; remote.default_branch = 'main'
+  remote.manifest = { schemaVersion: 1, projectId, gitlabProjectId: created.gitlabProjectId, repositoryUrl: created.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: templateCatalog }
+  await service.initializeProject(author, projectId, { idempotencyKey: key(), commitSha: initialSha })
 
-  let first: EntityView
-  await t.test('A07a claim succeeds while the actual stable head matches the recognized head', async () => {
-    first = await service.reserve(author, projectId, { idempotencyKey: key(), kind: 'requirement', title: '一致性需求甲', categoryId: 'cat-1' })
+  let first: EntityView, second: EntityView
+  await t.test('A07a a stable recognized head permits claiming a newly numbered scenario', async () => {
+    const input = { idempotencyKey: key(), kind: 'scenario' as const, title: '一致性场景甲' }
+    first = await service.reserve(author, projectId, input)
+    const replay = await service.reserve(author, projectId, input)
+    assert.equal(replay.id, first.id)
+    assert.equal(replay.code, first.code)
+    assert.equal(first.code, 'SC-0001')
+    assert.equal(first.categoryId, undefined)
+    assert.ok(first.templateRef)
     const claimed = await service.claim(author, projectId, first.id, { idempotencyKey: key(), expectedRevision: first.revision, taskId: 'task-a', clientId: 'client-a', purpose: 'design' })
     assert.equal(claimed.taskStatus, 'active')
     assert.equal(claimed.occupation?.ownerId, author.id)
   })
 
-  let second: EntityView
-  await t.test('A07b a diverged stable head rejects claim with UNRECOGNIZED_GIT_HEAD after reading the branch head', async () => {
-    second = await service.reserve(author, projectId, { idempotencyKey: key(), kind: 'requirement', title: '一致性需求乙', categoryId: 'cat-1' })
-    remote().head = 'b'.repeat(40)
+  await t.test('A07b claim reads and rejects a diverged remote stable head', async () => {
+    second = await service.reserve(author, projectId, { idempotencyKey: key(), kind: 'scenario', title: '一致性场景乙' })
+    remote.head = 'b'.repeat(40)
     const reads = gitlab.counts.headReads
-    await assert.rejects(
-      service.claim(author, projectId, second.id, { idempotencyKey: key(), expectedRevision: second.revision, taskId: 'task-b', clientId: 'client-b', purpose: 'design' }),
-      error => errorCode(error) === 'UNRECOGNIZED_GIT_HEAD')
-    assert.ok(gitlab.counts.headReads > reads, 'claim must actually read the stable branch head before rejecting')
+    await assert.rejects(service.claim(author, projectId, second.id, { idempotencyKey: key(), expectedRevision: second.revision, taskId: 'task-b', clientId: 'client-b', purpose: 'design' }), error => errorCode(error) === 'UNRECOGNIZED_GIT_HEAD')
+    assert.ok(gitlab.counts.headReads > reads)
+    assert.equal((await service.state(author, projectId)).entities.find(value => value.id === second.id)?.occupation, undefined)
   })
 
-  await t.test('A07c reconcile recognizes the corrected head and claim succeeds again', async () => {
+  await t.test('A07c an administrator reconciles a traceable unchanged tree before claiming', async () => {
     gitlab.controls.commitParent = initialSha
     try {
       const corrected = await service.reconcile(author, projectId, { idempotencyKey: key(), expectedHead: initialSha, correctedHead: 'b'.repeat(40), reason: '管理员认可纠正提交' })
@@ -80,64 +74,49 @@ test('A07 claim head gate and A08 entity visibility projection hold on a real is
     assert.equal(claimed.occupation?.ownerId, author.id)
   })
 
-  await t.test('A07d releasing the occupation never clears the head gate for the next claim', async () => {
-    const third = await service.reserve(author, projectId, { idempotencyKey: key(), kind: 'requirement', title: '一致性需求丙', categoryId: 'cat-1' })
+  await t.test('A07d releasing an occupation preserves the next claim head gate', async () => {
+    const third = await service.reserve(author, projectId, { idempotencyKey: key(), kind: 'scenario', title: '一致性场景丙' })
     const claimed = await service.claim(author, projectId, third.id, { idempotencyKey: key(), expectedRevision: third.revision, taskId: 'task-d', clientId: 'client-d', purpose: 'design' })
-    await service.release(author, projectId, third.id, { idempotencyKey: key(), token: claimed.occupation!, reason: '管理员释放占用' }, true)
-    remote().head = 'c'.repeat(40)
-    await assert.rejects(
-      service.claim(author, projectId, third.id, { idempotencyKey: key(), expectedRevision: claimed.revision, taskId: 'task-d2', clientId: 'client-d2', purpose: 'design' }),
-      error => errorCode(error) === 'UNRECOGNIZED_GIT_HEAD')
+    const released = await service.release(author, projectId, third.id, { idempotencyKey: key(), token: claimed.occupation!, reason: '管理员释放占用' }, true)
+    assert.equal(released.occupation, undefined)
+    assert.equal(released.taskStatus, 'aborted')
+    remote.head = 'c'.repeat(40)
+    await assert.rejects(service.claim(author, projectId, third.id, { idempotencyKey: key(), expectedRevision: released.revision, taskId: 'task-d2', clientId: 'client-d2', purpose: 'design' }), error => errorCode(error) === 'UNRECOGNIZED_GIT_HEAD')
   })
 
-  await t.test('A08a the author sees the full entity view including its title', async () => {
-    const state = await service.state(author, projectId)
-    const view = state.entities.find(entity => entity.id === first.id)
-    assert.ok(view && 'title' in view)
-    assert.equal(view.title, '一致性需求甲')
-    assert.equal(view.categoryId, 'cat-1')
+  await t.test('A08a the author sees the full draft directory and its selected fixed template', async () => {
+    const view = (await service.state(author, projectId)).entities.find(value => value.id === first.id)
+    assert.ok(view && 'prerequisites' in view)
+    assert.equal(view.title, '一致性场景甲')
+    assert.equal(view.code, 'SC-0001')
     assert.equal(view.confirmationStatus, 'draft')
+    assert.equal(view.creator?.id, author.id)
+    assert.equal(view.templateId, 'default')
+    assert.equal(view.current, undefined)
   })
 
-  await t.test('A08b another member sees only the occupancy card without the title', async () => {
+  await t.test('A08b another member sees shared names, numbers, authors and occupations without draft contents', async () => {
     const state = await service.state(other, projectId)
-    const occupied = state.entities.find(entity => 'occupation' in entity && entity.occupation)
-    assert.ok(occupied)
-    assert.deepEqual(keys(occupied), ['id', 'kind', 'occupation', 'revision', 'taskStatus'])
-    assert.equal(occupied.occupation?.ownerId, author.id)
-    assert.ok(!JSON.stringify(state.entities).includes('一致性需求甲'), 'the draft title must not reach another member')
-    assert.ok(!JSON.stringify(state.entities).includes('一致性需求乙'))
-    assert.ok(!JSON.stringify(state.entities).includes('一致性需求丙'))
-    const ids = state.entities.map(entity => entity.id).sort()
-    assert.deepEqual(ids, (await service.state(author, projectId)).entities.map(entity => entity.id).sort(), 'visibility projection must not hide entity identities')
+    const view = state.entities.find(value => value.id === first.id)
+    assert.ok(view)
+    assert.equal(view.title, '一致性场景甲')
+    assert.equal(view.code, 'SC-0001')
+    assert.equal(view.creator?.id, author.id)
+    assert.equal(view.occupation?.ownerId, author.id)
+    for (const privateField of ['current', 'metadata', 'prerequisites', 'scenarioIds', 'templateRef', 'body', 'conversation']) assert.equal(privateField in view, false, `${privateField} must not appear on another member's draft card`)
+    assert.deepEqual(state.entities.map(value => value.id).sort(), (await service.state(author, projectId)).entities.map(value => value.id).sort())
   })
 
-  await t.test('A08c a non-author administrator sees the same occupancy card and nothing more', async () => {
-    const state = await service.state(administrator, projectId)
-    const occupied = state.entities.find(entity => 'occupation' in entity && entity.occupation)
-    assert.ok(occupied)
-    assert.deepEqual(keys(occupied), ['id', 'kind', 'occupation', 'revision', 'taskStatus'])
-    assert.ok(!JSON.stringify(state.entities).includes('一致性需求甲'), 'admin status must not widen visibility')
+  await t.test('A08c administrator status does not expand another author’s draft projection', async () => {
+    const members = (await service.state(other, projectId)).entities
+    assert.deepEqual((await service.state(administrator, projectId)).entities, members)
   })
 
-  await t.test('A08d a confirmed entity opens its summary to every member', async () => {
-    const stored = (await database.query<{ data: EntityView }>('SELECT data FROM studio_entities WHERE project_id=$1 AND id=$2', [projectId, first.id])).rows[0].data
-    const current: FixedVersion = {
-      version: 1, confirmationId: 'confirm-e1', confirmedBy: author.id, confirmedAt: new Date().toISOString(),
-      fixed: { commitSha: 'd'.repeat(40), path: `需求/${stored.id}.md`, sha256: 'e'.repeat(64) },
-      metadata: {
-        entityId: stored.id, kind: 'requirement', title: '一致性需求甲', categoryId: 'cat-1', scenarioIds: [], prerequisites: [],
-        sources: [], businessEvidence: [{ label: '作者确认', reference: 'backend-consistency' }], coreRulesPresent: true,
-        acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [],
-      },
-      reuse: { enabled: true, reason: '材料确认即取得资格' },
-    }
-    await database.query('UPDATE studio_entities SET data=$3 WHERE project_id=$1 AND id=$2', [projectId, stored.id, { ...stored, confirmationStatus: 'confirmed', materialVersion: 1, current }])
-    const state = await service.state(other, projectId)
-    const view = state.entities.find(entity => entity.id === stored.id)
-    assert.ok(view && 'title' in view)
-    assert.equal(view.title, '一致性需求甲')
-    assert.equal(view.confirmationStatus, 'confirmed')
-    assert.equal(view.current?.version, 1)
+  await t.test('A08d reading draft revision impact neither creates an occupation nor invents a confirmation', async () => {
+    const before = await database.query<{ count: string }>('SELECT count(*) FROM studio_occupations WHERE project_id=$1', [projectId])
+    await assert.rejects(service.revisionImpact(other, projectId, first.id), error => errorCode(error) === 'CONFIRMED_SCENARIO_REQUIRED')
+    const after = await database.query<{ count: string }>('SELECT count(*) FROM studio_occupations WHERE project_id=$1', [projectId])
+    assert.equal(after.rows[0]!.count, before.rows[0]!.count)
+    assert.equal((await database.query<{ count: string }>('SELECT count(*) FROM studio_confirmations WHERE project_id=$1', [projectId])).rows[0]!.count, '0')
   })
 })

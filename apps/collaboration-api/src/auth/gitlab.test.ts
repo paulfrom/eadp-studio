@@ -340,14 +340,14 @@ test('project creation rejects a newly blocked user before repository POST despi
   userState = 'blocked';
 
   const input = { name: 'New project', path: 'new-project', namespaceId: 1, idempotencyKey: 'blocked-user-regression' };
-  const creation = { actor_id: String(actor.id), key: input.idempotencyKey, request_hash: requestHash(input), project_id: 'synthetic-project', namespace_id: '1', namespace_path: 'team', path: input.path, name: input.name, marker: 'synthetic-marker', state: 'reserved', gitlab_project_id: null };
+  const creation = { creator_id: String(actor.id), key: input.idempotencyKey, request_hash: requestHash(input), project_id: 'synthetic-project', namespace_id: '1', namespace_path: 'team', path: input.path, name: input.name, marker: 'synthetic-marker', state: 'reserved', gitlab_project_id: null };
   const queries: string[] = [];
   let released = false;
   const query = async (sql: string) => {
     queries.push(sql);
-    if (sql.startsWith('SELECT * FROM studio_project_creations')) return { rows: [creation] };
+    if (sql.startsWith('SELECT *,id AS project_id FROM studio_projects')) return { rows: [creation] };
     if (sql.startsWith('SELECT pg_try_advisory_lock')) return { rows: [{ acquired: true }] };
-    if (sql.startsWith('SELECT pg_advisory_unlock') || sql.startsWith('UPDATE studio_project_creations')) return { rows: [] };
+    if (sql.startsWith('SELECT pg_advisory_unlock') || sql.startsWith('UPDATE studio_projects')) return { rows: [] };
     throw new Error(`Unexpected database query: ${sql}`);
   };
   const database = { query, connect: async () => ({ query, release: () => { released = true; } }) } as unknown as Database;

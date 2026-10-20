@@ -26,7 +26,7 @@
 --   编号、确认、占用、关联与目录投影经后台数据恢复；仅桌面本地过程数据
 --   （AI 会话、建议批次、资料读取记录、本地保存队列）不随恢复，按设计可丢弃。
 --
--- 编号分配（新建事务内执行，行锁保证项目内原子递增；已分配序号不回收，失败允许空号）：
+-- 编号分配在业务事务之前独立提交，行锁保证项目内原子递增；失败允许空号且原操作保留原编号：
 --   INSERT INTO studio_project_counters(project_id) VALUES ($1) ON CONFLICT (project_id) DO NOTHING;
 --   UPDATE studio_project_counters SET next_sequence = next_sequence + 1
 --     WHERE project_id = $1 RETURNING next_sequence - 1 AS sequence;
@@ -45,7 +45,11 @@
 -- 枚举类型：全部状态字段的唯一权威定义
 -- ============================================================
 
-CREATE TYPE studio_entity_kind AS ENUM ('scenario','requirement');
+CREATE TYPE studio_confirmation_stage AS ENUM ('material','prototype');
+CREATE TYPE studio_adoption_scope AS ENUM ('material-package','prototype-package');
+CREATE TYPE studio_adoption_status AS ENUM ('accepted','succeeded');
+
+CREATE TYPE studio_entity_kind AS ENUM ('scenario','requirement','baseline','handoff');
 COMMENT ON TYPE studio_entity_kind IS '资产种类';
 
 CREATE TYPE studio_confirmation_status AS ENUM ('draft','confirmed');
@@ -55,14 +59,14 @@ CREATE TYPE studio_task_status AS ENUM ('idle','active','aborted','completed');
 COMMENT ON TYPE studio_task_status IS '任务状态';
 
 -- design 普通整理；scenario-batch 显式修订批次（冻结关联需求、同批确认）
-CREATE TYPE studio_occupation_purpose AS ENUM ('design','scenario-batch');
+CREATE TYPE studio_occupation_purpose AS ENUM ('design','prototype','scenario-batch');
 COMMENT ON TYPE studio_occupation_purpose IS '占用用途';
 
 CREATE TYPE studio_occupation_finish AS ENUM ('aborted','completed');
 COMMENT ON TYPE studio_occupation_finish IS '占用结束方式';
 
--- 模板变更不作为独立范围，随材料或批次候选一并提交接受
-CREATE TYPE studio_integration_scope AS ENUM ('material','scenario-batch');
+-- 模板使用独立项目受控配置发布，不领取材料占用或确认材料
+CREATE TYPE studio_integration_scope AS ENUM ('material','prototype','scenario-batch','template');
 COMMENT ON TYPE studio_integration_scope IS '集成范围';
 
 CREATE TYPE studio_integration_status AS ENUM ('prepared','accepted','aborted');
@@ -152,6 +156,11 @@ CREATE TABLE studio_projects (
   last_editor_account varchar(50) NOT NULL,
   last_editor_name varchar(50) NOT NULL,
   last_edited_date timestamptz NOT NULL DEFAULT now(),
+  current_baseline_id text,
+  deployment_baseline_id text,
+  deployment_url text,
+  deployment_artifact_sha256 text CHECK (deployment_artifact_sha256 ~ '^[a-f0-9]{64}$'),
+  deployed_at timestamptz,
   UNIQUE (creator_id, key),
   UNIQUE (namespace_id, path),
   CHECK (
@@ -174,7 +183,7 @@ COMMENT ON COLUMN studio_projects.recognized_head IS '认可分支头';
 -- 集成（准备候选 → 条件更新远端头 → 完成接受）
 -- ============================================================
 
--- 每项目至多一条 prepared（部分唯一索引）；模板改动随候选一并提交，
+-- 每项目至多一条 prepared（部分唯一索引）；模板独立构造受控候选提交，
 -- allowed_paths 可声明 .template/ 与 project.assets.json，完整 diff 不得越界；
 -- request 仅保存结果未知时核对所需的控制协议字段（幂等键、修订号、固定引用、确认方式、
 -- 适用性与来源版本等）；不得携带正文、metadata、质量项、待澄清项、evidence 或 files 清单。
@@ -182,8 +191,10 @@ CREATE TABLE studio_integrations (
   id text PRIMARY KEY,
   project_id text NOT NULL REFERENCES studio_projects(id),
   scope studio_integration_scope NOT NULL,
-  entity_id text NOT NULL,
-  occupation_id text NOT NULL,
+  entity_id text,
+  occupation_id text,
+  expected_project_revision integer,
+  baseline_id text,
   status studio_integration_status NOT NULL,
   source_sha text NOT NULL CHECK (source_sha ~ '^[a-f0-9]{40}$'),
   expected_head text NOT NULL CHECK (expected_head ~ '^[a-f0-9]{40}$'),
@@ -197,7 +208,9 @@ CREATE TABLE studio_integrations (
   last_editor_id bigint NOT NULL REFERENCES studio_users(id),
   last_editor_account varchar(50) NOT NULL,
   last_editor_name varchar(50) NOT NULL,
-  last_edited_date timestamptz NOT NULL DEFAULT now()
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  CHECK ((scope = 'template' AND entity_id IS NULL AND occupation_id IS NULL AND expected_project_revision IS NOT NULL) OR
+         (scope <> 'template' AND entity_id IS NOT NULL AND occupation_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX studio_one_prepared_integration ON studio_integrations(project_id) WHERE status = 'prepared';
 COMMENT ON TABLE studio_integrations IS '集成操作';
@@ -220,18 +233,21 @@ CREATE TABLE studio_project_counters (
 COMMENT ON TABLE studio_project_counters IS '编号计数器';
 COMMENT ON COLUMN studio_project_counters.next_sequence IS '下一序号';
 
--- 场景与需求实体：
+-- 场景、需求及后续阶段材料实体：
 --   id 为隐藏 UUID 技术身份，决定文件路径（场景/<id>.md），界面只展示业务编号；
---   sequence/code 项目内唯一，改名与修订不变，不可手改、重排或回收；
+--   仅场景持有 sequence/code，项目内唯一，改名与修订不变，不可手改、重排或回收；
 --   title/summary 入库用于目录投影，确认时随固定版本快照保存；
+--   category_id 仅需求及后续材料使用，场景禁止分类；
 --   template_ref 为场景绑定的模板固定引用 {commitSha,path,sha256}，仅场景持有，需求不得持有；
 --   确认状态与任务状态分列；列表默认按 last_edited_date 降序、sequence 稳定次序
 CREATE TABLE studio_entities (
   project_id text NOT NULL REFERENCES studio_projects(id),
   id text NOT NULL,
   kind studio_entity_kind NOT NULL,
-  sequence bigint NOT NULL CHECK (sequence > 0),
-  code text NOT NULL CHECK (code = 'SC-' || lpad(sequence::text, 4, '0')),
+  sequence bigint CHECK (sequence > 0),
+  code text CHECK (code = 'SC-' || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
+  category_id text,
+  template_id text,
   title text NOT NULL,
   summary text NOT NULL DEFAULT '',
   revision integer NOT NULL DEFAULT 0 CHECK (revision >= 0),
@@ -253,7 +269,10 @@ CREATE TABLE studio_entities (
   PRIMARY KEY (project_id, id),
   UNIQUE (project_id, sequence),
   UNIQUE (project_id, code),
-  CHECK ((kind = 'scenario') = (template_ref IS NOT NULL))
+  CHECK ((kind = 'scenario') = (template_ref IS NOT NULL)),
+  CHECK ((kind = 'scenario') = (template_id IS NOT NULL)),
+  CHECK ((kind = 'scenario' AND sequence IS NOT NULL AND code IS NOT NULL AND category_id IS NULL) OR
+         (kind <> 'scenario' AND sequence IS NULL AND code IS NULL AND category_id IS NOT NULL))
 );
 CREATE INDEX studio_entities_updated ON studio_entities(project_id, last_edited_date DESC, sequence);
 COMMENT ON TABLE studio_entities IS '场景与需求';
@@ -278,17 +297,23 @@ COMMENT ON COLUMN studio_entities.last_editor_name IS '最后编辑人姓名';
 COMMENT ON COLUMN studio_entities.last_edited_date IS '最后编辑时间';
 
 -- 编号预留：先分配后记实体；同一新建 operation_key 重试返回同一编号；
--- 分配后失败产生空号，不回收、不强求连续；entity_id 在实体行写入后回填
+-- 分配后失败不回收；预留同时确定 entity_id，但不要求业务实体已经写入
 CREATE TABLE studio_entity_numbers (
   project_id text NOT NULL REFERENCES studio_projects(id),
   sequence bigint NOT NULL CHECK (sequence > 0),
-  code text NOT NULL CHECK (code = 'SC-' || lpad(sequence::text, 4, '0')),
-  operation_key text,
-  entity_id text,
+  code text NOT NULL CHECK (code = 'SC-' || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
+  operation_key text NOT NULL,
+  entity_id text NOT NULL,
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (project_id, sequence),
   UNIQUE (project_id, code),
   UNIQUE (project_id, operation_key),
-  FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id)
+  UNIQUE (project_id, entity_id),
+  UNIQUE (project_id, entity_id, sequence)
 );
 COMMENT ON TABLE studio_entity_numbers IS '编号预留';
 COMMENT ON COLUMN studio_entity_numbers.operation_key IS '新建幂等键';
@@ -296,7 +321,7 @@ COMMENT ON COLUMN studio_entity_numbers.entity_id IS '占用实体';
 
 ALTER TABLE studio_entities
   ADD CONSTRAINT studio_entities_number_fk
-  FOREIGN KEY (project_id, sequence) REFERENCES studio_entity_numbers(project_id, sequence);
+  FOREIGN KEY (project_id, id, sequence) REFERENCES studio_entity_numbers(project_id, entity_id, sequence);
 
 -- 场景与需求的当前关联（草稿态，可随整理调整）；
 -- 确认时绑定的各场景固定版本见 studio_requirement_sources
@@ -308,7 +333,7 @@ CREATE TABLE studio_scenario_requirements (
   creator_account varchar(50) NOT NULL,
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (scenario_id, requirement_id),
+  PRIMARY KEY (project_id, scenario_id, requirement_id),
   FOREIGN KEY (project_id, scenario_id) REFERENCES studio_entities(project_id, id),
   FOREIGN KEY (project_id, requirement_id) REFERENCES studio_entities(project_id, id)
 );
@@ -361,6 +386,8 @@ CREATE TABLE studio_occupations (
   last_edited_date timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id),
   UNIQUE (project_id, entity_id, generation),
+  UNIQUE (project_id, entity_id, id),
+  UNIQUE (project_id, id),
   CHECK (creator_id = owner_id)
 );
 CREATE UNIQUE INDEX studio_one_active_occupation ON studio_occupations(project_id, entity_id) WHERE active;
@@ -389,7 +416,7 @@ COMMENT ON COLUMN studio_batch_freezes.entity_id IS '冻结需求';
 
 ALTER TABLE studio_integrations
   ADD CONSTRAINT studio_integrations_occupation_fk
-  FOREIGN KEY (occupation_id) REFERENCES studio_occupations(id);
+  FOREIGN KEY (project_id, entity_id, occupation_id) REFERENCES studio_occupations(project_id, entity_id, id);
 
 -- ============================================================
 -- 授权修复任务
@@ -401,7 +428,7 @@ CREATE TABLE studio_repair_tasks (
   id text PRIMARY KEY,
   project_id text NOT NULL,
   entity_id text NOT NULL,
-  occupation_id text NOT NULL REFERENCES studio_occupations(id),
+  occupation_id text NOT NULL,
   user_action_id text NOT NULL,
   start_hash text NOT NULL CHECK (start_hash ~ '^[a-f0-9]{64}$'),
   status studio_repair_status NOT NULL,
@@ -415,7 +442,10 @@ CREATE TABLE studio_repair_tasks (
   last_editor_account varchar(50) NOT NULL,
   last_editor_name varchar(50) NOT NULL,
   last_edited_date timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id)
+  FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id),
+  FOREIGN KEY (project_id, entity_id, occupation_id) REFERENCES studio_occupations(project_id, entity_id, id),
+  UNIQUE (project_id, entity_id, id),
+  UNIQUE (project_id, entity_id, user_action_id)
 );
 COMMENT ON TABLE studio_repair_tasks IS '授权修复任务';
 COMMENT ON COLUMN studio_repair_tasks.user_action_id IS '用户动作ID';
@@ -453,6 +483,7 @@ CREATE TABLE studio_confirmations (
   project_id text NOT NULL,
   entity_id text NOT NULL,
   version integer NOT NULL CHECK (version > 0),
+  stage studio_confirmation_stage NOT NULL DEFAULT 'material',
   revision integer NOT NULL CHECK (revision > 0),
   title text NOT NULL,
   summary text NOT NULL,
@@ -470,7 +501,8 @@ CREATE TABLE studio_confirmations (
   applicability studio_applicability NOT NULL DEFAULT 'applicable',
   applicability_reason text,
   UNIQUE (project_id, id),
-  UNIQUE (project_id, entity_id, version),
+  UNIQUE (project_id, entity_id, id),
+  UNIQUE (project_id, entity_id, version, stage),
   FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id),
   CHECK ((method = 'repair') = (repair_task_id IS NOT NULL)),
   CHECK (
@@ -495,7 +527,7 @@ COMMENT ON COLUMN studio_confirmations.applicability_reason IS '需求固定版�
 
 ALTER TABLE studio_entities
   ADD CONSTRAINT studio_entities_current_confirmation_fk
-  FOREIGN KEY (current_confirmation_id) REFERENCES studio_confirmations(id);
+  FOREIGN KEY (project_id, id, current_confirmation_id) REFERENCES studio_confirmations(project_id, entity_id, id);
 
 -- 需求确认绑定的场景固定版本：至少一个、可多个，提交时触发器强制；
 -- 仅允许同项目已接受的场景确认版本，不允许无来源或未确认来源
@@ -508,6 +540,161 @@ CREATE TABLE studio_requirement_sources (
 COMMENT ON TABLE studio_requirement_sources IS '需求场景来源';
 COMMENT ON COLUMN studio_requirement_sources.confirmation_id IS '需求确认';
 COMMENT ON COLUMN studio_requirement_sources.scenario_confirmation_id IS '场景确认版本';
+
+
+-- 需求分类与后续产品阶段的明确关系模型。场景不具有分类。
+CREATE TABLE studio_categories (
+  project_id text NOT NULL REFERENCES studio_projects(id),
+  id text NOT NULL,
+  name text NOT NULL,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  last_editor_id bigint NOT NULL REFERENCES studio_users(id),
+  last_editor_account varchar(50) NOT NULL,
+  last_editor_name varchar(50) NOT NULL,
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(project_id,id)
+);
+ALTER TABLE studio_entities ADD FOREIGN KEY(project_id,category_id) REFERENCES studio_categories(project_id,id);
+
+CREATE TABLE studio_prerequisites (
+  project_id text NOT NULL,
+  entity_id text NOT NULL,
+  requirement_id text NOT NULL,
+  version integer NOT NULL CHECK(version>0),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(project_id,entity_id,requirement_id),
+  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
+  FOREIGN KEY(project_id,requirement_id) REFERENCES studio_entities(project_id,id)
+);
+CREATE TABLE studio_occupation_inputs (
+  occupation_id text NOT NULL REFERENCES studio_occupations(id),
+  requirement_id text NOT NULL,
+  version integer NOT NULL CHECK(version>0),
+  confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
+  integration_sha text NOT NULL CHECK(integration_sha ~ '^[a-f0-9]{40}$'),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(occupation_id,requirement_id)
+);
+CREATE TABLE studio_eligibility (
+  project_id text NOT NULL,
+  entity_id text NOT NULL,
+  version integer NOT NULL CHECK(version>0),
+  enabled boolean NOT NULL,
+  reason text NOT NULL,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  last_editor_id bigint NOT NULL REFERENCES studio_users(id),
+  last_editor_account varchar(50) NOT NULL,
+  last_editor_name varchar(50) NOT NULL,
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(project_id,entity_id,version),
+  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id)
+);
+CREATE TABLE studio_baselines (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  entity_id text NOT NULL,
+  version integer NOT NULL CHECK(version>0),
+  commit_sha text NOT NULL CHECK(commit_sha ~ '^[a-f0-9]{40}$'),
+  confirmation_id text NOT NULL UNIQUE REFERENCES studio_confirmations(id),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
+  UNIQUE(project_id,entity_id,version)
+);
+ALTER TABLE studio_projects ADD FOREIGN KEY(current_baseline_id) REFERENCES studio_baselines(id);
+ALTER TABLE studio_integrations ADD FOREIGN KEY(baseline_id) REFERENCES studio_baselines(id);
+CREATE TABLE studio_integration_confirmations (
+  integration_id text NOT NULL REFERENCES studio_integrations(id),
+  confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
+  PRIMARY KEY(integration_id,confirmation_id)
+);
+CREATE TABLE studio_adoptions (
+  id text PRIMARY KEY,
+  source_project_id text NOT NULL,
+  source_entity_id text NOT NULL,
+  source_version integer NOT NULL CHECK(source_version>0),
+  target_project_id text NOT NULL,
+  target_entity_id text NOT NULL,
+  target_task_id text NOT NULL,
+  scope studio_adoption_scope NOT NULL,
+  adjustment_summary text NOT NULL,
+  status studio_adoption_status NOT NULL,
+  target_confirmation_id text REFERENCES studio_confirmations(id),
+  target_version integer CHECK(target_version>0),
+  succeeded_at timestamptz,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  last_editor_id bigint NOT NULL REFERENCES studio_users(id),
+  last_editor_account varchar(50) NOT NULL,
+  last_editor_name varchar(50) NOT NULL,
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(source_project_id,source_entity_id) REFERENCES studio_entities(project_id,id),
+  FOREIGN KEY(target_project_id,target_entity_id) REFERENCES studio_entities(project_id,id)
+);
+CREATE TABLE studio_handoff_receipts (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  entity_id text NOT NULL,
+  confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
+  note text NOT NULL,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
+  UNIQUE(project_id,entity_id,confirmation_id,creator_id)
+);
+CREATE UNIQUE INDEX studio_one_active_repair ON studio_repair_tasks(project_id,entity_id,occupation_id) WHERE status IN ('active','paused');
+
+-- 草稿需求也绑定已确认场景的固定版本，不只保存可变场景关联。
+CREATE TABLE studio_entity_scenario_sources (
+  project_id text NOT NULL,
+  entity_id text NOT NULL,
+  scenario_confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(project_id,entity_id,scenario_confirmation_id),
+  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id)
+);
+
+-- 复合外键保证占用、修复、确认和派生物不能跨项目或跨实体串接。
+ALTER TABLE studio_integrations ADD UNIQUE(project_id,id);
+ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_integration_id_fkey;
+ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,integration_id) REFERENCES studio_integrations(project_id,id);
+ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_repair_task_id_fkey;
+ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,entity_id,repair_task_id) REFERENCES studio_repair_tasks(project_id,entity_id,id);
+ALTER TABLE studio_batch_freezes DROP CONSTRAINT studio_batch_freezes_occupation_id_fkey;
+ALTER TABLE studio_batch_freezes ADD FOREIGN KEY(project_id,occupation_id) REFERENCES studio_occupations(project_id,id);
+ALTER TABLE studio_baselines ADD UNIQUE(project_id,id);
+ALTER TABLE studio_baselines DROP CONSTRAINT studio_baselines_confirmation_id_fkey;
+ALTER TABLE studio_baselines ADD FOREIGN KEY(project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
+ALTER TABLE studio_projects DROP CONSTRAINT studio_projects_current_baseline_id_fkey;
+ALTER TABLE studio_projects ADD FOREIGN KEY(id,current_baseline_id) REFERENCES studio_baselines(project_id,id);
+ALTER TABLE studio_integrations DROP CONSTRAINT studio_integrations_baseline_id_fkey;
+ALTER TABLE studio_integrations ADD FOREIGN KEY(project_id,baseline_id) REFERENCES studio_baselines(project_id,id);
+ALTER TABLE studio_projects ADD FOREIGN KEY(id,deployment_baseline_id) REFERENCES studio_baselines(project_id,id);
+ALTER TABLE studio_handoff_receipts DROP CONSTRAINT studio_handoff_receipts_confirmation_id_fkey;
+ALTER TABLE studio_handoff_receipts ADD FOREIGN KEY(project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
+ALTER TABLE studio_adoptions DROP CONSTRAINT studio_adoptions_target_confirmation_id_fkey;
+ALTER TABLE studio_adoptions ADD FOREIGN KEY(target_project_id,target_entity_id,target_confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
 
 -- ============================================================
 -- 幂等操作与审计
@@ -571,7 +758,7 @@ CREATE TRIGGER studio_requirement_sources_immutable BEFORE UPDATE OR DELETE ON s
 -- 项目原创建请求身份不可变，生命周期仅前进；改名不改变请求指纹。
 CREATE FUNCTION studio_guard_project_creation() RETURNS trigger AS $$
 BEGIN
-  IF NEW.id <> OLD.id OR NEW.creator_id <> OLD.creator_id OR NEW.key <> OLD.key OR
+  IF NEW.id <> OLD.id OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date OR NEW.key <> OLD.key OR
      NEW.request_hash <> OLD.request_hash OR NEW.marker <> OLD.marker OR
      NEW.namespace_id <> OLD.namespace_id OR NEW.namespace_path <> OLD.namespace_path OR NEW.path <> OLD.path THEN
     RAISE EXCEPTION 'project creation identity and original request fingerprint are immutable';
@@ -591,10 +778,10 @@ COMMENT ON FUNCTION studio_guard_project_creation() IS '项目创建身份与生
 CREATE TRIGGER studio_projects_guard BEFORE UPDATE ON studio_projects
   FOR EACH ROW EXECUTE FUNCTION studio_guard_project_creation();
 
--- 编号预留仅允许回填 entity_id；sequence/code/operation_key 不可改、不可删
+-- 编号预留的身份、编号、请求及创建人不可改、不可删
 CREATE FUNCTION studio_guard_entity_number() RETURNS trigger AS $$
 BEGIN
-  IF NEW.sequence <> OLD.sequence OR NEW.code <> OLD.code OR NEW.operation_key IS DISTINCT FROM OLD.operation_key THEN
+  IF NEW.project_id <> OLD.project_id OR NEW.entity_id <> OLD.entity_id OR NEW.sequence <> OLD.sequence OR NEW.code <> OLD.code OR NEW.operation_key IS DISTINCT FROM OLD.operation_key OR NEW.request_hash <> OLD.request_hash OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
     RAISE EXCEPTION 'allocated entity numbers cannot be modified, reordered or recycled';
   END IF;
   RETURN NEW;
@@ -609,7 +796,7 @@ CREATE TRIGGER studio_entity_numbers_no_delete BEFORE DELETE ON studio_entity_nu
 -- 实体技术身份与业务编号不可变（改名与修订保持不变）；其余更新自动维护 last_edited_date
 CREATE FUNCTION studio_guard_entity_identity() RETURNS trigger AS $$
 BEGIN
-  IF NEW.id <> OLD.id OR NEW.sequence <> OLD.sequence OR NEW.code <> OLD.code OR NEW.kind <> OLD.kind THEN
+  IF NEW.project_id <> OLD.project_id OR NEW.id <> OLD.id OR NEW.sequence IS DISTINCT FROM OLD.sequence OR NEW.code IS DISTINCT FROM OLD.code OR NEW.kind <> OLD.kind OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
     RAISE EXCEPTION 'entity identity, kind, sequence and code are immutable';
   END IF;
   NEW.last_edited_date = now();
@@ -632,7 +819,7 @@ BEGIN
   IF entity_kind = 'scenario' AND NEW.applicability <> 'applicable' THEN
     RAISE EXCEPTION 'scenario confirmation % must be applicable', NEW.id;
   END IF;
-  IF entity_kind = 'requirement' THEN
+  IF entity_kind = 'requirement' AND NEW.stage = 'material' THEN
     IF NOT EXISTS (SELECT 1 FROM studio_requirement_sources WHERE confirmation_id = NEW.id) THEN
       RAISE EXCEPTION 'requirement confirmation % requires at least one confirmed scenario source', NEW.id;
     END IF;
@@ -640,7 +827,7 @@ BEGIN
       SELECT 1 FROM studio_requirement_sources s
       JOIN studio_confirmations sc ON sc.id = s.scenario_confirmation_id
       JOIN studio_entities e ON e.project_id = sc.project_id AND e.id = sc.entity_id
-      WHERE s.confirmation_id = NEW.id AND (sc.project_id <> NEW.project_id OR e.kind <> 'scenario')
+      WHERE s.confirmation_id = NEW.id AND (sc.project_id <> NEW.project_id OR e.kind <> 'scenario' OR sc.stage <> 'material')
     ) THEN
       RAISE EXCEPTION 'requirement confirmation % sources must be confirmed scenario versions of the same project', NEW.id;
     END IF;
@@ -654,3 +841,100 @@ CREATE CONSTRAINT TRIGGER studio_confirmation_acceptance
   AFTER INSERT ON studio_confirmations DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION studio_check_confirmation_acceptance();
 COMMENT ON TRIGGER studio_confirmation_acceptance ON studio_confirmations IS '提交时统一校验';
+
+-- 草稿需求与确认需求一致，必须始终具有至少一个同项目的已确认场景固定来源。
+-- 关系可在同事务内分步写入，提交时才检查最终来源集合，允许 scenario-batch 原子更新。
+CREATE FUNCTION studio_assert_draft_requirement_sources(p_project text, p_entity text) RETURNS void AS $$
+DECLARE
+  entity_kind studio_entity_kind;
+BEGIN
+  SELECT kind INTO entity_kind FROM studio_entities WHERE project_id=p_project AND id=p_entity;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF entity_kind <> 'requirement' THEN
+    IF EXISTS(SELECT 1 FROM studio_entity_scenario_sources WHERE project_id=p_project AND entity_id=p_entity) OR
+       EXISTS(SELECT 1 FROM studio_scenario_requirements WHERE project_id=p_project AND requirement_id=p_entity) THEN
+      RAISE EXCEPTION 'only requirements may have scenario sources';
+    END IF;
+    RETURN;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM studio_entity_scenario_sources WHERE project_id=p_project AND entity_id=p_entity) THEN
+    RAISE EXCEPTION 'draft requirement % requires at least one confirmed scenario source', p_entity;
+  END IF;
+  IF EXISTS(
+    SELECT 1 FROM studio_entity_scenario_sources s
+    JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id
+    JOIN studio_entities e ON e.project_id=f.project_id AND e.id=f.entity_id
+    WHERE s.project_id=p_project AND s.entity_id=p_entity AND
+      (f.project_id<>p_project OR e.kind<>'scenario' OR f.stage<>'material')
+  ) THEN
+    RAISE EXCEPTION 'draft requirement sources must be fixed scenario material versions of the same project';
+  END IF;
+  IF (SELECT count(*)<>count(DISTINCT f.entity_id) FROM studio_entity_scenario_sources s
+      JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id WHERE s.project_id=p_project AND s.entity_id=p_entity) THEN
+    RAISE EXCEPTION 'a draft requirement must bind one fixed version per scenario';
+  END IF;
+  IF EXISTS(
+    SELECT 1 FROM studio_scenario_requirements r WHERE r.project_id=p_project AND r.requirement_id=p_entity AND
+      NOT EXISTS(SELECT 1 FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id
+        WHERE s.project_id=p_project AND s.entity_id=p_entity AND f.entity_id=r.scenario_id)
+  ) OR EXISTS(
+    SELECT 1 FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id
+    WHERE s.project_id=p_project AND s.entity_id=p_entity AND NOT EXISTS(
+      SELECT 1 FROM studio_scenario_requirements r WHERE r.project_id=p_project AND r.requirement_id=p_entity AND r.scenario_id=f.entity_id)
+  ) THEN
+    RAISE EXCEPTION 'draft requirement scenario relations must match its fixed sources';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION studio_check_draft_requirement_sources() RETURNS trigger AS $$
+DECLARE
+  old_project text;
+  old_entity text;
+  new_project text;
+  new_entity text;
+BEGIN
+  IF TG_OP <> 'INSERT' THEN
+    old_project=OLD.project_id;
+    IF TG_TABLE_NAME='studio_entities' THEN old_entity=OLD.id;
+    ELSIF TG_TABLE_NAME='studio_scenario_requirements' THEN old_entity=OLD.requirement_id;
+    ELSE old_entity=OLD.entity_id; END IF;
+    PERFORM studio_assert_draft_requirement_sources(old_project,old_entity);
+  END IF;
+  IF TG_OP <> 'DELETE' THEN
+    new_project=NEW.project_id;
+    IF TG_TABLE_NAME='studio_entities' THEN new_entity=NEW.id;
+    ELSIF TG_TABLE_NAME='studio_scenario_requirements' THEN new_entity=NEW.requirement_id;
+    ELSE new_entity=NEW.entity_id; END IF;
+    IF TG_OP='INSERT' OR new_project IS DISTINCT FROM old_project OR new_entity IS DISTINCT FROM old_entity THEN
+      PERFORM studio_assert_draft_requirement_sources(new_project,new_entity);
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+CREATE CONSTRAINT TRIGGER studio_draft_sources_entity AFTER INSERT OR UPDATE ON studio_entities
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_draft_requirement_sources();
+CREATE CONSTRAINT TRIGGER studio_draft_sources_binding AFTER INSERT OR UPDATE OR DELETE ON studio_entity_scenario_sources
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_draft_requirement_sources();
+CREATE CONSTRAINT TRIGGER studio_draft_sources_relation AFTER INSERT OR UPDATE OR DELETE ON studio_scenario_requirements
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_draft_requirement_sources();
+
+-- 固定来源明细即使在确认后被追加，也须独立保持同项目和种类约束。
+CREATE FUNCTION studio_check_fixed_scenario_source() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS(
+    SELECT 1 FROM studio_confirmations r
+    JOIN studio_entities re ON re.project_id=r.project_id AND re.id=r.entity_id
+    JOIN studio_confirmations s ON s.id=NEW.scenario_confirmation_id
+    JOIN studio_entities se ON se.project_id=s.project_id AND se.id=s.entity_id
+    WHERE r.id=NEW.confirmation_id AND r.project_id=s.project_id AND
+      re.kind='requirement' AND r.stage='material' AND se.kind='scenario' AND s.stage='material'
+  ) THEN
+    RAISE EXCEPTION 'requirement sources must be confirmed scenario material versions of the same project';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE CONSTRAINT TRIGGER studio_fixed_scenario_source AFTER INSERT ON studio_requirement_sources
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_fixed_scenario_source();

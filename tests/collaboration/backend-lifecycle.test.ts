@@ -6,7 +6,7 @@ import { createApp } from '../../apps/collaboration-api/src/app.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
 import type { EntityView, LoginResponse, ProjectState, ProjectView } from '../../packages/contracts/src/index.ts'
-import { boundUser, fixtureToken, gitlabFixture } from './gitlab-fixture.ts'
+import { boundUser, fixtureToken, gitlabFixture, templateCatalog } from './gitlab-fixture.ts'
 
 // Run only against a new, disposable database named eadp_auth_check_*.
 // STUDIO_TEST_DATABASE_URL=... pnpm --dir apps/collaboration-api exec tsx --test ../../tests/collaboration/backend-lifecycle.test.ts
@@ -79,7 +79,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     assert.equal(changed.statusCode, 409)
     const categories = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers: auth(), payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '业务分类', expectedRevision: 0 } })
     assert.equal(categories.statusCode, 409, categories.body)
-    assert.equal((await database.query('SELECT data FROM studio_projects WHERE id=$1', [created.id])).rows[0].data.recognizedHead, null)
+    assert.equal((await database.query('SELECT state,recognized_head FROM studio_projects WHERE id=$1', [created.id])).rows[0].recognized_head, null)
   })
 
   await t.test('concurrent requests share one durable creation operation', async () => {
@@ -131,10 +131,10 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const notPushed = await initialize()
     assert.ok(notPushed.statusCode >= 400, notPushed.body)
     remote.head = initialSha; remote.default_branch = 'main'; remote.empty_repo = false
-    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '原型代码'] }
+    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: templateCatalog }
     const wrongIdentity = await initialize()
     assert.ok(wrongIdentity.statusCode >= 400, wrongIdentity.body)
-    assert.equal((await database.query('SELECT data FROM studio_projects WHERE id=$1', [created.id])).rows[0].data.initializationStatus, 'pending')
+    assert.equal((await database.query('SELECT state,recognized_head FROM studio_projects WHERE id=$1', [created.id])).rows[0].state, 'assigned')
     remote.manifest = { ...remote.manifest, projectId: created.id }
     gitlab.controls.wrongRootParent = true
     const nonRoot = await initialize()
@@ -180,7 +180,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     assert.equal(current.statusCode, 200, current.body)
     const category = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers, payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '头门禁分类', expectedRevision: current.json<ProjectState>().project.revision } })
     assert.equal(category.statusCode, 200, category.body)
-    const reserved = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/entities`, headers, payload: { idempotencyKey: randomUUID(), kind: 'requirement', title: '头门禁需求', categoryId: category.json<ProjectView>().categories.at(-1)!.id } })
+    const reserved = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/entities`, headers, payload: { idempotencyKey: randomUUID(), kind: 'scenario', title: '头门禁场景' } })
     assert.equal(reserved.statusCode, 200, reserved.body)
     const entity = reserved.json<EntityView>()
     const claim = () => app.inject({ method: 'POST', url: `/v1/projects/${created.id}/entities/${entity.id}/claim`, headers, payload: { idempotencyKey: randomUUID(), expectedRevision: entity.revision, taskId: randomUUID(), clientId: randomUUID(), purpose: 'design' } })

@@ -1,9 +1,9 @@
 import type { EntityOccupancyView, EntityView } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 
-// Unconfirmed entities expose their occupancy card only; the author and every confirmed entity stay fully visible.
+// Shared draft cards contain directory and control fields; only accepted fixed material is shared.
 export function visibleEntity(entity: EntityView, actor: Actor): EntityView | EntityOccupancyView {
-  if (entity.authorId === actor.id || entity.confirmationStatus === 'confirmed') return entity;
-  const { id, kind, revision, taskStatus, occupation } = entity;
-  return { id, kind, revision, taskStatus, ...(occupation ? { occupation } : {}) };
+  if (entity.authorId === actor.id || entity.current) return entity;
+  const { id, kind, title, summary, sequence, code, creator, lastEditor, authorId, confirmationStatus, materialVersion, revision, taskStatus, occupation, frozenBy, associationRevision } = entity;
+  return { id, kind, title, summary, sequence, code, creator, lastEditor, authorId, confirmationStatus, materialVersion, revision, taskStatus, occupation, frozenBy, associationRevision };
 }

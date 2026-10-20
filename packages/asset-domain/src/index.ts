@@ -1,4 +1,4 @@
-import { isConfirmedMaterialMetadata, type EntityView, type MaterialMetadata, type Prerequisite } from '@eadp/contracts';
+import { isConfirmedMaterialMetadata, isProjectManifest, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
 
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 409, public readonly details?: unknown) { super(message); }
@@ -23,14 +23,46 @@ export function parseMaterial(markdown: string): MaterialMetadata {
   let metadata: unknown;
   try { metadata = JSON.parse(matches[0]![1]!); } catch { throw new DomainError('INVALID_MATERIAL', 'Invalid material metadata JSON', 422); }
   requireCondition(isConfirmedMaterialMetadata(metadata), 'INVALID_MATERIAL', 'Material metadata does not match the confirmation contract', 422);
-  requireCondition(metadata.coreRulesPresent && metadata.acceptanceCriteriaPresent && !metadata.openQuestions.some(q => q.blocking), 'CORE_UNRESOLVED', 'Core business rules and acceptance criteria must be resolved', 422);
-  for (const title of ['核心业务规则', '验收条件']) {
-    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const section = markdown.match(new RegExp(`^## ${escaped}\\n([^]*?)(?=^## |$(?![^]))`, 'm'))?.[1]?.trim();
-    requireCondition(section && section.length >= 2, 'CORE_UNRESOLVED', `Material requires a nonempty ${title} section`, 422);
-  }
-  requireCondition(!metadata.referencedAssets.some(r => r.entityId === metadata.entityId), 'SELF_REFERENCE', 'An asset manifest cannot reference itself', 422);
+  validateMaterialMetadata(metadata);
   return metadata;
+}
+/** Checks explicit business declarations without inferring quality from document headings. */
+export function validateMaterialMetadata(metadata: MaterialMetadata): void {
+  requireCondition(metadata.coreRulesPresent && metadata.acceptanceCriteriaPresent && !metadata.openQuestions.some(q => q.blocking), 'CORE_UNRESOLVED', 'Core business rules and acceptance criteria must be resolved', 422);
+  requireCondition(!metadata.referencedAssets.some(r => r.entityId === metadata.entityId), 'SELF_REFERENCE', 'An asset manifest cannot reference itself', 422);
+  if (metadata.kind === 'requirement') requireCondition(metadata.sources.length > 0, 'SCENARIO_SOURCE_REQUIRED', 'Requirements need at least one confirmed scenario version source', 422);
+  const files = new Map<string, string>();
+  for (const file of [...(metadata.files ?? []), ...metadata.businessEvidence.flatMap(e => e.files)]) {
+    repositoryPath(file.path);
+    const prior = files.get(file.path);
+    requireCondition(!prior || prior === file.sha256, 'FILE_REFERENCE_CONFLICT', 'The same fixed file cannot declare different hashes', 422);
+    files.set(file.path, file.sha256);
+  }
+  for (const evidence of metadata.businessEvidence) {
+    requireCondition(evidence.files.every(file => file.path.startsWith('.eadp/evidence/')), 'EVIDENCE_PATH_SCOPE', 'Formal evidence must be archived under .eadp/evidence/', 422);
+    for (const range of evidence.ranges) {
+      repositoryPath(range.path);
+      requireCondition(range.startLine <= range.endLine && evidence.files.some(file => file.path === range.path), 'EVIDENCE_RANGE_INVALID', 'Evidence ranges must belong to the archived files and be ordered', 422);
+    }
+  }
+  if (metadata.kind === 'scenario') {
+    repositoryPath(metadata.templateRef.path);
+    requireCondition(metadata.templateRef.path === `.template/${metadata.templateId}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'The template path must match its stable template ID', 422);
+  }
+}
+/** Validates the project-owned template catalog; the accepted Git tree remains authoritative. */
+export function parseProjectManifest(text: string): ProjectManifest {
+  let manifest: unknown;
+  try { manifest = JSON.parse(text); } catch { throw new DomainError('INVALID_PROJECT_MANIFEST', 'Project manifest must be valid JSON', 422); }
+  requireCondition(isProjectManifest(manifest), 'INVALID_PROJECT_MANIFEST', 'Project manifest does not match the project contract', 422);
+  const catalog = manifest.scenarioTemplates;
+  requireCondition(new Set(catalog.templates.map(t => t.id)).size === catalog.templates.length && new Set(catalog.templates.map(t => t.path)).size === catalog.templates.length, 'DUPLICATE_TEMPLATE', 'Project template identities and paths must be unique', 422);
+  requireCondition(catalog.templates.some(t => t.id === catalog.defaultTemplateId), 'DEFAULT_TEMPLATE_REQUIRED', 'The default scenario template must exist in the catalog', 422);
+  for (const template of catalog.templates) {
+    repositoryPath(template.path);
+    requireCondition(template.path === `.template/${template.id}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'Template paths must match their stable template IDs', 422);
+  }
+  return manifest;
 }
 export function validatePrerequisites(entityId: string, prerequisites: Prerequisite[], entities: EntityView[]): void {
   const byId = new Map(entities.map(e => [e.id, e]));

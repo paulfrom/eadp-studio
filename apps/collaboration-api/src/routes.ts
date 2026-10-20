@@ -32,6 +32,13 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   write('POST', `${base}/initialize`, contract.InitializeProjectSchema, (a, p, b) => service.initializeProject(a, p.projectId!, b));
   write('POST', `${base}/categories`, contract.CategorySchema, (a, p, b) => service.category(a, p.projectId!, b));
   write('POST', `${base}/entities`, contract.ReserveEntitySchema, (a, p, b) => service.reserve(a, p.projectId!, b));
+  write('PUT', `${base}/entities/:entityId`, contract.UpdateEntitySchema, (a, p, b) => service.updateEntity(a, p.projectId!, p.entityId!, b));
+  read(`${base}/entities/:entityId/revision-impact`, (a, p) => service.revisionImpact(a, p.projectId!, p.entityId!));
+  read(`${base}/templates`, (a, p) => service.projectTemplates(a, p.projectId!));
+  write('PUT', `${base}/entities/:entityId/template`, contract.BindTemplateSchema, (a, p, b) => service.bindTemplate(a, p.projectId!, p.entityId!, b));
+  write('POST', `${base}/entities/:entityId/repairs`, contract.RepairStartSchema, (a, p, b) => service.startRepair(a, p.projectId!, p.entityId!, b));
+  read(`${base}/repairs/:repairId`, (a, p) => service.getRepair(a, p.projectId!, p.repairId!));
+  write('POST', `${base}/repairs/:repairId/events`, contract.RepairEventSchema, (a, p, b) => service.repairEvent(a, p.projectId!, p.repairId!, b));
   write('POST', `${base}/entities/:entityId/claim`, contract.ClaimSchema, (a, p, b) => service.claim(a, p.projectId!, p.entityId!, b));
   write('POST', `${base}/entities/:entityId/cancel`, contract.ReleaseSchema, (a, p, b) => service.release(a, p.projectId!, p.entityId!, b));
   write('POST', `${base}/entities/:entityId/admin-release`, contract.ReleaseSchema, (a, p, b) => service.release(a, p.projectId!, p.entityId!, b, true));
@@ -49,7 +56,7 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   write('POST', `${base}/entities/:entityId/receipts`, contract.HandoffReceiptSchema, (a, p, b) => service.receipt(a, p.projectId!, p.entityId!, b));
   read(`${base}/entities/:entityId/receipts`, async (a, p) => {
     await service.authorize(a, p.projectId!);
-    return (await service.database.query('SELECT id,confirmation_id AS "confirmationId",actor_id AS "actorId",note,created_at AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 ORDER BY created_at', [p.projectId!, p.entityId!])).rows;
+    return (await service.database.query('SELECT id,confirmation_id AS "confirmationId",creator_id::integer AS "actorId",note,created_date AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 ORDER BY created_date', [p.projectId!, p.entityId!])).rows;
   });
   read(`${base}/deployment`, async (a, p) => (await service.authorize(a, p.projectId!)).deployment ?? null);
   write('POST', `${base}/publication-authorizations`, contract.PublicationAuthorizationSchema, (a, p, b) => service.publicationAuthorization(a, p.projectId!, b));
