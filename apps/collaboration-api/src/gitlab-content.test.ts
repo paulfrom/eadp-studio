@@ -35,7 +35,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   const changedPath = stage === 'prototype' ? '原型代码/src/pages/index.tsx' : materialPath;
   const diff = (path: string, text = '+accepted change') => ({ old_path: path, new_path: path, deleted_file: false, renamed_file: false, diff: text });
   const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: (stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : ['materials', 'relations']).map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: stage === 'prototype' ? { ...fixed } : { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }], ...(stage === 'scenario-batch' ? { expectedAssociationRevision: 0, batchRequirementIds: [] } : {}) };
-  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] } }, files: new Map([[evidencePath, evidenceBytes]]), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
+  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
   const reads: Array<{ path: string; ref: string | null }> = [];
   mock.method(globalThis, 'fetch', async (url: string | URL | Request, request: RequestInit) => {
     const parsed = new URL(String(url)), path = decodeURIComponent(parsed.pathname.replace(/^\/api\/v4/, ''));
@@ -252,11 +252,11 @@ test('scenario templates are fixed catalog references and business metadata has 
 });
 
 test('template catalogs reject missing defaults, duplicate identities and paths outside their directory', () => {
-  const f = fixture('material'), manifest = f.controls.projectManifest;
+  const f = fixture('material'), manifest = f.controls.projectManifest, catalog = manifest.scenarioTemplates!;
   for (const scenarioTemplates of [
-    { ...manifest.scenarioTemplates, defaultTemplateId: 'absent' },
-    { ...manifest.scenarioTemplates, templates: [manifest.scenarioTemplates.templates[0], manifest.scenarioTemplates.templates[0]] },
-    { ...manifest.scenarioTemplates, templates: [{ id: 'default', name: 'Default', path: '需求/default.md' }] },
+    { ...catalog, defaultTemplateId: 'absent' },
+    { ...catalog, templates: [catalog.templates[0], catalog.templates[0]] },
+    { ...catalog, templates: [{ id: 'default', name: 'Default', path: '需求/default.md' }] },
   ]) assert.throws(() => parseProjectManifest(JSON.stringify({ ...manifest, scenarioTemplates })), error => error instanceof DomainError);
 });
 
@@ -298,4 +298,17 @@ test('template publication preserves historical catalog identities and refuses d
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_DELETE_FORBIDDEN'));
   f.controls.candidateManifest = undefined; f.controls.candidateDiffs[0]!.deleted_file = true;
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_PATH_SCOPE'));
+});
+
+test('a project accepted without a template catalog reads an empty catalog instead of failing', async () => {
+  const f = fixture('material'), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
+  f.controls.projectManifest = legacy;
+  assert.deepEqual(await f.content.loadProjectTemplates(actor, 7, head), { templates: [] });
+});
+
+test('the first template publication may declare the catalog of a project accepted without one', async () => {
+  const f = fixture('material'), input = templateInput(f), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
+  f.controls.projectManifest = legacy;
+  f.controls.candidateManifest = { ...legacy, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: '.template/default.md' }] } };
+  assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
 });

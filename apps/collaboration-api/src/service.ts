@@ -96,6 +96,7 @@ export class CollaborationService {
     if (input.kind === 'scenario') {
       requireCondition(!input.categoryId && !input.batch, 'INVALID_SCENARIO_FIELDS', 'Scenarios do not use categories or a parent batch', 422);
       const catalog = await this.content.loadProjectTemplates(actor, bound.gitlabProjectId, bound.recognizedHead!);
+      requireCondition(catalog.templates.length > 0, 'PROJECT_TEMPLATES_REQUIRED', 'Publish the project scenario templates before creating a scenario', 422);
       const selected = catalog.templates.find(t => t.id === (input.templateId ?? catalog.defaultTemplateId));
       requireCondition(selected, 'TEMPLATE_NOT_FOUND', 'Select an accepted project scenario template', 422);
       requireCondition(!input.templateRef || canonical(input.templateRef) === canonical(selected.fixed), 'TEMPLATE_VERSION_MISMATCH', 'New scenarios bind the selected accepted project template');

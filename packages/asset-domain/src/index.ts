@@ -56,6 +56,9 @@ export function parseProjectManifest(text: string): ProjectManifest {
   try { manifest = JSON.parse(text); } catch { throw new DomainError('INVALID_PROJECT_MANIFEST', 'Project manifest must be valid JSON', 422); }
   requireCondition(isProjectManifest(manifest), 'INVALID_PROJECT_MANIFEST', 'Project manifest does not match the project contract', 422);
   const catalog = manifest.scenarioTemplates;
+  // A project accepted before the catalog existed declares none; its templates
+  // are published later through the normal template integration.
+  if (!catalog) return manifest;
   requireCondition(new Set(catalog.templates.map(t => t.id)).size === catalog.templates.length && new Set(catalog.templates.map(t => t.path)).size === catalog.templates.length, 'DUPLICATE_TEMPLATE', 'Project template identities and paths must be unique', 422);
   requireCondition(catalog.templates.some(t => t.id === catalog.defaultTemplateId), 'DEFAULT_TEMPLATE_REQUIRED', 'The default scenario template must exist in the catalog', 422);
   for (const template of catalog.templates) {

@@ -2,51 +2,46 @@
 
 import { useEffect, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
+import type { PropsStore } from '@deepseek-ai/dsh-client-store'
+import type { StudioState } from '../../shared/studio.ts'
+import type { StudioSessionActions } from '../session.ts'
+import type { StudioProjectionStore } from '../store.ts'
 import type { ThemeFace } from '../theme.ts'
 import studioCss from '../studio.module.css'
 import css from './sections.module.css'
 import { ScenarioTemplateSettings } from './ScenarioTemplateSettings.tsx'
 
 /** Faces the Studio settings sections act through (wired from the client context). */
-export interface StudioSettingsFaces {
-  call(command: StudioCommand): Promise<StudioReply>
+export interface StudioSettingsFaces extends StudioSessionActions {
   theme: ThemeFace
 }
 
-type SectionProps = PropsRuntime<'settings.section'> & StudioSettingsFaces
+/** Props every Studio settings section receives: runtime seats, the session faces, and the shared projection store. */
+export type StudioSectionProps = PropsRuntime<'settings.section'> & StudioSettingsFaces & PropsStore<StudioProjectionStore>
 
-const idleState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
+type SectionProps = StudioSectionProps
 
-/** The workbench projection a section needs: fetched on mount, refreshed on demand. A failed fetch is not
- *  evidence of being signed out, so non-LOGIN_REQUIRED failures keep the last projection and surface `loadError`. */
-function useStudioState(call: StudioSettingsFaces['call']): { state: StudioState; setState(next: StudioState): void; refresh(): void; loadError: string } {
-  const [state, setState] = useState<StudioState>(idleState)
-  const [loadError, setLoadError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    let cancelled = false
-    void call({ action: 'state' }).then(result => {
-      if (cancelled) return
-      if (result.ok) { setState(result.state); setLoadError('') }
-      else if (result.code === 'LOGIN_REQUIRED') { setState(idleState()); setLoadError('') }
-      else setLoadError(result.message)
-    }).catch(error => { if (!cancelled) setLoadError(error instanceof Error ? error.message : '工作台状态获取失败') })
-    return () => { cancelled = true }
-  }, [call, attempt])
-  // Login/logout elsewhere (the workbench panel, another dialog session) announce
-  // themselves; a refetch here heals a section that mounted during a failed fetch.
-  useEffect(() => {
-    const refresh = () => setAttempt(value => value + 1)
-    window.addEventListener('eadp:studio-state-changed', refresh)
-    return () => window.removeEventListener('eadp:studio-state-changed', refresh)
-  }, [])
-  return { state, setState, refresh: () => setAttempt(value => value + 1), loadError }
+/** The shared projection a section renders: one read for the whole settings surface. */
+interface StudioSettingsView {
+  /** Undefined until the first answer arrives; never assume it means signed out. */
+  projection: StudioState | undefined
+  loading: boolean
+  error: string
 }
 
-/** Tell the workbench panel to re-poll immediately instead of waiting for its next tick. */
-function notifyWorkbench(): void {
-  window.dispatchEvent(new CustomEvent('eadp:studio-state-changed'))
+/**
+ * Read the shared projection and keep it fresh while a section is mounted.
+ * Mounting is the only trigger a closed dialog does not pay for; the session
+ * joins those concurrent requests into one Host round trip, and the workbench
+ * panel reads the same store, so no cross-surface announcement is needed.
+ */
+function useStudioSettings(props: StudioSectionProps): StudioSettingsView {
+  const projection = props.useStore(snapshot => snapshot.projection)
+  const loading = props.useStore(snapshot => snapshot.loading)
+  const error = props.useStore(snapshot => snapshot.error)
+  const sync = props.sync
+  useEffect(() => { sync() }, [sync])
+  return { projection, loading, error }
 }
 
 type IconName = 'monitor' | 'moon' | 'sun' | 'lock' | 'logout' | 'info'
@@ -75,75 +70,99 @@ function Section({ children }: { children: ReactNode }) {
   return <div className={`${studioCss.settingsScope} ${css.section}`}>{children}</div>
 }
 
+/** Placeholder for a section whose first projection has not arrived: the Host has not answered yet. */
+function Loading({ label }: { label: string }) {
+  return <div className={css.loadingCard} role="status" aria-busy="true">
+    <span className={css.spinner} aria-hidden="true" />
+    <div><div className={css.identityName}>{label}</div><div className={css.identityMeta}>正在从本机工作台服务读取状态…</div></div>
+  </div>
+}
+
+/** Failure text for a projection the Host did not deliver; a retry re-reads it. */
+function Unavailable({ detail, onRetry }: { detail: string; onRetry: () => void }) {
+  return <>
+    <p className={css.sectionIntro}>协同工作台状态暂时无法确认；请重试，或检查本机工作台服务是否正常。</p>
+    <div className={css.identityCard}>
+      <span className={css.identityAvatar}>!</span>
+      <div><div className={css.identityName}>无法获取登录状态</div><div className={css.identityMeta}>{detail || '工作台状态暂未确认，请重试。'}</div></div>
+      <button className={css.ghostBtn} onClick={onRetry}>重试</button>
+    </div>
+  </>
+}
+
+/** Inline notice that a refresh is under way; the visible projection stays in place. */
+function Syncing() {
+  return <span className={css.syncNote} role="status"><span className={css.spinner} aria-hidden="true" />正在同步…</span>
+}
+
 function CollabAccountSection(props: SectionProps) {
-  const { state, setState, loadError, refresh } = useStudioState(props.call)
+  const { projection, loading, error } = useStudioSettings(props)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const account = state.account
-  useEffect(() => { if (error) setPassword('') }, [error])
+  const [failure, setFailure] = useState('')
+  const account = projection?.account
+  useEffect(() => { if (failure) setPassword('') }, [failure])
   const submitLogin = (event: FormEvent) => {
     event.preventDefault()
     const submitted = password
     setPassword('')
     setBusy(true)
-    void props.call({ action: 'login', username, password: submitted }).then(result => {
-      if (result.ok) { setState(result.state); setUsername(''); setError(''); notifyWorkbench() }
-      else setError(result.message)
-    }).catch(err => setError(err instanceof Error ? err.message : '登录未完成，请重新提交')).finally(() => setBusy(false))
+    void props.login(username, submitted).then(text => {
+      if (text) { setFailure(text); return }
+      setUsername(''); setFailure('')
+    }).finally(() => setBusy(false))
   }
   const logout = () => {
     setBusy(true)
-    void props.call({ action: 'logout' }).then(result => {
-      if (result.ok) { setState(idleState()); notifyWorkbench() }
-    }).catch(() => { /* 登出失败保持现状，面板轮询会反映真实状态 */ }).finally(() => setBusy(false))
+    void props.logout().then(text => {
+      if (text) { setFailure(text); return }
+      setFailure('')
+    }).finally(() => setBusy(false))
   }
   return <Section>
-    {!account && loadError ? <>
-      <p className={css.sectionIntro}>协同工作台状态暂时无法确认；请重试，或检查本机工作台服务是否正常。</p>
-      <div className={css.identityCard}>
-        <span className={css.identityAvatar}>!</span>
-        <div><div className={css.identityName}>无法获取登录状态</div><div className={css.identityMeta}>{loadError}</div></div>
-        <button className={css.ghostBtn} onClick={refresh}>重试</button>
-      </div>
-    </> : account ? <>
-      <p className={css.sectionIntro}>协同身份用于登录工作台、校验项目访问权限；Git 推送仍使用本机 Git 凭据。</p>
-      <div className={css.identityCard}>
-        <span className={css.identityAvatar}>{account.name.slice(0, 1) || '@'}</span>
-        <div><div className={css.identityName}>{account.name}</div><div className={css.identityMeta}>@{account.username} · 协同用户 {account.id}<br />绑定 GitLab @{account.gitlabUsername}</div></div>
-        <span className={`${css.chip} ${css.ok}`}>已登录</span>
-      </div>
-      <div className={css.group}>
-        <h3 className={css.groupTitle}>登录状态</h3>
-        <div className={css.kvBlock}>
-          <div className={css.kv}><span className={css.kvK}>登录缓存</span><span className={css.kvV}><span className={`${css.badge} ${css.accent}`}>本机安全存储 · 90 天</span></span></div>
-          <div className={css.kv}><span className={css.kvK}>本机凭据</span><span className={css.kvV}>系统安全存储 · 会话令牌</span></div>
-          <div className={css.kv}><span className={css.kvK}>Git 凭据</span><span className={css.kvV}>本机独立管理</span></div>
+    {projection === undefined
+      // The first answer has not arrived: "signed out" is not yet a fact.
+      ? loading ? <Loading label="正在读取登录状态" /> : <Unavailable detail={error} onRetry={props.sync} />
+      : !account ? <>
+        <p className={css.sectionIntro}>使用协同账号登录工作台，项目访问权限由后台管理；登录状态在本机系统安全存储中缓存，最长 90 天。</p>
+        <div className={`${css.identityCard} ${css.signedOut}`}>
+          <span className={css.identityAvatar}>?</span>
+          <div><div className={css.identityName}>未登录协同工作台</div><div className={css.identityMeta}>登录后查看可用项目与当前占用。</div></div>
+          <span className={css.chip}>{loading ? '正在同步' : '未登录'}</span>
         </div>
-        <div className={css.settingRow}>
-          <div className={css.settingText}><div className={css.settingTitle}>退出登录</div><div className={css.settingDesc}>撤销当前协同会话并清除本机缓存；此操作不影响本机 Git 凭据。</div></div>
-          <button className={css.dangerBtn} disabled={busy} onClick={logout}><Icon name="logout" />退出登录</button>
+        <form className={css.loginForm} onSubmit={submitLogin} noValidate>
+          <div className={css.field}><label htmlFor="studio-login-username">用户名</label><input id="studio-login-username" required autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} placeholder="studioAdmin" maxLength={100} /></div>
+          <div className={css.field}><label htmlFor="studio-login-password">密码</label><input id="studio-login-password" required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="••••••••" maxLength={200} /></div>
+          {(failure || error) && <p className={css.inlineError} role="alert">{failure || error}</p>}
+          <button className={css.primaryBtn} type="submit" disabled={busy}>{busy ? '正在登录…' : '登录协同工作台'}</button>
+          <p className={css.formNote}>账号与密码仅发送到固定协同后端；登录状态在本机系统安全存储中缓存，本机不写入密码。</p>
+        </form>
+        <div className={css.loginSep}>登录状态保存策略</div>
+        <div className={css.note}><Icon name="lock" /><span>会话令牌在本机系统安全存储中缓存，默认最长 90 天；后端会话同步持久保存，退出登录会同时撤销远端会话。</span></div>
+      </> : <>
+        <p className={css.sectionIntro}>协同身份用于登录工作台、校验项目访问权限；Git 推送仍使用本机 Git 凭据。</p>
+        <div className={css.identityCard}>
+          <span className={css.identityAvatar}>{account.name.slice(0, 1) || '@'}</span>
+          <div><div className={css.identityName}>{account.name}</div><div className={css.identityMeta}>@{account.username} · 协同用户 {account.id}<br />绑定 GitLab @{account.gitlabUsername}</div></div>
+          <span className={`${css.chip} ${css.ok}`}>已登录</span>
         </div>
-      </div>
-      <div className={css.note}><Icon name="info" /><span>更换工作站后使用同一账号重新登录，项目与占用状态会从协同后端恢复；本机不保存密码，也不缓存项目正文。</span></div>
-    </> : <>
-      <p className={css.sectionIntro}>使用协同账号登录工作台，项目访问权限由后台管理；登录状态在本机系统安全存储中缓存，最长 90 天。</p>
-      <div className={`${css.identityCard} ${css.signedOut}`}>
-        <span className={css.identityAvatar}>?</span>
-        <div><div className={css.identityName}>未登录协同工作台</div><div className={css.identityMeta}>登录后查看可用项目与当前占用。</div></div>
-        <span className={css.chip}>未登录</span>
-      </div>
-      <form className={css.loginForm} onSubmit={submitLogin} noValidate>
-        <div className={css.field}><label htmlFor="studio-login-username">用户名</label><input id="studio-login-username" required autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} placeholder="studioAdmin" maxLength={100} /></div>
-        <div className={css.field}><label htmlFor="studio-login-password">密码</label><input id="studio-login-password" required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="••••••••" maxLength={200} /></div>
+        <div className={css.group}>
+          <h3 className={css.groupTitle}>登录状态 {loading && <Syncing />}</h3>
+          <div className={css.kvBlock}>
+            <div className={css.kv}><span className={css.kvK}>登录缓存</span><span className={css.kvV}><span className={`${css.badge} ${css.accent}`}>本机安全存储 · 90 天</span></span></div>
+            <div className={css.kv}><span className={css.kvK}>本机凭据</span><span className={css.kvV}>系统安全存储 · 会话令牌</span></div>
+            <div className={css.kv}><span className={css.kvK}>Git 凭据</span><span className={css.kvV}>本机独立管理</span></div>
+          </div>
+          <div className={css.settingRow}>
+            <div className={css.settingText}><div className={css.settingTitle}>退出登录</div><div className={css.settingDesc}>撤销当前协同会话并清除本机缓存；此操作不影响本机 Git 凭据。</div></div>
+            <button className={css.dangerBtn} disabled={busy} onClick={logout}><Icon name="logout" />退出登录</button>
+          </div>
+        </div>
         {error && <p className={css.inlineError} role="alert">{error}</p>}
-        <button className={css.primaryBtn} type="submit" disabled={busy}>{busy ? '正在登录…' : '登录协同工作台'}</button>
-        <p className={css.formNote}>账号与密码仅发送到固定协同后端；登录状态在本机系统安全存储中缓存，本机不写入密码。</p>
-      </form>
-      <div className={css.loginSep}>登录状态保存策略</div>
-      <div className={css.note}><Icon name="lock" /><span>会话令牌在本机系统安全存储中缓存，默认最长 90 天；后端会话同步持久保存，退出登录会同时撤销远端会话。</span></div>
-    </>}
+        {failure && <p className={css.inlineError} role="alert">{failure}</p>}
+        <div className={css.note}><Icon name="info" /><span>更换工作站后使用同一账号重新登录，项目与占用状态会从协同后端恢复；本机不保存密码，也不缓存项目正文。</span></div>
+      </>}
   </Section>
 }
 
@@ -169,38 +188,55 @@ function AppearanceSection(props: SectionProps) {
 }
 
 function ConnectionSection(props: SectionProps) {
-  const { state, loadError, refresh } = useStudioState(props.call)
-  const connected = state.connected
+  const { projection, loading, error } = useStudioSettings(props)
+  const connected = projection?.connected ?? false
   return <Section>
     <p className={css.sectionIntro}>协同后端由企业集中部署，客户端固定连接；项目、占用与登录状态以服务端为准。</p>
-    <div className={css.kvBlock}>
-      <div className={css.kv}><span className={css.kvK}>连接状态</span><span className={css.kvV}>{connected ? <><span className={`${css.dot} ${css.ok}`} />已连接</> : loadError ? '状态获取失败' : '未登录协同工作台'}</span></div>
-      <div className={css.kv}><span className={css.kvK}>当前项目</span><span className={`${css.kvV} ${css.mono}`}>{state.project?.name ?? '未选择'}</span></div>
-    </div>
-    {loadError && <p className={css.inlineError} role="alert">{loadError}</p>}
-    <div className={css.group}>
-      <h3 className={css.groupTitle}>诊断</h3>
-      <div className={css.settingRow}><div className={css.settingText}><div className={css.settingTitle}>重新同步状态</div><div className={css.settingDesc}>从协同后端重新拉取项目、占用与基线状态。</div></div><button className={css.ghostBtn} onClick={refresh}>重新同步</button></div>
-    </div>
+    {projection === undefined && !loading
+      ? <Unavailable detail={error} onRetry={props.sync} />
+      : <>
+        <div className={css.kvBlock}>
+          <div className={css.kv}><span className={css.kvK}>连接状态</span><span className={css.kvV}>{projection === undefined ? '正在读取状态' : connected ? <><span className={`${css.dot} ${css.ok}`} />已连接</> : '未登录协同工作台'}</span></div>
+          <div className={css.kv}><span className={css.kvK}>当前项目</span><span className={`${css.kvV} ${css.mono}`}>{projection === undefined ? '正在读取…' : projection.project?.name ?? '未选择'}</span></div>
+        </div>
+        {error && <p className={css.inlineError} role="alert">{error}</p>}
+        <div className={css.group}>
+          <h3 className={css.groupTitle}>诊断 {loading && <Syncing />}</h3>
+          <div className={css.settingRow}><div className={css.settingText}><div className={css.settingTitle}>重新同步状态</div><div className={css.settingDesc}>从协同后端重新拉取项目、占用与基线状态。</div></div><button className={css.ghostBtn} disabled={loading} onClick={props.sync}>{loading ? '正在同步…' : '重新同步'}</button></div>
+        </div>
+      </>}
     <div className={css.note}><Icon name="info" /><span>本地原型服务仅监听 loopback；Git 推送使用本机凭据，不经过协同后端。</span></div>
   </Section>
 }
 
 function AboutSection(props: SectionProps) {
-  const { state } = useStudioState(props.call)
+  const { projection, loading, error } = useStudioSettings(props)
   const snapshot = useSyncExternalStore(props.theme.subscribe, props.theme.getSnapshot)
   const preference = snapshot.preference === 'system' ? snapshot.active.colorScheme : snapshot.preference
+  const project = projection === undefined ? (loading ? '正在读取…' : '无法确认') : projection.project?.name ?? '未选择'
   return <Section>
     <div className={css.aboutMark}><span className={css.logo} aria-hidden="true">e</span><div><div className={css.aboutName}>EADP Studio</div><div className={css.aboutSub}>内测通道</div></div></div>
     <div className={css.kvBlock}>
-      <div className={css.kv}><span className={css.kvK}>当前项目</span><span className={`${css.kvV} ${css.mono}`}>{state.project?.name ?? '未选择'}</span></div>
+      <div className={css.kv}><span className={css.kvK}>当前项目</span><span className={`${css.kvV} ${css.mono}`}>{project}</span></div>
       <div className={css.kv}><span className={css.kvK}>主题</span><span className={css.kvV}>{preference === 'dark' ? '深色' : '浅色'}</span></div>
     </div>
+    {error && <p className={css.inlineError} role="alert">{error}</p>}
     <div className={css.note}><Icon name="info" /><span>业务资产保存在项目 Git 仓库；协同后端只持久保存身份、会话与控制元数据，不托管正文。</span></div>
   </Section>
 }
 
+/**
+ * Project template editing: the fifth section, reading the same shared projection
+ * and writing through the same owner as the account sections. Without a project
+ * there is nothing to manage, and without a first answer there is not yet a fact.
+ */
 function ScenarioTemplateSection(props: SectionProps) {
-  const { state, setState, loadError, refresh } = useStudioState(props.call)
-  return <Section>{loadError && <p role="alert" className={css.inlineError}>{loadError}<button onClick={refresh}>重试</button></p>}<ScenarioTemplateSettings state={state} call={props.call} onState={setState} /></Section>
+  const { projection, loading, error } = useStudioSettings(props)
+  if (projection === undefined) {
+    return <Section>{loading ? <Loading label="正在读取场景模板" /> : <Unavailable detail={error} onRetry={props.sync} />}</Section>
+  }
+  return <Section>
+    <ScenarioTemplateSettings state={projection} run={props.run} />
+    {error && <p role="alert" className={css.inlineError}>{error}<button onClick={props.sync}>重试</button></p>}
+  </Section>
 }

@@ -73,17 +73,19 @@ export class ScenarioWorkspaces {
     const readOnly = !!entity.current && !owned
     let draft: MaterialDraft
     if (readOnly) {
-      const fixed = entity.current!.fixed, bytes = await this.projects.readFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
-      if (digest(bytes) !== fixed.sha256) throw new Error('固定场景内容 hash 不符')
+      const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
+      // The fixed version is not local yet: the lane is fetching it, and the
+      // workspace appears on the read that follows.
+      if (!bytes) return undefined
       draft = parseMaterial(Buffer.from(bytes), fixed.path)
     } else {
       if (!task) return undefined
       draft = await readMaterial(task.worktree, 'scenario', entity.id)
     }
     if (draft.metadata.kind !== 'scenario') throw new Error('场景元数据无效')
-    const fixed = draft.metadata.templateRef, bytes = await this.projects.readFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
-    if (digest(bytes) !== fixed.sha256) throw new Error('固定模板 hash 不符')
-    const templateBody = Buffer.from(bytes).toString('utf8')
+    const fixed = draft.metadata.templateRef, fixedTemplate = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
+    if (!fixedTemplate) return undefined
+    const templateBody = Buffer.from(fixedTemplate).toString('utf8')
     for (const batch of record.suggestions) if (batch.status === 'current' && (batch.baseHash !== draft.sha256 || JSON.stringify(batch.templateRef) !== JSON.stringify(fixed))) batch.status = 'stale'
     const check = checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: !!account, hasOccupation: !!owned, conflict: !!record.conflict, structureCheck: local.scenarioStructureCheck, templateBody, fileErrors: !readOnly && task ? await scenarioFileErrors(task.worktree, draft) : [] })
     const gates = check.groups

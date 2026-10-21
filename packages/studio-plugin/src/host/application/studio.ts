@@ -15,16 +15,23 @@ import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
 import { StudioStore, type PendingOperation, type AdoptionOperation, type MaterialReservation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
 import { AuthorReviews, type ReviewCandidate } from './reviews.ts'
+import { BackgroundLane } from './background-lane.ts'
 
 const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
 const key = (): string => randomUUID()
 const sameSource = (left: { projectId: string; entityId: string; version: number }, right: { projectId: string; entityId: string; version: number }) => left.projectId === right.projectId && left.entityId === right.entityId && left.version === right.version
 const isEntityView = (value: EntityView | EntityOccupancyView): value is EntityView => 'generation' in value
 const starter = (title: string) => `# ${title}\n\n## 业务背景\n\n请与 AI 整理实际业务背景与使用者。\n\n## 核心业务规则\n\n待补充。\n\n## 验收条件\n\n待补充。\n\n## 限制与不适用范围\n\n待澄清。\n`
+/** One failure mapping for every command: an operation that fails answers with a typed reply, never a rejected promise. */
+const respond = (result: Promise<StudioReply>): Promise<StudioReply> =>
+  result.catch((error: unknown) => ({ ok: false, code: error instanceof CollaborationError ? error.code : 'STUDIO_OPERATION_FAILED', message: error instanceof Error ? error.message : '操作未完成，请查询当前状态' }))
 
 /** Serializes one local writer. PostgreSQL and Git CAS remain the cross-client authority. */
 export class StudioApplication {
   private queue: Promise<unknown> = Promise.resolve()
+  /** Work no reply waits for: Git synchronization and the preparation that depends on it. */
+  private readonly lane = new BackgroundLane()
+  private projection: Promise<StudioState> | undefined
   private previewState: StudioState['preview']
   private namespaces: NamespaceView[] = []
   private readonly reviews: AuthorReviews
@@ -32,24 +39,49 @@ export class StudioApplication {
   private readonly scenarios: ScenarioWorkspaces
   private readonly templates: ScenarioTemplates
   private readonly repairs: ScenarioRepairs
-  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports); this.reviews = new AuthorReviews(store, ports)
-    this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.deliverBackground(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
-    this.templates = new ScenarioTemplates(store, api, ports, this.projects)
+  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane); this.reviews = new AuthorReviews(store, ports)
+    this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
+    this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
     this.repairs = new ScenarioRepairs(this.scenarios, (id, hash, repairId) => this.confirmRepairedScenario(id, hash, repairId))
   }
-  private deliverBackground(work: () => Promise<void>): void { const result = this.queue.then(work); this.queue = result.catch(() => undefined) }
-  async dispose(): Promise<void> { this.scenarios.dispose(); await this.queue; await this.projects.dispose() }
+  /** Await every queued command and every background Git task this workbench started. */
+  async settle(): Promise<void> { await this.queue; await this.lane.settle() }
+  async dispose(): Promise<void> { this.scenarios.dispose(); await this.settle(); await this.projects.dispose() }
+  /**
+   * Run one command. Projection reads keep their own lane so a long local write
+   * (worktree, dependency install, checks, agent resume) cannot hold the state the
+   * workbench and the settings surface render; every other action keeps the single
+   * local-writer queue. A projection reads the local store while a writer is mid-save,
+   * which the store's atomic file replacement already tolerates.
+   */
   command(command: StudioCommand): Promise<StudioReply> {
+    if (command.action === 'state') return this.project()
     const result = this.queue.then(() => this.execute(command))
     this.queue = result.catch(() => undefined)
-    return result.catch((error: unknown) => ({ ok: false, code: error instanceof CollaborationError ? error.code : 'STUDIO_OPERATION_FAILED', message: error instanceof Error ? error.message : '操作未完成，请查询当前状态' }))
+    return respond(result)
   }
-  private async execute(command: StudioCommand): Promise<StudioReply> {
+  /**
+   * Join the projection read already in flight instead of starting another: the
+   * workbench poll and every mounted settings section collapse into one Host read.
+   * A caller that arrives after the read settled starts the next one.
+   * @returns the shared projection as a successful reply.
+   */
+  private project(): Promise<StudioReply> {
+    let read = this.projection
+    if (read === undefined) {
+      const started = this.state()
+      read = started
+      this.projection = started
+      const settled = (): void => { if (this.projection === started) this.projection = undefined }
+      void started.then(settled, settled)
+    }
+    return respond(read.then(state => ({ ok: true, state })))
+  }
+  private async execute(command: Exclude<StudioCommand, { action: 'state' }>): Promise<StudioReply> {
     let sessionId: string | undefined
-    if (!['state', 'login', 'logout'].includes(command.action)) await this.requireAccount()
+    if (command.action !== 'login' && command.action !== 'logout') await this.requireAccount()
     sessionId = await this.executeScenario(command)
     switch (command.action) {
-      case 'state': break
       case 'login': {
         await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []
         const identity = await this.ports.login(command.username, command.password)
@@ -64,7 +96,7 @@ export class StudioApplication {
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
-      case 'retryProjectInitialization': await this.projects.resume(command.operationId); break
+      case 'retryProjectInitialization': await this.projects.retry(command.operationId); break
       case 'selectProject': {
         this.scenarios.activeEntityId = undefined
         const local = await this.store.read()
@@ -119,14 +151,14 @@ export class StudioApplication {
         await this.ports.stopPreview(); this.previewState = undefined; break
       }
       case 'setEligibility': {
-        const { remote } = await this.selected()
+        const { remote } = await this.entity(command.entityId)
         await this.api.request('POST', this.route(remote.project.id, `/entities/${command.entityId}/eligibility`), { idempotencyKey: key(), version: command.version, enabled: command.enabled, reason: command.reason }); break
       }
       case 'selectCandidate': await this.selectCandidate(command.candidateId, command.categoryId); break
       case 'adopt': await this.adopt(command); break
       case 'retryOperation': {
         const local = await this.store.read(); const operation = local.operations.find(op => op.id === command.operationId)
-        if (operation) await this.resumeOperation(operation)
+        if (operation) this.resumeOnLane(operation)
           else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
             const repairAuthorization = local.scenarios.find(record => record.projectId === local.selectedProjectId && record.repairAuthorization?.request.idempotencyKey === command.operationId)
             const repairEvent = local.scenarioRepairs.find(record => record.projectId === local.selectedProjectId && (record.pending?.idempotencyKey === command.operationId || record.recoverPending?.idempotencyKey === command.operationId))
@@ -209,6 +241,12 @@ export class StudioApplication {
     if (!source) return
     source.status = 'read'; source.ranges = output.ranges; source.text = `原生 read_image 已读取图像，attachmentId=${output.attachmentId}；范围=${output.ranges.join('；')}`; delete source.error; await this.store.save()
   }
+  /**
+   * Build the projection the surfaces render. This read never synchronizes Git:
+   * commit fetches, mirrors and preparation are queued on the background lane,
+   * and a fixed material that is not local yet is left out until it arrives.
+   * @returns the current workbench projection.
+   */
   async state(): Promise<StudioState> {
     const account = await this.ports.account()
     if (!account) {
@@ -223,12 +261,14 @@ export class StudioApplication {
     const projects = local.projects.filter(project => allowed.has(project.id))
     const selected = projects.find(project => project.id === local.selectedProjectId)
     const remote = selected ? await this.api.request<ProjectState>('GET', this.route(selected.id)) : undefined
-    const scenarioTemplates = remote?.project.initializationStatus === 'ready'
-      ? await this.templates.catalog(remote.project.id, remote.project.recognizedHead!)
-      : undefined
+    const scenarioTemplates = remote?.project.initializationStatus === 'ready' ? await this.templates.catalog(remote.project) : undefined
     if (remote) for (const value of remote.entities) {
-      if (isEntityView(value) && value.frozenBy.length && !(value.completedVersion === value.materialVersion && value.materialVersion > 0)
-        && remote.entities.some(batch => isEntityView(batch) && batch.occupation?.ownerId === account.id && batch.occupation.clientId === local.clientId && value.frozenBy.includes(batch.occupation.occupationId))) await this.designTask(remote, value)
+      if (!isEntityView(value) || !value.frozenBy.length || (value.completedVersion === value.materialVersion && value.materialVersion > 0)) continue
+      const batch = remote.entities.find(batch => isEntityView(batch) && batch.occupation?.ownerId === account.id && batch.occupation.clientId === local.clientId && value.frozenBy.includes(batch.occupation.occupationId))
+      if (!batch?.occupation) continue
+      // Preparing a frozen requirement claims its batch occupation and creates a
+      // worktree, so it runs on the lane and the projection keeps answering.
+      this.lane.schedule(`draft:${value.id}:${batch.occupation.occupationId}`, async () => { await this.designTask(remote, value) })
     }
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
     const drafts: MaterialDraft[] = []
@@ -238,17 +278,26 @@ export class StudioApplication {
         try { drafts.push(await readMaterial(task.worktree, entity.kind, entity.id)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       } else if ('current' in entity && entity.current) {
-        const bytes = await this.projects.readFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path, entity.current.fixed.sha256)
-        if (digest(bytes) !== entity.current.fixed.sha256) throw new Error('固定材料哈希校验失败')
-        drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
+        const bytes = await this.projects.localFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path, entity.current.fixed.sha256)
+        if (bytes) drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
       }
+    }
+    // Accepted documents from an earlier contract stay displayable: their exact
+    // fixed bytes are read locally and never parsed into an editable draft.
+    const legacyMaterials: Array<{ entityId: string; body: string }> = []
+    if (remote) for (const entity of remote.entities.filter(isEntityView)) {
+      const legacy = entity.legacyCurrent
+      if (!legacy) continue
+      const bytes = await this.projects.localFixed(remote.project.id, legacy.fixed.commitSha, legacy.fixed.path, legacy.fixed.sha256)
+      if (bytes) legacyMaterials.push({ entityId: entity.id, body: Buffer.from(bytes).toString('utf8') })
     }
     const scenario = remote ? await this.scenarios.snapshot(remote) : undefined
     if (scenario) { await this.repairs.checkConcurrent(scenario.entityId); const repair = await this.repairs.view(scenario.entityId); if (repair) scenario.repair = repair }
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
-    return { ...(scenario ? { scenario } : {}), ...(templatePreview ? { templatePreview } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
+    const recovery = this.store.preservedRecord
+    return { ...(scenario ? { scenario } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
-      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(scenarioTemplates ? { scenarioTemplates } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
+      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(scenarioTemplates ? { scenarioTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
       pending: [
         ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
@@ -267,7 +316,9 @@ export class StudioApplication {
     if (remote.project.initializationStatus !== 'ready' || !remote.project.recognizedHead) throw new Error('项目尚未完成初始化，请先恢复首次提交。')
     return { project, remote }
   }
-  private async entity(entityId: string, projectId?: string) { const context = projectId ? { remote: await this.api.request<ProjectState>('GET', this.route(projectId)), project: (await this.store.read()).projects.find(p => p.id === projectId)! } : await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity || !isEntityView(entity)) throw new Error('资产不存在或不可见'); return { ...context, entity } }
+  private async entity(entityId: string, projectId?: string) { const context = projectId ? { remote: await this.api.request<ProjectState>('GET', this.route(projectId)), project: (await this.store.read()).projects.find(p => p.id === projectId)! } : await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity || !isEntityView(entity)) throw new Error('资产不存在或不可见'); this.requireCurrentContract(entity); return { ...context, entity } }
+  /** An accepted material from before the current contract stays readable only. */
+  private requireCurrentContract(entity: EntityView): void { if (entity.legacyCurrent) throw new Error('该材料的已接受版本早于当前契约，只能只读查看，不能编辑、确认、复用或发起会话') }
   private async requireOwned(entity: EntityView): Promise<OccupationToken> {
     const account = await this.ports.account(); const state = await this.store.read(); const token = entity.occupation
     if (!token || token.ownerId !== account?.id || token.clientId !== state.clientId) throw new Error('此任务需要本人当前客户端的有效占用')
@@ -317,6 +368,7 @@ export class StudioApplication {
       const currentSources = scenarioIds.map(id => remote.entities.find((value): value is EntityView => isEntityView(value) && value.id === id && value.kind === 'scenario' && value.materialVersion > 0))
       if (currentSources.some(source => !source) || new Set(scenarioIds).size !== scenarioIds.length) throw new Error('需求来源必须是本项目已确认的场景版本')
       if (kind === 'scenario' && categoryId) throw new Error('场景不使用业务分类')
+      if (kind === 'scenario' && !(await this.templates.catalog(remote.project))?.templates.length) throw new Error('本项目尚未发布场景模板，请先在设置里上传并发布默认场景模板，再新建场景。')
       if (kind !== 'scenario' && !categoryId) throw new Error('请选择业务分类')
       if (kind === 'requirement' && !currentSources.length) throw new Error('新需求必须绑定至少一个已确认场景版本')
       const local = await this.store.read()
@@ -407,7 +459,7 @@ export class StudioApplication {
     const existing = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && (t.purpose === 'material' || t.purpose === 'handoff') && path.basename(t.worktree) === token.taskId)
     if (existing) return existing
     const project = local.projects.find(p => p.id === remote.project.id)!
-    await this.ports.git.fetch(project.directory, remote.project.stableBranch)
+    await this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!)
     const worktree = path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)
     await this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/${token.generation}`, remote.project.recognizedHead!)
     const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: entity.kind === 'handoff' ? 'handoff' : 'material', inputHash: entity.current?.fixed.sha256 ?? '', worktree }
@@ -430,7 +482,7 @@ export class StudioApplication {
       return existing
     }
     const project = local.projects.find(p => p.id === remote.project.id)!
-    await this.ports.git.fetch(project.directory, remote.project.stableBranch)
+    await this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!)
     const worktree = path.join(this.store.directory, 'worktrees', project.id, token.taskId)
     await this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/prototype-${token.generation}`, remote.project.recognizedHead!)
     const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: 'prototype', inputHash: entity.current!.fixed.sha256, worktree }
@@ -512,12 +564,21 @@ export class StudioApplication {
     const authority = await this.reviews.confirmation(choice, snapshot.review)
     await this.integrate(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map(value => ({ ...value, readHash: value.fixed.sha256, ...authority, authorConfirmed: true as const })) })
   }
+  /**
+   * Record a fixed candidate and queue its publication. The push, the
+   * conditional branch update and backend acceptance run on the background lane:
+   * the reply reports the pending operation, which the surfaces render and
+   * `retryOperation` can resume.
+   */
   private async integrate(task: TaskView, draft: MaterialDraft, prepare: MaterialIntegrationRequest) {
     const local = await this.store.read()
     const operation: PendingOperation = { id: prepare.idempotencyKey, projectId: task.projectId, entityId: task.entityId, phase: 'fixed', candidateSha: prepare.candidateSha, expectedHead: prepare.expectedHead, fixedPath: draft.path, sha256: draft.sha256, prepare, token: prepare.token, adoptionIds: local.adoptions.filter(value => value.projectId === task.projectId && value.entityId === task.entityId && value.worktree === task.worktree && value.applied && draft.metadata.sources.some(source => sameSource(source, value.request.source))).map(value => value.id) }
     local.operations.push(operation); await this.store.save()
-    await this.ports.git.push(task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`)
-    await this.resumeOperation(operation)
+    this.lane.schedule(`operation:${operation.id}`, async () => { await this.ports.git.push(task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`); await this.resumeOperation(operation) })
+  }
+  /** Queue a recorded operation's remaining Git and backend work. */
+  private resumeOnLane(operation: PendingOperation): void {
+    this.lane.schedule(`operation:${operation.id}`, () => this.resumeOperation(operation))
   }
   private async resumeOperation(operation: PendingOperation) {
     const local = await this.store.read(); const project = local.projects.find(p => p.id === operation.projectId)

@@ -1,26 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import { NativeConversation } from '../components/NativeConversation.tsx'
 import { ScenarioWorkspace } from '../scenarios/ScenarioWorkspace.tsx'
-import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
+import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply } from '../../shared/studio.ts'
 import { MaterialCatalog } from '../components/MaterialCatalog.tsx'
+import { LegacyMaterial } from '../components/LegacyMaterial.tsx'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
 import type { ThemeFace } from '../theme.ts'
+import type { StudioProjectionStore } from '../store.ts'
+import { emptyStudioState } from '../state.ts'
 import css from '../studio.module.css'
 import '../studio.tw.generated.css'
 
 export interface StudioFace {
-  call(command: StudioCommand): Promise<StudioReply>
+  /** Run one command whose reply carries the newer projection. */
+  run(command: StudioCommand): Promise<StudioReply>
+  /** Refresh the shared projection; a read already in flight keeps its slot. */
+  sync(): void
   retainSession(id: string): SessionReference
   openSettings(section?: string): void
   startSession(): void
   theme: ThemeFace
 }
-export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace
+export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRenderSlots<'studio.session'> & StudioFace & PropsStore<StudioProjectionStore>
 const stages: Array<{ id: Stage; name: string; mark: string; description: string; icon: string[] }> = [
   { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依', icon: ['M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'] },
   { id: 'requirements', name: '需求协同', mark: '02', description: '明确规则、前置与验收条件', icon: ['M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z'] },
@@ -28,10 +35,16 @@ const stages: Array<{ id: Stage; name: string; mark: string; description: string
   { id: 'baselines', name: '基线确认', mark: '04', description: '查看已接受的原型版本与确认依据', icon: ['M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'] },
   { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发', icon: ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'] },
 ]
+/** Phases a recorded initialization passes through while the background lane works; only `unknown` needs a decision. */
+const initializing: Record<string, string> = { creating: '后台正在创建仓库', initializing: '正在写入项目资产', pushing: '正在推送首次提交', verifying: '正在核对后台接受' }
 
-const disconnectedState = (): StudioState => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
 export function StudioPanel(props: StudioProps) {
-  const [state, setState] = useState<StudioState>(disconnectedState)
+  // The workbench and the settings sections render one projection: the store is
+  // the only owner, so signing in or out anywhere shows up everywhere at once.
+  const projection = props.useStore(snapshot => snapshot.projection)
+  const loading = props.useStore(snapshot => snapshot.loading)
+  const storeError = props.useStore(snapshot => snapshot.error)
+  const state = projection ?? emptyStudioState()
   const [stage, setStage] = useState<Stage>('scenarios')
   const [selectedId, setSelectedId] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -46,54 +59,30 @@ export function StudioPanel(props: StudioProps) {
   const flushRef = useRef<(() => Promise<boolean>) | undefined>(undefined)
   const registerFlush = useCallback((flush?: () => Promise<boolean>) => { flushRef.current = flush }, [])
   const flushBeforeLeave = useCallback(async () => !flushRef.current || await flushRef.current(), [])
-  const projectionEpoch = useRef(0)
-  const actionCount = useRef(0)
-  const [loadError, setLoadError] = useState('')
+  const actions = useRef(0)
+  const run = props.run
+  const sync = props.sync
   const call = useCallback(async (command: StudioCommand) => {
-    const epoch = ++projectionEpoch.current
-    actionCount.current += 1
+    actions.current += 1
     setError(''); setBusy(true)
     try {
-      const result = await props.call(command)
+      const result = await run(command)
       if (!result.ok) {
         if (result.code === 'LOGIN_REQUIRED') props.openSettings('studio-collab')
         setError(result.message)
-        return result
       }
-      if (epoch === projectionEpoch.current) setState(result.state)
       return result
     } catch (err) { setError(err instanceof Error ? err.message : '操作未完成，请重新查询状态'); return undefined }
-    finally { actionCount.current -= 1; setBusy(actionCount.current > 0) }
-  }, [props.call, props.openSettings])
+    finally { actions.current -= 1; setBusy(actions.current > 0) }
+  }, [run, props.openSettings])
   useEffect(() => {
-    let cancelled = false, inFlight = false, timer: ReturnType<typeof setTimeout> | undefined
-    // The poll owns transport-failure surfacing: user actions report their own
-    // errors, so the banner only takes a poll failure when nothing is showing,
-    // and a recovered poll clears only the message the poll itself set.
-    let pollError = ''
-    const refresh = async () => {
-      if (inFlight) return
-      if (timer) clearTimeout(timer)
-      inFlight = true
-      const epoch = projectionEpoch.current
-      try { const result = await props.call({ action: 'state' }); if (!cancelled && epoch === projectionEpoch.current && actionCount.current === 0) {
-        if (result.ok || result.code === 'LOGIN_REQUIRED') {
-          if (result.ok) { setState(result.state); setLoadError('') }; if (!result.ok) setLoadError('请登录后读取项目目录')
-          const reported = pollError
-          if (reported) { pollError = ''; setError(previous => previous === reported ? '' : previous) }
-        } else { pollError = result.message; setLoadError(result.message); setError(previous => previous || result.message) }
-      } }
-      catch (reason) { if (!cancelled) setLoadError(reason instanceof Error ? reason.message : '目录读取失败，请重试。') }
-      // One request at a time. Queuing a refresh every few seconds would put
-      // every user action behind a growing backlog on a slow collaboration API.
-      finally { inFlight = false; if (!cancelled) timer = setTimeout(() => { void refresh() }, 10_000) }
-    }
-    void refresh()
-    // Settings sections announce login/logout so the workbench reflects them instantly.
-    const onStateChanged = () => { void refresh() }
-    window.addEventListener('eadp:studio-state-changed', onStateChanged)
-    return () => { cancelled = true; if (timer) clearTimeout(timer); window.removeEventListener('eadp:studio-state-changed', onStateChanged) }
-  }, [props.call])
+    // The session joins a poll and a section's read into one Host round trip, and
+    // a user action always writes the newer projection, so polling cannot undo it.
+    sync()
+    const timer = setInterval(() => sync(), 10_000)
+    return () => clearInterval(timer)
+  }, [sync])
+  const loadError = storeError || (state.connected ? '' : '请登录后读取项目目录')
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const openProjectDialog = async () => { if (!await flushBeforeLeave()) return; setProjectDialog(true); await call({ action: 'namespaces' }) }
   const selected = entities.find(e => e.id === selectedId)
@@ -113,14 +102,20 @@ export function StudioPanel(props: StudioProps) {
   const selectMaterial = async (id: string) => {
     if (!await flushBeforeLeave()) return
     setSelectedId(id); setActiveTab('material'); setMaterialCollapsed(false)
-    if (stage === 'scenarios') await call({ action: 'openScenario', entityId: id })
+    if (stage === 'scenarios' && !entities.find(e => e.id === id)?.legacyCurrent) await call({ action: 'openScenario', entityId: id })
   }
   const confirm = (choice: ConfirmationChoice) => draft && call({ action: 'confirmMaterial', entityId: draft.entityId, expectedHash: draft.sha256, ...choice })
   const operation = (action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation') => {
     if (selectedId) void call({ action, entityId: selectedId })
   }
+  // Before the first answer, "signed out" and "not read yet" must look different:
+  // the workbench states which one it is instead of showing the signed-out shell.
+  if (projection === undefined) return <div className={`${css.studio} studio-root`} data-studio-panel="studio"><div className={css.welcome}>
+    <span className={css.welcomeMark}>e</span><p className={css.eyebrow}>PROJECT WORKBENCH</p>
+    {storeError ? <><h2>无法确认工作台状态</h2><p role="alert">{storeError}</p><button className={css.primary} onClick={() => props.sync()}>重新同步</button></> : <><h2>正在读取工作台状态</h2><p>{loading ? '正在与协同工作台核对登录状态与项目目录…' : '等待工作台答复。'}</p></>}
+  </div></div>
   return <div className={`${css.studio} studio-root`} data-studio-panel="studio">
-    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => void call({ action: 'state' }), selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
+    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => props.sync(), selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
     <div className={css.shell}>
       <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
         <button className={css.repoBox} disabled={!state.connected} onClick={() => void openProjectDialog()} title="切换、新建或获取项目">
@@ -161,17 +156,20 @@ export function StudioPanel(props: StudioProps) {
       <main className={css.main}>
         <header className={css.pageHeader}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}<p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
-        {state.projectInitializations.map(operation => <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
+        {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
+        {state.projectInitializations.map(operation => initializing[operation.phase]
+          ? <div className={css.notice} key={operation.id}>项目「{operation.name}」正在初始化：{initializing[operation.phase]}，完成后会自动出现在项目列表中。</div>
+          : <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
         {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : props.openSettings('studio-collab')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
-        </div> : materialStage && !selected ? <MaterialCatalog key={`${state.project.id}:${stage}`} entities={entities} drafts={state.drafts} categories={categories} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} busy={busy} call={call} onSelect={id => void selectMaterial(id)} loadError={loadError} onRetry={() => void call({ action: 'state' }).then(result => { if (result?.ok) setLoadError('') })} /> : stage === 'scenarios' && selected ? state.scenario?.entityId === selected.id ? <ScenarioWorkspace key={`${state.project.id}:${selected.id}`} workspace={state.scenario} entity={selected} state={state} faces={props} busy={busy} call={call} registerFlush={registerFlush} /> : <div className={css.empty}>正在读取场景材料…<button disabled={busy} onClick={() => void call({ action: 'openScenario', entityId: selected.id })}>重新读取</button></div> : <div className={`${css.workspace} ${materialStage ? css.materialWorkspace : ''} ${materialStage && materialCollapsed ? css.materialCollapsed : ''}`}>
+        </div> : selected?.legacyCurrent ? <LegacyMaterial entity={selected} body={state.legacyMaterials?.find(material => material.entityId === selected.id)?.body} /> : materialStage && !selected ? <MaterialCatalog key={`${state.project.id}:${stage}`} entities={entities} drafts={state.drafts} categories={categories} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} busy={busy} call={call} onSelect={id => void selectMaterial(id)} loadError={loadError} onRetry={() => props.sync()} /> : stage === 'scenarios' && selected ? state.scenario?.entityId === selected.id ? <ScenarioWorkspace key={`${state.project.id}:${selected.id}`} workspace={state.scenario} entity={selected} state={state} faces={props} busy={busy} call={call} registerFlush={registerFlush} /> : <div className={css.empty}>正在读取场景材料…<button disabled={busy} onClick={() => void call({ action: 'openScenario', entityId: selected.id })}>重新读取</button></div> : <div className={`${css.workspace} ${materialStage ? css.materialWorkspace : ''} ${materialStage && materialCollapsed ? css.materialCollapsed : ''}`}>
           {!materialStage && <section className={css.catalog} aria-label="资产列表"><div className={css.catalogHeader}><strong>{stage === 'handoffs' ? '清单' : '需求'}目录</strong><span>{visible.length}</span></div><input className={css.search} placeholder="搜索标题或编号…" aria-label="搜索资产" value={filter} onChange={e => setFilter(e.target.value)} />
             <div className={css.assetList}>{visible.map(e => <button key={e.id} className={`${css.assetItem} ${selectedId === e.id ? css.selectedAsset : ''}`} onClick={() => { setSelectedId(e.id); setActiveTab('material') }}><small>{e.id}</small><strong>{e.title}</strong><div><span className={e.confirmationStatus === 'confirmed' ? css.success : css.muted}>{e.confirmationStatus === 'confirmed' ? '材料已确认' : '草稿'}</span><span>{e.occupation ? '处理中' : '空闲'}</span></div></button>)}{visible.length === 0 && <Empty text="还没有资产" />}</div>
           </section>}
-          <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: taskPurpose })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
+          <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy || !!selected.legacyCurrent} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: taskPurpose })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
             {selected ? <><div className={css.contextStrip}><span>输入版本 {selected.materialVersion || '草稿'}</span><span>{selected.occupation ? `由 #${selected.occupation.ownerId} 处理中` : '尚未认领'}</span>{selected.frozenBy.length > 0 && <strong>场景联动冻结</strong>}</div>{task?.error && <div className={css.notice}>{task.error}</div>}
               {task ? <NativeConversation key={task.sessionId} {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
               {stage === 'prototype' && <div className={css.actionBar}><button disabled={busy} onClick={() => operation('claimPrototype')}>认领原型任务</button><button disabled={busy} onClick={() => operation('checkPrototype')}>运行工程检查</button><button disabled={busy} onClick={() => operation('startPreview')}>启动预览</button><button disabled={busy} onClick={() => operation('stopPreview')}>停止预览</button><button className={css.primary} disabled={busy} onClick={() => void call({ action: 'confirmPrototype', entityId: selected.id, method: 'direct' })}>确认当前需求完成</button></div>}

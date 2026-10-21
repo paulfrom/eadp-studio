@@ -39,8 +39,10 @@ async function fixedFiles(directory: string): Promise<void> {
   await writeFile(path.join(directory, templateRef.path), templateBody)
 }
 async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirement') {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-asset-workflow-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-asset-workflow-')), apps: StudioApplication[] = []
+  // Confirmations finish on the background lane; teardown waits for it so no
+  // local state write races removal of the temporary directory.
+  t.after(async () => { for (const created of apps) await created.dispose(); await rm(root, { recursive: true, force: true }) })
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
   const local = await store.read(), value = entity('target', kind), worktree = path.join(root, 'task')
   await mkdir(worktree)
@@ -116,11 +118,12 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     prompt: async (session: string, text: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') } },
     checks: async (_task: unknown, sha: string) => ({ candidateSha: sha, passed: true, checks: [{ name: 'engineering', passed: true, evidenceHash: digest('checked') }] }),
     gitLocal: async () => gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
-    git: { commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async () => {}, fetch: async () => {}, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
+    git: { hasCommit: async () => true, commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async () => {}, fetch: async () => {}, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
   } as unknown as HostPorts
-  const app = (nextStore = store) => new StudioApplication(nextStore, api, ports)
+  const app = (nextStore = store) => { const created = new StudioApplication(nextStore, api, ports); apps.push(created); return created }
+  const settle = async () => { for (const created of apps) await created.settle() }
   const adopt = { action: 'adopt' as const, sourceProjectId: 'source-project', sourceEntityId: 'source', version: 2, targetEntityId: value.id, reason: '依据目标业务调整验收条件' }
-  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, adopt, api, ports }
+  return { root, store, local, value, worktree, remote, source, sourceDirectory, calls, failures, gitState, app, settle, adopt, api, ports }
 }
 
 test('author handoff acknowledgement uses the actual API receipt route and current confirmation', async t => {
@@ -150,16 +153,23 @@ test('adoption success binds the accepted target confirmation and survives a los
   f.failures.adoptionResponse = true
   assert.equal((await f.app().command(f.adopt)).ok, false)
   const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
-  assert.equal((await f.app(rebooted).command(f.adopt)).ok, true)
+  const app = f.app(rebooted)
+  assert.equal((await app.command(f.adopt)).ok, true)
   assert.equal(f.calls.adoptions, 1, 'restart must resolve the original adoption instead of accepting a new record')
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   const checked = await saveMaterial(f.worktree, { ...draft.metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true }, draft.body)
   f.failures.successResponse = true
-  assert.equal((await f.app(rebooted).command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: checked.sha256, method: 'direct' })).ok, false)
+  const confirmed = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: checked.sha256, method: 'direct' })
+  assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+  // The confirmation is recorded before its Git publication finishes; the lost
+  // acknowledgement surfaces on the operation the surfaces render.
+  await app.settle()
   const pending = (await rebooted.read()).operations[0]!
   assert.equal(pending.phase, 'accepted', 'the target confirmation remains accepted if success acknowledgement is lost')
   const second = new StudioStore(path.join(f.root, 'state')); second.useUser(1)
-  assert.equal((await f.app(second).command({ action: 'retryOperation', operationId: pending.id })).ok, true)
+  const retry = f.app(second)
+  assert.equal((await retry.command({ action: 'retryOperation', operationId: pending.id })).ok, true)
+  await retry.settle()
   assert.equal(f.calls.successEffects, 1)
   assert.equal(f.calls.successRequests.length, 2)
   assert.deepEqual(f.calls.successRequests[0], f.calls.successRequests[1], 'retries retain the exact confirmation and idempotency key')
@@ -253,7 +263,11 @@ test('frozen unstarted requirements remain editable only through the owned scena
   f.value.materialVersion = 1; f.value.occupation!.purpose = 'scenario-batch'; f.value.occupation!.inputVersion = 1
   const related = entity('related'); related.scenarioIds = [f.value.id]; related.frozenBy = ['occupation']
   f.remote.entities.push(related)
-  const state = await f.app().state()
+  const app = f.app()
+  // The first read queues preparation of the frozen requirement on the lane; the
+  // draft is visible to the read that follows it.
+  await app.state(); await app.settle()
+  const state = await app.state()
   const draft = state.drafts.find(value => value.entityId === related.id)!
   assert.ok(draft)
   assert.equal(state.tasks.find(value => value.entityId === related.id)!.worktree, f.worktree)
@@ -452,6 +466,9 @@ test('explicit scenario revision binds unfinished requirements to the next scene
   const reply = await app.command({ action: 'startScenarioRevision', entityId: f.value.id, expectedRevision: f.value.revision, expectedAssociationRevision: f.value.associationRevision })
   assert.equal(reply.ok, true, JSON.stringify(reply))
   assert.equal(claims.length, 1)
+  // Rebinding the frozen requirements is preparation on the lane: it is readable
+  // once that work settles, and the reply already reported the new task.
+  await app.settle()
   const task = (await f.store.read()).tasks.findLast(task => task.entityId === f.value.id && task.purpose === 'material')!
   assert.notEqual(task.worktree, f.worktree)
   const rebound = await readMaterial(task.worktree, 'requirement', related.id)
@@ -463,3 +480,4 @@ test('explicit scenario revision binds unfinished requirements to the next scene
   assert.equal((await readMaterial(f.worktree, 'requirement', related.id)).sha256, previous.sha256, 'the old task material remains intact')
   assert.equal(f.value.current!.fixed.sha256, current.sha256, 'the accepted scene stays fixed while its revision is edited')
 })
+

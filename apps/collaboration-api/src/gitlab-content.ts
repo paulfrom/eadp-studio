@@ -7,7 +7,7 @@ import type { Actor } from './auth/session.js';
 type Reader = Pick<Actor, 'gitlabUserId'>;
 type Diff = { old_path: string; new_path: string; deleted_file: boolean; renamed_file: boolean; too_large?: boolean; collapsed?: boolean; diff: string };
 type Compare = { compare_timeout?: boolean; compare_same_ref?: boolean; diffs: Diff[] };
-export interface ProjectTemplates { defaultTemplateId: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> }
+export interface ProjectTemplates { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> }
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 function utf8(bytes: Uint8Array, code: string): string {
   requireCondition(!(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) && !bytes.includes(13), code, 'Text must use UTF-8 without BOM and LF line endings', 422);
@@ -33,6 +33,9 @@ export class GitLabContent {
     await this.gitlab.authorize(actor, gitlabProjectId);
     const manifest = await this.manifest(gitlabProjectId, commitSha);
     requireCondition(manifest.gitlabProjectId === gitlabProjectId, 'PROJECT_MANIFEST_IDENTITY_MISMATCH', 'Template manifest must belong to its GitLab project', 422);
+    // A project accepted before the catalog existed has no templates yet; the
+    // empty catalog is a published state, not a read failure.
+    if (!manifest.scenarioTemplates) return { templates: [] };
     const templates: ProjectTemplates['templates'] = [];
     for (const template of manifest.scenarioTemplates.templates) {
       const bytes = await this.file(gitlabProjectId, commitSha, template.path);
@@ -138,7 +141,10 @@ export class GitLabContent {
     const before = await this.manifest(gitlabProjectId, expectedHead), after = await this.manifest(gitlabProjectId, candidateSha);
     const { scenarioTemplates: oldCatalog, ...oldIdentity } = before, { scenarioTemplates: newCatalog, ...newIdentity } = after;
     requireCondition(canonical(oldIdentity) === canonical(newIdentity), 'TEMPLATE_MANIFEST_SCOPE', 'Template publication cannot change project identity or directory declarations', 422);
-    requireCondition(oldCatalog.templates.every(t => newCatalog.templates.some(n => t.id === n.id && t.path === n.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
+    // The first publication of a project accepted without a catalog declares it;
+    // afterwards a published template identity can never be removed.
+    requireCondition(newCatalog, 'TEMPLATE_CATALOG_REQUIRED', 'Template publication must declare the project template catalog', 422);
+    requireCondition((oldCatalog?.templates ?? []).every(t => newCatalog.templates.some(n => t.id === n.id && t.path === n.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
     requireCondition(diffs.every(d => !d.deleted_file && !d.renamed_file && (d.new_path === 'project.assets.json' || newCatalog.templates.some(t => t.path === d.new_path))), 'TEMPLATE_PATH_SCOPE', 'Template publication cannot delete templates or change files outside the catalog', 422);
     await this.loadProjectTemplates(actor, gitlabProjectId, candidateSha);
   }

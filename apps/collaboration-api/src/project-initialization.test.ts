@@ -82,3 +82,9 @@ test('initialization requires a versioned template directory and readable defaul
   mock.restoreAll(); fixture({ missingTemplate: true });
   await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('FIXED_FILE_MISSING'));
 });
+
+test('a new initialization must declare the scenario template catalog even when .template exists', async () => {
+  const { scenarioTemplates: _catalog, ...withoutCatalog } = manifest;
+  fixture({ body: Buffer.from(`${JSON.stringify(withoutCatalog)}\n`) });
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_TEMPLATES_REQUIRED'));
+});

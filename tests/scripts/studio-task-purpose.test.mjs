@@ -12,7 +12,10 @@ const compiled = ts.transpileModule(source.replace(/^import .+\n/gm, '').replace
   compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
 }).outputText.replace(/^export \{\};?\s*$/gm, '')
 const createElement = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
-const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', `${compiled}; return StudioPanel`)
+// The module's own dependencies, as with `css` below: the panel takes its empty
+// projection from `client/state.ts`, which this harness does not transpile.
+const emptyStudioState = () => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
+const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'emptyStudioState', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', `${compiled}; return StudioPanel`)
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(nodes)]
 const text = tree => !tree || typeof tree !== 'object' ? tree ?? '' : tree.children.map(text).join('')
 
@@ -20,10 +23,15 @@ function render(stage, tasks) {
   const entity = { id: 'asset', title: '固定交接材料', kind: stage === 'handoffs' ? 'handoff' : stage === 'scenarios' ? 'scenario' : 'requirement', materialVersion: 1, frozenBy: [] }
   const scenario = stage === 'scenarios' ? { entityId: entity.id, sessions: tasks, draft: { entityId: entity.id, sha256: 'hash' } } : undefined
   const state = { scenario, connected: true, project: { id: 'project', categories: [] }, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], collaboration: { entities: [entity], baselines: [] }, tasks, drafts: [{ entityId: entity.id, sha256: 'hash' }], reviews: [{ id: 'material-review', entityId: entity.id, purpose: 'material' }], candidates: [], pending: [] }
-  const values = [state, stage, entity.id], calls = [], updates = []
+  // The projection now arrives from the shared store, so the first hook slots are
+  // the panel's own stage and selection.
+  const values = [stage, entity.id], calls = [], updates = []
   let index = 0
-  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace')
-  const tree = Panel({ call: async command => { calls.push(command); return { ok: true, state } }, theme: {} })
+  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), emptyStudioState, new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace')
+  // The panel reads one shared projection and runs commands through the session;
+  // the harness supplies both faces the slot registration injects.
+  const props = { useStore: selector => selector({ projection: state, loading: false, error: '' }), run: async command => { calls.push(command); return { ok: true, state } }, sync: () => {}, theme: {} }
+  const tree = Panel(props)
   return { tree, calls, updates }
 }
 

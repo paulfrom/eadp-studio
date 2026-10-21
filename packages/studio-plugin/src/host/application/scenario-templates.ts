@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isProjectManifest, type IntegrationView, type ProjectState, type TemplateIntegrationRequest } from '@eadp/contracts'
+import { isProjectManifest, type IntegrationView, type ProjectState, type ProjectView, type TemplateIntegrationRequest } from '@eadp/contracts'
 import type { ScenarioTemplatePreview } from '../../shared/scenarios.ts'
 import type { ScenarioTemplateCatalog } from '../../shared/studio.ts'
 import { containedFile, digest } from '../adapters/assets/materials.ts'
@@ -9,21 +9,26 @@ import { CollaborationError, type CollaborationClient } from '../adapters/collab
 import type { StudioStore } from './state.ts'
 import type { HostPorts } from './ports.ts'
 import type { ProjectWorkspaces } from './projects.ts'
+import type { BackgroundLane } from './background-lane.ts'
 
 export interface TemplateOperation { preview: ScenarioTemplatePreview; projectId: string; directory?: string; request?: TemplateIntegrationRequest; integrationId?: string; phase: 'preview' | 'fixed' | 'prepared' | 'accepted' | 'unknown'; message?: string }
 /** Publishes project configuration in a separate worktree, preserving all material drafts. */
 export class ScenarioTemplates {
-  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly projects: ProjectWorkspaces) {}
+  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly projects: ProjectWorkspaces, private readonly lane: BackgroundLane) {}
   private readonly catalogs = new Map<string, ScenarioTemplateCatalog>()
-  async catalog(projectId: string, head?: string): Promise<ScenarioTemplateCatalog> {
-    const cacheKey = `${this.store.directory}:${projectId}:${head}`
-    if (head && this.catalogs.has(cacheKey)) return this.catalogs.get(cacheKey)!
-    const catalog = await this.api.request<ScenarioTemplateCatalog>('GET', `/v1/projects/${projectId}/templates`)
-    const templates = await Promise.all(catalog.templates.map(async template => {
-      const bytes = await this.projects.readFixed(projectId, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)
-      if (digest(bytes) !== template.fixed.sha256) throw new Error('模板固定内容 hash 不符')
-      return { ...template, body: Buffer.from(bytes).toString('utf8') }
-    }))
+  /**
+   * Read the project's template catalogue from bodies already present locally.
+   * @param project - selected project and its accepted head.
+   * @returns the catalogue, or undefined while the background lane fetches a template commit.
+   */
+  async catalog(project: ProjectView): Promise<ScenarioTemplateCatalog | undefined> {
+    const cacheKey = `${this.store.directory}:${project.id}:${project.recognizedHead}`
+    const cached = this.catalogs.get(cacheKey)
+    if (cached) return cached
+    const catalog = await this.api.request<ScenarioTemplateCatalog>('GET', `/v1/projects/${project.id}/templates`)
+    const bodies = await Promise.all(catalog.templates.map(template => this.projects.localFixed(project.id, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)))
+    if (bodies.some(bytes => bytes === undefined)) return undefined
+    const templates = catalog.templates.map((template, index) => ({ ...template, body: Buffer.from(bodies[index]!).toString('utf8') }))
     const result = { ...catalog, templates }
     if (this.catalogs.size >= 32) this.catalogs.delete(this.catalogs.keys().next().value!)
     this.catalogs.set(cacheKey, result)
@@ -32,7 +37,8 @@ export class ScenarioTemplates {
   async preview(remote: ProjectState, templates: ScenarioTemplatePreview['templates'], defaultTemplateId: string): Promise<void> {
     if (!templates.length || templates.length > 100 || !templates.some(t => t.id === defaultTemplateId) || new Set(templates.map(t => t.id)).size !== templates.length) throw new Error('模板清单或默认模板无效')
     for (const t of templates) if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(t.id) || !t.name.trim() || t.name.length > 500 || !t.body.trim() || Buffer.byteLength(t.body) > 1_000_000 || t.body.includes('\r')) throw new Error('模板须使用有效名称、标识与 UTF-8 LF Markdown')
-    const catalog = await this.catalog(remote.project.id)
+    const catalog = await this.catalog(remote.project)
+    if (!catalog) throw new Error('场景模板固定内容正在后台同步，请稍后重试。')
     if (catalog.templates.some(t => !templates.some(next => next.id === t.id))) throw new Error('本阶段不支持删除历史模板')
     if (catalog.defaultTemplateId === defaultTemplateId && catalog.templates.length === templates.length && catalog.templates.every(value => templates.some(next => next.id === value.id && next.name === value.name && next.body === value.body))) throw new Error('当前模板没有需要发布的变更')
     const local = await this.store.read()
@@ -40,10 +46,22 @@ export class ScenarioTemplates {
     local.templateOperations.push({ projectId: remote.project.id, preview: { operationId: randomUUID(), expectedHead: remote.project.recognizedHead!, expectedRevision: remote.project.revision, templates, defaultTemplateId }, phase: 'preview' })
     await this.store.save()
   }
+  /**
+   * Queue publication of one previewed change. The worktree, commit, push and
+   * backend acceptance run on the background lane, so the reply reports the
+   * recorded operation instead of holding the settings surface for minutes.
+   * @param operationId - previewed operation to publish.
+   * @param remote - project state the preview was taken against.
+   */
   async publish(operationId: string, remote: ProjectState): Promise<void> {
     const local = await this.store.read(), op = local.templateOperations.find(o => o.preview.operationId === operationId && o.projectId === remote.project.id)
     if (!op) throw new Error('请先预览模板变更')
     if (op.phase === 'accepted') return
+    this.lane.schedule(`templates:${operationId}`, () => this.run(operationId, remote))
+  }
+  private async run(operationId: string, remote: ProjectState): Promise<void> {
+    const local = await this.store.read(), op = local.templateOperations.find(o => o.preview.operationId === operationId && o.projectId === remote.project.id)
+    if (!op || op.phase === 'accepted') return
     try {
       if (!op.request) {
         if (remote.project.recognizedHead !== op.preview.expectedHead || remote.project.revision !== op.preview.expectedRevision) throw new Error('项目版本已变化，请刷新并重新预览模板')

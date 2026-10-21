@@ -8,6 +8,7 @@ import type { ProjectView, StudioUser } from '@eadp/contracts'
 import { ProjectWorkspaces } from '../../packages/studio-plugin/src/host/application/projects.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
+import { BackgroundLane } from '../../packages/studio-plugin/src/host/application/background-lane.ts'
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { copyTemplate, verifyTemplate } from '../../packages/studio-plugin/src/host/prototype/template.ts'
@@ -54,6 +55,7 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
       clone: async (_url: string, directory: string) => { ++clones; await mkdir(path.join(directory, '.git')); localHead = remoteHead },
       probeRemoteHead: async () => remoteHead,
       head: async () => localHead,
+      hasCommit: async () => true,
       fetchCommit: async () => {},
       state: async () => ({ head: localHead, repositoryUrl: project.repositoryUrl, dirty: false, branch: 'main' }),
       readBlob: async (directory: string, _sha: string, file: string) => readFile(path.join(directory, file)),
@@ -71,16 +73,34 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
     installTemplate: async (directory: string) => { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'package.json'), '{}\n') },
   } as unknown as HostPorts
   const store = new StudioStore(storeRoot); store.useUser(user.id)
-  const service = new ProjectWorkspaces(store, api, ports)
-  return { root, storeRoot, workspaceRoot, store, service, ports, api, calls, setUser: (next?: StudioUser) => { currentUser = next },
+  const lane = new BackgroundLane()
+  const service = new ProjectWorkspaces(store, api, ports, lane)
+  return { settlement: () => lane.settle(), root, storeRoot, workspaceRoot, store, service, ports, api, calls, setUser: (next?: StudioUser) => { currentUser = next },
     counts: () => ({ creates, uniqueCreations: creationKeys.size, commits, pushes, initializes, clones }),
-    dispose: async () => { await service.dispose(); await rm(root, { recursive: true, force: true }) } }
+    dispose: async () => { await lane.settle(); await service.dispose(); await rm(root, { recursive: true, force: true }) } }
+}
+
+/**
+ * Queue one creation and wait for the background lane. `create` returns at once,
+ * so the test observes the project initialization it recorded.
+ */
+async function queued(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.service.create(command)
+  await f.settlement()
+  return (await f.store.read()).projectInitializations[0]!
+}
+/** A restarted Host service over the same local store, with its own fresh lane. */
+function restarted(f: Awaited<ReturnType<typeof fixture>>) {
+  const store = new StudioStore(f.storeRoot); store.useUser(1)
+  const lane = new BackgroundLane()
+  return { store, lane, service: new ProjectWorkspaces(store, f.api, f.ports, lane) }
 }
 
 test('project creation persists its key before POST and initializes the backend-created private repository', async () => {
   const f = await fixture()
   try {
-    await f.service.create(command)
+    const operation = await queued(f)
+    assert.equal(operation.phase, 'ready')
     assert.deepEqual(f.counts(), { creates: 1, uniqueCreations: 1, commits: 1, pushes: 1, initializes: 1, clones: 0 })
     const saved = await f.store.read(); assert.equal(saved.projects[0]!.id, 'project-1'); assert.equal(saved.projectInitializations[0]!.phase, 'ready')
     assert.equal(JSON.stringify(saved).includes('studio_'), false)
@@ -90,50 +110,105 @@ test('project creation persists its key before POST and initializes the backend-
 test('lost create response is retried with the original body/key after restarting the local store', async () => {
   const f = await fixture('create-response')
   try {
-    await assert.rejects(f.service.create(command), /响应丢失/)
-    const rebooted = new StudioStore(f.storeRoot); rebooted.useUser(1)
-    const service = new ProjectWorkspaces(rebooted, f.api, f.ports)
-    await service.create(command)
+    const failed = await queued(f)
+    assert.equal(failed.phase, 'unknown'); assert.match(failed.message ?? '', /响应丢失/)
+    const next = restarted(f)
+    await next.service.create(command); await next.lane.settle()
     assert.equal(f.counts().creates, 2); assert.equal(f.counts().uniqueCreations, 1); assert.equal(f.counts().commits, 1)
-    assert.equal((await rebooted.read()).projectInitializations.length, 1)
+    assert.equal((await next.store.read()).projectInitializations.length, 1)
   } finally { await f.dispose() }
 })
 
 test('lost push response is reconciled from the real remote head without committing or pushing again', async () => {
   const f = await fixture('push-response')
   try {
-    await assert.rejects(f.service.create(command), /响应丢失/)
-    const operation = (await f.store.read()).projectInitializations[0]!
-    const rebooted = new StudioStore(f.storeRoot); rebooted.useUser(1)
-    await new ProjectWorkspaces(rebooted, f.api, f.ports).resume(operation.id)
+    const failed = await queued(f)
+    assert.match(failed.message ?? '', /响应丢失/)
+    const next = restarted(f)
+    await next.service.retry(failed.id); await next.lane.settle()
     assert.equal(f.counts().creates, 1); assert.equal(f.counts().pushes, 1); assert.equal(f.counts().commits, 1); assert.equal(f.counts().initializes, 1)
-    assert.equal((await rebooted.read()).projects.length, 1)
+    assert.equal((await next.store.read()).projects.length, 1)
   } finally { await f.dispose() }
 })
 
 test('lost initialize response opens the accepted project without a second initialization or remote creation', async () => {
   const f = await fixture('initialize-response')
   try {
-    await assert.rejects(f.service.create(command), /响应丢失/)
-    await f.service.resume((await f.store.read()).projectInitializations[0]!.id)
+    const failed = await queued(f)
+    assert.match(failed.message ?? '', /响应丢失/)
+    await f.service.retry(failed.id); await f.settlement()
     assert.equal(f.counts().initializes, 1); assert.equal(f.counts().creates, 1); assert.equal((await f.store.read()).projects.length, 1)
   } finally { await f.dispose() }
 })
 
-test('an unknown existing directory is preserved and cannot be adopted by a pending initialization', async () => {
+test('an unknown existing directory is preserved and never adopted by an initialization', async () => {
   const f = await fixture()
   try {
     const directory = path.join(f.workspaceRoot, 'users/1/project-project-1'); await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'private.txt'), 'preserve me')
-    await assert.rejects(f.service.create(command), /不属于本任务/)
+    const failed = await queued(f)
+    assert.match(failed.message ?? '', /缺少本项目的持久归属记录/)
     assert.equal(await readFile(path.join(directory, 'private.txt'), 'utf8'), 'preserve me')
     assert.equal(f.counts().commits, 0); assert.equal(f.counts().pushes, 0)
+  } finally { await f.dispose() }
+})
+
+test('a rebuilt local record adopts the directory its marker names instead of initializing again', async () => {
+  const f = await fixture()
+  try {
+    await queued(f)
+    const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
+    await readFile(path.join(directory, 'project.assets.json'))
+    // The previous version left an unusable record: the next start preserves it and rebuilds.
+    await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
+    const next = restarted(f)
+    try {
+      assert.deepEqual((await next.store.read()).projects, [])
+      assert.ok(next.store.preservedRecord)
+      await next.service.open('project-1'); await next.lane.settle()
+      const local = await next.store.read()
+      assert.deepEqual(local.projects.map(project => project.directory), [directory], 'the marker-named directory is adopted')
+      assert.equal(local.selectedProjectId, 'project-1')
+      assert.equal(local.projectInitializations[0]!.phase, 'ready')
+      assert.equal(f.counts().initializes, 1, 'an already accepted initialization is not sent again')
+      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+    } finally { await next.lane.settle(); await next.service.dispose() }
+  } finally { await f.dispose() }
+})
+
+/** Rewrite the accepted local manifest as one recorded before the template catalog existed. */
+async function withoutTemplateCatalog(directory: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8')) as Record<string, unknown>
+  delete manifest.scenarioTemplates
+  await writeFile(path.join(directory, 'project.assets.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  await rm(path.join(directory, '.template'), { recursive: true, force: true })
+}
+
+test('an accepted project whose manifest predates the template catalog opens instead of failing initialization', async () => {
+  const f = await fixture()
+  try {
+    await queued(f)
+    const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
+    await withoutTemplateCatalog(directory)
+    // A rebuilt local record re-adopts the marker-named directory, exactly as the
+    // production case where the accepted manifest has no `scenarioTemplates`.
+    await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
+    const next = restarted(f)
+    try {
+      await next.service.open('project-1'); await next.lane.settle()
+      const local = await next.store.read()
+      assert.deepEqual(local.projects.map(project => project.directory), [directory], 'the legacy accepted project is opened')
+      assert.equal(local.projectInitializations[0]!.phase, 'ready')
+      assert.equal(local.projectInitializations[0]!.message, undefined, 'opening does not report an invalid manifest')
+      assert.equal(f.counts().initializes, 1, 'the accepted initialization is not sent again')
+      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+    } finally { await next.lane.settle(); await next.service.dispose() }
   } finally { await f.dispose() }
 })
 
 test('signed-out and other users never receive old local projects, tasks or pending operations', async () => {
   const f = await fixture()
   try {
-    await f.service.create(command)
+    await f.service.create(command); await f.settlement()
     const app = new StudioApplication(f.store, f.api, f.ports)
     assert.equal((await app.state()).projects.length, 1)
     f.calls.length = 0; f.setUser()
@@ -147,7 +222,7 @@ test('signed-out and other users never receive old local projects, tasks or pend
 test('late image read evidence is rejected immediately after the account changes, before the next state poll', async () => {
   const f = await fixture()
   try {
-    await f.service.create(command)
+    await f.service.create(command); await f.settlement()
     const local = await f.store.read(), sourcePath = path.join(f.store.directory, 'scenario-sources', 'image.png')
     const source = { id: 'image', name: 'image.png', format: 'png', sha256: 'a'.repeat(64), status: 'failed' as const, ranges: [] as string[], text: '', selected: true, formal: false }
     local.tasks.push({ projectId: 'project-1', entityId: 'scene', sessionId: 'user-one-session', purpose: 'material', inputHash: '', worktree: local.projects[0]!.directory })

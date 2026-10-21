@@ -37,9 +37,12 @@ async function sourceBytes(filename: string, maxBytes = MAX_FILE_BYTES): Promise
 async function pdfText(bytes: Uint8Array): Promise<ScenarioSourceRead> {
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
   const packageUrl = import.meta.resolve('pdfjs-dist/package.json')
+  // pdfjs appends a file name to each asset directory, so the setting keeps its
+  // trailing separator, which a filesystem path conversion would drop.
+  const assetDirectory = (name: string): string => `${fileURLToPath(new URL(name, packageUrl)).replaceAll('\\', '/').replace(/\/?$/, '/')}`
   const loading = getDocument({ data: bytes, useSystemFonts: false, disableFontFace: true,
-    standardFontDataUrl: fileURLToPath(new URL('standard_fonts/', packageUrl)),
-    cMapUrl: fileURLToPath(new URL('cmaps/', packageUrl)), cMapPacked: true, useWorkerFetch: false })
+    standardFontDataUrl: assetDirectory('standard_fonts/'),
+    cMapUrl: assetDirectory('cmaps/'), cMapPacked: true, useWorkerFetch: false })
   const ranges: string[] = [], parts: string[] = [], missing: number[] = []
   let count = 0, truncated = false
   try {

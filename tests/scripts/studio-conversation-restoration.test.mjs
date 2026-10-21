@@ -22,7 +22,7 @@ function mount() {
     initial => { const key = index++; if (!(key in slots)) slots[key] = typeof initial === 'function' ? initial() : initial; return [slots[key], value => { slots[key] = typeof value === 'function' ? value(slots[key]) : value }] },
     (effect, dependencies) => { const key = index++; if (!slots[key] || dependencies.some((value, i) => value !== slots[key][i])) effects.push(effect); slots[key] = dependencies }, {},
   )
-  const props = { sessionId: 'studio-existing', call: async command => { calls.push(command); return restore.promise }, retainSession: () => { retained++; return reference }, SessionProvider: 'NativeProvider', renderFactorySlot: () => 'conversation' }
+  const props = { sessionId: 'studio-existing', run: async command => { calls.push(command); return restore.promise }, retainSession: () => { retained++; return reference }, SessionProvider: 'NativeProvider', renderFactorySlot: () => 'conversation' }
   const render = (overrides = {}) => { Object.assign(props, overrides); index = 0; return Component(props) }
   render(); const clean = effects[0]()
   return { restore, ready, calls, render, clean, retained: () => retained, released: () => released, effectCount: () => effects.length }
@@ -57,7 +57,7 @@ test('projection renders and refreshed face callbacks do not release or restore 
   const f = mount()
   f.restore.resolve({ ok: true, sessionId: 'studio-existing' }); await flush()
   f.ready.resolve(); await flush()
-  f.render({ call: async () => { throw new Error('poll must not restart restoration') }, retainSession: () => { throw new Error('poll must not retain again') } })
+  f.render({ run: async () => { throw new Error('poll must not restart restoration') }, retainSession: () => { throw new Error('poll must not retain again') } })
   assert.equal(f.effectCount(), 1)
   assert.equal(f.retained(), 1)
   assert.equal(f.released(), 0)

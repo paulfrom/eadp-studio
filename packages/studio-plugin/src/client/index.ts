@@ -8,9 +8,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import { studioCall } from './command.ts'
 import { StudioPanel } from './StudioPanel.tsx'
 import { StudioPanelIcon } from './panelIcon.tsx'
 import { settingsSections, type StudioSettingsFaces } from './settings/sections.tsx'
+import { createStudioSession, type StudioSession } from './session.ts'
 import type { ThemeFace } from './theme.ts'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-api-gateway/client'
@@ -30,15 +32,6 @@ export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'ui
 
 const PANEL_ID = 'studio' as MainPanelId
 
-/** Typed studio command channel shared by the panel and the settings sections. */
-function studioCall(ctx: ClientContext): (command: StudioCommand) => Promise<StudioReply> {
-  return async command => {
-    const result = await ctx.remote.studio.command(command)
-    if (!result.ok) return { ok: false, code: result.error.code, message: result.error.message }
-    return result.value
-  }
-}
-
 function themeFace(ctx: ClientContext): ThemeFace {
   return {
     getSnapshot: () => ctx.theme.getTheme(),
@@ -52,15 +45,20 @@ function openSettings(section?: string): void {
   window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: section ? { section } : {} }))
 }
 
-/** Studio sections inside the host settings dialog — the single settings surface (design 00, 2026-10-20 revision). */
-function registerSettingsSections(ctx: ClientContext): void {
-  const faces: StudioSettingsFaces = { call: studioCall(ctx), theme: themeFace(ctx) }
+/**
+ * Studio sections inside the host settings dialog — the single settings surface
+ * (design 00, 2026-10-20 revision). Every registration declares the same pinned
+ * store handle the workbench panel uses, so both surfaces read one projection.
+ */
+function registerSettingsSections(ctx: ClientContext, session: StudioSession, theme: ThemeFace): void {
+  const faces: StudioSettingsFaces = { login: session.login, logout: session.logout, sync: session.sync, run: session.run, theme }
   for (const section of settingsSections) {
     ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section',
       id: section.id,
       order: section.order,
       label: section.label,
+      store: session.store,
       inject: () => faces,
     }, section.component))
   }
@@ -77,14 +75,13 @@ function registerPanelRow(ctx: ClientContext): void {
 }
 
 /** Mount the Studio panel and make it the selected main panel. */
-function registerStudio(ctx: ClientContext): () => void {
-  const call = studioCall(ctx)
+function registerStudio(ctx: ClientContext, session: StudioSession, theme: ThemeFace): () => void {
   const retainSession = (id: string) => ctx.sessions.retain(id as SessionId, { source: 'studio' })
   const startSession = () => ctx.uiWorkspace.startSession()
-  const theme = themeFace(ctx)
   const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
+    store: session.store,
     children: { 'studio.session': { kind: 'single', scope: 'session' } },
-    inject: () => ({ call, retainSession, openSettings, startSession, theme }),
+    inject: () => ({ run: session.run, sync: session.sync, retainSession, openSettings, startSession, theme }),
   }, StudioPanel)
   ctx.layout.selectPanel(PANEL_ID)
   return dispose
@@ -95,10 +92,12 @@ export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(studioRemote)
   registerPanelRow(ctx)
   // `remote.studio` is only addressable inside a fiber that declares it, so the
-  // settings sections' command channel must be built in the same fiber as the panel.
+  // command channel and the one projection session both belong to that fiber.
   const ui = ctx.inject(['remote.studio'], (injected: ClientContext) => {
-    registerSettingsSections(injected)
-    return registerStudio(injected)
+    const session = createStudioSession(studioCall(injected))
+    const theme = themeFace(injected)
+    registerSettingsSections(injected, session, theme)
+    return registerStudio(injected, session, theme)
   })
   try { await ui } catch (error) { await ui.dispose(); await disposeRemote(); throw error }
   return async () => { await ui.dispose(); await disposeRemote() }

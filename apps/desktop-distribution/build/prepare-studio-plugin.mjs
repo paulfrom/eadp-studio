@@ -120,6 +120,7 @@ export const studioStagingPaths = [...new Set([
 /** Upstream workspace packages the assembled plugin needs to compile and bundle. */
 const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-layout',
   '@deepseek-ai/dsh-client-ui-renderer',
   '@deepseek-ai/dsh-client-ui-slots',

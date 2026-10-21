@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedReference, FixedVersion, IntegrationView, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
+import { canonical, DomainError, requireCondition } from '@eadp/asset-domain';
+import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { AdoptionRecord } from '../modules/reuse.js';
 import type { StoredIntegration } from '../modules/integration.js';
@@ -92,7 +92,9 @@ export async function entities(c: Transaction, projectId: string): Promise<Entit
     if (value.kind === 'requirement') value.scenarioSources = sources.filter(r => r.entity_id === id).map(r => ({ projectId, entityId: String(r.scenario_id), version: Number(r.version) }));
     if (occupation) value.occupation = await occupationView(c, occupation);
     if (row.current_confirmation_id) {
-      value.current = await fixedVersion(c, projectId, id, value.materialVersion);
+      const resolved = await currentVersion(c, projectId, id, value.materialVersion);
+      if (resolved.current) value.current = resolved.current;
+      if (resolved.legacy) value.legacyCurrent = resolved.legacy;
     }
     const completions = baselines.filter(b => b.entityId === id).map(b => ({ version: b.version, confirmationId: b.confirmationId, integrationSha: b.commitSha, baselineId: b.id }));
     if (completions.length) {
@@ -105,7 +107,7 @@ export async function entities(c: Transaction, projectId: string): Promise<Entit
   return result;
 }
 export async function saveEntity(c: Transaction, projectId: string, value: EntityView) {
-  await c.query(`INSERT INTO studio_entities(project_id,id,kind,sequence,code,title,summary,category_id,template_id,template_ref,revision,generation,material_version,confirmation_status,task_status,association_revision,current_confirmation_id,${auditColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$18,$19,$20) ON CONFLICT(project_id,id) DO UPDATE SET title=excluded.title,summary=excluded.summary,category_id=excluded.category_id,template_id=excluded.template_id,template_ref=excluded.template_ref,revision=excluded.revision,generation=excluded.generation,material_version=excluded.material_version,confirmation_status=excluded.confirmation_status,task_status=excluded.task_status,association_revision=excluded.association_revision,current_confirmation_id=excluded.current_confirmation_id,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [projectId, value.id, value.kind, value.sequence ?? null, value.code ?? null, value.title, value.summary ?? '', value.categoryId ?? null, value.templateId ?? null, value.templateRef ?? null, value.revision, value.generation, value.materialVersion, value.confirmationStatus, value.taskStatus, value.associationRevision, value.current?.confirmationId ?? null, ...actorFields()]);
+  await c.query(`INSERT INTO studio_entities(project_id,id,kind,sequence,code,title,summary,category_id,template_id,template_ref,revision,generation,material_version,confirmation_status,task_status,association_revision,current_confirmation_id,${auditColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$18,$19,$20) ON CONFLICT(project_id,id) DO UPDATE SET title=excluded.title,summary=excluded.summary,category_id=excluded.category_id,template_id=excluded.template_id,template_ref=excluded.template_ref,revision=excluded.revision,generation=excluded.generation,material_version=excluded.material_version,confirmation_status=excluded.confirmation_status,task_status=excluded.task_status,association_revision=excluded.association_revision,current_confirmation_id=excluded.current_confirmation_id,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [projectId, value.id, value.kind, value.sequence ?? null, value.code ?? null, value.title, value.summary ?? '', value.categoryId ?? null, value.templateId ?? null, value.templateRef ?? null, value.revision, value.generation, value.materialVersion, value.confirmationStatus, value.taskStatus, value.associationRevision, value.current?.confirmationId ?? value.legacyCurrent?.confirmationId ?? null, ...actorFields()]);
   if (value.kind === 'requirement') {
     await c.query('DELETE FROM studio_scenario_requirements WHERE project_id=$1 AND requirement_id=$2 AND NOT(scenario_id=ANY($3::text[]))', [projectId, value.id, value.scenarioIds]);
     for (const id of value.scenarioIds) await c.query(`INSERT INTO studio_scenario_requirements(project_id,scenario_id,requirement_id,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, [projectId, id, value.id, ...actorFields()]);
@@ -162,14 +164,35 @@ export async function listIntegrations(c: Transaction, projectId: string): Promi
   }
   return result;
 }
+/**
+ * Contract violations that make an accepted document readable-only rather than
+ * unreadable: integrity failures (hash, missing file, encoding) are not listed
+ * and keep failing loudly.
+ */
+const legacyMaterialCodes = new Set(['INVALID_MATERIAL', 'INVALID_MANIFEST', 'INVALID_MATERIAL_PATH', 'CORE_UNRESOLVED', 'SCENARIO_SOURCE_REQUIRED', 'TEMPLATE_IDENTITY_MISMATCH', 'TEMPLATE_REFERENCE_MISMATCH', 'EVIDENCE_PATH_SCOPE', 'EVIDENCE_RANGE_INVALID', 'FILE_REFERENCE_CONFLICT', 'SELF_REFERENCE']);
+async function versionRows(c: Transaction, projectId: string, entityId: string, version?: number): Promise<Row[]> {
+  return (await c.query<Row>("SELECT f.*,e.enabled,e.reason,b.id AS baseline_id FROM studio_confirmations f JOIN studio_eligibility e USING(project_id,entity_id,version) LEFT JOIN studio_baselines b USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
+}
+function fixedReference(row: Row): FixedReference { return { commitSha: String(row.commit_sha), path: String(row.path), sha256: String(row.sha256) }; }
+async function fixedVersionOf(projectId: string, row: Row): Promise<FixedVersion> {
+  const fixed = fixedReference(row);
+  return { version: Number(row.version), fixed, metadata: await loadMaterial(projectId, fixed), confirmationId: String(row.id), confirmedBy: Number(row.creator_id), confirmedAt: date(row.created_date), title: String(row.title), summary: String(row.summary), applicability: row.applicability as 'applicable' | 'not-applicable', ...(row.applicability_reason ? { applicabilityReason: String(row.applicability_reason) } : {}), readHash: String(row.read_hash), reuse: { enabled: Boolean(row.enabled), reason: String(row.reason) }, ...(row.baseline_id ? { prototypeBaselineId: String(row.baseline_id) } : {}) };
+}
 export async function versions(c: Transaction, projectId: string, entityId: string, version?: number): Promise<FixedVersion[]> {
-  const rows = (await c.query<Row>("SELECT f.*,e.enabled,e.reason,b.id AS baseline_id FROM studio_confirmations f JOIN studio_eligibility e USING(project_id,entity_id,version) LEFT JOIN studio_baselines b USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
   const result: FixedVersion[] = [];
-  for (const row of rows) {
-    const fixed = { commitSha: String(row.commit_sha), path: String(row.path), sha256: String(row.sha256) };
-    result.push({ version: Number(row.version), fixed, metadata: await loadMaterial(projectId, fixed), confirmationId: String(row.id), confirmedBy: Number(row.creator_id), confirmedAt: date(row.created_date), title: String(row.title), summary: String(row.summary), applicability: row.applicability as 'applicable' | 'not-applicable', ...(row.applicability_reason ? { applicabilityReason: String(row.applicability_reason) } : {}), readHash: String(row.read_hash), reuse: { enabled: Boolean(row.enabled), reason: String(row.reason) }, ...(row.baseline_id ? { prototypeBaselineId: String(row.baseline_id) } : {}) });
-  }
+  for (const row of await versionRows(c, projectId, entityId, version)) result.push(await fixedVersionOf(projectId, row));
   return result;
+}
+/** The entity's accepted version either reads under the current contract or stays readable-only. */
+export async function currentVersion(c: Transaction, projectId: string, entityId: string, version: number): Promise<{ current?: FixedVersion; legacy?: LegacyFixedVersion }> {
+  const row = (await versionRows(c, projectId, entityId, version))[0];
+  requireCondition(row, 'FIXED_VERSION_NOT_FOUND', 'Accepted fixed material version was not found', 404);
+  try { return { current: await fixedVersionOf(projectId, row) }; }
+  catch (error) {
+    if (!(error instanceof DomainError) || !legacyMaterialCodes.has(error.code)) throw error;
+    const fixed = fixedReference(row);
+    return { legacy: { version: Number(row.version), fixed, confirmationId: String(row.id), confirmedBy: Number(row.creator_id), confirmedAt: date(row.created_date), title: String(row.title), ...(String(row.summary) ? { summary: String(row.summary) } : {}), reason: `${error.code}: ${error.message}` } };
+  }
 }
 export async function fixedVersion(c: Transaction, projectId: string, entityId: string, version: number): Promise<FixedVersion> {
   const value = (await versions(c, projectId, entityId, version))[0];

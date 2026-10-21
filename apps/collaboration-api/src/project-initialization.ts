@@ -31,6 +31,9 @@ export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, 
   try { manifest = parseProjectManifest(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { requireCondition(false, 'INITIALIZATION_MANIFEST_INVALID', 'Project manifest is not valid UTF-8 JSON', 422); }
   requireCondition(record(manifest) && manifest.schemaVersion === 1 && manifest.projectId === project.id && manifest.gitlabProjectId === project.gitlabProjectId && manifest.repositoryUrl === project.repositoryUrl && manifest.stableBranch === project.stableBranch && canonical(manifest.directories) === canonical(directories), 'INITIALIZATION_MANIFEST_MISMATCH', 'Project manifest identity or directory contract differs from its registered project', 422);
+  // Only projects accepted before the catalog existed may omit it; a new
+  // initialization must declare the templates it ships under `.template/`.
+  requireCondition(manifest.scenarioTemplates, 'INITIALIZATION_TEMPLATES_REQUIRED', 'Initialization must declare the project scenario template catalog', 422);
   await new GitLabContent(gitlab).loadProjectTemplates(actor, project.gitlabProjectId, commitSha);
   requireCondition(await gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch changed during initialization verification', 409);
 }

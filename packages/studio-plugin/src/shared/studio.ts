@@ -1,7 +1,8 @@
 import type { ScenarioCommand, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
 
-export interface ScenarioTemplateCatalog { acceptedHead: string; defaultTemplateId: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
+/** A project template catalog; `defaultTemplateId` is absent while a project has published no template. */
+export interface ScenarioTemplateCatalog { acceptedHead: string; defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
 
 export type ConfirmationChoice = { method: 'direct' } | { method: 'ai-assisted'; reviewId: string; authorDisposition: string }
 export interface ReviewView {
@@ -14,12 +15,18 @@ export interface LocalProject { id: string; name: string; directory: string; rep
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
 export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
 export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
+/** A local recovery record the Host could not use, and where its bytes were preserved. */
+export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
   connected: boolean; account?: StudioUser;
+  /** Set once per rebuild, so the surfaces can report where the unusable record was kept. */
+  recovery?: StudioRecovery;
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
   availableProjects: ProjectView[]; namespaces: NamespaceView[];
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;
-  scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; scenarioTemplates?: ScenarioTemplateCatalog; reviews: ReviewView[]; drafts: MaterialDraft[]; tasks: TaskView[]; candidates: Candidate[];
+  scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; scenarioTemplates?: ScenarioTemplateCatalog; reviews: ReviewView[]; drafts: MaterialDraft[];
+  /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
+  legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
 }
 export type StudioCommand = ScenarioCommand

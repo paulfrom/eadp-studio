@@ -41,7 +41,7 @@
 - 删除自绘 StudioSettings 弹窗。唯一设置入口是 DSH 原生设置对话框（桥接补丁已使其在 Studio 激活时可用：壳侧栏保持挂载，设置壳 store 提升到插件激活层）。
 - Studio 节注册进 `settings.section` 槽（与 `ui-settings-models` 等原生节同一机制）：协同账号（id `studio-collab`）、外观（`studio-appearance`）、协同连接（`studio-connection`）、关于（`studio-about`），与原生节（账号/通用/模型/插件/Agent 预设/子代理）并列。模型配置直接在弹窗内完成，不再有「打开宿主模型设置」跳转；原生模型配置保持唯一权威。
 - 打开途径：侧栏底部齿轮（定位协同账号节）、欢迎页登录按钮、`Ctrl+,`，均经 `eadp:open-settings` 桥接事件。
-- 节组件经自己的 inject 拿 studio 命令通道与主题 face，自行拉取状态；登录/登出成功即派发 `eadp:studio-state-changed`，工作台立即刷新（不等 10s 轮询）。
+- 节组件经自己的 inject 拿协同账号命令（登录/登出）、同步回调、模板命令入口与主题 face；投影由各节共享的一份 store 持有（注册时声明 `store`，所有条目共用同一个固定实例），首次答复前显示加载态、失败时可重试、同步进行中禁用「重新同步」并只允许一次在途请求。工作台主面板与这些节声明同一个 store 实例：登录/登出直接改这一份投影，两侧同时更新，不需要跨界面事件通知。投影与本地写入走不同车道，命令有明确截止时间：任何一侧卡住都显示可重试的失败，而不是停在"未登录"的外观。
 - 上游锚点补丁 `studio-settings-sections-edits.mjs`：`SettingsRoot.tsx` 的 `navIcon()` 增加 Studio 节 id → 原生 primitives 图标映射，未命中回退齿轮；注册进 `UPSTREAM_EDITS`，锚点缺失即构建失败。
 
 ### 登录缓存
@@ -51,19 +51,27 @@
   1. 本机缓存畸形（字段/来源不匹配）时，`saved()` 清除缓存并按未登录处理，不再抛错阻塞 `state` 轮询。
   2. 补齐测试盲区：`DesktopSecretStore` IPC 协议（requestId 匹配、key 校验、超时）用真实 Node IPC 双进程测试；`studio-platform-edits.mjs` 对 `host-process.ts` 的补丁锚点增加回归断言（补丁缺失时 Host 会被 `invalid IPC event` 杀掉，必须防漂移）。
 
+### 本地状态与后台同步
+
+- **恢复记录按版本重建**：`studio-state.json` 只按当前版本解析（`clientId`、`scenarioStructureCheck` 与 11 个集合齐全）；不通过时把原文件改名为 `studio-state.json.invalid-<时间戳>` 保留现场、写入当前版本空记录，工作台顶部提示保留路径并建议重新打开项目。仍能读出的 `clientId` 沿用，本人既有占用因此仍可取消或继续。本地项目凭目录旁的归属标记重新认领：标记记录项目身份，打开已初始化项目时核对仓库地址与项目清单后直接绑定，不重新初始化、不重新克隆；无标记的目录仍然拒绝认领并保留现场。详见 [ADR-0005](../adr/0005-local-record-rebuild-and-background-git.md)。
+- **Git 同步全部后台化**：`BackgroundLane` 是一条串行车道（按键去重），克隆镜像、取固定提交、推送候选、条件推进、集成恢复、模板发布、项目初始化都排在它上面；投影读取只读本地已有对象，命中不到就返回空缺并在下一次读取带上，需要基线提交的动作答复「项目仓库正在后台同步，请稍后重试当前操作」。界面复用既有待办展示（`projectInitializations`、`pending`）与 `retryOperation` / `retryProjectInitialization`。
+- **登录一致**：工作台主面板与设置各节声明同一个投影 store（`client/store.ts`，由 `client/session.ts` 读写），任一侧登录/登出立即同时生效，不再有跨界面刷新事件。
+
 ## 协同后台职责
 
 无。登录缓存所需端点（`/v1/auth/login`、`/v1/me`、`/v1/auth/logout`）与会话持久化均已存在。
 
 ## 数据与文档格式
 
-无新载体。桥接事件约定：`window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: { section?: string } }))`，`section` 为设置分区 id（如 `studio-collab`、`models`）；无监听时事件静默丢弃（纯 web 场景回退提示 `Ctrl+,`）。新增工作台刷新通知：`window.dispatchEvent(new CustomEvent('eadp:studio-state-changed'))`，无 detail。
+无新载体。桥接事件约定：`window.dispatchEvent(new CustomEvent('eadp:open-settings', { detail: { section?: string } }))`，`section` 为设置分区 id（如 `studio-collab`、`models`）；无监听时事件静默丢弃（纯 web 场景回退提示 `Ctrl+,`）。工作台与设置共享同一份投影后不再需要刷新通知（原 `eadp:studio-state-changed` 已删除）。
 
 ## 验收标准
 
 1. Windows 桌面 caption 带单行呈现：折叠钮、应用/编辑、`EADP Studio / 仓库 / 分支（已同步）`、新建会话、视图、设置、窗口控制，互不遮挡；浅色/深色主题下均可读；拖拽、双击最大化行为正常；主工作区上方没有第二行工具栏。web 回退为单行 in-flow 工具栏。
 2. 侧栏三段与设计稿一致：仓库选择器可打开项目对话框完成切换/新建/获取；五阶段图标导航可用；选中资产时激活项下挂子芯片且可返回列表；底部用户区显示账号与 `@GitLab`，齿轮打开设置协同账号节。
 3. 点击「新建会话」切到原生 DSH 界面并打开新会话；原生侧栏可见 `EADP Studio` 面板行，点击返回工作台。
-4. 齿轮 / `Ctrl+,` / 欢迎页登录打开唯一设置弹窗；弹窗左导航同时可见 Studio 四节与原生节，节图标正确（非齿轮回退）；协同登录/登出即时生效；模型配置在弹窗内直接完成，无二次跳转；原生模型配置功能不受影响。
+4. 齿轮 / `Ctrl+,` / 欢迎页登录打开唯一设置弹窗；弹窗左导航同时可见 Studio 各节与原生节，节图标正确（非齿轮回退）；协同登录/登出即时生效；模型配置在弹窗内直接完成，无二次跳转；原生模型配置功能不受影响。
 5. 登录 → 退出桌面端 → 重新启动：自动恢复登录（用户区显示账号）；手工构造畸形缓存文件后启动：自动清除并回到登录页，`state` 轮询不再持续报错。
-6. 新增与既有测试全部通过；`studio-settings-bridge`、`studio-settings-sections` 编辑与 `host-process.ts` 补丁锚点有回归断言。
+6. 手工构造旧版本 / 损坏的 `studio-state.json` 后启动：不报「格式无效」，原文件以 `studio-state.json.invalid-<时间戳>` 保留，工作台可正常打开并在顶部提示保留路径；重新打开既有项目后本地目录被认领、项目回到可用状态。
+7. Git 同步不阻塞界面：断网或慢网下打开工作台，投影照常渲染（固定材料暂缺的条目显示待同步，稍后自动补齐）；发起取任务/发布模板时先得到「正在后台同步，请稍后重试」，重试后继续。
+8. 新增与既有测试全部通过；`studio-settings-bridge`、`studio-settings-sections` 编辑与 `host-process.ts` 补丁锚点有回归断言。

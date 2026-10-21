@@ -55,7 +55,7 @@ async function fixture(failure?: 'session' | 'prompt') {
     if (route.includes('/integrations/')) return integrations.get(route.split('/').at(-1)!)
     return remote
   } } as unknown as CollaborationClient
-  const ports = { git: { fetchCommit: async () => {}, readBlob: async (_directory: string, sha: string, file: string) => Buffer.from(file === '.template/default.md' ? template : corrupted ? 'modified input' : material(Number(sha[0]))) }, account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failure === 'session' && !failed) { failed = true; throw new Error('injected session failure') }; return task.sessionId }, prompt: async (sessionId: string, text: string) => { calls.prompts.push(sessionId); calls.promptTexts.push(text); if (failure === 'prompt' && !failed) { failed = true; throw new Error('injected prompt failure') } } } as unknown as HostPorts
+  const ports = { git: { hasCommit: async () => true, fetchCommit: async () => {}, readBlob: async (_directory: string, sha: string, file: string) => Buffer.from(file === '.template/default.md' ? template : corrupted ? 'modified input' : material(Number(sha[0]))) }, account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failure === 'session' && !failed) { failed = true; throw new Error('injected session failure') }; return task.sessionId }, prompt: async (sessionId: string, text: string) => { calls.prompts.push(sessionId); calls.promptTexts.push(text); if (failure === 'prompt' && !failed) { failed = true; throw new Error('injected prompt failure') } } } as unknown as HostPorts
   const createApp = (nextStore = store) => new StudioApplication(nextStore, api, ports)
   return { root, ports, api, store, storeRoot, remote, local, calls, first, addOperation, createApp, corruptInput: (value: boolean) => { corrupted = value }, nextVersion: (version: number) => { remote.entities = [scenario(version)] }, dispose: () => rm(root, { recursive: true, force: true }) }
 }
@@ -66,6 +66,9 @@ test('accepted confirmation recovery offers splitting and waits for an explicit 
     const app = f.createApp()
     const recovered = await app.command({ action: 'retryOperation', operationId: f.first.id })
     assert.equal(recovered.ok, true, JSON.stringify(recovered))
+    // Recovery continues on the background lane; the recorded operation and the
+    // offered split are visible once that work settles.
+    await app.settle()
     assert.equal(f.local.tasks.filter(task => task.purpose === 'split').length, 0)
     assert.equal(f.calls.sessions.length, 0); assert.equal(f.calls.prompts.length, 0)
     assert.equal(f.local.scenarios.find(record => record.entityId === 'scenario')!.splitOffered, true)

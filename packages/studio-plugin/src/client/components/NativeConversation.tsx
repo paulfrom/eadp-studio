@@ -3,7 +3,7 @@ import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/c
 import type { StudioProps } from '../studio/StudioPanel.tsx'
 import css from '../studio.module.css'
 
-type ConversationProps = Pick<StudioProps, 'call' | 'retainSession' | 'SessionProvider' | 'renderFactorySlot'> & { sessionId: string }
+type ConversationProps = Pick<StudioProps, 'run' | 'retainSession' | 'SessionProvider' | 'renderFactorySlot'> & { sessionId: string }
 
 /** Retains a native DSH conversation for its session identity, independently of workspace polling. */
 export const NativeConversation = memo(function NativeConversation(props: ConversationProps) {
@@ -16,7 +16,7 @@ export const NativeConversation = memo(function NativeConversation(props: Conver
     let cancelled = false, retained: SessionReference | undefined
     setReference(undefined); setError('')
     void (async () => {
-      const result = await faces.current.call({ action: 'restoreSession', sessionId: props.sessionId })
+      const result = await faces.current.run({ action: 'restoreSession', sessionId: props.sessionId })
       if (cancelled) return
       if (!result.ok) throw new Error(result.message)
       if (result.sessionId !== props.sessionId) throw new Error('恢复结果与当前场景会话不一致，请重试。')

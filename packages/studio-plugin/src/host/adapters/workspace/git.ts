@@ -63,6 +63,13 @@ export class WorkspaceGit {
     return result.stdoutBytes
   }
   async fetchCommit(root: string, commit: string): Promise<void> { await this.command(root, ['fetch', '--no-tags', 'origin', fixedSha(commit)], true) }
+  /** Whether the commit object already exists locally, so a read can avoid the network. */
+  async hasCommit(root: string, commit: string): Promise<boolean> {
+    const result = await this.result(root, ['cat-file', '-e', `${fixedSha(commit)}^{commit}`])
+    if (result.exitCode === 0) return true
+    if (result.exitCode === 1 || result.exitCode === 128) return false
+    throw new Error('无法核对本地 Git 提交。')
+  }
   async probeRemoteHead(repositoryUrl: string, branch: string, cwd: string): Promise<string | undefined> {
     const result = await this.command(cwd, ['ls-remote', '--heads', '--refs', '--', repositoryAddress(repositoryUrl), `refs/heads/${branchName(branch)}`], true, undefined, repositoryUrl)
     if (!result.stdout.trim()) return undefined

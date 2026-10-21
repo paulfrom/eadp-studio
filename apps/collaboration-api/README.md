@@ -166,6 +166,8 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 
 该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/` 与 `project.assets.json` 的模板声明变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。已有模板身份不能删除，项目身份与三目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
 
+清单的 `scenarioTemplates` 只对新初始化必填。早于模板目录存在的已接受项目没有该片段：读取其清单不失败，`GET /projects/:id/templates` 返回空目录（`templates: []`、无默认项），此时新建场景以 `PROJECT_TEMPLATES_REQUIRED` 阻断；用户发布模板即按上面的模板分支补齐清单与 `.template/`。详见 [ADR-0006](../../docs/adr/0006-legacy-project-readonly-compatibility.md)。
+
 显式切换模板请求为 `{idempotencyKey,token,templateId,templateRef}`，引用必须在项目已接受 Git 历史中，且路径/hash 与该提交清单的模板身份一致。切换只更新绑定与 revision，不改写正文；进行中的修复授权或待接受确认须先处理。
 
 授权修复开始请求为 `{idempotencyKey,token,userActionId,startHash}`，只接受当前场景 design/scenario-batch 占用。事件均携带 `idempotencyKey`、`token`、`expectedHash`：`round` 另含 `hashAfter`、`improved`；`pause` 的原因固定为 `business-answer-required`；`resume` 必须含新的显式 `userActionId`；`terminate` 原因为 cancelled/concurrent-edit/missing-evidence/no-improvement/round-limit。累计最多 3 轮，暂停/续接不清零；无改善、并发修改、资料不可读、额度耗尽或用户取消时终止，结束占用撤销未完成授权。普通聊天不能续接任务，终止任务不能恢复。后台只记录授权和控制事件，不接收业务补答全文、会话、提示词或工具日志，也不新增 AI 端点。

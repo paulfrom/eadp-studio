@@ -13,6 +13,7 @@ import { StudioStore } from '../../packages/studio-plugin/src/host/application/s
 import { ScenarioWorkspaces } from '../../packages/studio-plugin/src/host/application/scenario-workspaces.ts'
 import { ScenarioRepairs } from '../../packages/studio-plugin/src/host/application/scenario-repairs.ts'
 import { ScenarioTemplates } from '../../packages/studio-plugin/src/host/application/scenario-templates.ts'
+import { BackgroundLane } from '../../packages/studio-plugin/src/host/application/background-lane.ts'
 
 const templateBody = '## 范围\n## 规则\n', templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: digest(templateBody) }
 function metadata(): MaterialMetadata { return { entityId: 'scene', kind: 'scenario', title: '审批', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [{ blocking: true, limitation: '异常审批规则待补充', excludedScope: '异常审批' }], referencedAssets: [] } }
@@ -67,7 +68,8 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
     throw new Error(`Unexpected request: ${method} ${route}`)
   } } as unknown as CollaborationClient
   const ports = { async account() { return { id: 1 } }, async session(value: TaskView) { return value.sessionId }, async prompt(_sessionId: string, value: string) { prompts.push(value) }, git: { async state() { return { dirty: false, head: 'c'.repeat(40), branch: 'main' } } } } as unknown as HostPorts
-  const projects = { async readFixed(_projectId: string, _commit: string, relative: string) { assert.equal(relative, templateRef.path); return Buffer.from(templateBody) } } as unknown as ProjectWorkspaces
+  const read = async (_projectId: string, _commit: string, relative: string) => { assert.equal(relative, templateRef.path); return Buffer.from(templateBody) }
+  const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   const workspaces = new ScenarioWorkspaces(store, api, ports, projects, { async entity() { return { remote, entity } }, async task() { return task }, async owned() { return token }, async deliver(work) { await work() } })
   const draft = await saveMaterial(root, metadata(), '## 范围\n审批流程允许退回重试。\n## 规则\n待补充')
   const record = await workspaces.record(entity.id)
@@ -83,7 +85,8 @@ test('opening and snapshotting an accepted scenario reads its fixed version with
   const f = await fixture(t), fixedText = materialText(metadata(), '已确认正文')
   delete f.entity.occupation
   f.entity.current = { fixed: { commitSha: 'd'.repeat(40), path: '场景/scene.md', sha256: digest(fixedText) }, confirmedBy: 1, confirmedAt: '2026-10-20T00:00:00Z' } as NonNullable<EntityView['current']>
-  const projects = { async readFixed(_projectId: string, _commit: string, relative: string) { return Buffer.from(relative === '场景/scene.md' ? fixedText : templateBody) } } as unknown as ProjectWorkspaces
+  const read = async (_projectId: string, _commit: string, relative: string) => Buffer.from(relative === '场景/scene.md' ? fixedText : templateBody)
+  const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   let taskCalls = 0, ownershipCalls = 0
   const workspaces = new ScenarioWorkspaces(f.store, f.api, f.ports, projects, { async entity() { return { remote: f.remote, entity: f.entity } }, async task() { taskCalls++; throw new Error('must stay read-only') }, async owned() { ownershipCalls++; throw new Error('must not claim') }, async deliver(work) { await work() } })
   await workspaces.open(f.entity.id)
@@ -152,13 +155,19 @@ test('repair with no usable source terminates; an unchanged set of blockers stop
 })
 
 test('template preview rejects deleting historical identities and publication stops before touching materials when the accepted head changes', async t => {
-  const f = await fixture(t), templates = new ScenarioTemplates(f.store, f.api, f.ports, f.projects)
+  const f = await fixture(t), lane = new BackgroundLane(), templates = new ScenarioTemplates(f.store, f.api, f.ports, f.projects, lane)
   await assert.rejects(templates.preview(f.remote, [{ id: 'different', name: '替代', body: '## 范围' }], 'different'), /不支持删除/)
   await templates.preview(f.remote, [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
   const operation = f.local.templateOperations[0]!
   f.remote.project.recognizedHead = 'e'.repeat(40)
-  await assert.rejects(templates.publish(operation.preview.operationId, f.remote), /项目版本已变化/)
-  assert.equal(operation.directory, undefined)
+  // Publication queues its Git work: the reply returns at once and the stopped
+  // operation is what the surfaces show and retry.
+  await templates.publish(operation.preview.operationId, f.remote)
+  await lane.settle()
+  const recorded = (await f.store.read()).templateOperations[0]!
+  assert.match(recorded.message ?? '', /项目版本已变化/)
+  assert.equal(recorded.phase, 'unknown')
+  assert.equal(recorded.directory, undefined)
   assert.equal(await readFile(path.join(f.root, f.draft.path), 'utf8'), materialText(f.draft.metadata, f.draft.body))
   assert.equal(f.calls.some(call => /integrations/.test(call)), false)
 })
@@ -166,8 +175,9 @@ test('template preview rejects deleting historical identities and publication st
 test('template publication builds outside the material worktree and rejects a candidate containing a scene', async t => {
   const f = await fixture(t)
   const manifest = { schemaVersion: 1, projectId: 'project', gitlabProjectId: 1, repositoryUrl: 'https://git.example/project.git', stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', path: '.template/default.md' }] } }
-  const projects = { async readFixed(_project: string, _sha: string, relative: string) { return Buffer.from(relative === 'project.assets.json' ? JSON.stringify(manifest) : templateBody) } } as unknown as ProjectWorkspaces
-  const directories: string[] = [], staged: string[][] = []
+  const read = async (_project: string, _sha: string, relative: string) => Buffer.from(relative === 'project.assets.json' ? JSON.stringify(manifest) : templateBody)
+  const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
+  const lane = new BackgroundLane(), directories: string[] = [], staged: string[][] = []
   const ports = { ...f.ports, git: {
     async fetch() {},
     async createWorktree(_projectDirectory: string, directory: string) { directories.push(directory); await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'project.assets.json'), JSON.stringify(manifest)) },
@@ -175,9 +185,13 @@ test('template publication builds outside the material worktree and rejects a ca
     async commitFiles(_directory: string, files: string[]) { staged.push(files); return 'f'.repeat(40) },
     async changedFiles() { return ['project.assets.json', '.template/default.md', '场景/scene.md'] },
   } } as unknown as HostPorts
-  const templates = new ScenarioTemplates(f.store, f.api, ports, projects)
+  const templates = new ScenarioTemplates(f.store, f.api, ports, projects, lane)
   await templates.preview(f.remote, [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
-  await assert.rejects(templates.publish(f.local.templateOperations[0]!.preview.operationId, f.remote), /不允许的变更/)
+  await templates.publish(f.local.templateOperations[0]!.preview.operationId, f.remote)
+  await lane.settle()
+  const recorded = (await f.store.read()).templateOperations[0]!
+  assert.match(recorded.message ?? '', /不允许的变更/)
+  assert.equal(recorded.phase, 'unknown')
   assert.equal(directories.length, 1)
   assert.equal(directories[0]!.startsWith(`${f.root}/`), false)
   assert.deepEqual(staged, [['project.assets.json', '.template/default.md']])
