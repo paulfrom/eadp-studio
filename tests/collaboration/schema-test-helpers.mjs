@@ -64,27 +64,13 @@ export function confirm(pool, id, entityId, { projectId = 'project-a', applicabi
   });
 }
 
-/** Accepts a finite comparison observation, its inputs and initial findings together. */
-export function comparison(pool, id, { result = 'completed', coverage = 'complete', failureCode = null, summary = '', withFinding = false, uncovered = false, fields = {}, input = {}, range = {} } = {}) {
+/** Accepts one immutable comparison snapshot together with its sealed conflict set. */
+export function comparison(pool, id, { result = 'completed', coverage = 'complete', failureCode = null, summary = '', conflicts = 0, involved = 'scenario-a', fields = {}, conflict = {} } = {}) {
   return inTransaction(pool, async c => {
-    await insert(c, 'studio_consistency_comparisons', { id, project_id: 'project-a', entity_id: 'requirement-a', trigger: 'manual', operation_key: `compare-${id}`, request_hash: fixed.fingerprint, result, coverage, failure_code: failureCode, summary, input_count: 1, uncovered_count: uncovered ? 1 : 0, finding_count: withFinding ? 1 : 0, ...audit.created, ...fields });
-    await insert(c, 'studio_consistency_inputs', { project_id: 'project-a', comparison_id: id, id: `input-${id}`, ordinal: 1, entity_id: 'requirement-a', path: '需求/requirement-a.md', sha256: fixed.contentHash, local_state: 'draft', range_count: 1, ...input });
-    await insert(c, 'studio_consistency_input_ranges', { project_id: 'project-a', comparison_id: id, input_id: `input-${id}`, ordinal: 1, start_line: 1, end_line: 5, ...range });
-    if (uncovered) await insert(c, 'studio_consistency_uncovered', { project_id: 'project-a', comparison_id: id, id: `missing-${id}`, ordinal: 1, path: '需求/missing.md', reason: 'missing' });
-    if (withFinding) {
-      await insert(c, 'studio_consistency_findings', { project_id: 'project-a', comparison_id: id, id: `finding-${id}`, ordinal: 1, summary: 'Scope differs', relation: 'formal', input_count: 1, range_count: 1, ...audit.mutable });
-      await insert(c, 'studio_consistency_finding_inputs', { project_id: 'project-a', comparison_id: id, finding_id: `finding-${id}`, input_id: `input-${id}`, ordinal: 1 });
-      await insert(c, 'studio_consistency_finding_ranges', { project_id: 'project-a', comparison_id: id, finding_id: `finding-${id}`, input_id: `input-${id}`, ordinal: 1, start_line: 2, end_line: 3 });
+    await insert(c, 'studio_consistency_comparisons', { id, project_id: 'project-a', entity_id: 'requirement-a', trigger: 'manual', operation_key: `compare-${id}`, request_hash: fixed.fingerprint, result, coverage, failure_code: failureCode, summary, conflict_count: conflicts, ...audit.created, ...fields });
+    if (conflicts > 0) {
+      await insert(c, 'studio_consistency_conflicts', { project_id: 'project-a', comparison_id: id, id: `conflict-${id}`, ordinal: 1, summary: 'Scope differs', relation: 'formal', entity_count: 1, ...conflict });
+      await insert(c, 'studio_consistency_conflict_entities', { project_id: 'project-a', comparison_id: id, conflict_id: `conflict-${id}`, ordinal: 1, entity_id: involved });
     }
-  });
-}
-
-/** Applies a conditional revision change and its treatment audit as one transaction. */
-export function treatFinding(pool, findingId, expectedRevision, operationKey, { action = 'handle', status = 'handled', reminder = false } = {}) {
-  return inTransaction(pool, async c => {
-    const update = await c.query('UPDATE studio_consistency_findings SET status=$1,reminder=$2,revision=revision+1,last_editor_id=1,last_editor_account=$3,last_editor_name=$4 WHERE project_id=$5 AND id=$6 AND revision=$7 RETURNING revision', [status, reminder, 'schema-test', 'Schema Test', 'project-a', findingId, expectedRevision]);
-    if (update.rowCount === 0) return false;
-    await insert(c, 'studio_consistency_finding_events', { project_id: 'project-a', id: `event-${operationKey}`, finding_id: findingId, revision: update.rows[0].revision, operation_key: operationKey, request_hash: fixed.fingerprint, action, status, reminder, note: 'Registered by user', ...audit.created });
-    return true;
   });
 }

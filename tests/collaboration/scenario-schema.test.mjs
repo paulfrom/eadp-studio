@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from '../../apps/collaboration-api/node_modules/pg/lib/index.js';
-import { audit, comparison, createEntity, createProject, confirm, fixed, initialize, inTransaction, insert, treatFinding } from './schema-test-helpers.mjs';
+import { audit, comparison, createEntity, createProject, confirm, fixed, initialize, inTransaction, insert } from './schema-test-helpers.mjs';
 
 // Only an explicitly supplied, empty disposable database may receive this DDL.
 const databaseUrl = process.env.SCENARIO_SCHEMA_TEST_DATABASE_URL;
@@ -125,51 +125,40 @@ test('collaboration schema on PostgreSQL', { skip: !databaseUrl }, async t => {
     await insert(pool, 'studio_occupation_inputs', input);
   });
 
-  await t.test('comparison execution, coverage, bounded input identities and line ranges are independently validated', async () => {
-    await comparison(pool, 'comparison-main', { withFinding: true });
-    await comparison(pool, 'comparison-partial', { coverage: 'partial', uncovered: true });
+  await t.test('comparison results, coverage and sealed conflict sets are independently validated', async () => {
+    await comparison(pool, 'comparison-main', { conflicts: 1 });
+    await comparison(pool, 'comparison-partial', { coverage: 'partial' });
     await comparison(pool, 'comparison-failed', { result: 'failed', coverage: 'partial', failureCode: 'model-failed', summary: 'Model unavailable' });
     await comparison(pool, 'comparison-cancelled', { result: 'cancelled', coverage: 'partial', failureCode: 'cancelled' });
     await assert.rejects(comparison(pool, 'cancelled-null', { result: 'cancelled', coverage: 'partial' }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'complete-missing', { uncovered: true }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'too-many-inputs', { fields: { input_count: 101 } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'ordinal-101', { input: { ordinal: 101 } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'invalid-hash', { input: { sha256: 'unread' } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'absolute-path', { input: { path: 'C:/private/requirement.md' } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'parent-path', { input: { path: '../private/requirement.md' } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'reversed-range', { range: { start_line: 10, end_line: 2 } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'line-zero', { range: { start_line: 0 } }), { code: '23514' });
-    await assert.rejects(comparison(pool, 'input-project', { input: { entity_id: 'requirement-b' } }), { code: '23503' });
+    await assert.rejects(comparison(pool, 'completed-with-code', { failureCode: 'model-failed' }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'failed-without-code', { result: 'failed', summary: 'No code' }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'too-many-conflicts', { fields: { conflict_count: 101 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'ordinal-101', { conflicts: 1, conflict: { ordinal: 101 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'blank-conflict', { conflicts: 1, conflict: { summary: '  ' } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'conflict-without-entity', { conflicts: 1, conflict: { entity_count: 0 } }), { code: '23514' });
     await assert.rejects(comparison(pool, 'oversized-summary', { summary: 'x'.repeat(501) }), { code: '22001' });
-    await assert.rejects(comparison(pool, 'missing-declared-input', { fields: { input_count: 2 } }), /count|collection/i);
-    await assert.rejects(insert(pool, 'studio_consistency_finding_inputs', { project_id: 'project-a', comparison_id: 'comparison-main', finding_id: 'finding-comparison-main', input_id: 'input-comparison-partial', ordinal: 2 }), { code: '23503' });
-    await assert.rejects(insert(pool, 'studio_consistency_inputs', { project_id: 'project-a', comparison_id: 'comparison-main', id: 'late-input', ordinal: 2, entity_id: 'scenario-a', path: '场景/scenario-a.md', sha256: fixed.contentHash, local_state: 'current' }), /count|collection/i);
+    await assert.rejects(comparison(pool, 'missing-declared-conflict', { fields: { conflict_count: 2 } }), /count|collection/i);
+    await assert.rejects(comparison(pool, 'missing-declared-entity', { conflicts: 1, conflict: { entity_count: 2 } }), /count|collection/i);
+    await assert.rejects(comparison(pool, 'foreign-conflict-entity', { conflicts: 1, involved: 'requirement-b' }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_consistency_conflicts', { project_id: 'project-a', comparison_id: 'comparison-partial', id: 'late-conflict', ordinal: 1, summary: 'Late', relation: 'formal', entity_count: 1 }), /count|collection/i);
+    await assert.rejects(insert(pool, 'studio_consistency_conflicts', { project_id: 'project-b', comparison_id: 'comparison-main', id: 'cross-project', ordinal: 1, summary: 'Cross', relation: 'formal', entity_count: 1 }), { code: '23503' });
     await assert.rejects(comparison(pool, 'operation-replay', { fields: { operation_key: 'compare-comparison-main' } }), { code: '23505' });
+    assert.equal((await pool.query("SELECT summary FROM studio_consistency_conflicts WHERE comparison_id='comparison-main'")).rows[0].summary, 'Scope differs');
+    await assert.rejects(pool.query("UPDATE studio_consistency_comparisons SET conflict_count=0 WHERE id='comparison-main'"), /immutable/);
+    await assert.rejects(pool.query("UPDATE studio_consistency_conflicts SET summary='rewritten' WHERE comparison_id='comparison-main'"), /immutable/);
+    await assert.rejects(pool.query("DELETE FROM studio_consistency_conflicts WHERE comparison_id='comparison-main'"), /immutable/);
+    await assert.rejects(pool.query("UPDATE studio_consistency_conflict_entities SET entity_id='scenario-large' WHERE comparison_id='comparison-main'"), /immutable/);
   });
 
-  await t.test('automatic comparison acceptance is unique per real confirmation; manual retries keep distinct histories', async () => {
+  await t.test('automatic comparison acceptance is unique per real confirmation and conflict ids stay comparison-scoped', async () => {
     await comparison(pool, 'automatic-first', { fields: { trigger: 'confirmation', confirmation_id: 'requirement-confirmed' } });
     await assert.rejects(comparison(pool, 'automatic-duplicate', { fields: { trigger: 'confirmation', confirmation_id: 'requirement-confirmed' } }), { code: '23505' });
     await assert.rejects(comparison(pool, 'automatic-foreign-target', { fields: { trigger: 'confirmation', confirmation_id: 'scenario-confirmed' } }), { code: '23503' });
-    await comparison(pool, 'manual-again', { withFinding: true });
-    assert.equal((await pool.query("SELECT status FROM studio_consistency_findings WHERE id='finding-manual-again'")).rows[0].status, 'pending');
-  });
-
-  await t.test('concurrent finding actions use their own revision and keep exactly one idempotent audit event', async () => {
-    const findingId = 'finding-comparison-main';
-    const before = (await pool.query("SELECT revision,material_version FROM studio_entities WHERE id='requirement-a'")).rows[0];
-    await assert.rejects(pool.query("UPDATE studio_consistency_findings SET revision=revision+1,status='handled' WHERE id=$1", [findingId]), /matching treatment event/);
-    const results = await Promise.all([treatFinding(pool, findingId, 0, 'concurrent-a'), treatFinding(pool, findingId, 0, 'concurrent-b', { action: 'ignore', status: 'ignored' })]);
-    assert.deepEqual(results.sort(), [false, true]);
-    assert.equal((await pool.query('SELECT count(*)::int AS n FROM studio_consistency_finding_events WHERE finding_id=$1', [findingId])).rows[0].n, 1);
-    const event = (await pool.query('SELECT * FROM studio_consistency_finding_events WHERE finding_id=$1', [findingId])).rows[0];
-    assert.equal(await treatFinding(pool, findingId, 0, event.operation_key), false);
-    await assert.rejects(treatFinding(pool, findingId, 1, event.operation_key, { action: 'remind', status: event.status, reminder: true }), { code: '23505' });
-    assert.equal((await pool.query('SELECT revision FROM studio_consistency_findings WHERE id=$1', [findingId])).rows[0].revision, 1);
-    assert.equal(await treatFinding(pool, findingId, 1, 'remind-once', { action: 'remind', status: event.status, reminder: true }), true);
-    await assert.rejects(pool.query("DELETE FROM studio_consistency_finding_events WHERE finding_id=$1", [findingId]), /immutable/);
-    await assert.rejects(pool.query("UPDATE studio_consistency_findings SET revision=revision+1,summary='Rewritten observation' WHERE id=$1", [findingId]), /immutable/);
-    assert.deepEqual((await pool.query("SELECT revision,material_version FROM studio_entities WHERE id='requirement-a'")).rows[0], before);
-    assert.equal((await pool.query('SELECT status FROM studio_consistency_findings WHERE id=$1', ['finding-manual-again'])).rows[0].status, 'pending');
+    await assert.rejects(comparison(pool, 'automatic-without-confirmation', { fields: { trigger: 'confirmation' } }), { code: '23514' });
+    await comparison(pool, 'manual-again', { conflicts: 1 });
+    assert.deepEqual((await pool.query("SELECT comparison_id FROM studio_consistency_conflicts WHERE id='conflict-manual-again'")).rows, [{ comparison_id: 'manual-again' }]);
+    const counts = (await pool.query("SELECT x.id,conflict_count::int AS sealed,(SELECT count(*)::int FROM studio_consistency_conflicts c WHERE c.project_id=x.project_id AND c.comparison_id=x.id) AS actual FROM studio_consistency_comparisons x ORDER BY x.id")).rows;
+    assert.ok(counts.every(row => row.sealed === row.actual), JSON.stringify(counts));
   });
 });
