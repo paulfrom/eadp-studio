@@ -19,23 +19,25 @@ const code = (expected: string) => (error: unknown) => error instanceof DomainEr
 afterEach(() => mock.restoreAll());
 
 function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
-  const kind = stage === 'scenario-batch' ? 'scenario' : 'requirement';
+  const kind = 'requirement' as const;
   const evidenceBytes = Buffer.from('用户提供的业务依据。\n第二行明确规则。\n');
   const evidencePath = '.eadp/evidence/source.txt';
   const templateBytes = Buffer.from('# 默认场景模板\n\n## 自定义章节\n');
   const templateRef = { commitSha: fixedSha, path: '.template/default.md', sha256: createHash('sha256').update(templateBytes).digest('hex') };
-  const common = { entityId: 'asset-1', title: 'Accepted input', scenarioIds: kind === 'requirement' ? ['source-1'] : [], prerequisites: [], sources: kind === 'requirement' ? [{ projectId: 'project-1', entityId: 'source-1', version: 1 }] : [], businessEvidence: [{ label: 'Author', reference: 'synthetic-acceptance', files: [{ path: evidencePath, sha256: createHash('sha256').update(evidenceBytes).digest('hex') }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] };
-  const metadata: MaterialMetadata = kind === 'scenario' ? { ...common, kind, templateId: 'default', templateRef } : { ...common, kind, categoryId: 'business' };
-  const materialPath = `${kind === 'scenario' ? '场景' : '需求'}/${metadata.title}.md`;
+  const requirementTemplateBytes = Buffer.from('# 默认需求模板\n\n## 自定义章节\n');
+  const requirementTemplateRef = { commitSha: fixedSha, path: '.template/requirement-default.md', sha256: createHash('sha256').update(requirementTemplateBytes).digest('hex') };
+  const common = { entityId: 'asset-1', title: 'Accepted input', scenarioIds: ['source-1'], prerequisites: [], sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }], businessEvidence: [{ label: 'Author', reference: 'synthetic-acceptance', files: [{ path: evidencePath, sha256: createHash('sha256').update(evidenceBytes).digest('hex') }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] };
+  const metadata: MaterialMetadata = { ...common, kind, templateId: 'requirement-default', templateRef: requirementTemplateRef };
+  const materialPath = `需求/${metadata.title}.md`;
   const body = Buffer.from('# Accepted input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
   const fixed = { commitSha: fixedSha, path: materialPath, sha256: createHash('sha256').update(body).digest('hex') };
-  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: stage === 'prototype' ? 'prototype' as const : stage === 'scenario-batch' ? 'scenario-batch' as const : 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
-  const entity: EntityView = { id: 'asset-1', kind, title: metadata.title, categoryId: metadata.categoryId, revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: actor.id, frozenBy: [], associationRevision: 0, templateId: metadata.templateId, templateRef: metadata.templateRef, occupation: token, current: { version: 1, confirmationId: 'confirmation-1', confirmedBy: actor.id, confirmedAt: '', fixed, metadata, reuse: { enabled: true, reason: 'accepted' } } };
-  const project: ProjectView = { id: 'project-1', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: 'Project', namespaceId: 2, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: head, revision: 1, categories: [{ id: 'business', name: 'Business' }] };
+  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: stage === 'prototype' ? 'prototype' as const : 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
+  const entity: EntityView = { id: 'asset-1', kind, title: metadata.title, revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: actor.id, templateId: metadata.templateId, templateRef: metadata.templateRef, occupation: token, current: { version: 1, confirmationId: 'confirmation-1', confirmedBy: actor.id, confirmedAt: '', fixed, metadata, reuse: { enabled: true, reason: 'accepted' } } };
+  const project: ProjectView = { id: 'project-1', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: 'Project', namespaceId: 2, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: head, revision: 1 };
   const changedPath = stage === 'prototype' ? '原型代码/src/pages/index.tsx' : materialPath;
   const diff = (path: string, text = '+accepted change') => ({ old_path: path, new_path: path, deleted_file: false, renamed_file: false, diff: text });
-  const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: (stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : ['materials', 'relations']).map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: stage === 'prototype' ? { ...fixed } : { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }], ...(stage === 'scenario-batch' ? { expectedAssociationRevision: 0, batchRequirementIds: [] } : {}) };
-  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), previousMaterials: new Map<string, Uint8Array>(), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
+  const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: (stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : ['materials', 'relations']).map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: stage === 'prototype' ? { ...fixed } : { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }] };
+  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] }, requirementTemplates: { defaultTemplateId: 'requirement-default', templates: [{ id: 'requirement-default', name: 'Default requirement', path: requirementTemplateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), previousMaterials: new Map<string, Uint8Array>(), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
   const reads: Array<{ path: string; ref: string | null }> = [];
   mock.method(globalThis, 'fetch', async (url: string | URL | Request, request: RequestInit) => {
     const parsed = new URL(String(url)), path = decodeURIComponent(parsed.pathname.replace(/^\/api\/v4/, ''));
@@ -50,6 +52,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
     if (path === '/projects/7/repository/merge_base') return json({ id: fixedSha });
     if (path === '/projects/7/repository/files/project.assets.json/raw') return json(parsed.searchParams.get('ref') === candidate && controls.candidateManifest ? controls.candidateManifest : controls.projectManifest);
     if (path === '/projects/7/repository/files/.template/default.md/raw') return new Response(templateBytes);
+    if (path === '/projects/7/repository/files/.template/requirement-default.md/raw') return new Response(requirementTemplateBytes);
     const filePath = path.match(/^\/projects\/7\/repository\/files\/(.+)\/raw$/)?.[1];
     if (filePath && controls.previousMaterials.has(filePath)) {
       reads.push({ path: filePath, ref: parsed.searchParams.get('ref') });
@@ -65,8 +68,8 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
     throw new Error(`Unexpected synthetic GitLab request ${path}`);
   });
   const content = new GitLabContent(new GitLab(config));
-  const materials = new Map([[metadata.entityId, structuredClone(metadata)]]);
-  const sourceEntity: EntityView = { ...entity, id: 'source-1', kind: 'scenario', scenarioIds: [], occupation: undefined, frozenBy: [], current: { ...entity.current!, metadata: { ...common, entityId: 'source-1', kind: 'scenario', templateId: 'default', templateRef, scenarioIds: [], sources: [] } } };
+  const materials: Map<string, MaterialMetadata> = new Map([[metadata.entityId, structuredClone(metadata)]]);
+  const sourceEntity: EntityView = { ...entity, id: 'source-1', kind: 'scenario', scenarioIds: [], occupation: undefined, current: { ...entity.current!, metadata: { ...common, entityId: 'source-1', kind: 'scenario', templateId: 'default', templateRef, scenarioIds: [], sources: [] } } };
   const all = [entity, sourceEntity];
   const verify = async () => { validateIntegration(project, all, actor, input, materials); await content.verifyCandidate(actor, project.gitlabProjectId, input); };
   return { input, entity, project, content, controls, reads, body, metadata, materialPath, diff, verify, all, materials };
@@ -78,8 +81,8 @@ test('a normal prototype candidate verifies unchanged accepted requirement bytes
   assert.ok(!f.input.allowedPaths.includes(f.materialPath), 'accepted input must not be added to the prototype write scope');
 });
 
-for (const stage of ['material', 'scenario-batch'] as const) test(`${stage} confirmations still require exact candidate paths and bytes`, async () => {
-  const f = fixture(stage); await f.verify();
+test('material confirmations still require exact candidate paths and bytes', async () => {
+  const f = fixture('material'); await f.verify();
   assert.deepEqual(f.reads, [{ path: f.materialPath, ref: candidate }]);
   f.input.confirmations[0]!.fixed.commitSha = fixedSha;
   await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('FIXED_CANDIDATE_MISMATCH'));
@@ -188,12 +191,14 @@ async function accepts(schema: TSchema, body: unknown): Promise<boolean> {
   try { return (await app.inject({ method: 'POST', url: '/', payload: body as Record<string, unknown> })).statusCode === 200; } finally { await app.close(); }
 }
 
-test('scenario reservations reject category fields and requirements require fixed scenario sources', async () => {
+test('scenario and requirement reservations follow their kind contracts', async () => {
   const input = { idempotencyKey: 'reserve-1', title: '新场景', kind: 'scenario' };
-  assert.equal(await accepts(ReserveEntitySchema, input), true);
-  assert.equal(await accepts(ReserveEntitySchema, { ...input, categoryId: 'business' }), false);
-  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'requirement', categoryId: 'business', sources: [] }), false);
-  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'requirement', categoryId: 'business', sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }] }), true);
+  const templateRef = { commitSha: fixedSha, path: '.template/requirement-default.md', sha256: '0'.repeat(64) };
+  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'scenario' }), true);
+  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'requirement', sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }] }), false); // 缺模板绑定
+  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'requirement', templateId: 'requirement-default', templateRef, sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }] }), true);
+  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'requirement', templateId: 'requirement-default', templateRef, sources: [] }), false);
+  assert.equal(await accepts(ReserveEntitySchema, { ...input, kind: 'scenario', categoryId: 'x' } as never), false); // 白名单拒绝多余字段
 });
 
 test('confirmation requests contain only controls and reject uploaded business metadata', async () => {
@@ -285,11 +290,11 @@ test('a title edit may remove the confirmed previous path and nothing else', asy
   await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('MATERIAL_PATH_SCOPE'));
 });
 
-test('scenario templates are fixed catalog references and business metadata has no category', async () => {
-  const f = fixture('scenario-batch');
+test('templates are fixed catalog references verified against the accepted project catalog', async () => {
+  const f = fixture('material');
   await f.content.verifyCandidate(actor, 7, f.input);
-  assert.throws(() => parseMaterial(materialText({ ...f.metadata, categoryId: 'business' } as MaterialMetadata)), code('INVALID_MATERIAL'));
-  assert.ok(f.metadata.kind === 'scenario');
+  assert.throws(() => parseMaterial(materialText({ ...f.metadata, categoryId: 'business' } as unknown as MaterialMetadata)), code('INVALID_MATERIAL'));
+  assert.ok(f.metadata.kind === 'requirement');
   const changed = { ...f.metadata, templateRef: { ...f.metadata.templateRef, sha256: '0'.repeat(64) } };
   updateFixed(f, changed);
   await assert.rejects(f.content.verify(actor, 7, f.input.confirmations[0]!.fixed), code('TEMPLATE_REFERENCE_MISMATCH'));
@@ -344,10 +349,10 @@ test('template publication preserves historical catalog identities and refuses d
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_PATH_SCOPE'));
 });
 
-test('a project accepted without a template catalog reads an empty catalog instead of failing', async () => {
-  const f = fixture('material'), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
+test('a project accepted without template catalogs reads empty catalogs instead of failing', async () => {
+  const f = fixture('material'), { scenarioTemplates: _scenarios, requirementTemplates: _requirements, ...legacy } = f.controls.projectManifest;
   f.controls.projectManifest = legacy;
-  assert.deepEqual(await f.content.loadProjectTemplates(actor, 7, head), { templates: [] });
+  assert.deepEqual(await f.content.loadProjectTemplates(actor, 7, head), { scenarios: { templates: [] }, requirements: { templates: [] } });
 });
 
 test('the first template publication may declare the catalog of a project accepted without one', async () => {

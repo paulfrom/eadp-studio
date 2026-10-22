@@ -1,11 +1,12 @@
 // Runs only on an explicitly named empty disposable database; fixed records are
 // retained for inspection and the caller owns dropping the disposable database.
 import assert from 'node:assert/strict';
-import type { EntityView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
-import { createDatabase, transaction } from './database.js';
+import type { ClaimRequest, EntityView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
+import { createDatabase, transaction, type Transaction } from './database.js';
 import { applySchema } from './schema.js';
 import { loadConfig } from '../config.js';
 import type { Actor } from '../auth/session.js';
+import * as occupations from '../modules/occupations.js';
 import * as repository from './repository.js';
 
 const databaseUrl = process.env.SCENARIO_TRANSACTION_TEST_DATABASE_URL;
@@ -53,5 +54,39 @@ try {
   assert.deepEqual(await repository.reserveEntityNumber(database, projectId, 'scenario', actor, reserve('scenario', 'rolled-back')), rolledBack, 'Retry after business rollback must retain the original identity and number');
   await assert.rejects(repository.withContext({ actor }, () => transaction(database, c => repository.previous(c, projectId, actor, 'entity.update', { idempotencyKey: 'scenario-rolled-back' }))), /reserved by a different entity creation/);
   assert.equal((await transaction(database, c => repository.previous(c, projectId, actor, 'entity.reserve', reserve('scenario', 'rolled-back')))).found, false, 'The original reserved creation may retry its business writes');
-  console.log('Passed: independent durable dual-kind number allocation, SC/REQ prefixes, parallel uniqueness, rollback retention and exact operation-key replay.');
+  // The fixture project stays 'assigned' (the ready trigger requires the Task 4
+  // initialization presets), so occupation checks replay the service mutate
+  // discipline directly instead of calling the readiness-gated service.
+  async function mutate<T>(action: string, input: { idempotencyKey: string }, change: (c: Transaction, all: EntityView[]) => Promise<T>): Promise<T> {
+    return repository.withContext({ actor }, () => transaction(database, async c => {
+      await repository.project(c, projectId, true);
+      const previous = await repository.previous(c, projectId, actor, action, input);
+      if (previous.found) return previous.result as T;
+      const all = await repository.entities(c, projectId);
+      const result = await change(c, all);
+      await repository.remember(c, projectId, actor, action, input, result);
+      return result;
+    }));
+  }
+  const claimInput = (key: string, expectedRevision: number): ClaimRequest => ({ idempotencyKey: key, expectedRevision, taskId: key, clientId: key, purpose: 'design' });
+  const stale = await mutate('check.stale-claim', claimInput('stale-claim', initial.revision + 100), (c, all) => occupations.claim(c, projectId, all, initial.id, actor, claimInput('stale-claim', initial.revision + 100)).then(() => 'claimed')).catch(error => error);
+  assert.equal((stale as { code?: string }).code, 'REVISION_CONFLICT', 'A stale expectedRevision must be rejected');
+  const requests = [0, 1].map(i => claimInput(`claim-${i}`, initial.revision));
+  const candidates = await Promise.allSettled(requests.map(request =>
+    mutate('check.claim', request, (c, all) => occupations.claim(c, projectId, all, initial.id, actor, request))));
+  assert.equal(candidates.filter(r => r.status === 'fulfilled').length, 1, 'Concurrent claims must have exactly one occupation winner (studio_one_active_occupation)');
+  const winnerIndex = candidates.findIndex(r => r.status === 'fulfilled');
+  assert.ok(winnerIndex >= 0, 'One claim must succeed');
+  const claimed = (candidates[winnerIndex]! as PromiseFulfilledResult<EntityView>).value;
+  const replay = await mutate<EntityView>('check.claim', requests[winnerIndex]!, async (): Promise<EntityView> => { throw new Error('Replay incorrectly executed mutation'); });
+  assert.equal(replay.id, claimed.id);
+  assert.equal(replay.occupation?.occupationId, claimed.occupation?.occupationId, 'Replaying the same operation must return the original result');
+  assert.equal(replay.revision, claimed.revision);
+  await mutate('check.release', { idempotencyKey: 'release' }, (c, all) => occupations.release(c, projectId, all, initial.id, actor, { idempotencyKey: 'release', token: claimed.occupation!, reason: 'Transaction test release' }, false));
+  const released = await repository.withContext({ actor }, () => transaction(database, c => repository.entities(c, projectId)));
+  const reclaimRequest = claimInput('reclaim', released[0]!.revision);
+  const reclaimed = await mutate('check.reclaim', reclaimRequest, (c, all) => occupations.claim(c, projectId, all, initial.id, actor, reclaimRequest));
+  assert.equal(reclaimed.generation, claimed.generation + 1, 'Reclaim after release must advance the generation');
+  assert.throws(() => occupations.assertOccupation(reclaimed, claimed.occupation!, actor), /must match/, 'The released occupation must be rejected after reclaim');
+  console.log('Passed: independent durable dual-kind number allocation, SC/REQ prefixes, parallel uniqueness, rollback retention, exact operation-key replay, single-winner concurrent claims, stale revision rejection and generation increment after release.');
 } finally { await database.end(); }

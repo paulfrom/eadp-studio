@@ -11,7 +11,7 @@ import { verifyProjectInitialization } from './project-initialization.js';
 const config = loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: 'synthetic-private-management-token' });
 const gitlab = new GitLab(config), rootSha = 'a'.repeat(40);
 const actor: Actor = { id: 1, name: '测试管理员', username: 'studioAdmin', email: 'songlin.liu@changhong.com', admin: true, gitlabUserId: 42, gitlabUsername: 'bound-user', sessionHash: 'b'.repeat(64) };
-const project: ProjectView = { id: 'server-project', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: '项目', namespaceId: 2, namespacePath: 'team', initializationStatus: 'pending', revision: 0, recognizedHead: null, categories: [] };
+const project: ProjectView = { id: 'server-project', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: '项目', namespaceId: 2, namespacePath: 'team', initializationStatus: 'pending', revision: 0, recognizedHead: null };
 const remote = { id: 7, name: '项目', path: 'project', path_with_namespace: 'team/project', http_url_to_repo: project.repositoryUrl, namespace: { id: 2, full_path: 'team' }, visibility: 'private', default_branch: null, description: 'marker' };
 const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } };
 const code = (expected: string) => (error: unknown) => error instanceof DomainError && error.code === expected;

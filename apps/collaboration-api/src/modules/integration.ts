@@ -5,7 +5,7 @@ import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, Fi
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import * as repository from '../persistence/repository.js';
-import { assertNotFrozen, assertOccupation, checkBoundInputs, finishOccupation } from './occupations.js';
+import { assertOccupation, checkBoundInputs, finishOccupation } from './occupations.js';
 import { assertRepairConfirmation, completeRepair } from './repairs.js';
 
 /** Prepared integrations retain recovery controls; fixed business material is read from Git. */
@@ -19,18 +19,7 @@ function materialFor(input: ConfirmationInput, materials: VerifiedMaterials): Ma
   requireCondition(metadata.entityId === input.entityId, 'CONFIRMATION_IDENTITY_MISMATCH', 'Fixed material identity must match the confirmation');
   return metadata;
 }
-function validateBatch(root: EntityView, all: EntityView[], input: MaterialRequest, occupationId: string): void {
-  requireCondition(input.expectedAssociationRevision === root.associationRevision, 'ASSOCIATION_REVISION_CONFLICT', 'Scenario association set has changed');
-  const frozen = all.filter(e => e.frozenBy.includes(occupationId));
-  requireCondition(canonical(frozen.map(x => x.id).sort()) === canonical([...(input.batchRequirementIds ?? [])].sort()), 'INCOMPLETE_SCENARIO_BATCH', 'Scenario batch must declare its complete frozen requirement set');
-  for (const requirement of frozen) {
-    const changing = input.confirmations.some(x => x.entityId === requirement.id);
-    if (requirement.completedVersion === requirement.materialVersion && requirement.materialVersion > 0) requireCondition(!changing, 'COMPLETED_REQUIREMENT_IMMUTABLE', 'Completed requirements must be preserved; derive a new requirement for changed scope');
-    else requireCondition(changing, 'INCOMPLETE_SCENARIO_BATCH', 'Every unstarted related requirement must be confirmed atomically in the batch');
-  }
-  requireCondition(input.confirmations.every(x => x.entityId === root.id || frozen.some(e => e.id === x.entityId)), 'BATCH_ENTITY_SCOPE', 'Batch can only modify the scenario and its frozen requirements');
-}
-function validateSources(project: ProjectView, value: EntityView, all: EntityView[], input: MaterialRequest, metadata: MaterialMetadata, materials: VerifiedMaterials): void {
+function validateSources(project: ProjectView, value: EntityView, all: EntityView[], metadata: MaterialMetadata): void {
   requireCondition(!metadata.sources.some(s => s.projectId === project.id && s.entityId === value.id), 'SELF_REFERENCE', 'Asset source cannot reference itself');
   if (value.kind !== 'requirement') return;
   requireCondition(metadata.scenarioIds.length > 0, 'SCENARIO_SOURCE_REQUIRED', 'A requirement must bind at least one confirmed scenario version');
@@ -38,9 +27,7 @@ function validateSources(project: ProjectView, value: EntityView, all: EntityVie
   requireCondition(scenarioSources.length === metadata.scenarioIds.length && new Set(scenarioSources.map(source => source.entityId)).size === scenarioSources.length, 'SCENARIO_SOURCE_REQUIRED', 'Every related scenario requires exactly one fixed source version');
   for (const source of scenarioSources) {
     const scenario = repository.entity(all, source.entityId);
-    const confirming = input.confirmations.find(confirmation => confirmation.entityId === scenario.id);
-    const pending = input.stage === 'scenario-batch' && scenario.id === input.entityId && confirming && materialFor(confirming, materials).kind === 'scenario';
-    requireCondition(scenario.kind === 'scenario' && (pending ? source.version === scenario.materialVersion + 1 : source.version <= scenario.materialVersion && source.version > 0), 'SCENARIO_VERSION_MISMATCH', 'Requirement source must bind an accepted scenario version or its atomic batch confirmation');
+    requireCondition(scenario.kind === 'scenario' && source.version <= scenario.materialVersion && source.version > 0, 'SCENARIO_VERSION_MISMATCH', 'Requirement source must bind an accepted scenario version');
   }
 }
 function validateConfirmation(project: ProjectView, all: EntityView[], prospective: EntityView[], root: EntityView, input: MaterialRequest, confirmation: ConfirmationInput, materials: VerifiedMaterials): void {
@@ -52,19 +39,18 @@ function validateConfirmation(project: ProjectView, all: EntityView[], prospecti
   }
   requireCondition(value.revision === confirmation.expectedRevision && metadata.kind === value.kind, 'CONFIRMATION_REVISION_CONFLICT', 'Confirmation entity, kind and revision must match');
   requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);
-  if (value.kind !== 'scenario') requireCondition(project.categories.some(category => category.id === metadata.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
-  if (value.kind === 'scenario') requireCondition(value.templateId === metadata.templateId && canonical(value.templateRef) === canonical(metadata.templateRef), 'TEMPLATE_BINDING_CHANGED', 'Scenario confirmation must bind its selected fixed template');
+  if (value.kind === 'scenario' || value.kind === 'requirement') requireCondition(value.templateId === metadata.templateId && canonical(value.templateRef) === canonical(metadata.templateRef), 'TEMPLATE_BINDING_CHANGED', 'Material confirmation must bind its selected fixed template');
   if (input.stage === 'prototype') {
     requireCondition(value.current && value.completedVersion !== value.materialVersion && canonical(value.current.metadata) === canonical(metadata) && canonical(value.current.fixed) === canonical(confirmation.fixed), 'PROTOTYPE_INPUT_CHANGED', 'Prototype completion must bind its confirmed requirement material');
   } else {
     if (value.kind !== 'requirement') requireCondition(metadata.prerequisites.length === 0 && metadata.scenarioIds.length === 0, 'INVALID_RELATIONS', 'Only requirements may declare scenarios and prerequisites', 422);
     for (const scenarioId of metadata.scenarioIds) {
       const scenario = repository.entity(prospective, scenarioId);
-      requireCondition(scenario.kind === 'scenario' && (!scenario.occupation || (input.stage === 'scenario-batch' && scenario.id === root.id)), 'SCENARIO_FROZEN', 'Related scenario is unavailable');
+      requireCondition(scenario.kind === 'scenario', 'SCENARIO_SOURCE_REQUIRED', 'Requirement sources must identify scenarios');
     }
     value.scenarioIds = metadata.scenarioIds; value.prerequisites = metadata.prerequisites;
   }
-  validateSources(project, value, all, input, metadata, materials);
+  validateSources(project, value, all, metadata);
   for (const reference of metadata.referencedAssets) {
     requireCondition(reference.projectId === project.id && reference.entityId !== value.id, 'INVALID_MANIFEST_REFERENCE', 'Manifest references must identify other fixed assets in this project');
     const referenced = repository.entity(all, reference.entityId);
@@ -80,12 +66,9 @@ export function validateIntegration(project: ProjectView, all: EntityView[], act
     return;
   }
   const root = repository.entity(all, input.entityId), occupation = assertOccupation(root, input.token, actor);
-  requireCondition(input.confirmations.length === new Set(input.confirmations.map(confirmation => confirmation.entityId)).size, 'DUPLICATE_CONFIRMATION', 'Batch contains duplicate entity confirmations', 422);
-  requireCondition(input.confirmations.some(confirmation => confirmation.entityId === root.id), 'ROOT_CONFIRMATION_REQUIRED', 'Integration must confirm its occupied entity', 422);
-  requireCondition(input.stage === 'scenario-batch' ? occupation.purpose === 'scenario-batch' : input.stage === 'prototype' ? occupation.purpose === 'prototype' : occupation.purpose === 'design', 'OCCUPATION_PURPOSE_MISMATCH', 'Integration stage does not match occupation purpose');
-  requireCondition(!(root.kind === 'scenario' && root.materialVersion > 0 && input.stage !== 'scenario-batch'), 'BATCH_REQUIRED', 'A confirmed scenario requires an explicit revision batch');
-  if (input.stage === 'scenario-batch') validateBatch(root, all, input, occupation.occupationId);
-  else { assertNotFrozen(root); checkBoundInputs(root, all); requireCondition(input.confirmations.length === 1, 'SINGLE_ENTITY_REQUIRED', 'Ordinary integration can only confirm the occupied entity'); }
+  requireCondition(input.stage === 'prototype' ? occupation.purpose === 'prototype' : occupation.purpose === 'design', 'OCCUPATION_PURPOSE_MISMATCH', 'Integration stage does not match occupation purpose');
+  checkBoundInputs(root, all);
+  requireCondition(input.confirmations.length === 1 && input.confirmations[0]!.entityId === root.id, 'SINGLE_ENTITY_REQUIRED', 'Integration confirms exactly its occupied entity', 422);
   const prospective = structuredClone(all);
   for (const confirmation of input.confirmations) validateConfirmation(project, all, prospective, root, input, confirmation, materials);
   for (const value of prospective) if (value.kind === 'requirement') validatePrerequisites(value.id, value.prerequisites, prospective);
@@ -110,7 +93,7 @@ export const getIntegration = repository.getIntegration;
 async function confirmMaterial(c: Transaction, projectId: string, value: EntityView, input: ConfirmationInput, metadata: MaterialMetadata, actor: Actor, occupied: boolean, integrationId: string): Promise<ConfirmationEvent> {
   const event: ConfirmationEvent = { id: repository.newId(), projectId, entityId: value.id, version: value.materialVersion + 1, fixed: input.fixed, revision: value.revision + 1, confirmedBy: actor.id, confirmedAt: repository.now() };
   const version: FixedVersion = { version: event.version, fixed: input.fixed, metadata, title: metadata.title, summary: metadata.summary ?? '', readHash: input.readHash, applicability: metadata.applicability ? 'not-applicable' : 'applicable', ...(metadata.applicability ? { applicabilityReason: metadata.applicability.reason } : {}), confirmationId: event.id, confirmedBy: actor.id, confirmedAt: event.confirmedAt, reuse: { enabled: (value.kind === 'scenario' || value.kind === 'requirement') && !metadata.applicability, reason: metadata.applicability?.reason ?? 'Confirmed material accepted' } };
-  value.materialVersion = version.version; value.current = version; value.title = metadata.title; value.summary = metadata.summary ?? ''; value.categoryId = metadata.categoryId; value.scenarioIds = metadata.scenarioIds; value.scenarioSources = metadata.sources.filter(source => source.projectId === projectId && metadata.scenarioIds.includes(source.entityId)); value.prerequisites = metadata.prerequisites; value.confirmationStatus = 'confirmed'; if (!occupied) value.revision++;
+  value.materialVersion = version.version; value.current = version; value.title = metadata.title; value.summary = metadata.summary ?? ''; value.scenarioIds = metadata.scenarioIds; value.scenarioSources = metadata.sources.filter(source => source.projectId === projectId && metadata.scenarioIds.includes(source.entityId)); value.prerequisites = metadata.prerequisites; value.confirmationStatus = 'confirmed'; if (!occupied) value.revision++;
   await repository.saveConfirmation(c, projectId, { event, version, method: input, stage: 'material', integrationId });
   await repository.saveEntity(c, projectId, value); return event;
 }
@@ -133,12 +116,12 @@ export async function complete(c: Transaction, project: ProjectView, all: Entity
   if (input.stage !== 'template') {
     requireCondition(root, 'ROOT_CONFIRMATION_REQUIRED', 'Material integration requires its occupied entity');
     if (input.stage === 'prototype') ids.push(await completePrototype(c, project, root, actor, operation, input));
-    else for (const confirmation of [...input.confirmations].sort((left, right) => Number(repository.entity(all, right.entityId).kind === 'scenario') - Number(repository.entity(all, left.entityId).kind === 'scenario'))) {
-      const value = repository.entity(all, confirmation.entityId), oldScenarios = value.scenarioIds;
+    else {
+      const confirmation = input.confirmations[0]!;
+      const value = repository.entity(all, confirmation.entityId);
       const event = await confirmMaterial(c, project.id, value, confirmation, materialFor(confirmation, materials), actor, value.id === root.id, operation.id); ids.push(event.id);
-      for (const sceneId of new Set([...oldScenarios, ...value.scenarioIds])) { const scene = repository.entity(all, sceneId); scene.associationRevision++; await repository.saveEntity(c, project.id, scene); }
+      if (confirmation.confirmationMethod === 'ai-repair') await completeRepair(c, confirmation.repairTaskId, actor);
     }
-    for (const confirmation of input.confirmations) if (confirmation.confirmationMethod === 'ai-repair') await completeRepair(c, confirmation.repairTaskId, actor);
     await finishOccupation(c, project.id, all, root, 'completed', actor);
   }
   operation.status = 'accepted'; if (input.stage !== 'template') operation.confirmationIds = ids;

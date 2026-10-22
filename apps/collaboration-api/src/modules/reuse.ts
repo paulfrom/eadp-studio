@@ -1,4 +1,5 @@
 import { requireCondition } from '@eadp/asset-domain';
+import { isBuiltinScenarioMetadata } from '@eadp/contracts';
 import type { AdoptRequest, AdoptionSuccessRequest, EntityView } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
@@ -11,7 +12,7 @@ export interface AdoptionRecord {
 }
 export async function eligibility(c: Transaction, projectId: string, all: EntityView[], id: string, actor: Actor, version: number, enabled: boolean, reason: string) {
   const value = await fixedVersion(c, projectId, id, version);
-  requireCondition(!enabled || !value.metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'An inapplicable requirement version cannot become an adoption source');
+  requireCondition(!enabled || isBuiltinScenarioMetadata(value.metadata) || !value.metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'An inapplicable requirement version cannot become an adoption source');
   requireCondition(value.metadata.kind === 'scenario' || value.metadata.kind === 'requirement', 'INVALID_REUSE_SOURCE', 'Only scenario and requirement packages can be reused');
   await setEligibility(c, projectId, id, version, enabled, reason);
   value.reuse = { enabled, reason };

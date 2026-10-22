@@ -34,7 +34,7 @@ function assertOwner(value: EntityView, repair: RepairTaskView, actor: Actor) {
 
 export async function start(c: Transaction, projectId: string, value: EntityView, actor: Actor, input: RepairStartRequest) {
   const occupation = assertOccupation(value, input.token, actor);
-  requireCondition(value.kind === 'scenario' && ['design', 'scenario-batch'].includes(occupation.purpose),
+  requireCondition(value.kind === 'scenario' && !value.builtinKey && occupation.purpose === 'design',
     'REPAIR_DESIGN_REQUIRED', 'Scenario repair requires the current design occupation');
   requireCondition(!(await c.query('SELECT id FROM studio_repair_tasks WHERE project_id=$1 AND entity_id=$2 AND user_action_id=$3', [projectId, value.id, input.userActionId])).rowCount,
     'REPAIR_ACTION_REUSED', 'A new repair authorization requires a new explicit user action');

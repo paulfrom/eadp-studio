@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonical, DomainError, isMaterialPathOf, parseMaterial, parseProjectManifest, repositoryPath, requireCondition, validateMaterialMetadata } from '@eadp/asset-domain';
-import { isFixedManifest, type EntityKind, type FixedReference, type MaterialMetadata, type PrepareIntegrationRequest, type ProjectManifest } from '@eadp/contracts';
+import { isFixedManifest, type EntityKind, type FixedReference, type MaterialMetadata, type PrepareIntegrationRequest, type ProjectManifest, type TemplateCatalog } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
 
@@ -31,23 +31,27 @@ export class GitLabContent {
   private async manifest(gitlabProjectId: number, commitSha: string): Promise<ProjectManifest> {
     return parseProjectManifest(utf8(await this.file(gitlabProjectId, commitSha, 'project.assets.json'), 'INVALID_MANIFEST_ENCODING'));
   }
-  async loadProjectTemplates(actor: Reader, gitlabProjectId: number, commitSha: string): Promise<ProjectTemplates> {
+  async loadProjectTemplates(actor: Reader, gitlabProjectId: number, commitSha: string): Promise<{ scenarios: ProjectTemplates; requirements: ProjectTemplates }> {
     await this.gitlab.authorize(actor, gitlabProjectId);
     const manifest = await this.manifest(gitlabProjectId, commitSha);
     requireCondition(manifest.gitlabProjectId === gitlabProjectId, 'PROJECT_MANIFEST_IDENTITY_MISMATCH', 'Template manifest must belong to its GitLab project', 422);
-    // A project accepted before the catalog existed has no templates yet; the
-    // empty catalog is a published state, not a read failure.
-    if (!manifest.scenarioTemplates) return { templates: [] };
-    const templates: ProjectTemplates['templates'] = [];
-    for (const template of manifest.scenarioTemplates.templates) {
-      const bytes = await this.file(gitlabProjectId, commitSha, template.path);
-      requireCondition(utf8(bytes, 'INVALID_TEMPLATE_ENCODING').trim().length > 0, 'EMPTY_TEMPLATE', 'Scenario templates must contain Markdown text', 422);
-      templates.push({ id: template.id, name: template.name, fixed: { commitSha, path: template.path, sha256: digest(bytes) } });
-    }
-    return { defaultTemplateId: manifest.scenarioTemplates.defaultTemplateId, templates };
+    const load = async (catalog: TemplateCatalog | undefined): Promise<ProjectTemplates> => {
+      // A project accepted before a catalog existed has none yet; the empty
+      // catalog is a published state, not a read failure.
+      if (!catalog) return { templates: [] };
+      const templates: ProjectTemplates['templates'] = [];
+      for (const template of catalog.templates) {
+        const bytes = await this.file(gitlabProjectId, commitSha, template.path);
+        requireCondition(utf8(bytes, 'INVALID_TEMPLATE_ENCODING').trim().length > 0, 'EMPTY_TEMPLATE', 'Project templates must contain Markdown text', 422);
+        templates.push({ id: template.id, name: template.name, fixed: { commitSha, path: template.path, sha256: digest(bytes) } });
+      }
+      return { defaultTemplateId: catalog.defaultTemplateId, templates };
+    };
+    return { scenarios: await load(manifest.scenarioTemplates), requirements: await load(manifest.requirementTemplates) };
   }
-  async verifyTemplate(actor: Reader, gitlabProjectId: number, fixed: FixedReference, templateId?: string): Promise<void> {
-    const catalog = await this.loadProjectTemplates(actor, gitlabProjectId, fixed.commitSha);
+  async verifyTemplate(actor: Reader, gitlabProjectId: number, kind: 'scenario' | 'requirement', fixed: FixedReference, templateId?: string): Promise<void> {
+    const catalogs = await this.loadProjectTemplates(actor, gitlabProjectId, fixed.commitSha);
+    const catalog = kind === 'scenario' ? catalogs.scenarios : catalogs.requirements;
     requireCondition(catalog.templates.some(t => (!templateId || t.id === templateId) && canonical(t.fixed) === canonical(fixed)), 'TEMPLATE_REFERENCE_MISMATCH', 'Template reference must match a fixed project catalog entry', 422);
   }
   /** Reads business metadata only from the immutable material; callers may hydrate API views with it. */
@@ -71,9 +75,8 @@ export class GitLabContent {
     const matched = metadata.kind === 'baseline' ? fixed.path === `baseline.${metadata.entityId}.json` : isMaterialPathOf(metadata.kind, fixed.path, metadata.title);
     requireCondition(matched && (!identity || (metadata.entityId === identity.entityId && metadata.kind === identity.kind)), 'INVALID_MATERIAL_PATH', 'Fixed material identity and path must match its stable entity ID, kind and title', 422);
     await this.verifyFiles(gitlabProjectId, fixed, metadata);
-    if (metadata.kind === 'scenario') {
-      await this.verifyTemplate(actor, gitlabProjectId, metadata.templateRef, metadata.templateId);
-      // A historical template remains valid, but it must belong to the material history.
+    if (metadata.kind === 'scenario' || metadata.kind === 'requirement') {
+      await this.verifyTemplate(actor, gitlabProjectId, metadata.kind, metadata.templateRef, metadata.templateId);
       if (metadata.templateRef.commitSha !== fixed.commitSha) {
         const ancestor = await this.gitlab.json<{ id: string }>(`/projects/${gitlabProjectId}/repository/merge_base?refs[]=${metadata.templateRef.commitSha}&refs[]=${fixed.commitSha}`);
         requireCondition(ancestor.id === metadata.templateRef.commitSha, 'TEMPLATE_HISTORY_MISMATCH', 'Bound template must belong to the fixed material history', 422);
@@ -107,7 +110,7 @@ export class GitLabContent {
       repositoryPath(path);
       if (input.stage === 'prototype') requireCondition(path.startsWith('原型代码/'), 'PROTOTYPE_PATH_SCOPE', 'Prototype integration can only change prototype source files', 422);
       if (input.stage === 'template') requireCondition(path === 'project.assets.json' || path === PROJECT_CONTEXT_PATH || /^\.template\/[A-Za-z0-9][A-Za-z0-9_.-]*\.md$/.test(path), 'TEMPLATE_PATH_SCOPE', 'Template publication can only change the project catalog, template files and project context', 422);
-      if (input.stage === 'material' || input.stage === 'scenario-batch') requireCondition(path.includes('/') || path === PROJECT_CONTEXT_PATH, 'MATERIAL_PATH_SCOPE', 'Material integrations may only change related files below project directories or the project CONTEXT.md', 422);
+      if (input.stage === 'material') requireCondition(path.includes('/') || path === PROJECT_CONTEXT_PATH, 'MATERIAL_PATH_SCOPE', 'Material integrations may only change related files below project directories or the project CONTEXT.md', 422);
     }
     const prefix = `/projects/${gitlabProjectId}/repository`;
     const commit = await this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.candidateSha}`);
@@ -159,15 +162,17 @@ export class GitLabContent {
   }
   private async verifyTemplateChange(actor: Reader, gitlabProjectId: number, expectedHead: string, candidateSha: string, diffs: Diff[]): Promise<void> {
     const before = await this.manifest(gitlabProjectId, expectedHead), after = await this.manifest(gitlabProjectId, candidateSha);
-    const { scenarioTemplates: oldCatalog, ...oldIdentity } = before, { scenarioTemplates: newCatalog, ...newIdentity } = after;
+    const { scenarioTemplates: oldScenarios, requirementTemplates: oldRequirements, ...oldIdentity } = before;
+    const { scenarioTemplates: newScenarios, requirementTemplates: newRequirements, ...newIdentity } = after;
     requireCondition(canonical(oldIdentity) === canonical(newIdentity), 'TEMPLATE_MANIFEST_SCOPE', 'Template publication cannot change project identity or directory declarations', 422);
-    const catalog = newCatalog?.templates ?? [];
-    // Publishing templates declares the catalog; a project context change does not.
+    // Publishing templates declares catalogs; a project context change does not.
     const publishesCatalog = diffs.some(d => d.new_path === 'project.assets.json' || d.new_path.startsWith('.template/'));
-    requireCondition(newCatalog || !publishesCatalog, 'TEMPLATE_CATALOG_REQUIRED', 'Template publication must declare the project template catalog', 422);
-    // The first publication of a project accepted without a catalog declares it;
-    // afterwards a published template identity can never be removed.
-    requireCondition((oldCatalog?.templates ?? []).every(t => catalog.some(n => t.id === n.id && t.path === n.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
+    requireCondition(newScenarios || newRequirements || !publishesCatalog, 'TEMPLATE_CATALOG_REQUIRED', 'Template publication must declare a project template catalog', 422);
+    // A published template identity can never be removed from its catalog.
+    for (const [oldCatalog, newCatalog] of [[oldScenarios, newScenarios], [oldRequirements, newRequirements]] as const) {
+      requireCondition((oldCatalog?.templates ?? []).every(t => (newCatalog?.templates ?? []).some(n => n.id === t.id && n.path === t.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
+    }
+    const catalog = [...(newScenarios?.templates ?? []), ...(newRequirements?.templates ?? [])];
     requireCondition(diffs.every(d => !d.deleted_file && !d.renamed_file && (d.new_path === 'project.assets.json' || d.new_path === PROJECT_CONTEXT_PATH || catalog.some(t => t.path === d.new_path))), 'TEMPLATE_PATH_SCOPE', 'Template publication cannot delete templates or change files outside the catalog and project context', 422);
     await this.loadProjectTemplates(actor, gitlabProjectId, candidateSha);
   }

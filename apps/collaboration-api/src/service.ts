@@ -83,19 +83,18 @@ export class CollaborationService {
     const replay = await this.replay(actor, projectId, 'entity.reserve', input);
     if (replay.found) return replay.result as EntityView;
     let template: { templateId: string; templateRef: FixedReference } | undefined;
-    if (input.kind === 'scenario') {
-      requireCondition(!input.categoryId && !input.batch, 'INVALID_SCENARIO_FIELDS', 'Scenarios do not use categories or a parent batch', 422);
-      const catalog = await this.content.loadProjectTemplates(actor, bound.gitlabProjectId, bound.recognizedHead!);
-      requireCondition(catalog.templates.length > 0, 'PROJECT_TEMPLATES_REQUIRED', 'Publish the project scenario templates before creating a scenario', 422);
+    if (input.kind === 'scenario' || input.kind === 'requirement') {
+      const catalogs = await this.content.loadProjectTemplates(actor, bound.gitlabProjectId, bound.recognizedHead!);
+      const catalog = input.kind === 'scenario' ? catalogs.scenarios : catalogs.requirements;
+      requireCondition(catalog.templates.length > 0, 'PROJECT_TEMPLATES_REQUIRED', `Publish the project ${input.kind} templates before creating a material`, 422);
       const selected = catalog.templates.find(t => t.id === (input.templateId ?? catalog.defaultTemplateId));
-      requireCondition(selected, 'TEMPLATE_NOT_FOUND', 'Select an accepted project scenario template', 422);
-      requireCondition(!input.templateRef || canonical(input.templateRef) === canonical(selected.fixed), 'TEMPLATE_VERSION_MISMATCH', 'New scenarios bind the selected accepted project template');
+      requireCondition(selected, 'TEMPLATE_NOT_FOUND', 'Select an accepted project template', 422);
+      requireCondition(!input.templateRef || canonical(input.templateRef) === canonical(selected.fixed), 'TEMPLATE_VERSION_MISMATCH', 'New materials bind the selected accepted project template');
       template = { templateId: selected.id, templateRef: selected.fixed };
     }
-    const number = input.kind === 'scenario' ? await repository.reserveScenarioNumber(this.database, projectId, actor, input) : undefined;
+    const number = input.kind === 'scenario' || input.kind === 'requirement' ? await repository.reserveEntityNumber(this.database, projectId, input.kind, actor, input) : undefined;
     return this.mutate(actor, projectId, 'entity.reserve', input, async (c, project, all) => {
       requireCondition(project.recognizedHead === bound.recognizedHead, 'INTEGRATION_HEAD_CHANGED', 'Refresh accepted project configuration before creating a material');
-      if (input.kind !== 'scenario') requireCondition(project.categories.some(x => x.id === input.categoryId), 'CATEGORY_NOT_FOUND', 'Choose an existing project category');
       const sources = input.kind === 'requirement' ? input.sources : [];
       if (input.kind === 'requirement') {
         requireCondition(sources.length > 0 && new Set(sources.map(s => s.entityId)).size === sources.length, 'SCENARIO_SOURCE_REQUIRED', 'A requirement must bind one or more distinct accepted scenario versions', 422);
@@ -107,23 +106,10 @@ export class CollaborationService {
         }
       }
       const value: EntityView = { id: number?.id ?? repository.newId(), kind: input.kind, title: input.title,
-        ...(input.kind !== 'scenario' ? { categoryId: input.categoryId } : {}),
         ...(number ? { sequence: number.sequence, code: number.code } : {}), ...template,
         revision: 0, generation: 0, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'idle',
         scenarioIds: sources.map(s => s.entityId), ...(sources.length ? { scenarioSources: sources } : {}),
-        prerequisites: [], authorId: actor.id, frozenBy: [], associationRevision: 0 };
-      if (input.batch) {
-        requireCondition(input.kind === 'requirement', 'INVALID_BATCH_ENTITY', 'Only a new requirement may be reserved in a scenario batch');
-        const scene = repository.entity(all, input.batch.scenarioId), occupation = occupations.assertOccupation(scene, input.batch.token, actor);
-        requireCondition(occupation.purpose === 'scenario-batch', 'BATCH_REQUIRED', 'Scenario batch occupation is required');
-        requireCondition(value.scenarioIds.includes(scene.id), 'SCENARIO_SOURCE_REQUIRED', 'The batch scenario must be one of the accepted fixed sources');
-        value.frozenBy = [occupation.occupationId];
-      }
-      for (const sceneId of value.scenarioIds) {
-        const scene = repository.entity(all, sceneId);
-        requireCondition(!scene.occupation || scene.occupation.occupationId === value.frozenBy[0], 'SCENARIO_FROZEN', 'A source scenario is being revised');
-        scene.associationRevision++; await repository.saveEntity(c, projectId, scene);
-      }
+        prerequisites: [], authorId: actor.id };
       await repository.saveEntity(c, projectId, value);
       return repository.entity(await repository.entities(c, projectId), value.id);
     });
@@ -146,7 +132,7 @@ export class CollaborationService {
     return this.mutate(actor, projectId, `entity.update:${id}`, input, async (c, _project, all) => {
       const value = repository.entity(all, id), occupation = occupations.assertOccupation(value, input.token, actor);
       requireCondition(occupation.purpose !== 'prototype', 'DESIGN_OCCUPATION_REQUIRED', 'Directory updates require a material design occupation');
-      occupations.assertNotFrozen(value);
+      requireCondition(!value.builtinKey, 'BUILTIN_SCENARIO_IMMUTABLE', 'The built-in general scenario cannot be edited', 409);
       requireCondition(!(await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' AND occupation_id=$2", [projectId, occupation.occupationId])).rowCount,
         'INTEGRATION_PENDING', 'Reconcile the prepared confirmation before changing directory fields');
       await repairs.invalidateEntityRepairs(c, projectId, id, actor);
@@ -161,9 +147,9 @@ export class CollaborationService {
     return this.transact(actor, async c => {
       const all = await repository.entities(c, projectId), scenario = repository.entity(all, id);
       requireCondition(scenario.kind === 'scenario' && scenario.materialVersion > 0, 'CONFIRMED_SCENARIO_REQUIRED', 'Revision impact requires an accepted scenario');
-      return { entityId: id, expectedRevision: scenario.revision, associationRevision: scenario.associationRevision,
+      return { entityId: id, expectedRevision: scenario.revision,
         requirements: all.filter(value => value.kind === 'requirement' && value.scenarioIds.includes(id)).map(value => ({ id: value.id, title: value.title,
-          materialVersion: value.materialVersion, taskStatus: value.taskStatus, frozenBy: value.frozenBy,
+          materialVersion: value.materialVersion, taskStatus: value.taskStatus,
           ...(value.occupation ? { occupation: value.occupation } : {}) })) };
     });
   }
@@ -175,7 +161,8 @@ export class CollaborationService {
     const project = await this.authorize(actor, projectId, true);
     const action = `scenario.template:${id}`, replay = await this.replay(actor, projectId, action, input);
     if (replay.found) return replay.result;
-    await templates.verifyBinding(this.gitlab, this.content, actor, project, input);
+    const kind = await this.transact(actor, c => repository.entityRow(c, projectId, id)).then(row => row.kind as 'scenario' | 'requirement');
+    await templates.verifyBinding(this.gitlab, this.content, actor, project, kind, input);
     return this.mutate(actor, projectId, action, input, async (c, current, all) => {
       requireCondition(current.recognizedHead === project.recognizedHead, 'INTEGRATION_HEAD_CHANGED', 'Refresh accepted project history before switching templates');
       await templates.bind(c, projectId, repository.entity(all, id), actor, input);
@@ -205,12 +192,6 @@ export class CollaborationService {
     for (const confirmation of input.confirmations) for (const source of materials.get(confirmation.entityId)!.sources) {
       // A requirement's fixed scenario input is provenance, not package adoption.
       if (source.projectId === projectId && materials.get(confirmation.entityId)!.scenarioIds.includes(source.entityId)) {
-        const pendingScene = input.confirmations.find(x => x.entityId === source.entityId && materials.get(x.entityId)?.kind === 'scenario');
-        if (pendingScene) {
-          const matches = await this.transact(actor, async c => repository.entity(await repository.entities(c, projectId), source.entityId).materialVersion + 1 === source.version);
-          requireCondition(matches, 'SCENARIO_VERSION_MISMATCH', 'Batch scenario source must bind the new fixed version');
-          continue;
-        }
         const version = await this.transact(actor, c => reuse.fixedVersion(c, projectId, source.entityId, source.version));
         requireCondition(version.metadata.kind === 'scenario', 'SCENARIO_VERSION_MISMATCH', 'Scenario input source must identify an accepted scenario');
         continue;
@@ -222,10 +203,6 @@ export class CollaborationService {
       const inherited = await this.transact(actor, async c => {
         const all = await repository.entities(c, projectId), value = repository.entity(all, confirmation.entityId);
         if (value.current?.metadata.sources.some(s => canonical(s) === canonical(source))) return true;
-        if (input.stage === 'scenario-batch' && source.projectId === projectId) {
-          const original = repository.entity(all, source.entityId);
-          if (original.completedVersion === source.version && original.frozenBy.includes(input.token.occupationId)) return true;
-        }
         const adoptions = await repository.listAdoptions(c, projectId);
         return adoptions.some(r => r.targetEntityId === value.id && r.targetTaskId === input.token.taskId && canonical(r.source) === canonical(source));
       });

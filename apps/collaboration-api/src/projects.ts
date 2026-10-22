@@ -78,7 +78,7 @@ export class Projects {
           this.owned(remote, creation);
         }
       }
-      const pending: ProjectView = { id: creation.project_id, gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', name: creation.name, namespaceId: Number(creation.namespace_id), namespacePath: creation.namespace_path, initializationStatus: 'pending', recognizedHead: null, revision: 0, categories: [] };
+      const pending: ProjectView = { id: creation.project_id, gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', name: creation.name, namespaceId: Number(creation.namespace_id), namespacePath: creation.namespace_path, initializationStatus: 'pending', recognizedHead: null, revision: 0 };
       await transactionOn(connection, async () => {
         const c = connection;
         const locked = (await c.query<Creation>('SELECT *,id AS project_id FROM studio_projects WHERE creator_id=$1 AND key=$2 FOR UPDATE', [actor.id, input.idempotencyKey])).rows[0];
