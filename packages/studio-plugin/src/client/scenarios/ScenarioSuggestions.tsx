@@ -1,14 +1,40 @@
-import { memo, useMemo, useState } from 'react'
+import { memo } from 'react'
 import type { ScenarioSuggestionBatch } from '../../shared/scenarios.ts'
 import css from '../studio.module.css'
 
-export const ScenarioSuggestions = memo(function ScenarioSuggestions({ batches, hash, disabled, onAdopt }: { batches: ScenarioSuggestionBatch[]; hash: string; disabled: boolean; onAdopt(batchId: string, itemIds: string[]): Promise<void> }) {
-  return <div className={css.suggestions}>{batches.map(batch => <SuggestionBatch key={batch.id} batch={batch} hash={hash} disabled={disabled} onAdopt={onAdopt} />)}</div>
+const batchStates = { current: '待采纳', applied: '已采纳', stale: '已过期', invalid: '已失效' }
+/**
+ * Adoptable suggestion groups produced against the current material hash.
+ * Each group and item can be adopted alone, and the footer adopts the batch.
+ */
+export const ScenarioSuggestions = memo(function ScenarioSuggestions({ batches, hash, disabled, onAdopt }: {
+  batches: ScenarioSuggestionBatch[]; hash: string; disabled: boolean; onAdopt(batchId: string, itemIds: string[]): Promise<void>;
+}) {
+  if (!batches.length) return null
+  return <div className={css.suggestionList}>{batches.map(batch => <SuggestionBatch key={batch.id} batch={batch} hash={hash} disabled={disabled} onAdopt={onAdopt} />)}</div>
 })
 function SuggestionBatch({ batch, hash, disabled, onAdopt }: { batch: ScenarioSuggestionBatch; hash: string; disabled: boolean; onAdopt(batchId: string, itemIds: string[]): Promise<void> }) {
-  const [selection, setSelection] = useState<string[]>([])
-  const ids = useMemo(() => batch.groups.flatMap(group => group.items.map(item => item.id)), [batch.groups])
   const current = batch.status === 'current' && batch.baseHash === hash
-  const toggle = (targets: string[], checked: boolean) => setSelection(previous => checked ? [...new Set([...previous, ...targets])] : previous.filter(id => !targets.includes(id)))
-  return <section className={css.suggestionBatch}><div className={css.sectionHeading}><h3>AI 建议</h3><span>{current ? '待选择采纳' : batch.status === 'applied' ? '已采纳' : '历史建议 · 已过期'}</span></div>{batch.error && <p role="alert">{batch.error}</p>}<label className={css.checkbox}><input type="checkbox" disabled={!current || disabled} checked={ids.length > 0 && ids.every(id => selection.includes(id))} onChange={event => toggle(ids, event.target.checked)} />选择全部建议</label>{batch.groups.map(group => <fieldset key={group.id}><legend><label className={css.checkbox}><input type="checkbox" disabled={!current || disabled} checked={group.items.length > 0 && group.items.every(item => selection.includes(item.id))} onChange={event => toggle(group.items.map(item => item.id), event.target.checked)} />{group.title}</label></legend>{group.items.map(item => <label key={item.id} className={css.suggestionItem}><span><input type="checkbox" disabled={!current || disabled} checked={selection.includes(item.id)} onChange={event => toggle([item.id], event.target.checked)} /> 选择此条</span>{item.original && <del>{item.original}</del>}<ins>{item.replacement}</ins></label>)}</fieldset>)}<button disabled={!current || disabled || !selection.length} onClick={() => void onAdopt(batch.id, selection)}>一次采纳所选 {selection.length} 条</button></section>
+  const ids = batch.groups.flatMap(group => group.items.map(item => item.id))
+  if (!ids.length) return <p className={css.dockNotice} data-state={batch.status}>
+    <span>AI 建议 · {batchStates[batch.status]}</span>
+    <span role={batch.error ? 'alert' : 'status'}>{batch.error ?? '此批建议不属于当前版本，需要重新生成。'}</span>
+  </p>
+  return <section className={css.suggestionBatch} aria-label="AI 建议">
+    <header className={css.groupLabel}><strong>AI 建议</strong><span className={css.cardCount} data-state={current ? 'current' : batch.status}>{batchStates[batch.status]}</span><small>{batch.groups.length} 组 · {ids.length} 条</small></header>
+    {batch.error && <p role="alert">{batch.error}</p>}
+    {batch.groups.map((group, index) => <article className={css.suggestionGroup} key={group.id}>
+      <header className={css.suggestionGroupHead}>
+        <span className={css.sectionIndex}>{String(index + 1).padStart(2, '0')}</span>
+        <strong>{group.title}</strong>
+        <small>{group.items.length} 条</small>
+        <button disabled={!current || disabled || !group.items.length} onClick={() => void onAdopt(batch.id, group.items.map(item => item.id))}>采纳至契约</button>
+      </header>
+      <ul className={css.suggestionItems}>{group.items.map(item => <li key={item.id}>
+        <div className={css.suggestionText}>{item.original && <del>{item.original}</del>}<ins>{item.replacement}</ins></div>
+        <button disabled={!current || disabled} onClick={() => void onAdopt(batch.id, [item.id])}>采纳</button>
+      </li>)}</ul>
+    </article>)}
+    <footer className={css.dockActions}><small>{current ? '采纳后写入右侧契约，未采纳的建议不会进入材料。' : '此批建议不属于当前版本，需要重新生成。'}</small><button className={css.primary} disabled={!current || disabled || !ids.length} onClick={() => void onAdopt(batch.id, ids)}>一键全部采纳至契约</button></footer>
+  </section>
 }

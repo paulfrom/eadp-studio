@@ -21,9 +21,16 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }, body =
   return { root, localRoot, draft, service: new ScenarioDocumentService(localRoot) }
 }
 function batch(draft: Awaited<ReturnType<typeof readMaterial>>): ScenarioSuggestionBatch {
-  return { id: 'batch-one', entityId: draft.entityId, baseHash: draft.sha256, templateRef, status: 'current', groups: [{ id: 'rules', title: '规则', items: [
+  return { id: 'batch-one', entityId: draft.entityId, baseHash: draft.sha256, status: 'current', groups: [{ id: 'rules', title: '规则', items: [
     { id: 'first', start: 0, end: 1, original: '甲', replacement: '第一', evidenceIds: ['source-one'] },
     { id: 'second', start: 2, end: 4, original: '丙丁', replacement: '第三四', evidenceIds: [] },
+  ] }] }
+}
+/** Wire shape the Agent sends: ranges plus anchors, never the replaced text itself. */
+function wireBatch(draft: Awaited<ReturnType<typeof readMaterial>>) {
+  return { id: 'batch-one', entityId: draft.entityId, baseHash: draft.sha256, groups: [{ id: 'rules', title: '规则', items: [
+    { id: 'first', start: 0, end: 1, anchor: '甲', replacement: '第一', evidenceIds: ['source-one'] },
+    { id: 'second', start: 2, end: 4, anchor: '丙丁', replacement: '第三四', evidenceIds: [] },
   ] }] }
 }
 const response = (value: unknown) => '```eadp-suggestions\n' + JSON.stringify(value) + '\n```'
@@ -55,11 +62,13 @@ test('concurrent writes serialize by file; losing writer keeps both external and
   const rejected = outcomes.find(result => result.status === 'rejected') as PromiseRejectedResult
   assert.ok(rejected.reason instanceof ScenarioDocumentConflictError)
   const conflict = rejected.reason as ScenarioDocumentConflictError
-  assert.equal(conflict.conflict?.actual.body, '甲')
-  assert.equal(conflict.conflict?.localBody, '乙')
-  assert.equal(await readFile(conflict.savedPaths.external, 'utf8'), materialText(draft.metadata, '甲'))
-  assert.equal(await readFile(conflict.savedPaths.local, 'utf8'), materialText(draft.metadata, '乙'))
+  // Which writer reaches the queue first is not observable; the loser must keep both versions.
+  const external = conflict.conflict?.actual.body, local = conflict.conflict?.localBody
+  assert.deepEqual(new Set([external, local]), new Set(['甲', '乙']))
+  assert.equal(await readFile(conflict.savedPaths.external, 'utf8'), materialText(draft.metadata, external!))
+  assert.equal(await readFile(conflict.savedPaths.local, 'utf8'), materialText(draft.metadata, local!))
   assert.equal(conflict.savedPaths.local.startsWith(`${root}/`), false)
+  assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, external)
 })
 
 test('an invalid external file is retained with the local input and never overwritten', async t => {
@@ -74,17 +83,27 @@ test('an invalid external file is retained with the local input and never overwr
   assert.equal(await readFile(path.join(root, draft.path), 'utf8'), '损坏的外部文件')
 })
 
-test('suggestions accept one strict block, reject extra fields, duplicate IDs and malformed ranges', async t => {
-  const { draft } = await fixture(t)
-  const { status: _, ...wire } = batch(draft)
-  assert.equal(parseSuggestionBatch(response(wire)).status, 'current')
-  assert.throws(() => parseSuggestionBatch(response({ ...wire, status: 'current' })))
-  assert.throws(() => parseSuggestionBatch(response(wire) + '\n' + response(wire)))
+test('suggestions accept one strict block, derive the original text from the draft, and reject malformed ranges', async t => {
+  const { draft } = await fixture(t), wire = wireBatch(draft)
+  const parsed = parseSuggestionBatch(response(wire), draft)
+  assert.equal(parsed.status, 'current')
+  assert.deepEqual(parsed.groups[0]!.items.map(item => item.original), ['甲', '丙丁'])
+  assert.throws(() => parseSuggestionBatch(response({ ...wire, status: 'current' }), draft))
+  assert.throws(() => parseSuggestionBatch(response(wire) + '\n' + response(wire), draft))
+  const first = wire.groups[0]!.items[0]
   for (const changed of [
     { ...wire, groups: [...wire.groups, wire.groups[0]] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...wire.groups[0]!.items[0], end: 2 }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...wire.groups[0]!.items[0], evidenceIds: ['source-one', 'source-one'] }] }] },
-  ]) assert.throws(() => parseSuggestionBatch(response(changed)))
+    { ...wire, groups: [{ ...wire.groups[0], items: [first, first] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, anchor: '乙' }] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, end: 9 }] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, start: 0, end: 0 }] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, anchor: '甲'.repeat(41) }] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, replacement: '甲' }] }] },
+    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, evidenceIds: ['source-one', 'source-one'] }] }] },
+  ]) assert.throws(() => parseSuggestionBatch(response(changed), draft))
+  // A batch about another version still arrives as history, with empty originals.
+  const older = parseSuggestionBatch(response({ ...wire, baseHash: 'f'.repeat(64) }), draft)
+  assert.deepEqual(older.groups[0]!.items.map(item => item.original), ['', ''])
 })
 
 test('a selected batch applies once; stale, overlapping, mismatched and unread suggestions never write', async t => {
@@ -95,9 +114,8 @@ test('a selected batch applies once; stale, overlapping, mismatched and unread s
   assert.deepEqual(await service.apply({ ...input, batch: { ...proposal, status: 'applied' } }), applied)
   assert.deepEqual(await service.apply({ ...input, draft: applied, batch: { ...proposal, status: 'applied' }, readEvidenceIds: [] }), applied)
   assert.throws(() => suggestionBody(applied, proposal, ['first'], ['source-one']), /过期/)
-  assert.throws(() => suggestionBody(draft, { ...proposal, templateRef: { ...templateRef, commitSha: 'c'.repeat(40) } }, ['first'], ['source-one']), /过期/)
   assert.throws(() => suggestionBody(draft, proposal, ['first'], []), /未实际读取/)
-  assert.throws(() => suggestionBody(draft, { ...proposal, groups: [{ ...proposal.groups[0]!, items: [{ ...proposal.groups[0]!.items[0]!, original: '错' }] }] }, ['first'], ['source-one']), /原文不匹配/)
+  assert.throws(() => suggestionBody(draft, { ...proposal, groups: [{ ...proposal.groups[0]!, items: [{ ...proposal.groups[0]!.items[0]!, end: 99 }] }] }, ['first'], ['source-one']), /超出当前正文/)
   const overlapping = { ...proposal, groups: [{ ...proposal.groups[0]!, items: [...proposal.groups[0]!.items, { id: 'overlap', start: 0, end: 2, original: '甲乙', replacement: '替代', evidenceIds: [] }] }] }
   assert.throws(() => suggestionBody(draft, overlapping, ['first', 'overlap'], ['source-one']), /重叠/)
   assert.equal((await readMaterial(root, 'scenario', draft.entityId)).sha256, applied.sha256)

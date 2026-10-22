@@ -51,7 +51,7 @@ export function isMaterialMetadata(value: unknown): value is MaterialMetadata { 
 export const ScenarioTemplateCatalogSchema = object({ defaultTemplateId: IdSchema, templates: Type.Array(object({ id: IdSchema, name: text, path: Type.String({ minLength: 1, maxLength: 400 }) }), { minItems: 1, maxItems: 100 }) });
 export type ScenarioTemplateCatalog = Static<typeof ScenarioTemplateCatalogSchema>;
 export const ProjectManifestSchema = object({ schemaVersion: Type.Literal(1), projectId: IdSchema, gitlabProjectId: Type.Integer({ minimum: 1 }), repositoryUrl: text, stableBranch: text,
-  directories: Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('原型代码')]),
+  directories: Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('交接'), Type.Literal('原型代码')]),
   /** Absent in projects accepted before the project template catalog existed; reading them must not fail. */
   scenarioTemplates: Type.Optional(ScenarioTemplateCatalogSchema) });
 export type ProjectManifest = Static<typeof ProjectManifestSchema>;

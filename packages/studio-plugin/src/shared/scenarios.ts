@@ -1,9 +1,10 @@
 import type { EntityOccupancyView, EntityView, FixedReference, MaterialMetadata, RepairTaskView } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from './studio.ts'
 
+/** `original` is the Host-derived text of `[start,end)`; the Agent only sends the range, an anchor and the replacement. */
 export interface ScenarioSuggestionItem { id: string; start: number; end: number; original: string; replacement: string; evidenceIds: string[] }
 export interface ScenarioSuggestionGroup { id: string; title: string; items: ScenarioSuggestionItem[] }
-export interface ScenarioSuggestionBatch { id: string; entityId: string; baseHash: string; templateRef: FixedReference; groups: ScenarioSuggestionGroup[]; status: 'current' | 'stale' | 'applied' | 'invalid'; error?: string }
+export interface ScenarioSuggestionBatch { id: string; entityId: string; baseHash: string; groups: ScenarioSuggestionGroup[]; status: 'current' | 'stale' | 'applied' | 'invalid'; error?: string }
 export interface ScenarioSource { id: string; name: string; format: string; sha256: string; status: 'reading' | 'read' | 'partial' | 'failed'; ranges: string[]; text: string; error?: string; selected: boolean; formal: boolean }
 export interface ScenarioGate { id: 'business' | 'evidence' | 'version' | 'template'; label: string; status: 'passed' | 'blocked' | 'disabled'; messages: string[] }
 export interface ScenarioConflict { expectedHash: string; actual: MaterialDraft; localBody: string; localMetadata: MaterialMetadata; savedPath: string }
@@ -12,6 +13,8 @@ export interface ScenarioWorkspace {
   entityId: string; draft: MaterialDraft; readOnly: boolean;
   template: { id: string; name: string; fixed: FixedReference; body: string };
   structureCheck: boolean; gates: ScenarioGate[]; suggestions: ScenarioSuggestionBatch[]; sources: ScenarioSource[];
+  /** Author-authorized automatic write of each valid Agent batch; kept locally per scene. */
+  autoWrite: boolean;
   sessions: TaskView[]; activeSessionId?: string; conflict?: ScenarioConflict;
   repair?: RepairTaskView & { question?: string; message?: string; sessionId?: string };
   impact?: Array<EntityView | EntityOccupancyView>; git?: { dirty: boolean; branch: string; head: string };
@@ -27,6 +30,7 @@ export type ScenarioCommand =
   | { action: 'resolveScenarioConflict'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'newScenarioSession'; entityId: string }
   | { action: 'selectScenarioSession'; entityId: string; sessionId: string }
+  | { action: 'setScenarioAutoWrite'; entityId: string; enabled: boolean }
   | { action: 'splitScenario'; entityId: string }
   | { action: 'setScenarioStructureCheck'; enabled: boolean }
   | { action: 'importScenarioSource'; entityId: string; name: string; base64: string; operationId: string }

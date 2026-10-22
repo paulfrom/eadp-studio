@@ -465,26 +465,150 @@
 .catalogPagination > span { margin-right: auto; }
 .summaryLabel { color: var(--text-3); font-size: 11px; }
 
-/* Scenario editing keeps the native conversation and the local draft independently scrollable. */
-.suggestions, .evidencePanel, .gatePanel, .revisionImpact, .splitOffer { min-width: 0; padding: 16px; border-top: 1px solid var(--border); }
-.suggestionBatch { margin-bottom: 16px; }
-.suggestionBatch fieldset { min-width: 0; margin: 12px 0; padding: 12px; border: 1px solid var(--border); }
-.suggestionItem { display: grid; gap: 6px; padding: 10px 0; }
-.suggestionItem del, .suggestionItem ins { white-space: pre-wrap; overflow-wrap: anywhere; text-decoration: none; }
-.suggestionItem del { opacity: .6; }
-.suggestionItem ins { border-left: 2px solid currentColor; padding-left: 10px; }
-.sourceCard { display: grid; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
-.gateGroups { display: grid; gap: 10px; margin: 12px 0; }
-.gateGroups > article { padding: 12px; border: 1px solid var(--border); }
-.gateGroups > article > span { margin-left: 12px; }
-.blockedGate { border-left: 3px solid var(--warn) !important; }
-.repairPanel, .conflictPanel { padding: 12px; margin: 12px 0; border: 1px solid var(--border); }
+/* ==========================================================================
+   Scenario page — two panes: the AI conversation with its evidence and
+   suggestion cards on the left, the material spec with its gate footer on the
+   right. Every surface stays on the Studio tokens.
+   ========================================================================== */
+.compactHeader { padding: 8px 20px; }
+.compactHeader .backToList { margin-bottom: 0; }
+.scenarioWorkspace { display: flex; flex: 1; min-width: 0; min-height: 0; gap: 12px; padding: 0 16px 14px; }
+.chatPanel, .specPanel { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-sm); }
+.chatPanel { flex: 1 1 46%; }
+.specPanel { flex: 1 1 54%; }
+.scenarioCollapsed .chatPanel { flex: 1 1 100%; }
+.scenarioCollapsed .specPanel { display: none; }
+
+.panelBar { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 7px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.panelIdentity { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.panelIdentity > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.panelPath { font-family: var(--mono) !important; font-size: 11px !important; }
+.codeChip { flex: 0 0 auto; padding: 2px 6px; border: 1px solid var(--accent-border); border-radius: 5px; background: var(--accent-soft); color: var(--accent-text); font: 600 10.5px/1.6 var(--mono); }
+.panelActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.studio .panelActions button { padding: 4px 9px; font-size: 11px; }
+.panelActions select { font-size: 11px; padding: 4px 6px; }
+.inlineField { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
+.segmented { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.studio .segmented button { padding: 2px 9px; border: 0; background: transparent; font-size: 11px; color: var(--text-3); }
+.studio .segmented button:hover { background: var(--surface-3); }
+.studio .segmented button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.syncState { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; font-size: 10.5px; color: var(--text-3); }
+.syncState i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.syncState[data-state='pending'] i { background: var(--warn); }
+.syncState[data-state='error'] i { background: var(--danger); }
+
+.chatPanel > .nativeConversation, .chatPanel > .conversationEmpty { flex: 1; min-height: 180px; }
+/* The native conversation only sticks its composer to the scrollport floor while the transcript overflows; an empty transcript would keep the input at the top. */
+.chatPanel [data-composer-seat] { margin-top: auto; }
+.chatDock { display: flex; flex: 0 1 auto; flex-direction: column; gap: 10px; max-height: 42%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.chatDock > * { flex: 0 0 auto; }
+.chatDock > .notice { margin: 0; }
+.dockCard, .revisionImpact { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.dockCard > p { font-size: 11px; line-height: 1.8; color: var(--text-2); }
+.dockGroup { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.dockGroup > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.dockGroup[open] > summary { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.dockGroup > summary::after { content: '展开'; margin-left: auto; color: var(--text-3); font-size: 10px; }
+.dockGroup[open] > summary::after { content: '收起'; }
+.groupLabel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-2); }
+.groupLabel small { color: var(--text-3); font-size: 10.5px; }
+.cardHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.cardHead strong { font-size: 12px; }
+.cardHead small { color: var(--text-3); font-size: 10.5px; }
+.cardCount { margin-left: auto; padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 10px; }
+.cardCount[data-state='current'] { background: var(--accent-soft); color: var(--accent-text); }
+.dockActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.dockActions small { margin-right: auto; color: var(--text-3); font-size: 10.5px; }
+.dockNotice { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 10.5px; color: var(--text-3); }
+.dockNotice [role='alert'], .dockNotice [role='status'] { color: var(--warn); }
+
+.suggestionList { display: flex; flex-direction: column; gap: 10px; }
+.suggestionBatch { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.suggestionGroup { margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.suggestionGroupHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.suggestionGroupHead strong { font-size: 11.5px; }
+.suggestionGroupHead small { color: var(--text-3); font-size: 10.5px; }
+.studio .suggestionGroupHead button { margin-left: auto; padding: 3px 8px; font-size: 10.5px; }
+.suggestionItems { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.suggestionItems > li { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.suggestionText { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11.5px; line-height: 1.75; overflow-wrap: anywhere; }
+.suggestionText del { opacity: .6; }
+.suggestionText ins { border-left: 2px solid currentColor; padding-left: 8px; text-decoration: none; }
+.studio .suggestionItems button { flex: 0 0 auto; padding: 3px 8px; font-size: 10.5px; }
+.candidateRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.candidateRow strong { font-size: 11.5px; }
+.candidateRow p { color: var(--text-3); font-size: 10.5px; }
+
+.panelNotice { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border)); font-size: 10.5px; }
+.panelNotice button { padding: 3px 8px; font-size: 10.5px; }
+.revisionImpact { flex-shrink: 0; margin: 10px 12px 0; }
+.revisionImpact p, .revisionImpact li { font-size: 11px; line-height: 1.8; color: var(--text-2); }
+.revisionImpact ul { margin: 6px 0; padding-left: 18px; }
+
+.specBody { display: flex; flex: 1; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; padding: 12px; }
+.frontmatterCard { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.frontmatterCard > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.frontmatterCard[open] > summary { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.frontmatterCard > summary::after { content: '展开'; margin-left: auto; color: var(--text-3); font-size: 10px; }
+.frontmatterCard[open] > summary::after { content: '收起'; }
+.frontmatterRows { display: flex; flex-direction: column; margin: 0; }
+.frontmatterRows > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
+.frontmatterRows > div:last-child { border-bottom: 0; }
+.frontmatterRows dt { color: var(--text-3); font: 10.5px var(--mono); }
+.frontmatterRows dd { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin: 0; font-size: 11.5px; overflow-wrap: anywhere; }
+.frontmatterRows dd small { color: var(--text-3); font: 10px var(--mono); }
+.frontmatterCard input { padding: 3px 7px; font-size: 11.5px; }
+.frontmatterExtra { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 11px; }
+.frontmatterExtra[open] { display: flex; flex-direction: column; gap: 6px; }
+.frontmatterExtra > summary { font-size: 11px; font-weight: 600; color: var(--text-2); }
+.frontmatterExtra fieldset { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.checkbox { display: flex; flex-direction: row; align-items: center; gap: 7px; }
+.specSections { display: flex; flex-direction: column; gap: 12px; }
+.specSection { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.sectionHead { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
+.sectionHead h3 { font-size: 13px; font-weight: 600; }
+.sectionHead small { margin-left: auto; color: var(--text-3); font-size: 10.5px; }
+.sectionIndex { display: inline-grid; flex: 0 0 auto; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font: 600 10px var(--mono); }
+.sectionBody { font-size: 12px; line-height: 1.85; overflow-wrap: anywhere; }
+.templateSections { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.templateSections > li { padding: 3px 9px; border: 1px dashed var(--border-strong); border-radius: 999px; color: var(--text-2); font-size: 11px; }
+
+.specFooter { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.gateStrip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 10.5px; color: var(--text-2); }
+.gateChip { display: inline-flex; align-items: center; gap: 5px; }
+.gateChip i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.gateChip[data-state='blocked'] { color: var(--danger); }
+.gateChip[data-state='blocked'] i { background: var(--danger); }
+.gateChip[data-state='passed'] { color: var(--ok); }
+.gateChip[data-state='disabled'] { color: var(--text-3); }
+.gateChip[data-state='disabled'] i { background: var(--text-3); }
+.gateReasons { color: var(--text-2); font-size: 10.5px; }
+.gateReasons > summary { color: var(--danger); cursor: pointer; }
+.gateReasons article { padding: 6px 0; }
+.gateReasons p { margin: 3px 0 0; }
+.footerBar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.gitState { color: var(--text-3); font-size: 10.5px; }
+.footerActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.studio .footerActions button { font-size: 11px; }
+.repairPanel { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font-size: 11px; }
+.repairPanel[open] { display: flex; flex-direction: column; gap: 8px; }
+.repairPanel > summary { font-weight: 600; color: var(--text-2); }
+.repairPanel form { display: flex; flex-direction: column; gap: 8px; }
+.conflictPanel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); border-radius: 8px; background: var(--warn-soft); font-size: 11.5px; }
+.conflictPanel strong { color: var(--warn); }
 .conflictCopies { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .conflictCopies textarea { width: 100%; min-width: 0; }
-.markdownPreview { min-height: 220px; padding: 16px 0; overflow-wrap: anywhere; }
+.evidencePanel { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; }
+.evidencePanel > p { color: var(--text-2); line-height: 1.8; }
+.evidencePanel label { margin-top: 8px; }
+.sourceCard { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 11px; overflow-wrap: anywhere; }
+.sourceCard > strong { font-size: 11.5px; }
+.sourceCard > small { color: var(--text-3); font: 10px var(--mono); }
+@media (max-width: 1100px) { .scenarioWorkspace { flex-direction: column; overflow: auto; padding: 0 12px 12px; } .chatPanel, .specPanel { flex: 0 0 auto; min-height: 420px; } .chatDock { max-height: none; } }
+@media (max-width: 900px) { .conflictCopies { grid-template-columns: minmax(0, 1fr); } }
+
 .catalogToolbar { flex-wrap: wrap; }
 .catalogToolbar .search { flex: 1 1 220px; }
 .catalogToolbar select { flex: 0 1 140px; }
-@media (max-width: 900px) { .conflictCopies { grid-template-columns: minmax(0, 1fr); } }
 
 .catalogBody.scenarioCatalogBody { grid-template-columns: minmax(0, 1fr); }

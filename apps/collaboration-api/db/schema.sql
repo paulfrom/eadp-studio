@@ -1,5 +1,5 @@
--- 阶段一项目场景：协同后台数据库物理模型
--- 依据 docs/design/scenarios/01-scenarios.md（2026-10-20 确认并同日修订）。
+-- 场景与需求协同：后台数据库物理模型
+-- PostgreSQL 新库一次执行；业务材料与完整业务清单以 Git 固定版本为权威。
 -- 本模型整体替代旧 schema（旧 jsonb 薄壳设计废弃，不留兼容层与迁移路径），按新库一次执行；PostgreSQL 15+。
 --
 -- 字段权威原则：
@@ -15,30 +15,31 @@
 --   account/name 为冗余快照，用户改名不影响历史展示。创建时 last_editor_* 与 creator_* 相同；
 --   实体的 last_edited_date 由触发器在每次更新时维护，last_editor_* 由应用写入。
 --   studio_users / studio_sessions / studio_project_counters 为基础设施表，不带审计字段；
---   需求来源明细随确认创建，审计信息以确认行为准。
+--   需求固定来源随确认创建，审计以确认行为准；比较输入、未覆盖项、范围和涉及输入随比较接受，审计继承父比较。
+--   系统预置版本不填写业务确认人；真实初始化发起人保存在初始化接受记录中。
 --
 -- 状态字段一律使用 PostgreSQL 枚举类型，不用自由文本。
 --
 -- 模板：文件为用户工程 .template/<模板ID>.md，由桌面客户端写入替换并随 Git 提交共享；
---   后台不保存模板内容、清单与默认项，不建模板注册表；场景绑定记录为实体上的固定引用。
+--   后台不保存模板内容、清单与默认项，不建模板注册表；材料绑定记录为实体上的固定引用。
 --
 -- 灾难恢复：更换电脑后，场景/需求正文、模板与正式依据文件经 Git 远程仓库恢复，
 --   编号、确认、占用、关联与目录投影经后台数据恢复；仅桌面本地过程数据
 --   （AI 会话、建议批次、资料读取记录、本地保存队列）不随恢复，按设计可丢弃。
 --
 -- 编号分配在业务事务之前独立提交，行锁保证项目内原子递增；失败允许空号且原操作保留原编号：
---   INSERT INTO studio_project_counters(project_id) VALUES ($1) ON CONFLICT (project_id) DO NOTHING;
+--   INSERT INTO studio_project_counters(project_id,kind) VALUES ($1,$2) ON CONFLICT (project_id,kind) DO NOTHING;
 --   UPDATE studio_project_counters SET next_sequence = next_sequence + 1
---     WHERE project_id = $1 RETURNING next_sequence - 1 AS sequence;
+--     WHERE project_id = $1 AND kind = $2 RETURNING next_sequence - 1 AS sequence;
 --   -- 先查 studio_entity_numbers：同一 operation_key 命中即返回原编号，不重新分配。
---   INSERT INTO studio_entity_numbers(project_id, sequence, code, operation_key) VALUES (...);
+--   INSERT INTO studio_entity_numbers(project_id, kind, sequence, code, operation_key) VALUES (...);
 --
 -- 固定版本接受事务（integration complete，单事务提交，约束触发器 INITIALLY DEFERRED 在提交时校验）：
 --   1. 条件更新项目认可头 recognized_head = candidate_sha；
 --   2. 核验 Git 固定材料版本中的质量项、待澄清项、依据和关联文件，写入 studio_confirmations
 --      （标题、摘要、固定引用、确认方式、适用性及不适用原因），不复制材料正文与清单；
 --   3. 需求确认写入 studio_requirement_sources（≥1 个同项目已确认场景版本，触发器强制）；
---   4. 更新实体 current_confirmation_id / material_version / confirmation_status，结束占用与批次冻结；
+--   4. 更新实体 current_confirmation_id / material_version / confirmation_status，结束当前材料占用；
 --   5. studio_integrations 置 accepted；任一失败整体回滚，结果未知时按 studio_operations 幂等键核对。
 
 -- ============================================================
@@ -46,6 +47,7 @@
 -- ============================================================
 
 CREATE TYPE studio_confirmation_stage AS ENUM ('material','prototype');
+CREATE TYPE studio_acceptance_kind AS ENUM ('user-confirmed','system-provisioned');
 CREATE TYPE studio_adoption_scope AS ENUM ('material-package','prototype-package');
 CREATE TYPE studio_adoption_status AS ENUM ('accepted','succeeded');
 
@@ -58,15 +60,15 @@ COMMENT ON TYPE studio_confirmation_status IS '确认状态';
 CREATE TYPE studio_task_status AS ENUM ('idle','active','aborted','completed');
 COMMENT ON TYPE studio_task_status IS '任务状态';
 
--- design 普通整理；scenario-batch 显式修订批次（冻结关联需求、同批确认）
-CREATE TYPE studio_occupation_purpose AS ENUM ('design','prototype','scenario-batch');
+-- 材料整理与原型生产分别占用当前资产。
+CREATE TYPE studio_occupation_purpose AS ENUM ('design','prototype');
 COMMENT ON TYPE studio_occupation_purpose IS '占用用途';
 
 CREATE TYPE studio_occupation_finish AS ENUM ('aborted','completed');
 COMMENT ON TYPE studio_occupation_finish IS '占用结束方式';
 
 -- 模板使用独立项目受控配置发布，不领取材料占用或确认材料
-CREATE TYPE studio_integration_scope AS ENUM ('material','prototype','scenario-batch','template');
+CREATE TYPE studio_integration_scope AS ENUM ('material','prototype','template');
 COMMENT ON TYPE studio_integration_scope IS '集成范围';
 
 CREATE TYPE studio_integration_status AS ENUM ('prepared','accepted','aborted');
@@ -89,6 +91,22 @@ COMMENT ON TYPE studio_applicability IS '固定版本适用性';
 CREATE TYPE studio_project_state AS ENUM ('reserved','creating','created','assigned','ready');
 COMMENT ON TYPE studio_project_state IS '项目生命周期';
 
+CREATE TYPE studio_comparison_trigger AS ENUM ('manual','confirmation');
+CREATE TYPE studio_comparison_result AS ENUM ('completed','failed','cancelled');
+CREATE TYPE studio_comparison_coverage AS ENUM ('complete','partial');
+CREATE TYPE studio_comparison_failure AS ENUM ('model-failed','timeout','permission-denied','read-failed','context-limit','relationship-unavailable','submission-failed','cancelled','internal-error');
+CREATE TYPE studio_local_content_state AS ENUM ('draft','current','unknown');
+CREATE TYPE studio_uncovered_reason AS ENUM ('missing','unreadable','invalid-encoding','invalid-identity','read-limit','context-limit','relationship-unavailable');
+CREATE TYPE studio_finding_relation AS ENUM ('formal','potential');
+CREATE TYPE studio_finding_status AS ENUM ('pending','handled','ignored');
+CREATE TYPE studio_finding_action AS ENUM ('handle','ignore','remind','unremind');
+
+-- 控制记录使用有限身份和项目相对路径，拒绝绝对路径、目录穿越及本机路径。
+CREATE DOMAIN studio_control_id AS varchar(100) CHECK (length(VALUE)>0);
+CREATE DOMAIN studio_relative_path AS varchar(400) CHECK (
+  length(VALUE)>0 AND VALUE !~ '(^/|^[A-Za-z]:|\\|(^|/)[.]{1,2}(/|$)|//)' AND VALUE !~ '[[:cntrl:]]'
+);
+
 -- ============================================================
 -- 身份与会话
 -- ============================================================
@@ -107,12 +125,18 @@ CREATE TABLE studio_users (
   gitlab_email text,
   CHECK ((gitlab_user_id IS NULL AND gitlab_username IS NULL) OR (gitlab_user_id IS NOT NULL AND gitlab_username IS NOT NULL))
 );
-COMMENT ON TABLE studio_users IS '后台用户';
+COMMENT ON TABLE studio_users IS '后台用户与GitLab身份';
+COMMENT ON COLUMN studio_users.id IS '系统用户ID';
 COMMENT ON COLUMN studio_users.username IS '登录名';
-COMMENT ON COLUMN studio_users.admin IS '后台管理员';
-COMMENT ON COLUMN studio_users.password_salt IS '口令盐';
+COMMENT ON COLUMN studio_users.name IS '用户姓名';
+COMMENT ON COLUMN studio_users.email IS '用户邮箱';
+COMMENT ON COLUMN studio_users.admin IS '是否为后台管理员';
+COMMENT ON COLUMN studio_users.password_salt IS '口令随机盐';
 COMMENT ON COLUMN studio_users.password_hash IS '口令散列';
-COMMENT ON COLUMN studio_users.gitlab_user_id IS 'GitLab用户ID';
+COMMENT ON COLUMN studio_users.gitlab_user_id IS '绑定的GitLab用户ID';
+COMMENT ON COLUMN studio_users.gitlab_username IS '绑定的GitLab用户名';
+COMMENT ON COLUMN studio_users.gitlab_email IS '绑定的GitLab邮箱';
+
 
 -- 登录会话：仅存令牌 SHA-256，不存明文；过期时间索引供到期清理与快速判活
 CREATE TABLE studio_sessions (
@@ -121,9 +145,13 @@ CREATE TABLE studio_sessions (
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX studio_sessions_expiry ON studio_sessions(expires_at);
 COMMENT ON TABLE studio_sessions IS '登录会话';
-COMMENT ON COLUMN studio_sessions.expires_at IS '过期时间';
+COMMENT ON COLUMN studio_sessions.token_hash IS '会话令牌的SHA-256散列，不保存明文令牌';
+COMMENT ON COLUMN studio_sessions.user_id IS '登录用户ID';
+COMMENT ON COLUMN studio_sessions.expires_at IS '会话到期时间';
+COMMENT ON COLUMN studio_sessions.created_at IS '会话创建时间';
+
+CREATE INDEX studio_sessions_expiry ON studio_sessions(expires_at);
 
 -- ============================================================
 -- 项目
@@ -169,15 +197,63 @@ CREATE TABLE studio_projects (
   ),
   CHECK ((state = 'ready' AND recognized_head IS NOT NULL) OR (state <> 'ready' AND recognized_head IS NULL))
 );
-COMMENT ON TABLE studio_projects IS '项目';
-COMMENT ON COLUMN studio_projects.key IS '创建幂等键';
+COMMENT ON TABLE studio_projects IS '项目及其创建、认可版本与部署控制事实';
+COMMENT ON COLUMN studio_projects.id IS '项目技术ID';
+COMMENT ON COLUMN studio_projects.key IS '项目创建幂等键';
 COMMENT ON COLUMN studio_projects.request_hash IS '不可变的原创建请求指纹';
-COMMENT ON COLUMN studio_projects.marker IS '建仓归属标记';
-COMMENT ON COLUMN studio_projects.state IS '项目生命周期';
-COMMENT ON COLUMN studio_projects.gitlab_project_id IS 'GitLab项目ID';
-COMMENT ON COLUMN studio_projects.stable_branch IS '稳定分支';
-COMMENT ON COLUMN studio_projects.revision IS '项目修订号';
-COMMENT ON COLUMN studio_projects.recognized_head IS '认可分支头';
+COMMENT ON COLUMN studio_projects.namespace_id IS 'GitLab命名空间ID';
+COMMENT ON COLUMN studio_projects.namespace_path IS 'GitLab命名空间路径';
+COMMENT ON COLUMN studio_projects.path IS 'GitLab项目仓库路径名';
+COMMENT ON COLUMN studio_projects.name IS '项目显示名称';
+COMMENT ON COLUMN studio_projects.marker IS '建仓归属核对标记';
+COMMENT ON COLUMN studio_projects.state IS '项目创建与就绪状态';
+COMMENT ON COLUMN studio_projects.gitlab_project_id IS '已绑定的GitLab项目ID';
+COMMENT ON COLUMN studio_projects.repository_url IS '已绑定的Git仓库地址';
+COMMENT ON COLUMN studio_projects.stable_branch IS '稳定集成分支名';
+COMMENT ON COLUMN studio_projects.revision IS '项目级并发修订号';
+COMMENT ON COLUMN studio_projects.recognized_head IS '后台已认可的稳定分支提交';
+COMMENT ON COLUMN studio_projects.creator_id IS '项目创建人用户ID';
+COMMENT ON COLUMN studio_projects.creator_account IS '项目创建人账号快照';
+COMMENT ON COLUMN studio_projects.creator_name IS '项目创建人姓名快照';
+COMMENT ON COLUMN studio_projects.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_projects.last_editor_id IS '项目最后修改人用户ID';
+COMMENT ON COLUMN studio_projects.last_editor_account IS '项目最后修改人账号快照';
+COMMENT ON COLUMN studio_projects.last_editor_name IS '项目最后修改人姓名快照';
+COMMENT ON COLUMN studio_projects.last_edited_date IS '记录最后修改时间';
+COMMENT ON COLUMN studio_projects.current_baseline_id IS '当前已接受的原型基线ID';
+COMMENT ON COLUMN studio_projects.deployment_baseline_id IS '当前部署对应的基线ID';
+COMMENT ON COLUMN studio_projects.deployment_url IS '当前部署访问地址';
+COMMENT ON COLUMN studio_projects.deployment_artifact_sha256 IS '当前部署产物的SHA-256';
+COMMENT ON COLUMN studio_projects.deployed_at IS '当前部署完成时间';
+
+
+-- 项目初始化核验接受事实与系统预置版本共同提交，响应未知时按原操作查询。
+CREATE TABLE studio_project_initializations (
+  id text PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 100),
+  project_id text NOT NULL UNIQUE REFERENCES studio_projects(id),
+  operation_key text NOT NULL CHECK (length(operation_key) BETWEEN 1 AND 100),
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  commit_sha text NOT NULL CHECK (commit_sha ~ '^[a-f0-9]{40}$'),
+  verified_at timestamptz NOT NULL DEFAULT now(),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (project_id,id),
+  UNIQUE (project_id,operation_key)
+);
+COMMENT ON TABLE studio_project_initializations IS '真实项目初始化核验后的接受事实，发起人不等于材料业务确认人';
+COMMENT ON COLUMN studio_project_initializations.id IS '初始化接受操作ID';
+COMMENT ON COLUMN studio_project_initializations.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_project_initializations.operation_key IS '初始化接受幂等键';
+COMMENT ON COLUMN studio_project_initializations.request_hash IS '原初始化接受请求指纹';
+COMMENT ON COLUMN studio_project_initializations.commit_sha IS '已核验的实际初始化提交';
+COMMENT ON COLUMN studio_project_initializations.verified_at IS '初始化固定内容核验时间';
+COMMENT ON COLUMN studio_project_initializations.creator_id IS '初始化发起人用户ID';
+COMMENT ON COLUMN studio_project_initializations.creator_account IS '初始化发起人账号快照';
+COMMENT ON COLUMN studio_project_initializations.creator_name IS '初始化发起人姓名快照';
+COMMENT ON COLUMN studio_project_initializations.created_date IS '初始化接受事实记录时间';
+
 
 -- ============================================================
 -- 集成（准备候选 → 条件更新远端头 → 完成接受）
@@ -212,41 +288,61 @@ CREATE TABLE studio_integrations (
   CHECK ((scope = 'template' AND entity_id IS NULL AND occupation_id IS NULL AND expected_project_revision IS NOT NULL) OR
          (scope <> 'template' AND entity_id IS NOT NULL AND occupation_id IS NOT NULL))
 );
+COMMENT ON TABLE studio_integrations IS '固定候选提交的准备、接受与中止操作';
+COMMENT ON COLUMN studio_integrations.id IS '集成操作ID';
+COMMENT ON COLUMN studio_integrations.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_integrations.scope IS '材料、原型或模板集成范围';
+COMMENT ON COLUMN studio_integrations.entity_id IS '本次集成的目标材料ID，模板集成为空';
+COMMENT ON COLUMN studio_integrations.occupation_id IS '目标材料的有效占用ID，模板集成为空';
+COMMENT ON COLUMN studio_integrations.expected_project_revision IS '模板发布预期的项目修订号';
+COMMENT ON COLUMN studio_integrations.baseline_id IS '原型完成后形成的基线ID';
+COMMENT ON COLUMN studio_integrations.status IS '集成操作状态';
+COMMENT ON COLUMN studio_integrations.source_sha IS '本次集成的来源提交';
+COMMENT ON COLUMN studio_integrations.expected_head IS '条件更新稳定分支时预期的原分支头';
+COMMENT ON COLUMN studio_integrations.candidate_sha IS '待接受的精确候选提交';
+COMMENT ON COLUMN studio_integrations.allowed_paths IS '本次候选允许修改的项目相对路径集合';
+COMMENT ON COLUMN studio_integrations.request IS '结果核对所需控制协议，不保存业务材料或清单';
+COMMENT ON COLUMN studio_integrations.creator_id IS '集成发起人用户ID';
+COMMENT ON COLUMN studio_integrations.creator_account IS '集成发起人账号快照';
+COMMENT ON COLUMN studio_integrations.creator_name IS '集成发起人姓名快照';
+COMMENT ON COLUMN studio_integrations.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_integrations.last_editor_id IS '集成操作最后执行人用户ID';
+COMMENT ON COLUMN studio_integrations.last_editor_account IS '集成操作最后执行人账号快照';
+COMMENT ON COLUMN studio_integrations.last_editor_name IS '集成操作最后执行人姓名快照';
+COMMENT ON COLUMN studio_integrations.last_edited_date IS '记录最后修改时间';
+
 CREATE UNIQUE INDEX studio_one_prepared_integration ON studio_integrations(project_id) WHERE status = 'prepared';
-COMMENT ON TABLE studio_integrations IS '集成操作';
-COMMENT ON COLUMN studio_integrations.entity_id IS '目标实体';
-COMMENT ON COLUMN studio_integrations.occupation_id IS '关联占用';
-COMMENT ON COLUMN studio_integrations.expected_head IS '预期分支头';
-COMMENT ON COLUMN studio_integrations.candidate_sha IS '候选提交';
-COMMENT ON COLUMN studio_integrations.allowed_paths IS '路径白名单';
-COMMENT ON COLUMN studio_integrations.request IS '控制协议快照，不保存业务材料及清单';
 
 -- ============================================================
 -- 实体（场景 / 需求）、业务编号与关联
 -- ============================================================
 
--- 每项目编号计数器：分配以行锁序列化，项目内原子递增，不同项目各自从 1 起
+-- 按项目和材料类型分配编号，行锁序列化，各序列分别从 1 起
 CREATE TABLE studio_project_counters (
-  project_id text PRIMARY KEY REFERENCES studio_projects(id),
+  project_id text NOT NULL REFERENCES studio_projects(id),
+  kind studio_entity_kind NOT NULL CHECK (kind IN ('scenario','requirement')),
+  PRIMARY KEY (project_id,kind),
   next_sequence bigint NOT NULL DEFAULT 1 CHECK (next_sequence > 0)
 );
-COMMENT ON TABLE studio_project_counters IS '编号计数器';
-COMMENT ON COLUMN studio_project_counters.next_sequence IS '下一序号';
+COMMENT ON TABLE studio_project_counters IS '按项目和材料类型分配稳定编号的计数器';
+COMMENT ON COLUMN studio_project_counters.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_project_counters.kind IS '编号所属材料类型，场景与需求独立计数';
+COMMENT ON COLUMN studio_project_counters.next_sequence IS '本类型下一次分配的序号';
+
 
 -- 场景、需求及后续阶段材料实体：
---   id 为隐藏 UUID 技术身份，决定文件路径（场景/<id>.md），界面只展示业务编号；
---   仅场景持有 sequence/code，项目内唯一，改名与修订不变，不可手改、重排或回收；
+--   id 为隐藏 UUID 技术身份，文件路径按名称生成（场景/<名称>.md），界面只展示业务编号；
+--   场景和需求按类型持有稳定编号，改名与修订不变，不可手改、重排或回收；
 --   title/summary 入库用于目录投影，确认时随固定版本快照保存；
---   category_id 仅需求及后续材料使用，场景禁止分类；
---   template_ref 为场景绑定的模板固定引用 {commitSha,path,sha256}，仅场景持有，需求不得持有；
+--   普通场景与需求分别绑定模板固定引用 {commitSha,path,sha256}；内置说明不绑定编辑模板；
 --   确认状态与任务状态分列；列表默认按 last_edited_date 降序、sequence 稳定次序
 CREATE TABLE studio_entities (
   project_id text NOT NULL REFERENCES studio_projects(id),
   id text NOT NULL,
   kind studio_entity_kind NOT NULL,
   sequence bigint CHECK (sequence > 0),
-  code text CHECK (code = 'SC-' || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
-  category_id text,
+  code text CHECK (code = CASE kind WHEN 'scenario' THEN 'SC-' WHEN 'requirement' THEN 'REQ-' END || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
+  builtin_key text CHECK (builtin_key = 'general'),
   template_id text,
   title text NOT NULL,
   summary text NOT NULL DEFAULT '',
@@ -255,7 +351,6 @@ CREATE TABLE studio_entities (
   material_version integer NOT NULL DEFAULT 0 CHECK (material_version >= 0),
   confirmation_status studio_confirmation_status NOT NULL DEFAULT 'draft',
   task_status studio_task_status NOT NULL DEFAULT 'idle',
-  association_revision integer NOT NULL DEFAULT 0 CHECK (association_revision >= 0),
   template_ref jsonb,
   current_confirmation_id text,
   creator_id bigint NOT NULL REFERENCES studio_users(id),
@@ -267,41 +362,55 @@ CREATE TABLE studio_entities (
   last_editor_name varchar(50) NOT NULL,
   last_edited_date timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (project_id, id),
-  UNIQUE (project_id, sequence),
+  UNIQUE (project_id, kind, sequence),
   UNIQUE (project_id, code),
-  CHECK ((kind = 'scenario') = (template_ref IS NOT NULL)),
-  CHECK ((kind = 'scenario') = (template_id IS NOT NULL)),
-  CHECK ((kind = 'scenario' AND sequence IS NOT NULL AND code IS NOT NULL AND category_id IS NULL) OR
-         (kind <> 'scenario' AND sequence IS NULL AND code IS NULL AND category_id IS NOT NULL))
+  UNIQUE (project_id, builtin_key),
+  CHECK (builtin_key IS NULL OR kind = 'scenario'),
+  CHECK ((kind IN ('scenario','requirement') AND sequence IS NOT NULL AND code IS NOT NULL) OR
+         (kind NOT IN ('scenario','requirement') AND sequence IS NULL AND code IS NULL)),
+  CHECK ((kind IN ('scenario','requirement') AND builtin_key IS NULL AND template_id IS NOT NULL AND template_ref IS NOT NULL) OR
+         ((kind NOT IN ('scenario','requirement') OR builtin_key IS NOT NULL) AND template_id IS NULL AND template_ref IS NULL)),
+  CHECK (template_ref IS NULL OR (jsonb_typeof(template_ref) = 'object' AND template_ref ?& ARRAY['commitSha','path','sha256'] AND
+    template_ref - ARRAY['commitSha','path','sha256'] = '{}'::jsonb AND
+    jsonb_typeof(template_ref->'commitSha') = 'string' AND (template_ref->>'commitSha') ~ '^[a-f0-9]{40}$' AND
+    jsonb_typeof(template_ref->'path') = 'string' AND template_ref->>'path' = '.template/' || template_id || '.md' AND
+    jsonb_typeof(template_ref->'sha256') = 'string' AND (template_ref->>'sha256') ~ '^[a-f0-9]{64}$'))
 );
+COMMENT ON TABLE studio_entities IS '场景、需求及后续阶段材料的身份与协同目录';
+COMMENT ON COLUMN studio_entities.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_entities.id IS '材料UUID技术身份，同时用于固定文件路径';
+COMMENT ON COLUMN studio_entities.kind IS '材料种类';
+COMMENT ON COLUMN studio_entities.sequence IS '项目与材料类型内的稳定编号序号';
+COMMENT ON COLUMN studio_entities.code IS '稳定业务编号，场景为SC前缀，需求为REQ前缀';
+COMMENT ON COLUMN studio_entities.builtin_key IS '系统内置场景身份，general表示项目内唯一的通用场景';
+COMMENT ON COLUMN studio_entities.template_id IS '当前绑定的项目模板ID，系统内置场景为空';
+COMMENT ON COLUMN studio_entities.title IS '材料目录标题';
+COMMENT ON COLUMN studio_entities.summary IS '材料目录摘要';
+COMMENT ON COLUMN studio_entities.revision IS '材料级并发修订号';
+COMMENT ON COLUMN studio_entities.generation IS '材料占用代数，用于隔离已失效占用';
+COMMENT ON COLUMN studio_entities.material_version IS '当前已接受的材料版本号';
+COMMENT ON COLUMN studio_entities.confirmation_status IS '材料内容确认状态';
+COMMENT ON COLUMN studio_entities.task_status IS '材料整理或原型生产任务状态';
+COMMENT ON COLUMN studio_entities.template_ref IS '当前模板固定引用，包含提交、路径和内容哈希';
+COMMENT ON COLUMN studio_entities.current_confirmation_id IS '当前已接受材料版本的确认记录ID';
+COMMENT ON COLUMN studio_entities.creator_id IS '材料创建人用户ID';
+COMMENT ON COLUMN studio_entities.creator_account IS '材料创建人账号快照';
+COMMENT ON COLUMN studio_entities.creator_name IS '材料创建人姓名快照';
+COMMENT ON COLUMN studio_entities.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_entities.last_editor_id IS '材料最后编辑人用户ID';
+COMMENT ON COLUMN studio_entities.last_editor_account IS '材料最后编辑人账号快照';
+COMMENT ON COLUMN studio_entities.last_editor_name IS '材料最后编辑人姓名快照';
+COMMENT ON COLUMN studio_entities.last_edited_date IS '记录最后修改时间';
+
 CREATE INDEX studio_entities_updated ON studio_entities(project_id, last_edited_date DESC, sequence);
-COMMENT ON TABLE studio_entities IS '场景与需求';
-COMMENT ON COLUMN studio_entities.id IS 'UUID技术身份';
-COMMENT ON COLUMN studio_entities.sequence IS '项目内序号';
-COMMENT ON COLUMN studio_entities.code IS '业务编号';
-COMMENT ON COLUMN studio_entities.title IS '标题';
-COMMENT ON COLUMN studio_entities.summary IS '摘要';
-COMMENT ON COLUMN studio_entities.revision IS '实体修订号';
-COMMENT ON COLUMN studio_entities.generation IS '占用代数';
-COMMENT ON COLUMN studio_entities.material_version IS '材料版本号';
-COMMENT ON COLUMN studio_entities.association_revision IS '关联修订号';
-COMMENT ON COLUMN studio_entities.template_ref IS '模板固定引用';
-COMMENT ON COLUMN studio_entities.current_confirmation_id IS '当前确认版本';
-COMMENT ON COLUMN studio_entities.creator_id IS '创建人ID';
-COMMENT ON COLUMN studio_entities.creator_account IS '创建人账号';
-COMMENT ON COLUMN studio_entities.creator_name IS '创建人姓名';
-COMMENT ON COLUMN studio_entities.created_date IS '创建时间';
-COMMENT ON COLUMN studio_entities.last_editor_id IS '最后编辑人ID';
-COMMENT ON COLUMN studio_entities.last_editor_account IS '最后编辑人账号';
-COMMENT ON COLUMN studio_entities.last_editor_name IS '最后编辑人姓名';
-COMMENT ON COLUMN studio_entities.last_edited_date IS '最后编辑时间';
 
 -- 编号预留：先分配后记实体；同一新建 operation_key 重试返回同一编号；
 -- 分配后失败不回收；预留同时确定 entity_id，但不要求业务实体已经写入
 CREATE TABLE studio_entity_numbers (
   project_id text NOT NULL REFERENCES studio_projects(id),
+  kind studio_entity_kind NOT NULL CHECK (kind IN ('scenario','requirement')),
   sequence bigint NOT NULL CHECK (sequence > 0),
-  code text NOT NULL CHECK (code = 'SC-' || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
+  code text NOT NULL CHECK (code = CASE kind WHEN 'scenario' THEN 'SC-' WHEN 'requirement' THEN 'REQ-' END || lpad(sequence::text, greatest(4,length(sequence::text)), '0')),
   operation_key text NOT NULL,
   entity_id text NOT NULL,
   request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
@@ -309,19 +418,29 @@ CREATE TABLE studio_entity_numbers (
   creator_account varchar(50) NOT NULL,
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (project_id, sequence),
+  PRIMARY KEY (project_id, kind, sequence),
   UNIQUE (project_id, code),
   UNIQUE (project_id, operation_key),
   UNIQUE (project_id, entity_id),
-  UNIQUE (project_id, entity_id, sequence)
+  UNIQUE (project_id, entity_id, kind, sequence)
 );
-COMMENT ON TABLE studio_entity_numbers IS '编号预留';
-COMMENT ON COLUMN studio_entity_numbers.operation_key IS '新建幂等键';
-COMMENT ON COLUMN studio_entity_numbers.entity_id IS '占用实体';
+COMMENT ON TABLE studio_entity_numbers IS '新建材料前独立持久化的稳定编号预留，不回收编号';
+COMMENT ON COLUMN studio_entity_numbers.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_entity_numbers.kind IS '预留编号所属材料类型';
+COMMENT ON COLUMN studio_entity_numbers.sequence IS '项目与材料类型内已分配的序号';
+COMMENT ON COLUMN studio_entity_numbers.code IS '已分配的稳定业务编号';
+COMMENT ON COLUMN studio_entity_numbers.operation_key IS '新建材料操作幂等键';
+COMMENT ON COLUMN studio_entity_numbers.entity_id IS '预留的材料UUID技术身份';
+COMMENT ON COLUMN studio_entity_numbers.request_hash IS '原新建请求指纹';
+COMMENT ON COLUMN studio_entity_numbers.creator_id IS '编号预留发起人用户ID';
+COMMENT ON COLUMN studio_entity_numbers.creator_account IS '编号预留发起人账号快照';
+COMMENT ON COLUMN studio_entity_numbers.creator_name IS '编号预留发起人姓名快照';
+COMMENT ON COLUMN studio_entity_numbers.created_date IS '记录创建时间';
+
 
 ALTER TABLE studio_entities
   ADD CONSTRAINT studio_entities_number_fk
-  FOREIGN KEY (project_id, id, sequence) REFERENCES studio_entity_numbers(project_id, entity_id, sequence);
+  FOREIGN KEY (project_id, id, kind, sequence) REFERENCES studio_entity_numbers(project_id, entity_id, kind, sequence);
 
 -- 场景与需求的当前关联（草稿态，可随整理调整）；
 -- 确认时绑定的各场景固定版本见 studio_requirement_sources
@@ -337,9 +456,15 @@ CREATE TABLE studio_scenario_requirements (
   FOREIGN KEY (project_id, scenario_id) REFERENCES studio_entities(project_id, id),
   FOREIGN KEY (project_id, requirement_id) REFERENCES studio_entities(project_id, id)
 );
-COMMENT ON TABLE studio_scenario_requirements IS '场景需求关联';
-COMMENT ON COLUMN studio_scenario_requirements.scenario_id IS '场景';
-COMMENT ON COLUMN studio_scenario_requirements.requirement_id IS '需求';
+COMMENT ON TABLE studio_scenario_requirements IS '需求当前正式关联的场景集合';
+COMMENT ON COLUMN studio_scenario_requirements.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_scenario_requirements.scenario_id IS '关联场景ID';
+COMMENT ON COLUMN studio_scenario_requirements.requirement_id IS '关联需求ID';
+COMMENT ON COLUMN studio_scenario_requirements.creator_id IS '关系建立人用户ID';
+COMMENT ON COLUMN studio_scenario_requirements.creator_account IS '关系建立人账号快照';
+COMMENT ON COLUMN studio_scenario_requirements.creator_name IS '关系建立人姓名快照';
+COMMENT ON COLUMN studio_scenario_requirements.created_date IS '记录创建时间';
+
 
 -- 实体当前关联的用户工程文件（草稿态，可随整理调整）；确认清单保存在 Git 固定 MD 或同提交清单中
 CREATE TABLE studio_entity_files (
@@ -353,16 +478,22 @@ CREATE TABLE studio_entity_files (
   PRIMARY KEY (project_id, entity_id, path),
   FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id)
 );
-COMMENT ON TABLE studio_entity_files IS '实体关联文件';
-COMMENT ON COLUMN studio_entity_files.path IS '文件路径';
+COMMENT ON TABLE studio_entity_files IS '材料当前关联的项目文件目录，确认清单以Git固定材料为准';
+COMMENT ON COLUMN studio_entity_files.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_entity_files.entity_id IS '关联材料ID';
+COMMENT ON COLUMN studio_entity_files.path IS '关联文件的项目相对路径';
+COMMENT ON COLUMN studio_entity_files.creator_id IS '文件关联建立人用户ID';
+COMMENT ON COLUMN studio_entity_files.creator_account IS '文件关联建立人账号快照';
+COMMENT ON COLUMN studio_entity_files.creator_name IS '文件关联建立人姓名快照';
+COMMENT ON COLUMN studio_entity_files.created_date IS '记录创建时间';
+
 
 -- ============================================================
--- 设计占用与批次冻结
+-- 单材料设计占用
 -- ============================================================
 
 -- 设计占用：同一实体至多一条活跃占用（部分唯一索引）；只读查看已确认版不领取占用；
 -- creator 即占有人（CHECK 强制一致），last_editor 记录释放/完成操作者（管理员强制释放时不同）；
--- scenario-batch 用于显式修订的冻结与同批确认
 CREATE TABLE studio_occupations (
   id text PRIMARY KEY,
   project_id text NOT NULL,
@@ -390,29 +521,29 @@ CREATE TABLE studio_occupations (
   UNIQUE (project_id, id),
   CHECK (creator_id = owner_id)
 );
-CREATE UNIQUE INDEX studio_one_active_occupation ON studio_occupations(project_id, entity_id) WHERE active;
-COMMENT ON TABLE studio_occupations IS '设计占用';
-COMMENT ON COLUMN studio_occupations.owner_id IS '占有人';
-COMMENT ON COLUMN studio_occupations.task_id IS '任务ID';
-COMMENT ON COLUMN studio_occupations.client_id IS '客户端ID';
-COMMENT ON COLUMN studio_occupations.expected_revision IS '预期修订号';
-COMMENT ON COLUMN studio_occupations.input_version IS '输入版本';
-COMMENT ON COLUMN studio_occupations.active IS '是否活跃';
+COMMENT ON TABLE studio_occupations IS '单材料的持久占用及结束控制事实';
+COMMENT ON COLUMN studio_occupations.id IS '占用令牌ID';
+COMMENT ON COLUMN studio_occupations.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_occupations.entity_id IS '被占用材料ID';
+COMMENT ON COLUMN studio_occupations.generation IS '本次占用代数';
+COMMENT ON COLUMN studio_occupations.owner_id IS '占有人用户ID';
+COMMENT ON COLUMN studio_occupations.purpose IS '材料整理或原型生产占用用途';
+COMMENT ON COLUMN studio_occupations.task_id IS '持有占用的任务ID';
+COMMENT ON COLUMN studio_occupations.client_id IS '持有占用的客户端ID';
+COMMENT ON COLUMN studio_occupations.expected_revision IS '领取占用时绑定的材料修订号';
+COMMENT ON COLUMN studio_occupations.input_version IS '领取占用时绑定的材料版本号';
+COMMENT ON COLUMN studio_occupations.active IS '占用是否仍有效';
+COMMENT ON COLUMN studio_occupations.finish_status IS '占用结束方式，活跃期间为空';
+COMMENT ON COLUMN studio_occupations.creator_id IS '占用创建人用户ID，须与占有人一致';
+COMMENT ON COLUMN studio_occupations.creator_account IS '占用创建人账号快照';
+COMMENT ON COLUMN studio_occupations.creator_name IS '占用创建人姓名快照';
+COMMENT ON COLUMN studio_occupations.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_occupations.last_editor_id IS '占用最后处理人用户ID';
+COMMENT ON COLUMN studio_occupations.last_editor_account IS '占用最后处理人账号快照';
+COMMENT ON COLUMN studio_occupations.last_editor_name IS '占用最后处理人姓名快照';
+COMMENT ON COLUMN studio_occupations.last_edited_date IS '记录最后修改时间';
 
--- scenario-batch 占用冻结的关联需求集合；占用结束时整批解除，不接受单场景保存绕过批次
-CREATE TABLE studio_batch_freezes (
-  project_id text NOT NULL,
-  occupation_id text NOT NULL REFERENCES studio_occupations(id),
-  entity_id text NOT NULL,
-  creator_id bigint NOT NULL REFERENCES studio_users(id),
-  creator_account varchar(50) NOT NULL,
-  creator_name varchar(50) NOT NULL,
-  created_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (occupation_id, entity_id),
-  FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id)
-);
-COMMENT ON TABLE studio_batch_freezes IS '批次冻结';
-COMMENT ON COLUMN studio_batch_freezes.entity_id IS '冻结需求';
+CREATE UNIQUE INDEX studio_one_active_occupation ON studio_occupations(project_id, entity_id) WHERE active;
 
 ALTER TABLE studio_integrations
   ADD CONSTRAINT studio_integrations_occupation_fk
@@ -447,11 +578,25 @@ CREATE TABLE studio_repair_tasks (
   UNIQUE (project_id, entity_id, id),
   UNIQUE (project_id, entity_id, user_action_id)
 );
-COMMENT ON TABLE studio_repair_tasks IS '授权修复任务';
-COMMENT ON COLUMN studio_repair_tasks.user_action_id IS '用户动作ID';
-COMMENT ON COLUMN studio_repair_tasks.start_hash IS '起始哈希';
-COMMENT ON COLUMN studio_repair_tasks.rounds_used IS '已用轮数';
-COMMENT ON COLUMN studio_repair_tasks.termination_reason IS '终止原因';
+COMMENT ON TABLE studio_repair_tasks IS '真实用户授权的有限轮次修复任务';
+COMMENT ON COLUMN studio_repair_tasks.id IS '修复任务ID';
+COMMENT ON COLUMN studio_repair_tasks.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_repair_tasks.entity_id IS '修复目标材料ID';
+COMMENT ON COLUMN studio_repair_tasks.occupation_id IS '修复任务绑定的材料占用ID';
+COMMENT ON COLUMN studio_repair_tasks.user_action_id IS '启动修复的真实用户动作ID';
+COMMENT ON COLUMN studio_repair_tasks.start_hash IS '修复授权开始时的材料SHA-256';
+COMMENT ON COLUMN studio_repair_tasks.status IS '修复任务状态';
+COMMENT ON COLUMN studio_repair_tasks.rounds_used IS '累计已使用修复轮数，暂停续接不重置';
+COMMENT ON COLUMN studio_repair_tasks.termination_reason IS '任务终止原因';
+COMMENT ON COLUMN studio_repair_tasks.creator_id IS '修复授权发起人用户ID';
+COMMENT ON COLUMN studio_repair_tasks.creator_account IS '修复授权发起人账号快照';
+COMMENT ON COLUMN studio_repair_tasks.creator_name IS '修复授权发起人姓名快照';
+COMMENT ON COLUMN studio_repair_tasks.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_repair_tasks.last_editor_id IS '修复任务最后处理人用户ID';
+COMMENT ON COLUMN studio_repair_tasks.last_editor_account IS '修复任务最后处理人账号快照';
+COMMENT ON COLUMN studio_repair_tasks.last_editor_name IS '修复任务最后处理人姓名快照';
+COMMENT ON COLUMN studio_repair_tasks.last_edited_date IS '记录最后修改时间';
+
 
 -- 修复任务控制事件：保存轮次结果 hash、暂停、显式续接与终止原因；不复制本地修复现场、正文或材料清单
 CREATE TABLE studio_repair_task_events (
@@ -466,18 +611,25 @@ CREATE TABLE studio_repair_task_events (
   created_date timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (task_id, seq)
 );
-COMMENT ON TABLE studio_repair_task_events IS '修复任务事件';
-COMMENT ON COLUMN studio_repair_task_events.seq IS '事件序号';
-COMMENT ON COLUMN studio_repair_task_events.hash_after IS '轮后哈希';
-COMMENT ON COLUMN studio_repair_task_events.detail IS '事件细节';
+COMMENT ON TABLE studio_repair_task_events IS '修复任务的轮次、暂停、续接与结束事件';
+COMMENT ON COLUMN studio_repair_task_events.task_id IS '所属修复任务ID';
+COMMENT ON COLUMN studio_repair_task_events.seq IS '任务内递增事件序号';
+COMMENT ON COLUMN studio_repair_task_events.type IS '修复事件类型';
+COMMENT ON COLUMN studio_repair_task_events.hash_after IS '本轮修复后的材料SHA-256';
+COMMENT ON COLUMN studio_repair_task_events.detail IS '有限修复控制信息，不保存正文或本地修复现场';
+COMMENT ON COLUMN studio_repair_task_events.creator_id IS '修复事件执行人用户ID';
+COMMENT ON COLUMN studio_repair_task_events.creator_account IS '修复事件执行人账号快照';
+COMMENT ON COLUMN studio_repair_task_events.creator_name IS '修复事件执行人姓名快照';
+COMMENT ON COLUMN studio_repair_task_events.created_date IS '记录创建时间';
+
 
 -- ============================================================
 -- 固定版本确认与需求来源
 -- ============================================================
 
 -- 被项目接受的固定材料版本：任何内容改动须形成新版本，行不可变；
--- creator_* / created_date 即确认人与确认时间；read_hash 为用户阅读版本，
--- 与当前内容不一致时阻断旧版本确认；repair 方式必须关联修复任务
+-- 用户确认的 creator_* 为确认人，read_hash 绑定实际阅读版本；repair 必须关联修复任务。
+-- 系统预置仅关联真实初始化接受事实，不填造用户确认字段。
 CREATE TABLE studio_confirmations (
   id text PRIMARY KEY,
   project_id text NOT NULL,
@@ -490,40 +642,67 @@ CREATE TABLE studio_confirmations (
   commit_sha text NOT NULL CHECK (commit_sha ~ '^[a-f0-9]{40}$'),
   path text NOT NULL,
   sha256 text NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
-  method studio_confirmation_method NOT NULL,
-  read_hash text NOT NULL CHECK (read_hash ~ '^[a-f0-9]{64}$'),
+  acceptance_kind studio_acceptance_kind NOT NULL DEFAULT 'user-confirmed',
+  method studio_confirmation_method,
+  read_hash text CHECK (read_hash ~ '^[a-f0-9]{64}$'),
   repair_task_id text REFERENCES studio_repair_tasks(id),
-  integration_id text NOT NULL REFERENCES studio_integrations(id),
-  creator_id bigint NOT NULL REFERENCES studio_users(id),
-  creator_account varchar(50) NOT NULL,
-  creator_name varchar(50) NOT NULL,
+  integration_id text REFERENCES studio_integrations(id),
+  initialization_id text,
+  creator_id bigint REFERENCES studio_users(id),
+  creator_account varchar(50),
+  creator_name varchar(50),
   created_date timestamptz NOT NULL DEFAULT now(),
+  source_count integer NOT NULL DEFAULT 0 CHECK (source_count BETWEEN 0 AND 100),
   applicability studio_applicability NOT NULL DEFAULT 'applicable',
   applicability_reason text,
   UNIQUE (project_id, id),
   UNIQUE (project_id, entity_id, id),
   UNIQUE (project_id, entity_id, version, stage),
+  UNIQUE (project_id, entity_id, version, stage, id),
+  UNIQUE (project_id, entity_id, stage, id),
+  UNIQUE (initialization_id),
   FOREIGN KEY (project_id, entity_id) REFERENCES studio_entities(project_id, id),
-  CHECK ((method = 'repair') = (repair_task_id IS NOT NULL)),
+  FOREIGN KEY (project_id,initialization_id) REFERENCES studio_project_initializations(project_id,id),
+  CHECK (
+    (acceptance_kind = 'user-confirmed' AND method IS NOT NULL AND read_hash IS NOT NULL AND read_hash = sha256 AND
+      integration_id IS NOT NULL AND initialization_id IS NULL AND creator_id IS NOT NULL AND creator_account IS NOT NULL AND creator_name IS NOT NULL AND
+      ((method = 'repair') = (repair_task_id IS NOT NULL))) OR
+    (acceptance_kind = 'system-provisioned' AND stage = 'material' AND version = 1 AND method IS NULL AND read_hash IS NULL AND
+      repair_task_id IS NULL AND integration_id IS NULL AND initialization_id IS NOT NULL AND
+      creator_id IS NULL AND creator_account IS NULL AND creator_name IS NULL)
+  ),
   CHECK (
     (applicability = 'applicable' AND applicability_reason IS NULL) OR
     (applicability = 'not-applicable' AND applicability_reason IS NOT NULL AND btrim(applicability_reason) <> '')
   )
 );
+COMMENT ON TABLE studio_confirmations IS '后台已接受的不可变固定版本，区分用户确认与系统预置';
+COMMENT ON COLUMN studio_confirmations.id IS '固定版本接受记录ID';
+COMMENT ON COLUMN studio_confirmations.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_confirmations.entity_id IS '被接受材料ID';
+COMMENT ON COLUMN studio_confirmations.version IS '材料版本号，原型完成沿用其材料版本号';
+COMMENT ON COLUMN studio_confirmations.stage IS '材料接受或原型完成阶段';
+COMMENT ON COLUMN studio_confirmations.revision IS '接受时对应的材料修订号';
+COMMENT ON COLUMN studio_confirmations.title IS '接受时的材料标题快照';
+COMMENT ON COLUMN studio_confirmations.summary IS '接受时的材料摘要快照';
+COMMENT ON COLUMN studio_confirmations.commit_sha IS '实际固定材料所在提交，原型阶段不替代为完成集成提交';
+COMMENT ON COLUMN studio_confirmations.path IS '固定材料的项目相对路径';
+COMMENT ON COLUMN studio_confirmations.sha256 IS '固定材料内容的SHA-256';
+COMMENT ON COLUMN studio_confirmations.acceptance_kind IS '用户确认或系统预置的互斥接受途径';
+COMMENT ON COLUMN studio_confirmations.method IS '用户普通确认或授权修复确认方式，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.read_hash IS '用户实际阅读版本的SHA-256，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.repair_task_id IS '授权修复确认对应的修复任务ID';
+COMMENT ON COLUMN studio_confirmations.integration_id IS '用户确认对应的真实集成操作ID，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.initialization_id IS '系统预置对应的真实初始化接受操作ID';
+COMMENT ON COLUMN studio_confirmations.creator_id IS '业务确认人用户ID，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.creator_account IS '业务确认人账号快照，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.creator_name IS '业务确认人姓名快照，系统预置为空';
+COMMENT ON COLUMN studio_confirmations.created_date IS '固定版本接受时间，系统预置为初始化接受时间';
+COMMENT ON COLUMN studio_confirmations.source_count IS '接受时封存的场景来源数量，须与来源明细数一致';
+COMMENT ON COLUMN studio_confirmations.applicability IS '该固定材料版本是否适用';
+COMMENT ON COLUMN studio_confirmations.applicability_reason IS '该需求固定版本不适用的明确原因';
+
 CREATE INDEX studio_confirmations_entity ON studio_confirmations(project_id, entity_id, version DESC);
-COMMENT ON TABLE studio_confirmations IS '固定版本确认';
-COMMENT ON COLUMN studio_confirmations.version IS '版本号';
-COMMENT ON COLUMN studio_confirmations.revision IS '实体修订号';
-COMMENT ON COLUMN studio_confirmations.title IS '标题快照';
-COMMENT ON COLUMN studio_confirmations.summary IS '摘要快照';
-COMMENT ON COLUMN studio_confirmations.commit_sha IS '固定提交';
-COMMENT ON COLUMN studio_confirmations.path IS '文件路径';
-COMMENT ON COLUMN studio_confirmations.sha256 IS '内容哈希';
-COMMENT ON COLUMN studio_confirmations.read_hash IS '阅读哈希';
-COMMENT ON COLUMN studio_confirmations.repair_task_id IS '修复任务';
-COMMENT ON COLUMN studio_confirmations.integration_id IS '接受集成';
-COMMENT ON COLUMN studio_confirmations.applicability IS '固定版本适用性，场景必须适用';
-COMMENT ON COLUMN studio_confirmations.applicability_reason IS '需求固定版本不适用原因';
 
 ALTER TABLE studio_entities
   ADD CONSTRAINT studio_entities_current_confirmation_fk
@@ -532,58 +711,84 @@ ALTER TABLE studio_entities
 -- 需求确认绑定的场景固定版本：至少一个、可多个，提交时触发器强制；
 -- 仅允许同项目已接受的场景确认版本，不允许无来源或未确认来源
 CREATE TABLE studio_requirement_sources (
-  confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
-  scenario_confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
-  PRIMARY KEY (confirmation_id, scenario_confirmation_id),
+  project_id text NOT NULL,
+  confirmation_id text NOT NULL,
+  scenario_id text NOT NULL,
+  scenario_confirmation_id text NOT NULL,
+  source_stage studio_confirmation_stage NOT NULL DEFAULT 'material' CHECK (source_stage = 'material'),
+  PRIMARY KEY (confirmation_id, scenario_id),
+  FOREIGN KEY (project_id,confirmation_id) REFERENCES studio_confirmations(project_id,id),
+  FOREIGN KEY (project_id,scenario_id,source_stage,scenario_confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,stage,id),
   CHECK (confirmation_id <> scenario_confirmation_id)
 );
-COMMENT ON TABLE studio_requirement_sources IS '需求场景来源';
-COMMENT ON COLUMN studio_requirement_sources.confirmation_id IS '需求确认';
-COMMENT ON COLUMN studio_requirement_sources.scenario_confirmation_id IS '场景确认版本';
+COMMENT ON TABLE studio_requirement_sources IS '需求固定版本接受时封存的场景来源集合，审计沿用父接受记录';
+COMMENT ON COLUMN studio_requirement_sources.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_requirement_sources.confirmation_id IS '需求材料接受记录ID';
+COMMENT ON COLUMN studio_requirement_sources.scenario_id IS '来源场景ID，同一次接受仅绑定一个版本';
+COMMENT ON COLUMN studio_requirement_sources.scenario_confirmation_id IS '来源场景的固定材料接受记录ID';
+COMMENT ON COLUMN studio_requirement_sources.source_stage IS '来源固定版本阶段，限材料阶段';
 
 
--- 需求分类与后续产品阶段的明确关系模型。场景不具有分类。
-CREATE TABLE studio_categories (
-  project_id text NOT NULL REFERENCES studio_projects(id),
-  id text NOT NULL,
-  name text NOT NULL,
-  creator_id bigint NOT NULL REFERENCES studio_users(id),
-  creator_account varchar(50) NOT NULL,
-  creator_name varchar(50) NOT NULL,
-  created_date timestamptz NOT NULL DEFAULT now(),
-  last_editor_id bigint NOT NULL REFERENCES studio_users(id),
-  last_editor_account varchar(50) NOT NULL,
-  last_editor_name varchar(50) NOT NULL,
-  last_edited_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(project_id,id)
-);
-ALTER TABLE studio_entities ADD FOREIGN KEY(project_id,category_id) REFERENCES studio_categories(project_id,id);
 
+-- 前置关系绑定已接受材料版本；完成证据仅在原型生产时校验。
 CREATE TABLE studio_prerequisites (
   project_id text NOT NULL,
   entity_id text NOT NULL,
   requirement_id text NOT NULL,
   version integer NOT NULL CHECK(version>0),
+  confirmation_id text NOT NULL,
+  stage studio_confirmation_stage NOT NULL DEFAULT 'material' CHECK (stage = 'material'),
   creator_id bigint NOT NULL REFERENCES studio_users(id),
   creator_account varchar(50) NOT NULL,
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(project_id,entity_id,requirement_id),
+  CHECK (entity_id <> requirement_id),
+  FOREIGN KEY(project_id,requirement_id,version,stage,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,version,stage,id),
   FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
   FOREIGN KEY(project_id,requirement_id) REFERENCES studio_entities(project_id,id)
 );
+COMMENT ON TABLE studio_prerequisites IS '需求当前绑定的前置需求固定材料版本，不提前要求生产完成';
+COMMENT ON COLUMN studio_prerequisites.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_prerequisites.entity_id IS '设置前置关系的当前需求ID';
+COMMENT ON COLUMN studio_prerequisites.requirement_id IS '前置需求ID';
+COMMENT ON COLUMN studio_prerequisites.version IS '绑定的前置需求材料版本号';
+COMMENT ON COLUMN studio_prerequisites.confirmation_id IS '该前置材料版本的接受记录ID';
+COMMENT ON COLUMN studio_prerequisites.stage IS '前置引用阶段，限材料阶段';
+COMMENT ON COLUMN studio_prerequisites.creator_id IS '前置关系建立人用户ID';
+COMMENT ON COLUMN studio_prerequisites.creator_account IS '前置关系建立人账号快照';
+COMMENT ON COLUMN studio_prerequisites.creator_name IS '前置关系建立人姓名快照';
+COMMENT ON COLUMN studio_prerequisites.created_date IS '记录创建时间';
+
 CREATE TABLE studio_occupation_inputs (
-  occupation_id text NOT NULL REFERENCES studio_occupations(id),
+  project_id text NOT NULL,
+  occupation_id text NOT NULL,
   requirement_id text NOT NULL,
   version integer NOT NULL CHECK(version>0),
-  confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
+  confirmation_id text NOT NULL,
+  stage studio_confirmation_stage NOT NULL DEFAULT 'prototype' CHECK (stage = 'prototype'),
   integration_sha text NOT NULL CHECK(integration_sha ~ '^[a-f0-9]{40}$'),
   creator_id bigint NOT NULL REFERENCES studio_users(id),
   creator_account varchar(50) NOT NULL,
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(occupation_id,requirement_id)
+  PRIMARY KEY(occupation_id,requirement_id),
+  FOREIGN KEY(project_id,occupation_id) REFERENCES studio_occupations(project_id,id),
+  FOREIGN KEY(project_id,requirement_id,version,stage,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,version,stage,id)
 );
+COMMENT ON TABLE studio_occupation_inputs IS '原型占用绑定的前置需求已接受完成证据';
+COMMENT ON COLUMN studio_occupation_inputs.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_occupation_inputs.occupation_id IS '使用这些前置输入的原型占用ID';
+COMMENT ON COLUMN studio_occupation_inputs.requirement_id IS '已完成的前置需求ID';
+COMMENT ON COLUMN studio_occupation_inputs.version IS '已完成的前置需求材料版本号';
+COMMENT ON COLUMN studio_occupation_inputs.confirmation_id IS '该前置需求版本的原型完成接受记录ID';
+COMMENT ON COLUMN studio_occupation_inputs.stage IS '前置完成证据阶段，限原型阶段';
+COMMENT ON COLUMN studio_occupation_inputs.integration_sha IS '前置需求完成基线对应的已接受集成提交';
+COMMENT ON COLUMN studio_occupation_inputs.creator_id IS '输入绑定记录创建人用户ID';
+COMMENT ON COLUMN studio_occupation_inputs.creator_account IS '输入绑定记录创建人账号快照';
+COMMENT ON COLUMN studio_occupation_inputs.creator_name IS '输入绑定记录创建人姓名快照';
+COMMENT ON COLUMN studio_occupation_inputs.created_date IS '记录创建时间';
+
 CREATE TABLE studio_eligibility (
   project_id text NOT NULL,
   entity_id text NOT NULL,
@@ -601,6 +806,21 @@ CREATE TABLE studio_eligibility (
   PRIMARY KEY(project_id,entity_id,version),
   FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id)
 );
+COMMENT ON TABLE studio_eligibility IS '固定材料版本的复用资格与停用原因';
+COMMENT ON COLUMN studio_eligibility.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_eligibility.entity_id IS '复用资格所属材料ID';
+COMMENT ON COLUMN studio_eligibility.version IS '复用资格所属材料版本号';
+COMMENT ON COLUMN studio_eligibility.enabled IS '该固定版本是否允许新的复用采用';
+COMMENT ON COLUMN studio_eligibility.reason IS '启用或停用复用资格的原因';
+COMMENT ON COLUMN studio_eligibility.creator_id IS '复用资格创建人用户ID';
+COMMENT ON COLUMN studio_eligibility.creator_account IS '复用资格创建人账号快照';
+COMMENT ON COLUMN studio_eligibility.creator_name IS '复用资格创建人姓名快照';
+COMMENT ON COLUMN studio_eligibility.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_eligibility.last_editor_id IS '复用资格最后修改人用户ID';
+COMMENT ON COLUMN studio_eligibility.last_editor_account IS '复用资格最后修改人账号快照';
+COMMENT ON COLUMN studio_eligibility.last_editor_name IS '复用资格最后修改人姓名快照';
+COMMENT ON COLUMN studio_eligibility.last_edited_date IS '记录最后修改时间';
+
 CREATE TABLE studio_baselines (
   id text PRIMARY KEY,
   project_id text NOT NULL,
@@ -613,8 +833,23 @@ CREATE TABLE studio_baselines (
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
-  UNIQUE(project_id,entity_id,version)
+  UNIQUE(project_id,entity_id,version),
+  UNIQUE(project_id,entity_id,version,confirmation_id,commit_sha)
 );
+COMMENT ON TABLE studio_baselines IS '单需求原型完成后接受的固定集成基线';
+COMMENT ON COLUMN studio_baselines.id IS '原型完成基线ID';
+COMMENT ON COLUMN studio_baselines.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_baselines.entity_id IS '已完成的需求ID';
+COMMENT ON COLUMN studio_baselines.version IS '本次原型完成对应的需求材料版本号';
+COMMENT ON COLUMN studio_baselines.commit_sha IS '已接受的原型完成集成提交，可不同于材料固定提交';
+COMMENT ON COLUMN studio_baselines.confirmation_id IS '本次原型完成接受记录ID';
+COMMENT ON COLUMN studio_baselines.creator_id IS '原型完成提交人用户ID';
+COMMENT ON COLUMN studio_baselines.creator_account IS '原型完成提交人账号快照';
+COMMENT ON COLUMN studio_baselines.creator_name IS '原型完成提交人姓名快照';
+COMMENT ON COLUMN studio_baselines.created_date IS '记录创建时间';
+
+ALTER TABLE studio_occupation_inputs ADD FOREIGN KEY(project_id,requirement_id,version,confirmation_id,integration_sha)
+  REFERENCES studio_baselines(project_id,entity_id,version,confirmation_id,commit_sha);
 ALTER TABLE studio_projects ADD FOREIGN KEY(current_baseline_id) REFERENCES studio_baselines(id);
 ALTER TABLE studio_integrations ADD FOREIGN KEY(baseline_id) REFERENCES studio_baselines(id);
 CREATE TABLE studio_integration_confirmations (
@@ -622,6 +857,10 @@ CREATE TABLE studio_integration_confirmations (
   confirmation_id text NOT NULL REFERENCES studio_confirmations(id),
   PRIMARY KEY(integration_id,confirmation_id)
 );
+COMMENT ON TABLE studio_integration_confirmations IS '集成操作与其接受确认记录的关联';
+COMMENT ON COLUMN studio_integration_confirmations.integration_id IS '所属集成操作ID';
+COMMENT ON COLUMN studio_integration_confirmations.confirmation_id IS '该集成接受的确认记录ID';
+
 CREATE TABLE studio_adoptions (
   id text PRIMARY KEY,
   source_project_id text NOT NULL,
@@ -647,6 +886,29 @@ CREATE TABLE studio_adoptions (
   FOREIGN KEY(source_project_id,source_entity_id) REFERENCES studio_entities(project_id,id),
   FOREIGN KEY(target_project_id,target_entity_id) REFERENCES studio_entities(project_id,id)
 );
+COMMENT ON TABLE studio_adoptions IS '固定来源版本的复用采用受理与成功控制事实';
+COMMENT ON COLUMN studio_adoptions.id IS '复用采用记录ID';
+COMMENT ON COLUMN studio_adoptions.source_project_id IS '被采用来源所属项目ID';
+COMMENT ON COLUMN studio_adoptions.source_entity_id IS '被采用来源材料ID';
+COMMENT ON COLUMN studio_adoptions.source_version IS '被采用的固定来源版本号';
+COMMENT ON COLUMN studio_adoptions.target_project_id IS '采用目标所属项目ID';
+COMMENT ON COLUMN studio_adoptions.target_entity_id IS '采用目标材料ID';
+COMMENT ON COLUMN studio_adoptions.target_task_id IS '执行采用的目标任务ID';
+COMMENT ON COLUMN studio_adoptions.scope IS '采用材料包或原型包的范围';
+COMMENT ON COLUMN studio_adoptions.adjustment_summary IS '目标采用时的有限调整说明';
+COMMENT ON COLUMN studio_adoptions.status IS '采用受理或成功状态';
+COMMENT ON COLUMN studio_adoptions.target_confirmation_id IS '采用成功后目标固定版本的接受记录ID';
+COMMENT ON COLUMN studio_adoptions.target_version IS '采用成功后目标材料版本号';
+COMMENT ON COLUMN studio_adoptions.succeeded_at IS '采用成功时间';
+COMMENT ON COLUMN studio_adoptions.creator_id IS '采用发起人用户ID';
+COMMENT ON COLUMN studio_adoptions.creator_account IS '采用发起人账号快照';
+COMMENT ON COLUMN studio_adoptions.creator_name IS '采用发起人姓名快照';
+COMMENT ON COLUMN studio_adoptions.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_adoptions.last_editor_id IS '采用记录最后处理人用户ID';
+COMMENT ON COLUMN studio_adoptions.last_editor_account IS '采用记录最后处理人账号快照';
+COMMENT ON COLUMN studio_adoptions.last_editor_name IS '采用记录最后处理人姓名快照';
+COMMENT ON COLUMN studio_adoptions.last_edited_date IS '记录最后修改时间';
+
 CREATE TABLE studio_handoff_receipts (
   id text PRIMARY KEY,
   project_id text NOT NULL,
@@ -660,6 +922,17 @@ CREATE TABLE studio_handoff_receipts (
   FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
   UNIQUE(project_id,entity_id,confirmation_id,creator_id)
 );
+COMMENT ON TABLE studio_handoff_receipts IS '用户对固定交接材料版本的收悉记录';
+COMMENT ON COLUMN studio_handoff_receipts.id IS '交接收悉记录ID';
+COMMENT ON COLUMN studio_handoff_receipts.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_handoff_receipts.entity_id IS '交接材料ID';
+COMMENT ON COLUMN studio_handoff_receipts.confirmation_id IS '已接受的固定交接版本记录ID';
+COMMENT ON COLUMN studio_handoff_receipts.note IS '收悉备注';
+COMMENT ON COLUMN studio_handoff_receipts.creator_id IS '交接收悉人用户ID';
+COMMENT ON COLUMN studio_handoff_receipts.creator_account IS '交接收悉人账号快照';
+COMMENT ON COLUMN studio_handoff_receipts.creator_name IS '交接收悉人姓名快照';
+COMMENT ON COLUMN studio_handoff_receipts.created_date IS '记录创建时间';
+
 CREATE UNIQUE INDEX studio_one_active_repair ON studio_repair_tasks(project_id,entity_id,occupation_id) WHERE status IN ('active','paused');
 
 -- 草稿需求也绑定已确认场景的固定版本，不只保存可变场景关联。
@@ -674,15 +947,23 @@ CREATE TABLE studio_entity_scenario_sources (
   PRIMARY KEY(project_id,entity_id,scenario_confirmation_id),
   FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id)
 );
+COMMENT ON TABLE studio_entity_scenario_sources IS '需求当前绑定的场景固定版本，允许在需求独立修订中显式调整';
+COMMENT ON COLUMN studio_entity_scenario_sources.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_entity_scenario_sources.entity_id IS '绑定来源的需求ID';
+COMMENT ON COLUMN studio_entity_scenario_sources.scenario_confirmation_id IS '当前所选场景固定材料版本的接受记录ID';
+COMMENT ON COLUMN studio_entity_scenario_sources.creator_id IS '来源绑定记录创建人用户ID';
+COMMENT ON COLUMN studio_entity_scenario_sources.creator_account IS '来源绑定记录创建人账号快照';
+COMMENT ON COLUMN studio_entity_scenario_sources.creator_name IS '来源绑定记录创建人姓名快照';
+COMMENT ON COLUMN studio_entity_scenario_sources.created_date IS '记录创建时间';
+
 
 -- 复合外键保证占用、修复、确认和派生物不能跨项目或跨实体串接。
 ALTER TABLE studio_integrations ADD UNIQUE(project_id,id);
+ALTER TABLE studio_integrations ADD UNIQUE(project_id,entity_id,id);
 ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_integration_id_fkey;
-ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,integration_id) REFERENCES studio_integrations(project_id,id);
+ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,entity_id,integration_id) REFERENCES studio_integrations(project_id,entity_id,id);
 ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_repair_task_id_fkey;
 ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,entity_id,repair_task_id) REFERENCES studio_repair_tasks(project_id,entity_id,id);
-ALTER TABLE studio_batch_freezes DROP CONSTRAINT studio_batch_freezes_occupation_id_fkey;
-ALTER TABLE studio_batch_freezes ADD FOREIGN KEY(project_id,occupation_id) REFERENCES studio_occupations(project_id,id);
 ALTER TABLE studio_baselines ADD UNIQUE(project_id,id);
 ALTER TABLE studio_baselines DROP CONSTRAINT studio_baselines_confirmation_id_fkey;
 ALTER TABLE studio_baselines ADD FOREIGN KEY(project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
@@ -714,11 +995,17 @@ CREATE TABLE studio_operations (
   created_date timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (project_id, key)
 );
-COMMENT ON TABLE studio_operations IS '幂等操作';
-COMMENT ON COLUMN studio_operations.key IS '幂等键';
-COMMENT ON COLUMN studio_operations.action IS '操作类型';
-COMMENT ON COLUMN studio_operations.request_hash IS '请求指纹';
-COMMENT ON COLUMN studio_operations.result IS '操作结果';
+COMMENT ON TABLE studio_operations IS '响应未知时可查询的幂等操作与有限控制结果';
+COMMENT ON COLUMN studio_operations.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_operations.key IS '项目内操作幂等键';
+COMMENT ON COLUMN studio_operations.action IS '操作动作名称';
+COMMENT ON COLUMN studio_operations.request_hash IS '原操作请求指纹';
+COMMENT ON COLUMN studio_operations.result IS '操作状态、身份、修订号及固定引用等有限控制结果';
+COMMENT ON COLUMN studio_operations.creator_id IS '操作发起人用户ID';
+COMMENT ON COLUMN studio_operations.creator_account IS '操作发起人账号快照';
+COMMENT ON COLUMN studio_operations.creator_name IS '操作发起人姓名快照';
+COMMENT ON COLUMN studio_operations.created_date IS '记录创建时间';
+
 
 -- 审计日志：项目内全部接受的管理与业务动作，仅追加；data 仅记录动作标识、对象、状态与版本引用，
 -- 不存正文、业务快照、质量项、待澄清项、正式依据或关联文件清单
@@ -732,11 +1019,294 @@ CREATE TABLE studio_audit (
   creator_name varchar(50) NOT NULL,
   created_date timestamptz NOT NULL DEFAULT now()
 );
+COMMENT ON TABLE studio_audit IS '项目内已接受动作的有限审计记录';
+COMMENT ON COLUMN studio_audit.id IS '审计流水ID';
+COMMENT ON COLUMN studio_audit.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_audit.action IS '被记录的管理或业务动作名称';
+COMMENT ON COLUMN studio_audit.data IS '动作对象、状态与版本引用等有限控制信息';
+COMMENT ON COLUMN studio_audit.creator_id IS '动作执行人用户ID';
+COMMENT ON COLUMN studio_audit.creator_account IS '动作执行人账号快照';
+COMMENT ON COLUMN studio_audit.creator_name IS '动作执行人姓名快照';
+COMMENT ON COLUMN studio_audit.created_date IS '记录创建时间';
+
 CREATE INDEX studio_audit_project ON studio_audit(project_id, created_date);
-COMMENT ON TABLE studio_audit IS '审计日志';
-COMMENT ON COLUMN studio_audit.creator_id IS '动作执行者';
-COMMENT ON COLUMN studio_audit.action IS '审计动作';
-COMMENT ON COLUMN studio_audit.data IS '动作细节';
+
+-- ============================================================
+-- 独立一致性对比、有限输入观察与差异处理
+-- ============================================================
+
+-- 每次比较不可变；数量封存防止在已接受结果中补入新的输入或差异。
+CREATE TABLE studio_consistency_comparisons (
+  id studio_control_id PRIMARY KEY,
+  project_id text NOT NULL REFERENCES studio_projects(id),
+  entity_id text NOT NULL,
+  trigger studio_comparison_trigger NOT NULL,
+  confirmation_id text,
+  operation_key studio_control_id NOT NULL,
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  result studio_comparison_result NOT NULL,
+  coverage studio_comparison_coverage NOT NULL,
+  failure_code studio_comparison_failure,
+  summary varchar(500) NOT NULL DEFAULT '',
+  input_count integer NOT NULL DEFAULT 0 CHECK (input_count BETWEEN 0 AND 100),
+  uncovered_count integer NOT NULL DEFAULT 0 CHECK (uncovered_count BETWEEN 0 AND 100),
+  finding_count integer NOT NULL DEFAULT 0 CHECK (finding_count BETWEEN 0 AND 100),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (project_id,id),
+  UNIQUE (project_id,operation_key),
+  FOREIGN KEY (project_id,entity_id) REFERENCES studio_entities(project_id,id),
+  FOREIGN KEY (project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id),
+  CHECK ((trigger='manual' AND confirmation_id IS NULL) OR (trigger='confirmation' AND confirmation_id IS NOT NULL)),
+  CHECK ((result='completed' AND failure_code IS NULL) OR
+    (result='failed' AND failure_code IS NOT NULL AND failure_code<>'cancelled' AND btrim(summary)<>'') OR
+    (result='cancelled' AND failure_code IS NOT NULL AND failure_code='cancelled')),
+  CHECK (coverage<>'complete' OR uncovered_count=0)
+);
+COMMENT ON TABLE studio_consistency_comparisons IS '本机实际输入的独立比较接受结果，不证明项目完整一致';
+COMMENT ON COLUMN studio_consistency_comparisons.id IS '独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_comparisons.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_comparisons.entity_id IS '本次比较的目标材料ID';
+COMMENT ON COLUMN studio_consistency_comparisons.trigger IS '手动发起或材料确认事件触发';
+COMMENT ON COLUMN studio_consistency_comparisons.confirmation_id IS '自动触发对应的材料接受记录ID，手动比较为空';
+COMMENT ON COLUMN studio_consistency_comparisons.operation_key IS '比较结果提交幂等键';
+COMMENT ON COLUMN studio_consistency_comparisons.request_hash IS '原比较结果提交请求指纹';
+COMMENT ON COLUMN studio_consistency_comparisons.result IS '比较执行结果，完成、失败与取消分别记录';
+COMMENT ON COLUMN studio_consistency_comparisons.coverage IS '本次实际覆盖范围完整或不足';
+COMMENT ON COLUMN studio_consistency_comparisons.failure_code IS '有限失败或取消码，完成结果为空';
+COMMENT ON COLUMN studio_consistency_comparisons.summary IS '有限比较结果或失败摘要，不保存完整模型输出';
+COMMENT ON COLUMN studio_consistency_comparisons.input_count IS '接受时封存的已读输入数量';
+COMMENT ON COLUMN studio_consistency_comparisons.uncovered_count IS '接受时封存的未覆盖项数量';
+COMMENT ON COLUMN studio_consistency_comparisons.finding_count IS '接受时封存的差异项数量';
+COMMENT ON COLUMN studio_consistency_comparisons.creator_id IS '比较发起人用户ID';
+COMMENT ON COLUMN studio_consistency_comparisons.creator_account IS '比较发起人账号快照';
+COMMENT ON COLUMN studio_consistency_comparisons.creator_name IS '比较发起人姓名快照';
+COMMENT ON COLUMN studio_consistency_comparisons.created_date IS '比较结果被后台接受的时间';
+
+CREATE UNIQUE INDEX studio_one_auto_comparison ON studio_consistency_comparisons(project_id,confirmation_id) WHERE trigger='confirmation';
+CREATE INDEX studio_comparisons_target ON studio_consistency_comparisons(project_id,entity_id,created_date DESC);
+
+CREATE TABLE studio_consistency_inputs (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  entity_id text NOT NULL,
+  path studio_relative_path NOT NULL,
+  sha256 text NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
+  local_state studio_local_content_state NOT NULL,
+  range_count integer NOT NULL DEFAULT 0 CHECK (range_count BETWEEN 0 AND 100),
+  PRIMARY KEY (project_id,comparison_id,id),
+  UNIQUE (project_id,comparison_id,ordinal),
+  UNIQUE (project_id,comparison_id,path),
+  FOREIGN KEY (project_id,comparison_id) REFERENCES studio_consistency_comparisons(project_id,id),
+  FOREIGN KEY (project_id,entity_id) REFERENCES studio_entities(project_id,id)
+);
+COMMENT ON TABLE studio_consistency_inputs IS '同次本地读取字节的身份与哈希观察，不保存正文；审计继承父比较';
+COMMENT ON COLUMN studio_consistency_inputs.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_inputs.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_inputs.id IS '本次比较内的已读输入ID';
+COMMENT ON COLUMN studio_consistency_inputs.ordinal IS '比较内已读输入序号，范围为1至100';
+COMMENT ON COLUMN studio_consistency_inputs.entity_id IS '实际读取的有效材料ID';
+COMMENT ON COLUMN studio_consistency_inputs.path IS '实际读取文件的项目相对路径';
+COMMENT ON COLUMN studio_consistency_inputs.sha256 IS '与模型实际输入同次读取字节的SHA-256';
+COMMENT ON COLUMN studio_consistency_inputs.local_state IS '本地草稿、本机当前文件或状态无法核对';
+COMMENT ON COLUMN studio_consistency_inputs.range_count IS '接受时封存的实际读取范围数量';
+
+CREATE INDEX studio_consistency_inputs_entity ON studio_consistency_inputs(project_id,entity_id,comparison_id);
+
+CREATE TABLE studio_consistency_uncovered (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  entity_id text,
+  path studio_relative_path NOT NULL,
+  reason studio_uncovered_reason NOT NULL,
+  range_count integer NOT NULL DEFAULT 0 CHECK (range_count BETWEEN 0 AND 100),
+  PRIMARY KEY (project_id,comparison_id,id),
+  UNIQUE (project_id,comparison_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id) REFERENCES studio_consistency_comparisons(project_id,id),
+  FOREIGN KEY (project_id,entity_id) REFERENCES studio_entities(project_id,id)
+);
+COMMENT ON TABLE studio_consistency_uncovered IS '未读取或未覆盖的定位及原因，不伪造哈希；审计继承父比较';
+COMMENT ON COLUMN studio_consistency_uncovered.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_uncovered.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_uncovered.id IS '本次比较内的未覆盖项ID';
+COMMENT ON COLUMN studio_consistency_uncovered.ordinal IS '比较内未覆盖项序号，范围为1至100';
+COMMENT ON COLUMN studio_consistency_uncovered.entity_id IS '可识别且属于本项目的材料ID，无法识别时为空';
+COMMENT ON COLUMN studio_consistency_uncovered.path IS '未覆盖文件的项目相对路径';
+COMMENT ON COLUMN studio_consistency_uncovered.reason IS '缺失、不可读、身份无效或超限等未覆盖原因';
+COMMENT ON COLUMN studio_consistency_uncovered.range_count IS '接受时封存的未覆盖范围数量';
+
+
+CREATE TABLE studio_consistency_findings (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  summary varchar(500) NOT NULL CHECK (btrim(summary)<>''),
+  direction varchar(500),
+  relation studio_finding_relation NOT NULL,
+  status studio_finding_status NOT NULL DEFAULT 'pending',
+  revision integer NOT NULL DEFAULT 0 CHECK (revision>=0),
+  reminder boolean NOT NULL DEFAULT false,
+  input_count integer NOT NULL CHECK (input_count BETWEEN 1 AND 100),
+  range_count integer NOT NULL DEFAULT 0 CHECK (range_count BETWEEN 0 AND 100),
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  last_editor_id bigint NOT NULL REFERENCES studio_users(id),
+  last_editor_account varchar(50) NOT NULL,
+  last_editor_name varchar(50) NOT NULL,
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id,id),
+  UNIQUE (project_id,comparison_id,id),
+  UNIQUE (project_id,comparison_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id) REFERENCES studio_consistency_comparisons(project_id,id)
+);
+COMMENT ON TABLE studio_consistency_findings IS '独立差异及其处理状态，登记已处理不表示材料已一致';
+COMMENT ON COLUMN studio_consistency_findings.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_findings.comparison_id IS '发现该差异的独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_findings.id IS '项目内差异项ID';
+COMMENT ON COLUMN studio_consistency_findings.ordinal IS '本次比较内差异项序号，范围为1至100';
+COMMENT ON COLUMN studio_consistency_findings.summary IS '有限差异问题摘要';
+COMMENT ON COLUMN studio_consistency_findings.direction IS '可选修改方向建议，不代表用户已采纳';
+COMMENT ON COLUMN studio_consistency_findings.relation IS '正式关系或潜在关联类型，不直接改写正式关系';
+COMMENT ON COLUMN studio_consistency_findings.status IS '差异待处理、登记已处理或忽略状态';
+COMMENT ON COLUMN studio_consistency_findings.revision IS '差异自身并发修订号，独立于材料修订号';
+COMMENT ON COLUMN studio_consistency_findings.reminder IS '是否显示项目内提醒，独立于处理状态';
+COMMENT ON COLUMN studio_consistency_findings.input_count IS '接受时封存的涉及已读输入数量';
+COMMENT ON COLUMN studio_consistency_findings.range_count IS '接受时封存的差异定位范围数量';
+COMMENT ON COLUMN studio_consistency_findings.creator_id IS '差异记录创建人用户ID';
+COMMENT ON COLUMN studio_consistency_findings.creator_account IS '差异记录创建人账号快照';
+COMMENT ON COLUMN studio_consistency_findings.creator_name IS '差异记录创建人姓名快照';
+COMMENT ON COLUMN studio_consistency_findings.created_date IS '记录创建时间';
+COMMENT ON COLUMN studio_consistency_findings.last_editor_id IS '差异最后处理人用户ID';
+COMMENT ON COLUMN studio_consistency_findings.last_editor_account IS '差异最后处理人账号快照';
+COMMENT ON COLUMN studio_consistency_findings.last_editor_name IS '差异最后处理人姓名快照';
+COMMENT ON COLUMN studio_consistency_findings.last_edited_date IS '记录最后修改时间';
+
+CREATE INDEX studio_findings_status ON studio_consistency_findings(project_id,status,reminder,created_date DESC);
+
+CREATE TABLE studio_consistency_finding_inputs (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  finding_id studio_control_id NOT NULL,
+  input_id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  PRIMARY KEY (project_id,comparison_id,finding_id,input_id),
+  UNIQUE (project_id,comparison_id,finding_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id,finding_id) REFERENCES studio_consistency_findings(project_id,comparison_id,id),
+  FOREIGN KEY (project_id,comparison_id,input_id) REFERENCES studio_consistency_inputs(project_id,comparison_id,id)
+);
+COMMENT ON TABLE studio_consistency_finding_inputs IS '差异涉及的同次比较已读输入集合，审计继承父比较';
+COMMENT ON COLUMN studio_consistency_finding_inputs.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_finding_inputs.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_finding_inputs.finding_id IS '所属差异项ID';
+COMMENT ON COLUMN studio_consistency_finding_inputs.input_id IS '该差异涉及的同次比较已读输入ID';
+COMMENT ON COLUMN studio_consistency_finding_inputs.ordinal IS '差异内涉及输入序号，范围为1至100';
+
+
+CREATE TABLE studio_consistency_input_ranges (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  input_id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  start_line integer NOT NULL CHECK (start_line>0),
+  end_line integer NOT NULL CHECK (end_line>=start_line),
+  PRIMARY KEY (project_id,comparison_id,input_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id,input_id) REFERENCES studio_consistency_inputs(project_id,comparison_id,id)
+);
+COMMENT ON TABLE studio_consistency_input_ranges IS '已读输入的实际读取行范围，审计继承父比较';
+COMMENT ON COLUMN studio_consistency_input_ranges.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_input_ranges.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_input_ranges.input_id IS '所属已读输入ID';
+COMMENT ON COLUMN studio_consistency_input_ranges.ordinal IS '该输入内读取范围序号，范围为1至100';
+COMMENT ON COLUMN studio_consistency_input_ranges.start_line IS '实际读取范围起始行，行号从1开始';
+COMMENT ON COLUMN studio_consistency_input_ranges.end_line IS '实际读取范围结束行，包含该行且不小于起始行';
+
+CREATE TABLE studio_consistency_uncovered_ranges (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  uncovered_id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  start_line integer NOT NULL CHECK (start_line>0),
+  end_line integer NOT NULL CHECK (end_line>=start_line),
+  PRIMARY KEY (project_id,comparison_id,uncovered_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id,uncovered_id) REFERENCES studio_consistency_uncovered(project_id,comparison_id,id)
+);
+COMMENT ON TABLE studio_consistency_uncovered_ranges IS '未覆盖项的有限行范围定位，审计继承父比较';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.uncovered_id IS '所属未覆盖项ID';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.ordinal IS '该未覆盖项内范围序号，范围为1至100';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.start_line IS '未覆盖范围起始行，行号从1开始';
+COMMENT ON COLUMN studio_consistency_uncovered_ranges.end_line IS '未覆盖范围结束行，包含该行且不小于起始行';
+
+CREATE TABLE studio_consistency_finding_ranges (
+  project_id text NOT NULL,
+  comparison_id studio_control_id NOT NULL,
+  finding_id studio_control_id NOT NULL,
+  input_id studio_control_id NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal BETWEEN 1 AND 100),
+  start_line integer NOT NULL CHECK (start_line>0),
+  end_line integer NOT NULL CHECK (end_line>=start_line),
+  PRIMARY KEY (project_id,comparison_id,finding_id,ordinal),
+  FOREIGN KEY (project_id,comparison_id,finding_id,input_id) REFERENCES studio_consistency_finding_inputs(project_id,comparison_id,finding_id,input_id)
+);
+COMMENT ON TABLE studio_consistency_finding_ranges IS '差异在其涉及已读输入中的有限行定位，审计继承父比较';
+COMMENT ON COLUMN studio_consistency_finding_ranges.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_finding_ranges.comparison_id IS '所属独立比较记录ID';
+COMMENT ON COLUMN studio_consistency_finding_ranges.finding_id IS '所属差异项ID';
+COMMENT ON COLUMN studio_consistency_finding_ranges.input_id IS '差异定位所指向的同次比较已读输入ID';
+COMMENT ON COLUMN studio_consistency_finding_ranges.ordinal IS '差异内定位范围序号，所有涉及输入合计不超过100';
+COMMENT ON COLUMN studio_consistency_finding_ranges.start_line IS '差异定位起始行，行号从1开始';
+COMMENT ON COLUMN studio_consistency_finding_ranges.end_line IS '差异定位结束行，包含该行且不小于起始行';
+
+
+-- 处理事件持续追加，不受每次比较的差异项数量上限影响。
+CREATE TABLE studio_consistency_finding_events (
+  project_id text NOT NULL,
+  id studio_control_id NOT NULL,
+  finding_id studio_control_id NOT NULL,
+  revision integer NOT NULL CHECK (revision>0),
+  operation_key studio_control_id NOT NULL,
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  action studio_finding_action NOT NULL,
+  status studio_finding_status NOT NULL,
+  reminder boolean NOT NULL,
+  note varchar(500) NOT NULL DEFAULT '',
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id,id),
+  UNIQUE (project_id,finding_id,revision),
+  UNIQUE (project_id,operation_key),
+  FOREIGN KEY (project_id,finding_id) REFERENCES studio_consistency_findings(project_id,id),
+  CHECK ((action='handle' AND status='handled') OR (action='ignore' AND status='ignored') OR
+         (action='remind' AND reminder) OR (action='unremind' AND NOT reminder))
+);
+COMMENT ON TABLE studio_consistency_finding_events IS '差异处理与提醒动作的幂等历史，持续追加并保留旧结论';
+COMMENT ON COLUMN studio_consistency_finding_events.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_consistency_finding_events.id IS '差异处理事件ID';
+COMMENT ON COLUMN studio_consistency_finding_events.finding_id IS '被处理的差异项ID';
+COMMENT ON COLUMN studio_consistency_finding_events.revision IS '本次动作成功后对应的差异修订号';
+COMMENT ON COLUMN studio_consistency_finding_events.operation_key IS '差异处理或提醒动作幂等键';
+COMMENT ON COLUMN studio_consistency_finding_events.request_hash IS '原处理请求指纹';
+COMMENT ON COLUMN studio_consistency_finding_events.action IS '登记处理、忽略、提醒或取消提醒动作';
+COMMENT ON COLUMN studio_consistency_finding_events.status IS '本次动作成功后的差异处理状态';
+COMMENT ON COLUMN studio_consistency_finding_events.reminder IS '本次动作成功后的独立提醒标记';
+COMMENT ON COLUMN studio_consistency_finding_events.note IS '有限处理说明，不保存完整材料或对比内容';
+COMMENT ON COLUMN studio_consistency_finding_events.creator_id IS '差异处理人用户ID';
+COMMENT ON COLUMN studio_consistency_finding_events.creator_account IS '差异处理人账号快照';
+COMMENT ON COLUMN studio_consistency_finding_events.creator_name IS '差异处理人姓名快照';
+COMMENT ON COLUMN studio_consistency_finding_events.created_date IS '本次差异处理或提醒动作被后台接受的时间';
+
 
 -- ============================================================
 -- 不变量触发器
@@ -781,7 +1351,7 @@ CREATE TRIGGER studio_projects_guard BEFORE UPDATE ON studio_projects
 -- 编号预留的身份、编号、请求及创建人不可改、不可删
 CREATE FUNCTION studio_guard_entity_number() RETURNS trigger AS $$
 BEGIN
-  IF NEW.project_id <> OLD.project_id OR NEW.entity_id <> OLD.entity_id OR NEW.sequence <> OLD.sequence OR NEW.code <> OLD.code OR NEW.operation_key IS DISTINCT FROM OLD.operation_key OR NEW.request_hash <> OLD.request_hash OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
+  IF NEW.project_id <> OLD.project_id OR NEW.entity_id <> OLD.entity_id OR NEW.kind <> OLD.kind OR NEW.sequence <> OLD.sequence OR NEW.code <> OLD.code OR NEW.operation_key IS DISTINCT FROM OLD.operation_key OR NEW.request_hash <> OLD.request_hash OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
     RAISE EXCEPTION 'allocated entity numbers cannot be modified, reordered or recycled';
   END IF;
   RETURN NEW;
@@ -796,7 +1366,7 @@ CREATE TRIGGER studio_entity_numbers_no_delete BEFORE DELETE ON studio_entity_nu
 -- 实体技术身份与业务编号不可变（改名与修订保持不变）；其余更新自动维护 last_edited_date
 CREATE FUNCTION studio_guard_entity_identity() RETURNS trigger AS $$
 BEGIN
-  IF NEW.project_id <> OLD.project_id OR NEW.id <> OLD.id OR NEW.sequence IS DISTINCT FROM OLD.sequence OR NEW.code IS DISTINCT FROM OLD.code OR NEW.kind <> OLD.kind OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
+  IF NEW.project_id <> OLD.project_id OR NEW.id <> OLD.id OR NEW.sequence IS DISTINCT FROM OLD.sequence OR NEW.code IS DISTINCT FROM OLD.code OR NEW.kind <> OLD.kind OR NEW.builtin_key IS DISTINCT FROM OLD.builtin_key OR NEW.creator_id <> OLD.creator_id OR NEW.creator_account <> OLD.creator_account OR NEW.creator_name <> OLD.creator_name OR NEW.created_date <> OLD.created_date THEN
     RAISE EXCEPTION 'entity identity, kind, sequence and code are immutable';
   END IF;
   NEW.last_edited_date = now();
@@ -807,43 +1377,71 @@ COMMENT ON FUNCTION studio_guard_entity_identity() IS '实体身份守卫';
 CREATE TRIGGER studio_entities_guard BEFORE UPDATE ON studio_entities
   FOR EACH ROW EXECUTE FUNCTION studio_guard_entity_identity();
 
--- 固定版本接受事务的提交时校验：
---   需求确认必须绑定 ≥1 个同项目已确认场景版本，且来源必须是场景；
---   场景必须适用；需求可不适用但须提供原因（列约束强制）；内容清单由 Git 固定版本核验
+-- 确认来源在接受时封存；固定父记录的数量与不可变子记录共同防止事后追加。
+CREATE FUNCTION studio_assert_confirmation_sources(p_confirmation text) RETURNS void AS $$
+DECLARE
+  accepted studio_confirmations%ROWTYPE;
+  entity_kind studio_entity_kind;
+  actual_count integer;
+BEGIN
+  SELECT * INTO accepted FROM studio_confirmations WHERE id=p_confirmation;
+  IF NOT FOUND THEN RETURN; END IF;
+  SELECT kind INTO entity_kind FROM studio_entities WHERE project_id=accepted.project_id AND id=accepted.entity_id;
+  SELECT count(*) INTO actual_count FROM studio_requirement_sources WHERE confirmation_id=p_confirmation;
+  IF entity_kind='requirement' AND accepted.stage='material' THEN
+    IF accepted.source_count=0 OR actual_count<>accepted.source_count THEN
+      RAISE EXCEPTION 'requirement confirmation requires at least one confirmed scenario source and its sealed source_count must match';
+    END IF;
+  ELSIF accepted.source_count<>0 OR actual_count<>0 THEN
+    RAISE EXCEPTION 'only requirement material confirmations may have scenario sources';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION studio_assert_confirmation_sources IS '校验固定确认的来源封存集合';
+
 CREATE FUNCTION studio_check_confirmation_acceptance() RETURNS trigger AS $$
 DECLARE
-  entity_kind studio_entity_kind;
+  entity studio_entities%ROWTYPE;
 BEGIN
-  SELECT kind INTO entity_kind FROM studio_entities
-    WHERE project_id = NEW.project_id AND id = NEW.entity_id;
-  IF entity_kind = 'scenario' AND NEW.applicability <> 'applicable' THEN
-    RAISE EXCEPTION 'scenario confirmation % must be applicable', NEW.id;
+  SELECT * INTO entity FROM studio_entities WHERE project_id=NEW.project_id AND id=NEW.entity_id;
+  IF entity.kind='scenario' AND NEW.applicability<>'applicable' THEN
+    RAISE EXCEPTION 'scenario confirmation must be applicable';
   END IF;
-  IF entity_kind = 'requirement' AND NEW.stage = 'material' THEN
-    IF NOT EXISTS (SELECT 1 FROM studio_requirement_sources WHERE confirmation_id = NEW.id) THEN
-      RAISE EXCEPTION 'requirement confirmation % requires at least one confirmed scenario source', NEW.id;
-    END IF;
-    IF EXISTS (
-      SELECT 1 FROM studio_requirement_sources s
-      JOIN studio_confirmations sc ON sc.id = s.scenario_confirmation_id
-      JOIN studio_entities e ON e.project_id = sc.project_id AND e.id = sc.entity_id
-      WHERE s.confirmation_id = NEW.id AND (sc.project_id <> NEW.project_id OR e.kind <> 'scenario' OR sc.stage <> 'material')
-    ) THEN
-      RAISE EXCEPTION 'requirement confirmation % sources must be confirmed scenario versions of the same project', NEW.id;
+  IF NEW.acceptance_kind='system-provisioned' THEN
+    IF entity.builtin_key IS DISTINCT FROM 'general' OR NOT EXISTS (
+      SELECT 1 FROM studio_project_initializations i
+      WHERE i.id=NEW.initialization_id AND i.project_id=NEW.project_id AND i.commit_sha=NEW.commit_sha
+    ) THEN RAISE EXCEPTION 'system provisioning requires the general scenario and its real initialization commit'; END IF;
+  ELSE
+    IF entity.builtin_key IS NOT NULL THEN RAISE EXCEPTION 'built-in scenarios cannot be user-confirmed'; END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM studio_integrations i
+      WHERE i.id=NEW.integration_id AND i.project_id=NEW.project_id AND i.entity_id=NEW.entity_id AND
+        i.status='accepted' AND (NEW.stage<>'material' OR i.candidate_sha=NEW.commit_sha) AND i.scope::text=NEW.stage::text
+    ) THEN RAISE EXCEPTION 'confirmation requires its own accepted integration and material candidate commit'; END IF;
+    IF NEW.stage='prototype' THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM studio_confirmations m WHERE m.project_id=NEW.project_id AND m.entity_id=NEW.entity_id AND
+          m.version=NEW.version AND m.stage='material' AND m.commit_sha=NEW.commit_sha AND m.path=NEW.path AND m.sha256=NEW.sha256
+      ) THEN RAISE EXCEPTION 'prototype completion must bind its accepted material version fixed reference'; END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM studio_baselines b JOIN studio_integrations i ON i.id=NEW.integration_id
+        WHERE b.project_id=NEW.project_id AND b.entity_id=NEW.entity_id AND b.version=NEW.version AND
+          b.confirmation_id=NEW.id AND b.commit_sha=i.candidate_sha
+      ) THEN RAISE EXCEPTION 'prototype completion requires its accepted integration baseline'; END IF;
     END IF;
   END IF;
+  PERFORM studio_assert_confirmation_sources(NEW.id);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-COMMENT ON FUNCTION studio_check_confirmation_acceptance() IS '接受提交校验';
-
+COMMENT ON FUNCTION studio_check_confirmation_acceptance IS '校验普通确认与系统预置的互斥接受途径';
 CREATE CONSTRAINT TRIGGER studio_confirmation_acceptance
   AFTER INSERT ON studio_confirmations DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION studio_check_confirmation_acceptance();
-COMMENT ON TRIGGER studio_confirmation_acceptance ON studio_confirmations IS '提交时统一校验';
 
 -- 草稿需求与确认需求一致，必须始终具有至少一个同项目的已确认场景固定来源。
--- 关系可在同事务内分步写入，提交时才检查最终来源集合，允许 scenario-batch 原子更新。
+-- 关系可在同事务内分步写入，提交时才检查最终来源集合，保持当前关系与固定引用原子更新。
 CREATE FUNCTION studio_assert_draft_requirement_sources(p_project text, p_entity text) RETURNS void AS $$
 DECLARE
   entity_kind studio_entity_kind;
@@ -920,21 +1518,267 @@ CREATE CONSTRAINT TRIGGER studio_draft_sources_binding AFTER INSERT OR UPDATE OR
 CREATE CONSTRAINT TRIGGER studio_draft_sources_relation AFTER INSERT OR UPDATE OR DELETE ON studio_scenario_requirements
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_draft_requirement_sources();
 
--- 固定来源明细即使在确认后被追加，也须独立保持同项目和种类约束。
+-- 来源目标必须为同项目真实场景材料版本；数量检查阻止接受后追加。
 CREATE FUNCTION studio_check_fixed_scenario_source() RETURNS trigger AS $$
 BEGIN
-  IF NOT EXISTS(
+  IF NOT EXISTS (
     SELECT 1 FROM studio_confirmations r
     JOIN studio_entities re ON re.project_id=r.project_id AND re.id=r.entity_id
-    JOIN studio_confirmations s ON s.id=NEW.scenario_confirmation_id
-    JOIN studio_entities se ON se.project_id=s.project_id AND se.id=s.entity_id
-    WHERE r.id=NEW.confirmation_id AND r.project_id=s.project_id AND
-      re.kind='requirement' AND r.stage='material' AND se.kind='scenario' AND s.stage='material'
-  ) THEN
-    RAISE EXCEPTION 'requirement sources must be confirmed scenario material versions of the same project';
-  END IF;
+    JOIN studio_confirmations sc ON sc.id=NEW.scenario_confirmation_id
+    JOIN studio_entities se ON se.project_id=sc.project_id AND se.id=sc.entity_id
+    WHERE r.id=NEW.confirmation_id AND r.project_id=NEW.project_id AND sc.project_id=NEW.project_id AND
+      sc.entity_id=NEW.scenario_id AND re.kind='requirement' AND r.stage='material' AND se.kind='scenario' AND sc.stage='material'
+  ) THEN RAISE EXCEPTION 'requirement sources must be confirmed scenario material versions of the same project'; END IF;
+  PERFORM studio_assert_confirmation_sources(NEW.confirmation_id);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 CREATE CONSTRAINT TRIGGER studio_fixed_scenario_source AFTER INSERT ON studio_requirement_sources
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_fixed_scenario_source();
+
+-- 初始化接受只能从已分配项目开始；提交时同时存在就绪项目、固定系统版本与目录投影。
+CREATE FUNCTION studio_guard_initialization() RETURNS trigger AS $$
+DECLARE project_state studio_project_state;
+BEGIN
+  SELECT state INTO project_state FROM studio_projects WHERE id=NEW.project_id FOR UPDATE;
+  IF project_state<>'assigned' THEN RAISE EXCEPTION 'initialization acceptance requires an assigned project'; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_initialization_guard BEFORE INSERT ON studio_project_initializations
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_initialization();
+CREATE TRIGGER studio_initialization_immutable BEFORE UPDATE OR DELETE ON studio_project_initializations
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+
+CREATE FUNCTION studio_assert_project_initialized(p_project text, p_initial_head text DEFAULT NULL) RETURNS void AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM studio_projects p
+    JOIN studio_project_initializations i ON i.project_id=p.id
+    JOIN studio_entities e ON e.project_id=p.id AND e.builtin_key='general' AND e.kind='scenario'
+    JOIN studio_confirmations c ON c.id=e.current_confirmation_id AND c.project_id=p.id AND c.entity_id=e.id
+    WHERE p.id=p_project AND p.state='ready' AND e.confirmation_status='confirmed' AND e.material_version=1 AND
+      c.version=1 AND c.stage='material' AND c.acceptance_kind='system-provisioned' AND c.initialization_id=i.id AND
+      c.commit_sha=i.commit_sha AND (p_initial_head IS NULL OR (p.recognized_head=p_initial_head AND i.commit_sha=p_initial_head))
+  ) THEN RAISE EXCEPTION 'ready project requires its accepted initialization and immutable general scenario version'; END IF;
+END;
+$$ LANGUAGE plpgsql;
+CREATE FUNCTION studio_check_initialization_acceptance() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME='studio_project_initializations' THEN
+    PERFORM studio_assert_project_initialized(NEW.project_id,NEW.commit_sha);
+  ELSIF NEW.state='ready' THEN
+    IF TG_OP='INSERT' THEN
+      PERFORM studio_assert_project_initialized(NEW.id,NEW.recognized_head);
+    ELSIF OLD.state<>'ready' THEN
+      PERFORM studio_assert_project_initialized(NEW.id,NEW.recognized_head);
+    ELSE
+      PERFORM studio_assert_project_initialized(NEW.id);
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE CONSTRAINT TRIGGER studio_initialization_acceptance AFTER INSERT ON studio_project_initializations
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_initialization_acceptance();
+CREATE CONSTRAINT TRIGGER studio_project_ready_acceptance AFTER INSERT OR UPDATE ON studio_projects
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_initialization_acceptance();
+
+CREATE FUNCTION studio_guard_builtin_entity() RETURNS trigger AS $$
+BEGIN
+  IF OLD.builtin_key IS NOT NULL AND EXISTS (SELECT 1 FROM studio_projects WHERE id=OLD.project_id AND state='ready') THEN
+    RAISE EXCEPTION 'system built-in scenario is immutable';
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_builtin_entity_guard BEFORE UPDATE OR DELETE ON studio_entities
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_builtin_entity();
+
+CREATE FUNCTION studio_guard_builtin_control() RETURNS trigger AS $$
+DECLARE target_project text; target_entity text;
+BEGIN
+  IF TG_TABLE_NAME='studio_adoptions' THEN target_project=NEW.source_project_id; target_entity=NEW.source_entity_id;
+  ELSE target_project=NEW.project_id; target_entity=NEW.entity_id; END IF;
+  IF EXISTS (SELECT 1 FROM studio_entities WHERE project_id=target_project AND id=target_entity AND builtin_key IS NOT NULL) THEN
+    IF TG_TABLE_NAME='studio_eligibility' THEN
+      IF NEW.enabled THEN RAISE EXCEPTION 'built-in scenario cannot be reused'; END IF;
+    ELSE
+      RAISE EXCEPTION 'built-in scenario cannot be occupied, repaired or reused';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_builtin_occupation_guard BEFORE INSERT OR UPDATE ON studio_occupations
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_builtin_control();
+CREATE TRIGGER studio_builtin_repair_guard BEFORE INSERT OR UPDATE ON studio_repair_tasks
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_builtin_control();
+CREATE TRIGGER studio_builtin_eligibility_guard BEFORE INSERT OR UPDATE ON studio_eligibility
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_builtin_control();
+CREATE TRIGGER studio_builtin_adoption_guard BEFORE INSERT OR UPDATE ON studio_adoptions
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_builtin_control();
+
+-- 前置材料关系只约束真实版本；完成证据在原型认领与完成时由服务事务核验。
+CREATE FUNCTION studio_check_prerequisite_reference() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM studio_entities WHERE project_id=NEW.project_id AND id=NEW.requirement_id AND kind='requirement') THEN
+    RAISE EXCEPTION 'prerequisite must reference a requirement in the same project';
+  END IF;
+  IF TG_TABLE_NAME='studio_prerequisites' THEN
+    IF NOT EXISTS (SELECT 1 FROM studio_entities WHERE project_id=NEW.project_id AND id=NEW.entity_id AND kind='requirement') THEN
+      RAISE EXCEPTION 'only requirements may define prerequisite relations';
+    END IF;
+  ELSIF NOT EXISTS (
+    SELECT 1 FROM studio_occupations o JOIN studio_entities e ON e.project_id=o.project_id AND e.id=o.entity_id
+    WHERE o.id=NEW.occupation_id AND o.purpose='prototype' AND e.kind='requirement'
+  ) THEN RAISE EXCEPTION 'prototype input must bind an accepted completion and prototype occupation'; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_prerequisite_reference BEFORE INSERT OR UPDATE ON studio_prerequisites
+  FOR EACH ROW EXECUTE FUNCTION studio_check_prerequisite_reference();
+CREATE TRIGGER studio_occupation_input_reference BEFORE INSERT OR UPDATE ON studio_occupation_inputs
+  FOR EACH ROW EXECUTE FUNCTION studio_check_prerequisite_reference();
+
+-- 验证比较观察的封存集合，ordinal 唯一及范围约束同时阻止并发越限。
+CREATE FUNCTION studio_assert_comparison(p_project text,p_comparison text) RETURNS void AS $$
+DECLARE comparison studio_consistency_comparisons%ROWTYPE;
+BEGIN
+  SELECT * INTO comparison FROM studio_consistency_comparisons WHERE project_id=p_project AND id=p_comparison;
+  IF NOT FOUND THEN RETURN; END IF;
+  IF comparison.input_count<>(SELECT count(*) FROM studio_consistency_inputs WHERE project_id=p_project AND comparison_id=p_comparison) OR
+     comparison.uncovered_count<>(SELECT count(*) FROM studio_consistency_uncovered WHERE project_id=p_project AND comparison_id=p_comparison) OR
+     comparison.finding_count<>(SELECT count(*) FROM studio_consistency_findings WHERE project_id=p_project AND comparison_id=p_comparison) THEN
+    RAISE EXCEPTION 'comparison sealed collection counts must match';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM studio_consistency_inputs i WHERE i.project_id=p_project AND i.comparison_id=p_comparison AND
+      i.range_count<>(SELECT count(*) FROM studio_consistency_input_ranges r WHERE r.project_id=i.project_id AND r.comparison_id=i.comparison_id AND r.input_id=i.id)
+  ) OR EXISTS (
+    SELECT 1 FROM studio_consistency_uncovered u WHERE u.project_id=p_project AND u.comparison_id=p_comparison AND
+      u.range_count<>(SELECT count(*) FROM studio_consistency_uncovered_ranges r WHERE r.project_id=u.project_id AND r.comparison_id=u.comparison_id AND r.uncovered_id=u.id)
+  ) OR EXISTS (
+    SELECT 1 FROM studio_consistency_findings f WHERE f.project_id=p_project AND f.comparison_id=p_comparison AND (
+      f.input_count<>(SELECT count(*) FROM studio_consistency_finding_inputs i WHERE i.project_id=f.project_id AND i.comparison_id=f.comparison_id AND i.finding_id=f.id) OR
+      f.range_count<>(SELECT count(*) FROM studio_consistency_finding_ranges r WHERE r.project_id=f.project_id AND r.comparison_id=f.comparison_id AND r.finding_id=f.id)
+    )
+  ) THEN RAISE EXCEPTION 'comparison input and finding location counts must match'; END IF;
+END;
+$$ LANGUAGE plpgsql;
+COMMENT ON FUNCTION studio_assert_comparison IS '校验已接受比较的有限输入与定位集合';
+CREATE FUNCTION studio_check_comparison_collection() RETURNS trigger AS $$
+BEGIN
+  IF TG_TABLE_NAME='studio_consistency_comparisons' THEN
+    PERFORM studio_assert_comparison(NEW.project_id,NEW.id);
+  ELSE
+    PERFORM studio_assert_comparison(NEW.project_id,NEW.comparison_id);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER studio_comparison_collection AFTER INSERT ON studio_consistency_comparisons
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_input_collection AFTER INSERT ON studio_consistency_inputs
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_uncovered_collection AFTER INSERT ON studio_consistency_uncovered
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_finding_collection AFTER INSERT ON studio_consistency_findings
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_finding_input_collection AFTER INSERT ON studio_consistency_finding_inputs
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_input_range_collection AFTER INSERT ON studio_consistency_input_ranges
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_uncovered_range_collection AFTER INSERT ON studio_consistency_uncovered_ranges
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+CREATE CONSTRAINT TRIGGER studio_finding_range_collection AFTER INSERT ON studio_consistency_finding_ranges
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_comparison_collection();
+
+CREATE TRIGGER studio_comparison_immutable BEFORE UPDATE OR DELETE ON studio_consistency_comparisons
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_input_immutable BEFORE UPDATE OR DELETE ON studio_consistency_inputs
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_uncovered_immutable BEFORE UPDATE OR DELETE ON studio_consistency_uncovered
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_finding_input_immutable BEFORE UPDATE OR DELETE ON studio_consistency_finding_inputs
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_input_range_immutable BEFORE UPDATE OR DELETE ON studio_consistency_input_ranges
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_uncovered_range_immutable BEFORE UPDATE OR DELETE ON studio_consistency_uncovered_ranges
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_finding_range_immutable BEFORE UPDATE OR DELETE ON studio_consistency_finding_ranges
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+CREATE TRIGGER studio_finding_event_immutable BEFORE UPDATE OR DELETE ON studio_consistency_finding_events
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+
+-- 差异创建为待处理；之后每次 revision 增量必须同事务带一条对应处理事件。
+CREATE FUNCTION studio_guard_finding() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP='INSERT' THEN
+    IF NEW.status<>'pending' OR NEW.revision<>0 OR NEW.reminder THEN
+      RAISE EXCEPTION 'new finding must be pending at revision zero without reminder';
+    END IF;
+  ELSE
+    IF to_jsonb(NEW)-ARRAY['status','revision','reminder','last_editor_id','last_editor_account','last_editor_name','last_edited_date'] <>
+       to_jsonb(OLD)-ARRAY['status','revision','reminder','last_editor_id','last_editor_account','last_editor_name','last_edited_date'] THEN
+      RAISE EXCEPTION 'finding observation and identity are immutable';
+    END IF;
+    IF NEW.revision<>OLD.revision+1 THEN RAISE EXCEPTION 'finding revision must increment once'; END IF;
+    NEW.last_edited_date=now();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_finding_guard BEFORE INSERT OR UPDATE ON studio_consistency_findings
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_finding();
+CREATE TRIGGER studio_finding_no_delete BEFORE DELETE ON studio_consistency_findings
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
+
+CREATE FUNCTION studio_guard_finding_event() RETURNS trigger AS $$
+DECLARE finding studio_consistency_findings%ROWTYPE;
+BEGIN
+  SELECT * INTO finding FROM studio_consistency_findings WHERE project_id=NEW.project_id AND id=NEW.finding_id FOR UPDATE;
+  IF NOT FOUND OR NEW.revision<>finding.revision OR NEW.status<>finding.status OR NEW.reminder<>finding.reminder THEN
+    RAISE EXCEPTION 'finding event must match its current revision and outcome';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER studio_finding_event_guard BEFORE INSERT ON studio_consistency_finding_events
+  FOR EACH ROW EXECUTE FUNCTION studio_guard_finding_event();
+
+CREATE FUNCTION studio_check_finding_transition() RETURNS trigger AS $$
+DECLARE event studio_consistency_finding_events%ROWTYPE;
+BEGIN
+  SELECT * INTO event FROM studio_consistency_finding_events WHERE project_id=NEW.project_id AND finding_id=NEW.id AND revision=NEW.revision;
+  IF NOT FOUND OR event.status<>NEW.status OR event.reminder<>NEW.reminder OR
+     event.creator_id<>NEW.last_editor_id OR event.creator_account<>NEW.last_editor_account OR event.creator_name<>NEW.last_editor_name THEN
+    RAISE EXCEPTION 'finding update requires a matching treatment event in the same transaction';
+  END IF;
+  IF (event.action IN ('handle','ignore') AND NEW.reminder<>OLD.reminder) OR
+     (event.action IN ('remind','unremind') AND NEW.status<>OLD.status) THEN
+    RAISE EXCEPTION 'finding treatment and reminder are independent actions';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE CONSTRAINT TRIGGER studio_finding_transition AFTER UPDATE ON studio_consistency_findings
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_finding_transition();
+
+-- 前置生产输入引用的基线必须对应同一需求版本的真实完成接受与集成提交。
+CREATE FUNCTION studio_check_baseline_acceptance() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM studio_confirmations c
+    JOIN studio_integrations i ON i.id=c.integration_id AND i.project_id=c.project_id AND i.entity_id=c.entity_id
+    JOIN studio_entities e ON e.project_id=c.project_id AND e.id=c.entity_id
+    WHERE c.id=NEW.confirmation_id AND c.project_id=NEW.project_id AND c.entity_id=NEW.entity_id AND c.version=NEW.version AND
+      c.stage='prototype' AND e.kind='requirement' AND i.status='accepted' AND i.scope='prototype' AND i.candidate_sha=NEW.commit_sha
+  ) THEN RAISE EXCEPTION 'baseline must bind an accepted requirement completion and its integration commit'; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE CONSTRAINT TRIGGER studio_baseline_acceptance AFTER INSERT OR UPDATE ON studio_baselines
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_baseline_acceptance();

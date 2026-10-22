@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { isMaterialMetadata, type MaterialMetadata, type RepairEventRequest, type RepairTaskView } from '@eadp/contracts'
+import { isMaterialMetadata, type RepairEventRequest, type RepairTaskView } from '@eadp/contracts'
 import type { ScenarioCommand, ScenarioWorkspace } from '../../shared/scenarios.ts'
 import type { TaskView } from '../../shared/studio.ts'
-import { containedFile, digest, readMaterial } from '../adapters/assets/materials.ts'
+import { containedFile, digest, findMaterialFile, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError } from '../adapters/collaboration/client.ts'
 import { checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
 import type { ScenarioRecord, ScenarioWorkspaces } from './scenario-workspaces.ts'
@@ -89,7 +89,8 @@ export class ScenarioRepairs {
     await this.current(repair)
   }
   private async current(repair: LocalScenarioRepair): Promise<boolean> {
-    const bytes = await containedFile(repair.task.worktree, `场景/${repair.entityId}.md`).then(file => readFile(file)).catch(() => undefined)
+    const relative = await findMaterialFile(repair.task.worktree, 'scenario', repair.entityId)
+    const bytes = relative ? await containedFile(repair.task.worktree, relative).then(file => readFile(file)).catch(() => undefined) : undefined
     if (bytes && digest(bytes) === repair.view.currentHash) return true
     await this.terminate(repair, 'concurrent-edit'); return false
   }
@@ -134,10 +135,10 @@ export class ScenarioRepairs {
     if (repair.view.status !== 'active') return
     if (repair.view.roundsUsed >= 3) { await this.terminate(repair, 'round-limit'); return }
     const context = await w.context(repair.task)
-    await w.ports.session(repair.task, '你是只读场景修复助手。根据可信Host传入的当前材料和实际读取依据生成修复候选，不直接写文件、不执行确认。缺少业务答案必须提问，不得编造。')
+    await w.ports.session(repair.task, '你是只读场景修复助手。先用可读中文说明修复要点，再按协议给出修复候选；根据可信Host传入的当前材料和实际读取依据生成修复候选，不直接写文件、不执行确认。缺少业务答案必须提问，不得编造。')
     const answer = repair.pendingAnswer ?? ''
     repair.waiting = true; repair.turnEnded = false; delete repair.nextRound; delete repair.pendingAnswer; await w.store.save()
-    await w.ports.prompt(repair.task.sessionId, `本任务已由用户授权修复后由Host确认，最多3轮，当前已用${repair.view.roundsUsed}轮。${context}\n本次业务补答：${answer}\n返回唯一 eadp-repair JSON代码块：{"baseHash":"${repair.view.currentHash}","body":"完整修复后正文","metadata":完整当前元数据（只可修正文业务质量项、待澄清项、真实引用，不可改身份与模板）,"evidenceIds":["实际已读资料ID"]}；缺业务答案则只返回{"baseHash":"${repair.view.currentHash}","question":"需要用户补充的具体问题"}。`)
+    await w.ports.prompt(repair.task.sessionId, `本任务已由用户授权修复后由Host确认，最多3轮，当前已用${repair.view.roundsUsed}轮。${context}\n本次业务补答：${answer}\n先用可读中文逐项说明本轮修复了什么、对应哪条门禁阻断、依据哪些已读资料；再在回答最后给出唯一 eadp-repair 代码块：{"baseHash":"${repair.view.currentHash}","body":"完整修复后正文","coreRulesPresent":true,"acceptanceCriteriaPresent":true,"openQuestions":[],"evidenceIds":["实际已读资料ID"]}。块内只写这些字段，身份、标题、模板与正式依据由Host保留。缺业务答案时先说明缺口，只输出{"baseHash":"${repair.view.currentHash}","question":"需要用户补充的具体问题"}。`)
   }
   async accept(sessionId: string, output: { kind: string; content?: string; reason?: string; seq?: number }): Promise<boolean> {
     const w = this.workspaces, local = await w.store.read(), repair = local.scenarioRepairs.find(r => r.task.sessionId === sessionId)
@@ -169,16 +170,20 @@ export class ScenarioRepairs {
       await this.checkConcurrent(repair.entityId, repair.projectId)
       if (repair.view.status !== 'active') return true
       const { task, entity } = await w.editable(repair.entityId, repair.projectId), draft = await readMaterial(task.worktree, 'scenario', entity.id)
-      const result = JSON.parse(matches[0]![1]!) as { baseHash: string; question?: string; body?: string; metadata?: MaterialMetadata; evidenceIds?: string[] }
+      const result = JSON.parse(matches[0]![1]!) as { baseHash: string; question?: string; body?: string; coreRulesPresent?: unknown; acceptanceCriteriaPresent?: unknown; openQuestions?: unknown; evidenceIds?: unknown }
       if (result.baseHash !== repair.view.currentHash || draft.sha256 !== result.baseHash) { await this.terminate(repair, 'concurrent-edit'); return true }
       if (typeof result.question === 'string' && result.question.trim()) {
         repair.question = result.question.slice(0, 4000); await this.event(repair, { type: 'pause', reason: 'business-answer-required' }); return true
       }
       const record = await w.record(entity.id, task.projectId), readIds = new Set(record.sources.filter(s => s.selected && (s.status === 'read' || s.status === 'partial') && s.text.trim() && s.ranges.length).map(s => s.id))
-      if (!Array.isArray(result.evidenceIds) || !result.evidenceIds.length || result.evidenceIds.some(id => !readIds.has(id))) { await this.terminate(repair, 'missing-evidence'); return true }
-      if (typeof result.body !== 'string' || !isMaterialMetadata(result.metadata) || result.metadata.kind !== 'scenario' || result.metadata.entityId !== draft.entityId || result.metadata.title !== draft.metadata.title || result.metadata.templateId !== draft.metadata.templateId || JSON.stringify(result.metadata.templateRef) !== JSON.stringify(draft.metadata.templateRef) || JSON.stringify(result.metadata.businessEvidence) !== JSON.stringify(draft.metadata.businessEvidence)) throw new Error('修复候选不能改变身份、目录或正式依据选择')
+      if (!Array.isArray(result.evidenceIds) || !result.evidenceIds.length || result.evidenceIds.some(id => typeof id !== 'string' || !readIds.has(id))) { await this.terminate(repair, 'missing-evidence'); return true }
+      if (typeof result.body !== 'string') throw new Error('修复候选缺少完整正文')
+      // Identity, title, template and formal evidence come from the current file;
+      // the Agent may only restate the business quality items and open questions.
+      const metadata = { ...draft.metadata, coreRulesPresent: result.coreRulesPresent, acceptanceCriteriaPresent: result.acceptanceCriteriaPresent, openQuestions: result.openQuestions }
+      if (!isMaterialMetadata(metadata)) throw new Error('修复候选的业务质量项或待澄清项无效')
       const before = await this.check(task, draft)
-      const next = await w.documents.save({ root: task.worktree, metadata: result.metadata, body: result.body, expectedHash: draft.sha256, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
+      const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, expectedHash: draft.sha256, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
       const after = await this.check(task, next)
       const priorIssues = before.groups.flatMap(g => g.messages), remainingIssues = after.groups.flatMap(g => g.messages)
       const improved = after.passed || remainingIssues.length < priorIssues.length || priorIssues.some(issue => !remainingIssues.includes(issue))

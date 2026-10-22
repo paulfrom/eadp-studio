@@ -2,6 +2,8 @@
 
 2026-10-20 起按“协同后端修正 → 桌面端修正”实施。业务与工程依据为[场景设计](01-scenarios.md)和[数据库设计](01-scenarios-database.md)。本记录区分源码完成、隔离验证与完整产品验收，不把后端通过等同于 S01—S38 全部通过。
 
+2026-10-21 衔接设计已调整修订规则：各材料独立占用与确认，取消关联冻结、强制同批确认和自动来源升版；增加只读本地文件的独立非阻断一致性对比，以及固定内置通用场景。下文批次、冻结及需求分类是现有实现记录，须按[阶段二需求设计](../02-requirements.md)替换；其既有代码校验不能证明新规则已经实现。阶段二工程方案仍待整体确认，本记录不扩大实施授权。
+
 ## 协同后端修正
 
 后端源码已接入关系模型，运行时 [schema.sql](../../../apps/collaboration-api/db/schema.sql) 与[设计 SQL](schema.sql)保持一致。按新库一次初始化，拒绝旧 JSON 薄壳结构，不提供迁移或兼容处理；本次未替换现有运行库或部署服务。
@@ -96,3 +98,19 @@
 | `tests/scripts/studio-payload.test.mjs`、`studio-typert-edits.test.mjs`、`studio-packaging-edits.test.mjs` | 插件载荷、原生类型生成锚点及发行装配规则。 |
 
 本轮未启动桌面、不进行截图或交互走查、不调用真实模型、不连接真实业务仓库进行确认或发布；上述代码结果不能替代 S01—S38 产品验收或 Windows 发行验收。
+
+## 场景编辑与新增页面结构对齐（2026-10-21）
+
+按 `docs/dseign/项目场景编辑.html` 的结构与信息层级重排场景工作区，只参考结构，不引入设计稿色系；新增场景确认后直接进入同一页面，因此本次改造同时覆盖编辑与新增。
+
+- 左右双栏：左侧场景会话（代码芯片、标题、刷新／历史会话／新会话／场景模板，资料与正式依据、AI 建议、需求拆分入口），右侧材料契约（文件路径与同步状态、预览／源码、导出、保存、收起）。
+- 右侧正文按 `##` 章节分卡，带 01.. 序号与条目数徽标；正文为空时按当前模板列出待补章节，代替空白预览。
+- 门禁状态、阻断原因、模板结构检查、Working Tree 与确认／AI 修复动作移到契约面板底部；页面头部在场景详情只保留返回与项目状态。
+- Frontmatter Manifest 整卡可收起，默认展开；收起后只保留标题行。
+- 资料与正式依据和 AI 建议合并为一个可折叠的「资料与 AI 建议」组，默认展开，收起后标题行仍保留资料份数与建议条数。
+- 会话输入框贴住面板底部：原生会话在没有消息时不会自动下沉输入座位，改用 `[data-composer-seat]` 的自动上边距；有消息时保持原生 sticky 行为。
+- 建议改为按组／按条采纳，采纳与材料 hash 绑定；不可采纳的失效批次以单行说明呈现，不再渲染无操作按钮的卡片。
+
+校验：`node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.client.json` 通过；`node --test tests/scenario-client/document.test.mjs tests/scenario-client/material-editor.test.mjs tests/scenario-client/draft-buffer.test.ts tests/scripts/studio-task-purpose.test.mjs` 全部通过（新增 `document.test.mjs` 覆盖章节拆分、围栏排除与条目计数）；`pnpm dev:desktop` 打开实际桌面后以 SC-0001 走查预览／源码切换、收起与展开、门禁与建议呈现，并确认输入框贴底（座位底边与面板底边相差 1px）与两处折叠互不影响。
+
+走查发现（与本轮页面改造无关的数据问题）：既有草稿 SC-0001 的文件模板引用与后台实体的 `templateId`／`templateRef` 不一致，保存被 Host 以“场景身份与模板绑定不能通过编辑改变”拒绝；页面已将错误显示在同步状态并提供重试，草稿正文未被写入。

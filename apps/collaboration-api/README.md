@@ -44,7 +44,7 @@ node --use-env-proxy --env-file=.env --import=tsx src/bootstrap.ts
 
 ## 固定材料
 
-UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），`eadp-metadata` 块唯一。下例假定项目 `p1` 已接受场景 `s1` 的第 1 版、分类 `procurement` 已存在，且同一确认提交中包含列出的依据文件：
+UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`），同项目重名依次追加 `-2`、`-3`，改名时文件随之改名；稳定身份只在唯一的 `eadp-metadata` 块中。下例假定项目 `p1` 已接受场景 `s1` 的第 1 版、分类 `procurement` 已存在，且同一确认提交中包含列出的依据文件：
 
 ````md
 ```eadp-metadata
@@ -99,7 +99,7 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 
 后端保存确认固定引用、标题/摘要、适用性、来源关系和确认事实，不保存整包 `metadata`、正式依据清单或确认文件快照。当前关联文件路径表只用于目录投影。确认请求不上传 `metadata`，后端从固定 Git 材料读取并校验；`FixedVersion.metadata` 仅在读取响应时从 Git 补齐，不落业务表、集成请求、幂等结果或审计。历史材料及清单始终按对应确认 `commitSha` 读取，不能用当前目录投影重建。
 
-确认门禁依据显式业务声明：必须有正式依据、核心规则、验收条件且无 blocking 问题；非阻断疑问保留 `limitation` 和 `excludedScope`。不再通过固定章节名称或字数推断质量，示例标题也不是强制模板。作者对实际业务结论负责，AI 评审为可选步骤。交接 MD 位于 `handoff.<id>.md`；独立清单基线 JSON 位于 `baseline.<id>.json`，格式为 `FixedManifestSchema` 的 `{schemaVersion:1,metadata}`，均保留既有后续阶段语义。
+确认门禁依据显式业务声明：必须有正式依据、核心规则、验收条件且无 blocking 问题；非阻断疑问保留 `limitation` 和 `excludedScope`。不再通过固定章节名称或字数推断质量，示例标题也不是强制模板。作者对实际业务结论负责，AI 评审为可选步骤。交接 MD 位于 `交接/<名称>.md`；独立清单基线 JSON 位于 `baseline.<id>.json`，格式为 `FixedManifestSchema` 的 `{schemaVersion:1,metadata}`，均保留既有后续阶段语义。
 
 后台先校验绑定用户的有效 GitLab 仓库成员权限，再从登记项目的 raw file endpoint 按完整 commit SHA 读取字节；单文件上限 2 MiB，GitLab 请求超时 15 秒，独立计算 SHA-256 并解析固定内容。失败、无权限、不一致、未知均阻断。Fastify 关闭日志，错误只返回固定诊断及必要 ID，不返回正文、GitLab 响应、凭证或 SQL 错误。
 
@@ -112,7 +112,7 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 | POST `/v1/auth/login`、POST `/v1/auth/logout`、GET `/v1/me` | 登录 token/期限、注销结果、当前协同身份及 GitLab origin |
 | GET `/v1/namespaces` | 当前绑定用户可建仓的群组 `NamespaceView`：`{id,name,fullPath}` |
 | GET `/v1/projects`、POST `/v1/projects` | 本人可见项目；创建 private 空库并登记 pending 项目 |
-| POST `P/initialize` | 核验首提交、远端头、清单、三目录及默认场景模板后 ready 的 ProjectView |
+| POST `P/initialize` | 核验首提交、远端头、清单、四个业务目录及默认场景模板后 ready 的 ProjectView |
 | GET `P` | `ProjectState`：项目、实体、集成操作、基线 |
 | POST `P/categories`、POST `P/entities` | 项目、预留的稳定实体（revision 0）；场景仅名称即可创建并取得编号 |
 | PUT `P/entities/:id` | 持有效设计占用更新名称/摘要，返回新 revision；不接受编号字段 |
@@ -139,7 +139,7 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 
 新建项目只接受 `{name,namespaceId,path,idempotencyKey}`；namespace 必须来自后端的可建仓群组。群组有效成员还需满足 `project_creation_level`：developer 至少 30、maintainer 至少 40，未知策略阻断；不以管理 token 的建仓能力或可见群组代替用户权限。后端创建 private 空库（不初始化 README、不传仅适用于 README 初始化的 default_branch），给现有绑定创建者分配 Maintainer（40），记录 pending 后返回；稳定分支固定 main，由 Host 首次 push 建立。
 
-`ProjectView` 含 `namespaceId`、`namespacePath`、`initializationStatus: pending|ready` 和 `recognizedHead: string|null`。pending 时认可头为 null，拒绝占用、材料确认、完成基线及发布。Host 本机 Git init，写固定三目录、模板和 `project.assets.json`，完成 root 首提交、push main，再向 initialize 发送 `{commitSha,idempotencyKey}`。后端核验真实远端头、root 首提交、三目录 tree 和 manifest 的 `schemaVersion:1`、`projectId`、`gitlabProjectId`、`repositoryUrl`、`stableBranch`、`directories: ["场景","需求","原型代码"]` 及 `scenarioTemplates` 后，才原子置 ready 并登记认可初始头。初始化还要求 `.template/` tree、清单中可读且非空的默认模板与全部模板文件。客户端自报 `gitlabProjectId` 的旧 RegisterProject 入口不再支持。
+`ProjectView` 含 `namespaceId`、`namespacePath`、`initializationStatus: pending|ready` 和 `recognizedHead: string|null`。pending 时认可头为 null，拒绝占用、材料确认、完成基线及发布。Host 本机 Git init，写固定四目录、模板和 `project.assets.json`，完成 root 首提交、push main，再向 initialize 发送 `{commitSha,idempotencyKey}`。后端核验真实远端头、root 首提交、四目录 tree 和 manifest 的 `schemaVersion:1`、`projectId`、`gitlabProjectId`、`repositoryUrl`、`stableBranch`、`directories: ["场景","需求","交接","原型代码"]` 及 `scenarioTemplates` 后，才原子置 ready 并登记认可初始头。初始化还要求 `.template/` tree、清单中可读且非空的默认模板与全部模板文件。客户端自报 `gitlabProjectId` 的旧 RegisterProject 入口不再支持。
 
 建仓、分配成员、推送与 PostgreSQL 不构成一个事务；统一使用 `studio_projects` 保存创建人/key、原请求哈希、稳定项目 UUID、namespace/path/name、随机 marker 及 reserved → creating → created → assigned → ready 生命周期，不再复制到独立项目创建表。失败保留已确定阶段，响应丢失先核对。相同请求的建仓窗口使用 PostgreSQL session advisory lock 串行，进程/连接结束自动释放，不开启跨 HTTP 调用的数据库事务；远端响应丢失时按 path 与 marker 核对归属，不接管未知仓库。同一幂等键及相同输入恢复同一结果，输入变化拒绝；不因 path 冲突接管未知仓库，不重复建仓，不覆盖或删除本地已有现场。initialize 未核验完成保留 pending，不伪报 ready。
 
@@ -151,7 +151,7 @@ UTF-8 无 BOM、LF，文件名为稳定实体 ID（例如 `需求/<id>.md`），
 
 材料与原型复用集成底座，材料分支的 `stage` 为 `material`、`prototype` 或 `scenario-batch`，携带 `entityId`、`token`、`sourceSha`、`expectedHead`、`candidateSha`、`allowedPaths`、`checks` 和 `confirmations`。每项 confirmation 包含 `{entityId,expectedRevision,fixed,readHash,authorConfirmed:true,confirmationMethod}`，其中 `fixed={commitSha,path,sha256}`，`readHash` 必须等于最终固定材料的 SHA-256；不传 `metadata` 或业务清单。`direct` 对应用户阅读版本；`ai-assisted` 另传绑定候选与输入的 `reviewEvidence`；`ai-repair` 另传 `repairTaskId`，对应任务最终已记录 hash。
 
-Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、冻结、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
+Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、冻结、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
 
 场景模板保存在 `.template/<模板ID>.md`。项目 `project.assets.json` 的共享模板声明为：
 
@@ -164,7 +164,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 }
 ```
 
-该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/` 与 `project.assets.json` 的模板声明变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。已有模板身份不能删除，项目身份与三目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
+该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/` 与 `project.assets.json` 的模板声明变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。已有模板身份不能删除，项目身份与四目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
 
 清单的 `scenarioTemplates` 只对新初始化必填。早于模板目录存在的已接受项目没有该片段：读取其清单不失败，`GET /projects/:id/templates` 返回空目录（`templates: []`、无默认项），此时新建场景以 `PROJECT_TEMPLATES_REQUIRED` 阻断；用户发布模板即按上面的模板分支补齐清单与 `.template/`。详见 [ADR-0006](../../docs/adr/0006-legacy-project-readonly-compatibility.md)。
 

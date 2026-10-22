@@ -4,7 +4,7 @@ import type { ProjectView } from '@eadp/contracts';
 import type { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
 import { GitLabContent } from './gitlab-content.js';
-const directories = ['场景', '需求', '原型代码'];
+const directories = ['场景', '需求', '交接', '原型代码'];
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, project: ProjectView, commitSha: string): Promise<void> {
   await gitlab.authorize(actor, project.gitlabProjectId, true);
@@ -19,7 +19,7 @@ export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, 
   }
   for (const directory of directories) {
     const entry = byName.get(directory);
-    requireCondition(entry?.type === 'tree' && entry.mode === '040000' && typeof entry.id === 'string' && /^[a-f0-9]{40}$/.test(entry.id), 'INITIALIZATION_DIRECTORIES_REQUIRED', 'Initialization requires the three versioned business directories', 422);
+    requireCondition(entry?.type === 'tree' && entry.mode === '040000' && typeof entry.id === 'string' && /^[a-f0-9]{40}$/.test(entry.id), 'INITIALIZATION_DIRECTORIES_REQUIRED', 'Initialization requires the versioned business directories', 422);
   }
   requireCondition(byName.get('.template')?.type === 'tree', 'INITIALIZATION_TEMPLATES_REQUIRED', 'Initialization requires versioned project scenario templates', 422);
   const manifestEntry = byName.get('project.assets.json');

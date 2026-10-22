@@ -2,194 +2,174 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from '../../apps/collaboration-api/node_modules/pg/lib/index.js';
+import { audit, comparison, createEntity, createProject, confirm, fixed, initialize, inTransaction, insert, treatFinding } from './schema-test-helpers.mjs';
 
-// An explicitly supplied fresh disposable database is required. Never load the
-// target design over the existing collaboration API's runtime schema.
+// Only an explicitly supplied, empty disposable database may receive this DDL.
 const databaseUrl = process.env.SCENARIO_SCHEMA_TEST_DATABASE_URL;
 
-test('stage-one scenario schema on PostgreSQL', { skip: !databaseUrl }, async t => {
+test('collaboration schema on PostgreSQL', { skip: !databaseUrl }, async t => {
   assert.match(new URL(databaseUrl).pathname, /^\/eadp_scenario_schema_check_[a-z0-9_]+$/);
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 16 });
   t.after(() => pool.end());
-  const existing = await pool.query("SELECT tablename FROM pg_tables WHERE schemaname='public'");
-  assert.equal(existing.rowCount, 0, 'the disposable database must be empty');
-  const sql = await readFile(new URL('../../docs/design/scenarios/schema.sql', import.meta.url), 'utf8');
+  assert.equal((await pool.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rowCount, 0, 'the disposable database must be empty');
+  const sql = await readFile(new URL('../../apps/collaboration-api/db/schema.sql', import.meta.url), 'utf8');
 
-  await t.test('DDL applies to an empty database in one transaction', async () => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(sql);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  await t.test('the actual API DDL applies atomically and refuses a second application', async () => {
+    await inTransaction(pool, c => c.query(sql));
+    await assert.rejects(inTransaction(pool, c => c.query(sql)), error => ['42P07', '42710'].includes(error.code));
   });
 
-  await t.test('the script refuses a second application', async () => {
-    await assert.rejects(pool.query(sql), error => error.code === '42P07' || error.code === '42710');
+  await t.test('the catalog has no category, batch freeze, material body or local process state', async () => {
+    const { rows } = await pool.query("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'");
+    for (const row of rows) assert.doesNotMatch(row.column_name, /^(category_id|body|content|metadata|messages|prompt|conversation|structure_check_enabled)$/);
+    const names = new Set(rows.map(row => row.table_name));
+    for (const name of ['studio_categories', 'studio_batch_freezes', 'studio_confirmation_evidence', 'studio_confirmation_files']) assert.ok(!names.has(name), name);
+    const values = (await pool.query("SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname IN ('studio_occupation_purpose','studio_integration_scope')")).rows;
+    assert.ok(values.every(row => row.enumlabel !== 'scenario-batch'));
   });
 
-  await t.test('scenario data has no category, plaintext body, conversation or local preference column', async () => {
-    const result = await pool.query("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'");
-    assert.ok(result.rowCount > 0);
-    for (const row of result.rows) {
-      assert.doesNotMatch(row.column_name, /^(body|content|messages|prompt|conversation|structure_check_enabled)$/);
-      if (/scenario/.test(row.table_name)) assert.doesNotMatch(row.column_name, /category/);
-    }
-    assert.ok(!result.rows.some(row => row.table_name === 'studio_confirmations' && row.column_name === 'metadata'));
-    const removed = await pool.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename IN ('studio_project_creations','studio_confirmation_evidence','studio_confirmation_files')");
-    assert.equal(removed.rowCount, 0);
+  await insert(pool, 'studio_users', { id: 1, username: 'schema-test', name: 'Schema Test', email: 'schema-test@example.invalid', admin: true, password_salt: '0'.repeat(32), password_hash: '0'.repeat(128) });
+  await createProject(pool, 'project-a');
+  await createProject(pool, 'project-b');
+
+  await t.test('system provisioning is atomic, exclusive and has no fabricated user confirmation credentials', async () => {
+    await assert.rejects(initialize(pool, 'project-a', { method: 'normal', read_hash: fixed.contentHash, ...audit.created }), { code: '23514' });
+    await initialize(pool, 'project-a');
+    await initialize(pool, 'project-b');
+    const row = (await pool.query("SELECT acceptance_kind,method,read_hash,integration_id,creator_id FROM studio_confirmations WHERE id='general-confirmed-project-a'")).rows[0];
+    assert.deepEqual(row, { acceptance_kind: 'system-provisioned', method: null, read_hash: null, integration_id: null, creator_id: null });
+    await assert.rejects(insert(pool, 'studio_project_initializations', { id: 'duplicate-init', project_id: 'project-a', operation_key: 'duplicate', request_hash: fixed.fingerprint, commit_sha: fixed.commitSha, ...audit.created }), /initializ|ready|unique/i);
+    await assert.rejects(pool.query("UPDATE studio_entities SET title='Edited general' WHERE id='general-project-a'"), /builtin|built-in|system|内置/i);
+    await assert.rejects(insert(pool, 'studio_occupations', { id: 'general-occupation', project_id: 'project-a', entity_id: 'general-project-a', generation: 1, owner_id: 1, purpose: 'design', task_id: 'general', client_id: 'schema-test', expected_revision: 0, input_version: 1, ...audit.mutable }), /builtin|built-in|system|内置/i);
+    await assert.rejects(pool.query("UPDATE studio_projects SET state='assigned',recognized_head=NULL WHERE id='project-a'"), /backwards/);
   });
 
-  await pool.query(`INSERT INTO studio_users(id,username,name,email,admin,password_salt,password_hash)
-    VALUES(1,'schema-test','Schema Test','schema-test@example.invalid',true,$1,$2)`, ['0'.repeat(32), '0'.repeat(128)]);
-  const fingerprint = '1'.repeat(64), commitSha = '2'.repeat(40), contentHash = '3'.repeat(64);
-  const insertProject = (id, key, path, marker) => pool.query(`INSERT INTO studio_projects
-    (id,key,request_hash,namespace_id,namespace_path,path,name,marker,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-    VALUES($1,$2,$3,10,'schema-tests',$4,'Schema Test',$5,1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [id, key, fingerprint, path, marker]);
-
-  await t.test('one project record preserves reservation uniqueness and verifies lifecycle stages', async () => {
-    await insertProject('project-a', 'creation-a', 'project-a', 'marker-a');
-    assert.equal((await pool.query("SELECT state FROM studio_projects WHERE id='project-a'")).rows[0].state, 'reserved');
-    await assert.rejects(insertProject('duplicate-key', 'creation-a', 'another-path', 'another-marker'), { code: '23505' });
-    await assert.rejects(insertProject('duplicate-path', 'another-key', 'project-a', 'another-marker'), { code: '23505' });
-    await assert.rejects(insertProject('duplicate-marker', 'another-key', 'another-path', 'marker-a'), { code: '23505' });
-    await assert.rejects(pool.query("UPDATE studio_projects SET state='created' WHERE id='project-a'"), { code: '23514' });
-    await assert.rejects(pool.query("UPDATE studio_projects SET gitlab_project_id=101,repository_url='https://example.invalid/project-a.git' WHERE id='project-a'"), { code: '23514' });
-    await pool.query("UPDATE studio_projects SET state='creating' WHERE id='project-a'");
-    await pool.query("UPDATE studio_projects SET state='created',gitlab_project_id=101,repository_url='https://example.invalid/project-a.git' WHERE id='project-a'");
-    await pool.query("UPDATE studio_projects SET state='assigned' WHERE id='project-a'");
-    await assert.rejects(pool.query("UPDATE studio_projects SET state='ready' WHERE id='project-a'"), { code: '23514' });
-    await pool.query("UPDATE studio_projects SET state='ready',recognized_head=$1 WHERE id='project-a'", [commitSha]);
-    await pool.query("UPDATE studio_projects SET name='Renamed Project' WHERE id='project-a'");
-    assert.equal((await pool.query("SELECT request_hash FROM studio_projects WHERE id='project-a'")).rows[0].request_hash, fingerprint);
-    await assert.rejects(pool.query("UPDATE studio_projects SET request_hash=$1 WHERE id='project-a'", ['4'.repeat(64)]), /original request fingerprint are immutable/);
-    await assert.rejects(pool.query("UPDATE studio_projects SET state='assigned',recognized_head=NULL WHERE id='project-a'"), /cannot move backwards/);
-    await assert.rejects(pool.query("UPDATE studio_projects SET gitlab_project_id=102 WHERE id='project-a'"), /repository binding is immutable/);
-    await insertProject('project-b', 'creation-b', 'project-b', 'marker-b');
-    await assert.rejects(pool.query("UPDATE studio_projects SET state='created',gitlab_project_id=101,repository_url='https://example.invalid/project-b.git' WHERE id='project-b'"), { code: '23505' });
+  await t.test('ordinary scenarios and requirements have independent stable numbers and fixed templates', async () => {
+    await createEntity(pool, 'scenario-a', 'scenario', 1);
+    await confirm(pool, 'scenario-confirmed', 'scenario-a');
+    await createEntity(pool, 'requirement-a', 'requirement', 1, { sources: ['scenario-confirmed'] });
+    const { rows } = await pool.query("SELECT kind,sequence::int,code,template_id,template_ref FROM studio_entities WHERE id IN ('scenario-a','requirement-a') ORDER BY kind::text");
+    assert.deepEqual(rows.map(({ kind, sequence, code }) => ({ kind, sequence, code })), [{ kind: 'requirement', sequence: 1, code: 'REQ-0001' }, { kind: 'scenario', sequence: 1, code: 'SC-0001' }]);
+    for (const row of rows) { assert.equal(row.template_id, row.kind); assert.equal(row.template_ref.path, `.template/${row.kind}.md`); }
+    await createEntity(pool, 'scenario-large', 'scenario', 10000);
+    await createEntity(pool, 'requirement-large', 'requirement', 10000, { sources: ['scenario-confirmed'] });
+    assert.equal((await pool.query("SELECT code FROM studio_entities WHERE id='requirement-large'")).rows[0].code, 'REQ-10000');
+    await assert.rejects(pool.query("UPDATE studio_entities SET code='REQ-10001' WHERE id='requirement-large'"), /immutable/);
+    await assert.rejects(pool.query("UPDATE studio_entity_numbers SET entity_id='stolen' WHERE entity_id='requirement-large'"), /cannot be modified/);
+    await assert.rejects(pool.query("DELETE FROM studio_entity_numbers WHERE entity_id='requirement-large'"), /immutable/);
+    await assert.rejects(pool.query("UPDATE studio_entities SET template_ref=NULL WHERE id='requirement-a'"), { code: '23514' });
   });
 
-  await pool.query("INSERT INTO studio_categories(project_id,id,name,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name) VALUES('project-a','requirements','Requirements',1,'schema-test','Schema Test',1,'schema-test','Schema Test')");
-
-  const insertEntity = async (id, kind, sequence) => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-    const code = `SC-${String(sequence).padStart(4, '0')}`;
-    if (kind === 'scenario') await client.query("INSERT INTO studio_entity_numbers(project_id,sequence,code,operation_key,entity_id,request_hash,creator_id,creator_account,creator_name) VALUES($1,$2,$3,$4,$5,$6,1,'schema-test','Schema Test')", ['project-a', sequence, code, `create-${id}`, id, fingerprint]);
-    await client.query(`INSERT INTO studio_entities(project_id,id,kind,sequence,code,title,template_ref,category_id,template_id,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES('project-a',$1,$2,$3,$4,$1,$5,$6,$7,1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [id, kind, kind === 'scenario' ? sequence : null, kind === 'scenario' ? code : null, kind === 'scenario' ? { commitSha, path: '.template/scenario.md', sha256: contentHash } : null, kind === 'scenario' ? null : 'requirements', kind === 'scenario' ? 'scenario' : null]);
-    await client.query(`INSERT INTO studio_occupations(id,project_id,entity_id,generation,owner_id,purpose,task_id,client_id,expected_revision,input_version,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES($1,'project-a',$2,1,1,'design',$1,'schema-test',0,0,1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [`occupation-${id}`, id]);
-    await client.query(`INSERT INTO studio_integrations(id,project_id,scope,entity_id,occupation_id,status,source_sha,expected_head,candidate_sha,allowed_paths,request,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES($1,'project-a','material',$2,$3,'accepted',$4,$4,$4,$5,'{}',1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [`integration-${id}`, id, `occupation-${id}`, commitSha, [`${kind}/${id}.md`]]);
-    if (kind === 'requirement') {
-      await client.query("INSERT INTO studio_scenario_requirements(project_id,scenario_id,requirement_id,creator_id,creator_account,creator_name) VALUES('project-a','scenario-a',$1,1,'schema-test','Schema Test')", [id]);
-      await client.query("INSERT INTO studio_entity_scenario_sources(project_id,entity_id,scenario_confirmation_id,creator_id,creator_account,creator_name) VALUES('project-a',$1,'scenario-confirmed',1,'schema-test','Schema Test')", [id]);
-    }
-      await client.query('COMMIT');
-    } catch (error) { await client.query('ROLLBACK'); throw error; }
-    finally { client.release(); }
-  };
-  const confirm = async (id, entityId, { applicability, reason = null, sources = [], version = 1 } = {}) => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`INSERT INTO studio_confirmations(id,project_id,entity_id,version,revision,title,summary,commit_sha,path,sha256,method,read_hash,integration_id,applicability,applicability_reason,creator_id,creator_account,creator_name)
-        VALUES($1,'project-a',$2,$3,1,$2,'Schema test',$4,$5,$6,'normal',$6,$7,COALESCE($8::studio_applicability,'applicable'),$9,1,'schema-test','Schema Test')`,
-      [id, entityId, version, commitSha, `${entityId}.md`, contentHash, `integration-${entityId}`, applicability ?? null, reason]);
-      for (const source of sources) await client.query('INSERT INTO studio_requirement_sources(confirmation_id,scenario_confirmation_id) VALUES($1,$2)', [id, source]);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  };
-
-  await t.test('confirmation uses fixed Git references and explicit applicability without backend material lists', async () => {
-    await insertEntity('scenario-a', 'scenario', 1);
-    await confirm('scenario-confirmed', 'scenario-a');
-    await insertEntity('requirement-a', 'requirement', 2);
-    assert.equal((await pool.query("SELECT applicability FROM studio_confirmations WHERE id='scenario-confirmed'")).rows[0].applicability, 'applicable');
-    await assert.rejects(confirm('scenario-invalid', 'scenario-a', { version: 2, applicability: 'not-applicable', reason: 'Only requirements may be inapplicable' }), /must be applicable/);
-    await assert.rejects(confirm('requirement-no-source', 'requirement-a'), /requires at least one confirmed scenario source/);
-    await assert.rejects(confirm('requirement-no-reason', 'requirement-a', { applicability: 'not-applicable', sources: ['scenario-confirmed'] }), { code: '23514' });
-    await assert.rejects(confirm('requirement-blank-reason', 'requirement-a', { applicability: 'not-applicable', reason: '   ', sources: ['scenario-confirmed'] }), { code: '23514' });
-    await assert.rejects(confirm('requirement-unexpected-reason', 'requirement-a', { reason: 'Applicable versions have no exception reason', sources: ['scenario-confirmed'] }), { code: '23514' });
-    await confirm('requirement-confirmed', 'requirement-a', { applicability: 'not-applicable', reason: 'The changed scenario excludes this scope', sources: ['scenario-confirmed'] });
-    await assert.rejects(confirm('requirement-wrong-source', 'requirement-a', { version: 2, sources: ['requirement-confirmed'] }), /sources must be confirmed scenario versions/);
-    await assert.rejects(pool.query("UPDATE studio_confirmations SET applicability_reason='changed' WHERE id='requirement-confirmed'"), /immutable fixed records/);
+  await t.test('fixed confirmations enforce real sources, applicability and sealed cardinality', async () => {
+    await assert.rejects(confirm(pool, 'scenario-inapplicable', 'scenario-a', { version: 2, applicability: 'not-applicable', reason: 'Excluded' }), /must be applicable/);
+    await assert.rejects(confirm(pool, 'requirement-no-source', 'requirement-a'), /source|sources/i);
+    await assert.rejects(confirm(pool, 'requirement-no-reason', 'requirement-a', { applicability: 'not-applicable', sources: ['scenario-confirmed'] }), { code: '23514' });
+    await confirm(pool, 'requirement-confirmed', 'requirement-a', { applicability: 'not-applicable', reason: 'Scope excluded', sources: ['scenario-confirmed'] });
+    await confirm(pool, 'scenario-confirmed-v2', 'scenario-a', { version: 2 });
+    await confirm(pool, 'scenario-large-confirmed', 'scenario-large');
+    await assert.rejects(confirm(pool, 'requirement-missing-source', 'requirement-a', { version: 2, sourceCount: 2, sources: ['scenario-confirmed'] }), /count|cardinality/i);
+    await assert.rejects(confirm(pool, 'requirement-extra-source', 'requirement-a', { version: 2, sourceCount: 1, sources: ['scenario-confirmed', 'scenario-large-confirmed'] }), /count|cardinality/i);
+    await assert.rejects(confirm(pool, 'requirement-two-versions', 'requirement-a', { version: 2, sources: ['scenario-confirmed', 'scenario-confirmed-v2'] }), { code: '23505' });
+    await assert.rejects(insert(pool, 'studio_requirement_sources', { project_id: 'project-a', confirmation_id: 'requirement-confirmed', scenario_id: 'scenario-large', scenario_confirmation_id: 'scenario-large-confirmed' }), /count|cardinality/i);
+    await assert.rejects(pool.query("UPDATE studio_requirement_sources SET scenario_confirmation_id='scenario-confirmed-v2' WHERE confirmation_id='requirement-confirmed'"), /immutable/);
+    await assert.rejects(pool.query("DELETE FROM studio_requirement_sources WHERE confirmation_id='requirement-confirmed'"), /immutable/);
   });
 
-  await t.test('only scenarios have immutable allocated numbers, including more than four digits', async () => {
-    await insertEntity('scenario-large', 'scenario', 10000);
-    assert.equal((await pool.query("SELECT code FROM studio_entities WHERE project_id='project-a' AND id='scenario-large'")).rows[0].code, 'SC-10000');
-    const requirement = (await pool.query("SELECT sequence,code,category_id FROM studio_entities WHERE project_id='project-a' AND id='requirement-a'")).rows[0];
-    assert.deepEqual(requirement, { sequence: null, code: null, category_id: 'requirements' });
-    await assert.rejects(pool.query("UPDATE studio_entities SET code='SC-10001' WHERE project_id='project-a' AND id='scenario-large'"), /identity, kind, sequence and code are immutable/);
-    await assert.rejects(pool.query("UPDATE studio_entity_numbers SET entity_id='stolen' WHERE project_id='project-a' AND sequence=10000"), /cannot be modified/);
-    await assert.rejects(pool.query("DELETE FROM studio_entity_numbers WHERE project_id='project-a' AND sequence=10000"), /immutable fixed records/);
-    await assert.rejects(pool.query("UPDATE studio_entities SET category_id='requirements' WHERE project_id='project-a' AND id='scenario-large'"), { code: '23514' });
-  });
-
-
-  const inTransaction = async action => {
-    const client = await pool.connect();
-    try { await client.query('BEGIN'); await action(client); await client.query('COMMIT'); }
-    catch (error) { await client.query('ROLLBACK'); throw error; }
-    finally { client.release(); }
-  };
-  const insertDraft = (client, projectId, id) => client.query(`INSERT INTO studio_entities
-    (project_id,id,kind,title,category_id,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-    VALUES($1,$2,'requirement','Draft requirement','requirements',1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [projectId, id]);
-
-  await t.test('draft fixed sources are mandatory, typed and equal the current scenario relationship set', async () => {
-    await assert.rejects(inTransaction(c => insertDraft(c, 'project-a', 'orphan-draft')), /requires at least one confirmed scenario source/);
-    await assert.rejects(pool.query("DELETE FROM studio_entity_scenario_sources WHERE project_id='project-a' AND entity_id='requirement-a'"), /requires at least one confirmed scenario source/);
-    await assert.rejects(pool.query("DELETE FROM studio_scenario_requirements WHERE project_id='project-a' AND requirement_id='requirement-a'"), /relations must match its fixed sources/);
-    await assert.rejects(pool.query("UPDATE studio_entity_scenario_sources SET scenario_confirmation_id='requirement-confirmed' WHERE project_id='project-a' AND entity_id='requirement-a'"), /fixed scenario material versions/);
-    await confirm('scenario-confirmed-v2', 'scenario-a', { version: 2 });
-    await assert.rejects(pool.query(`INSERT INTO studio_entity_scenario_sources(project_id,entity_id,scenario_confirmation_id,creator_id,creator_account,creator_name)
-      VALUES('project-a','requirement-a','scenario-confirmed-v2',1,'schema-test','Schema Test')`), /one fixed version per scenario/);
-    await confirm('scenario-large-confirmed', 'scenario-large');
-    await inTransaction(async c => {
-      await c.query("DELETE FROM studio_entity_scenario_sources WHERE project_id='project-a' AND entity_id='requirement-a'");
-      await c.query("DELETE FROM studio_scenario_requirements WHERE project_id='project-a' AND requirement_id='requirement-a'");
-      await c.query(`INSERT INTO studio_entity_scenario_sources(project_id,entity_id,scenario_confirmation_id,creator_id,creator_account,creator_name)
-        VALUES('project-a','requirement-a','scenario-large-confirmed',1,'schema-test','Schema Test')`);
-      await c.query(`INSERT INTO studio_scenario_requirements(project_id,scenario_id,requirement_id,creator_id,creator_account,creator_name)
-        VALUES('project-a','scenario-large','requirement-a',1,'schema-test','Schema Test')`);
+  await t.test('draft source relationships remain nonempty, typed and independent from old fixed confirmations', async () => {
+    await assert.rejects(createEntity(pool, 'orphan-draft', 'requirement', 2), /requires at least one|source/i);
+    await assert.rejects(pool.query("DELETE FROM studio_entity_scenario_sources WHERE entity_id='requirement-a'"), /requires at least one/);
+    await assert.rejects(pool.query("DELETE FROM studio_scenario_requirements WHERE requirement_id='requirement-a'"), /relations must match/);
+    await assert.rejects(insert(pool, 'studio_entity_scenario_sources', { project_id: 'project-a', entity_id: 'requirement-a', scenario_confirmation_id: 'scenario-confirmed-v2', ...audit.created }), /one fixed version per scenario/);
+    await assert.rejects(createEntity(pool, 'cross-project-source', 'requirement', 1, { projectId: 'project-b', sources: ['scenario-confirmed'] }), /same project|foreign key/i);
+    await inTransaction(pool, async c => {
+      await c.query("DELETE FROM studio_entity_scenario_sources WHERE entity_id='requirement-a'");
+      await c.query("DELETE FROM studio_scenario_requirements WHERE requirement_id='requirement-a'");
+      await insert(c, 'studio_entity_scenario_sources', { project_id: 'project-a', entity_id: 'requirement-a', scenario_confirmation_id: 'scenario-large-confirmed', ...audit.created });
+      await insert(c, 'studio_scenario_requirements', { project_id: 'project-a', scenario_id: 'scenario-large', requirement_id: 'requirement-a', ...audit.created });
     });
-    assert.equal((await pool.query("SELECT scenario_confirmation_id FROM studio_entity_scenario_sources WHERE entity_id='requirement-a'")).rows[0].scenario_confirmation_id, 'scenario-large-confirmed');
+    assert.equal((await pool.query("SELECT scenario_confirmation_id FROM studio_requirement_sources WHERE confirmation_id='requirement-confirmed'")).rows[0].scenario_confirmation_id, 'scenario-confirmed');
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM studio_occupations WHERE active AND entity_id IN ('scenario-a','requirement-a')")).rows[0].n, 2);
+    await assert.rejects(pool.query("UPDATE studio_entities SET current_confirmation_id='scenario-confirmed' WHERE id='requirement-a'"), { code: '23503' });
   });
 
-  await t.test('cross-project and cross-entity control references are rejected by the database', async () => {
-    await pool.query(`INSERT INTO studio_categories(project_id,id,name,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES('project-b','requirements','Requirements',1,'schema-test','Schema Test',1,'schema-test','Schema Test')`);
-    await assert.rejects(inTransaction(async c => {
-      await insertDraft(c, 'project-b', 'foreign-source-draft');
-      await c.query(`INSERT INTO studio_entity_scenario_sources(project_id,entity_id,scenario_confirmation_id,creator_id,creator_account,creator_name)
-        VALUES('project-b','foreign-source-draft','scenario-confirmed',1,'schema-test','Schema Test')`);
-    }), /same project/);
-    await assert.rejects(pool.query("UPDATE studio_entities SET current_confirmation_id='scenario-confirmed' WHERE project_id='project-a' AND id='requirement-a'"), { code: '23503' });
-    await assert.rejects(pool.query("UPDATE studio_entities SET project_id='project-b' WHERE project_id='project-a' AND id='scenario-large'"), /identity, kind, sequence and code are immutable/);
-    await assert.rejects(pool.query("UPDATE studio_integrations SET project_id='project-b' WHERE id='integration-scenario-large'"), { code: '23503' });
-    await assert.rejects(pool.query(`INSERT INTO studio_repair_tasks(id,project_id,entity_id,occupation_id,user_action_id,start_hash,status,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES('wrong-occupation','project-a','requirement-a','occupation-scenario-a','wrong-occupation',$1,'terminated',1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [contentHash]), { code: '23503' });
+  await t.test('prerequisites bind exact material versions without requiring prototype completion', async () => {
+    await confirm(pool, 'requirement-large-confirmed', 'requirement-large', { sources: ['scenario-confirmed'] });
+    const prerequisite = { project_id: 'project-a', entity_id: 'requirement-a', requirement_id: 'requirement-large', version: 1, confirmation_id: 'requirement-large-confirmed', ...audit.created };
+    await assert.rejects(insert(pool, 'studio_prerequisites', { ...prerequisite, version: 2 }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_prerequisites', { ...prerequisite, confirmation_id: 'scenario-confirmed' }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_prerequisites', { ...prerequisite, entity_id: 'requirement-large' }), { code: '23514' });
+    await createEntity(pool, 'requirement-b', 'requirement', 1, { projectId: 'project-b', sources: ['general-confirmed-project-b'] });
+    await confirm(pool, 'requirement-b-confirmed', 'requirement-b', { projectId: 'project-b', sources: ['general-confirmed-project-b'] });
+    await assert.rejects(insert(pool, 'studio_prerequisites', { ...prerequisite, requirement_id: 'requirement-b', confirmation_id: 'requirement-b-confirmed' }), /requirement in the same project/);
+    await insert(pool, 'studio_prerequisites', prerequisite);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM studio_baselines WHERE entity_id='requirement-large'")).rows[0].n, 0);
+    // DAG validation belongs to the relationship service transaction, not this DDL test.
   });
 
-  await t.test('a repair authorization action cannot start a second task after termination', async () => {
-    const insertRepair = id => pool.query(`INSERT INTO studio_repair_tasks(id,project_id,entity_id,occupation_id,user_action_id,start_hash,status,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name)
-      VALUES($1,'project-a','scenario-a','occupation-scenario-a','one-authorization',$2,'terminated',1,'schema-test','Schema Test',1,'schema-test','Schema Test')`, [id, contentHash]);
-    await insertRepair('first-authorization');
-    await assert.rejects(insertRepair('reused-authorization'), { code: '23505' });
+  await t.test('prototype inputs bind completion baseline SHA while preserving the different original material SHA', async () => {
+    const completionSha = '4'.repeat(40);
+    assert.notEqual(completionSha, fixed.commitSha);
+    await inTransaction(pool, async c => {
+      await c.query("UPDATE studio_occupations SET active=false,finish_status='completed' WHERE id='occupation-requirement-large'");
+      await insert(c, 'studio_occupations', { id: 'prototype-occupation', project_id: 'project-a', entity_id: 'requirement-large', generation: 2, owner_id: 1, purpose: 'prototype', task_id: 'prototype-large', client_id: 'schema-test', expected_revision: 1, input_version: 1, ...audit.mutable });
+      await insert(c, 'studio_integrations', { id: 'prototype-integration', project_id: 'project-a', scope: 'prototype', entity_id: 'requirement-large', occupation_id: 'prototype-occupation', status: 'accepted', source_sha: fixed.commitSha, expected_head: fixed.commitSha, candidate_sha: completionSha, allowed_paths: ['prototype/requirement-large'], request: {}, ...audit.mutable });
+      await insert(c, 'studio_confirmations', { id: 'prototype-completed', project_id: 'project-a', entity_id: 'requirement-large', version: 1, stage: 'prototype', revision: 1, title: 'requirement-large', summary: 'Completed', commit_sha: fixed.commitSha, path: 'requirement-large.md', sha256: fixed.contentHash, method: 'normal', read_hash: fixed.contentHash, integration_id: 'prototype-integration', ...audit.created });
+      await insert(c, 'studio_baselines', { id: 'completed-baseline', project_id: 'project-a', entity_id: 'requirement-large', version: 1, commit_sha: completionSha, confirmation_id: 'prototype-completed', ...audit.created });
+      await c.query("UPDATE studio_occupations SET active=false,finish_status='completed' WHERE id='occupation-requirement-a'");
+      await insert(c, 'studio_occupations', { id: 'consumer-prototype-occupation', project_id: 'project-a', entity_id: 'requirement-a', generation: 2, owner_id: 1, purpose: 'prototype', task_id: 'prototype-a', client_id: 'schema-test', expected_revision: 1, input_version: 1, ...audit.mutable });
+    });
+    const input = { project_id: 'project-a', occupation_id: 'consumer-prototype-occupation', requirement_id: 'requirement-large', version: 1, confirmation_id: 'prototype-completed', integration_sha: completionSha, ...audit.created };
+    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, confirmation_id: 'requirement-large-confirmed' }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, integration_sha: fixed.commitSha }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, project_id: 'project-b' }), /requirement in the same project/);
+    await insert(pool, 'studio_occupation_inputs', input);
   });
 
+  await t.test('comparison execution, coverage, bounded input identities and line ranges are independently validated', async () => {
+    await comparison(pool, 'comparison-main', { withFinding: true });
+    await comparison(pool, 'comparison-partial', { coverage: 'partial', uncovered: true });
+    await comparison(pool, 'comparison-failed', { result: 'failed', coverage: 'partial', failureCode: 'model-failed', summary: 'Model unavailable' });
+    await comparison(pool, 'comparison-cancelled', { result: 'cancelled', coverage: 'partial', failureCode: 'cancelled' });
+    await assert.rejects(comparison(pool, 'cancelled-null', { result: 'cancelled', coverage: 'partial' }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'complete-missing', { uncovered: true }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'too-many-inputs', { fields: { input_count: 101 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'ordinal-101', { input: { ordinal: 101 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'invalid-hash', { input: { sha256: 'unread' } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'absolute-path', { input: { path: 'C:/private/requirement.md' } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'parent-path', { input: { path: '../private/requirement.md' } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'reversed-range', { range: { start_line: 10, end_line: 2 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'line-zero', { range: { start_line: 0 } }), { code: '23514' });
+    await assert.rejects(comparison(pool, 'input-project', { input: { entity_id: 'requirement-b' } }), { code: '23503' });
+    await assert.rejects(comparison(pool, 'oversized-summary', { summary: 'x'.repeat(501) }), { code: '22001' });
+    await assert.rejects(comparison(pool, 'missing-declared-input', { fields: { input_count: 2 } }), /count|collection/i);
+    await assert.rejects(insert(pool, 'studio_consistency_finding_inputs', { project_id: 'project-a', comparison_id: 'comparison-main', finding_id: 'finding-comparison-main', input_id: 'input-comparison-partial', ordinal: 2 }), { code: '23503' });
+    await assert.rejects(insert(pool, 'studio_consistency_inputs', { project_id: 'project-a', comparison_id: 'comparison-main', id: 'late-input', ordinal: 2, entity_id: 'scenario-a', path: '场景/scenario-a.md', sha256: fixed.contentHash, local_state: 'current' }), /count|collection/i);
+    await assert.rejects(comparison(pool, 'operation-replay', { fields: { operation_key: 'compare-comparison-main' } }), { code: '23505' });
+  });
+
+  await t.test('automatic comparison acceptance is unique per real confirmation; manual retries keep distinct histories', async () => {
+    await comparison(pool, 'automatic-first', { fields: { trigger: 'confirmation', confirmation_id: 'requirement-confirmed' } });
+    await assert.rejects(comparison(pool, 'automatic-duplicate', { fields: { trigger: 'confirmation', confirmation_id: 'requirement-confirmed' } }), { code: '23505' });
+    await assert.rejects(comparison(pool, 'automatic-foreign-target', { fields: { trigger: 'confirmation', confirmation_id: 'scenario-confirmed' } }), { code: '23503' });
+    await comparison(pool, 'manual-again', { withFinding: true });
+    assert.equal((await pool.query("SELECT status FROM studio_consistency_findings WHERE id='finding-manual-again'")).rows[0].status, 'pending');
+  });
+
+  await t.test('concurrent finding actions use their own revision and keep exactly one idempotent audit event', async () => {
+    const findingId = 'finding-comparison-main';
+    const before = (await pool.query("SELECT revision,material_version FROM studio_entities WHERE id='requirement-a'")).rows[0];
+    await assert.rejects(pool.query("UPDATE studio_consistency_findings SET revision=revision+1,status='handled' WHERE id=$1", [findingId]), /matching treatment event/);
+    const results = await Promise.all([treatFinding(pool, findingId, 0, 'concurrent-a'), treatFinding(pool, findingId, 0, 'concurrent-b', { action: 'ignore', status: 'ignored' })]);
+    assert.deepEqual(results.sort(), [false, true]);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM studio_consistency_finding_events WHERE finding_id=$1', [findingId])).rows[0].n, 1);
+    const event = (await pool.query('SELECT * FROM studio_consistency_finding_events WHERE finding_id=$1', [findingId])).rows[0];
+    assert.equal(await treatFinding(pool, findingId, 0, event.operation_key), false);
+    await assert.rejects(treatFinding(pool, findingId, 1, event.operation_key, { action: 'remind', status: event.status, reminder: true }), { code: '23505' });
+    assert.equal((await pool.query('SELECT revision FROM studio_consistency_findings WHERE id=$1', [findingId])).rows[0].revision, 1);
+    assert.equal(await treatFinding(pool, findingId, 1, 'remind-once', { action: 'remind', status: event.status, reminder: true }), true);
+    await assert.rejects(pool.query("DELETE FROM studio_consistency_finding_events WHERE finding_id=$1", [findingId]), /immutable/);
+    await assert.rejects(pool.query("UPDATE studio_consistency_findings SET revision=revision+1,summary='Rewritten observation' WHERE id=$1", [findingId]), /immutable/);
+    assert.deepEqual((await pool.query("SELECT revision,material_version FROM studio_entities WHERE id='requirement-a'")).rows[0], before);
+    assert.equal((await pool.query('SELECT status FROM studio_consistency_findings WHERE id=$1', ['finding-manual-again'])).rows[0].status, 'pending');
+  });
 });

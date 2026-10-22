@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { studioToolGuard } from '../../packages/studio-plugin/src/host/adapters/platform/execution-guard.ts'
+import { saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
+import { initialMetadata } from '../../packages/studio-plugin/src/host/application/ports.ts'
 
 const mocks = {
   '@deepseek-ai/dsh-llm': 'export const createUserMessage = value => value; export const ReasoningEffortId = value => value',
@@ -93,10 +95,11 @@ for (const scenarioRepair of [false, true]) for (const restored of [false, true]
   const external = path.join(path.dirname(root), `${path.basename(root)}-image.png`)
   const sessions = new DshTaskSessions(ctx as never, '', async (_id, output) => { emitted.push(output) }, async (_task, signal) => { signal.throwIfAborted(); return { text: latest, readPaths: [external] } })
   try {
-    await mkdir(path.join(root, '场景')); await writeFile(path.join(root, '场景', 'scenario.md'), '# draft')
+    await mkdir(path.join(root, '场景'))
+    const material = await saveMaterial(root, initialMetadata({ id: 'scenario', kind: 'scenario', title: '原生场景', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } }), '# draft')
     await sessions.open({ projectId: 'p', entityId: 'scenario', purpose: scenarioRepair ? 'review' : 'material', scenarioRepair, sessionId: 's', inputHash: '', worktree: root }, 'read only', undefined)
-    for (const name of ['write', 'edit', 'bash']) assert.ok(studioToolGuard({ name, arguments: { file_path: '场景/scenario.md' }, agent }))
-    assert.equal(studioToolGuard({ name: 'read_image', arguments: { file_path: '场景/scenario.md' }, agent }), undefined)
+    for (const name of ['write', 'edit', 'bash']) assert.ok(studioToolGuard({ name, arguments: { file_path: material.path }, agent }))
+    assert.equal(studioToolGuard({ name: 'read_image', arguments: { file_path: material.path }, agent }), undefined)
     assert.ok(studioToolGuard({ name: 'read_image', arguments: { file_path: '../outside.png' }, agent }))
     const request = handlers.get('agent/request')!
     await writeFile(external, 'imported source outside Git')

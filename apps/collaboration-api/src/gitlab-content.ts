@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonical, DomainError, parseMaterial, parseProjectManifest, repositoryPath, requireCondition, validateMaterialMetadata } from '@eadp/asset-domain';
+import { canonical, DomainError, isMaterialPathOf, parseMaterial, parseProjectManifest, repositoryPath, requireCondition, validateMaterialMetadata } from '@eadp/asset-domain';
 import { isFixedManifest, type EntityKind, type FixedReference, type MaterialMetadata, type PrepareIntegrationRequest, type ProjectManifest } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
@@ -65,8 +65,9 @@ export class GitLabContent {
       metadata = manifest.metadata;
       validateMaterialMetadata(metadata);
     } else metadata = parseMaterial(markdown);
-    const expectedPath = metadata.kind === 'scenario' ? `场景/${metadata.entityId}.md` : metadata.kind === 'requirement' ? `需求/${metadata.entityId}.md` : metadata.kind === 'handoff' ? `handoff.${metadata.entityId}.md` : `baseline.${metadata.entityId}.json`;
-    requireCondition(fixed.path === expectedPath && (!identity || (metadata.entityId === identity.entityId && metadata.kind === identity.kind)), 'INVALID_MATERIAL_PATH', 'Fixed material identity and path must match its stable entity ID and kind', 422);
+    // Materials are addressed by their business title; only baseline manifests keep the stable ID.
+    const matched = metadata.kind === 'baseline' ? fixed.path === `baseline.${metadata.entityId}.json` : isMaterialPathOf(metadata.kind, fixed.path, metadata.title);
+    requireCondition(matched && (!identity || (metadata.entityId === identity.entityId && metadata.kind === identity.kind)), 'INVALID_MATERIAL_PATH', 'Fixed material identity and path must match its stable entity ID, kind and title', 422);
     await this.verifyFiles(gitlabProjectId, fixed, metadata);
     if (metadata.kind === 'scenario') {
       await this.verifyTemplate(actor, gitlabProjectId, metadata.templateRef, metadata.templateId);
@@ -133,9 +134,25 @@ export class GitLabContent {
     }
     if (input.stage !== 'prototype') {
       const materialPaths = new Set(input.confirmations.map(confirmation => confirmation.fixed.path));
-      requireCondition(input.allowedPaths.every(path => path !== 'project.assets.json' && !path.startsWith('.template/') && (!/^(?:场景|需求)\/|^(?:baseline|handoff)\./.test(path) || materialPaths.has(path)) && declaredPaths.has(path)), 'MATERIAL_PATH_SCOPE', 'Material integrations may only change their confirmed documents and related files outside protected project paths', 422);
+      // A title edit renames the material, so the candidate removes the previous path of a confirmed entity.
+      const materialPathPattern = /^(?:场景|需求|交接)\//;
+      const removable = new Set<string>();
+      for (const diff of candidate.diffs) {
+        if (!diff.deleted_file || !materialPathPattern.test(diff.old_path) || materialPaths.has(diff.old_path)) continue;
+        const replaced = await this.replacesConfirmedMaterial(gitlabProjectId, input.expectedHead, diff.old_path, materials);
+        requireCondition(replaced, 'MATERIAL_PATH_SCOPE', 'A task may only replace the confirmed material path it renames', 422);
+        removable.add(diff.old_path);
+      }
+      requireCondition(input.allowedPaths.every(path => path !== 'project.assets.json' && !path.startsWith('.template/') && (declaredPaths.has(path) || removable.has(path)) && (!materialPathPattern.test(path) && !/^baseline\./.test(path) || materialPaths.has(path) || removable.has(path))), 'MATERIAL_PATH_SCOPE', 'Material integrations may only change their confirmed documents and related files outside protected project paths', 422);
     }
     return materials;
+  }
+  /** Whether the removed path held a confirmed material of this candidate before the rename. */
+  private async replacesConfirmedMaterial(gitlabProjectId: number, expectedHead: string, path: string, materials: Map<string, MaterialMetadata>): Promise<boolean> {
+    try {
+      const previous = await this.file(gitlabProjectId, expectedHead, path);
+      return materials.has(parseMaterial(utf8(previous, 'INVALID_MATERIAL_ENCODING')).entityId);
+    } catch { return false; }
   }
   private async verifyTemplateChange(actor: Reader, gitlabProjectId: number, expectedHead: string, candidateSha: string, diffs: Diff[]): Promise<void> {
     const before = await this.manifest(gitlabProjectId, expectedHead), after = await this.manifest(gitlabProjectId, candidateSha);

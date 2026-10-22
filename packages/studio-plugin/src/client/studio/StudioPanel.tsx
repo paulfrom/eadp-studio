@@ -154,7 +154,7 @@ export function StudioPanel(props: StudioProps) {
         </div>
       </aside>
       <main className={css.main}>
-        <header className={css.pageHeader}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}<p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
+        <header className={`${css.pageHeader} ${stage === 'scenarios' && selected ? css.compactHeader : ''}`}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}{!(stage === 'scenarios' && selected) && <><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></>}</div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
         {state.projectInitializations.map(operation => initializing[operation.phase]

@@ -5,7 +5,7 @@ import { canonical, validateMaterialMetadata } from '@eadp/asset-domain'
 import { isMaterialMetadata, type MaterialMetadata } from '@eadp/contracts'
 import type { MaterialDraft } from '../../shared/studio.ts'
 import type { ScenarioConflict, ScenarioGate, ScenarioSuggestionBatch } from '../../shared/scenarios.ts'
-import { atomicWriteFile, containedFile, digest, materialPath, materialText, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
+import { atomicWriteFile, containedFile, digest, findMaterialFile, materialTargetPath, materialText, parseMaterial, readMaterial, unidentifiedMaterialFile } from '../adapters/assets/materials.ts'
 import { sameTemplate, suggestionBody } from './scenario-suggestions.ts'
 
 interface SaveInput { root: string; metadata: MaterialMetadata; body: string; expectedHash: string; operationId: string }
@@ -40,14 +40,12 @@ export class ScenarioDocumentService {
   }
   async save(input: SaveInput): Promise<MaterialDraft> {
     const root = await realpath(input.root)
-    const relative = materialPath(input.metadata.kind, input.metadata.entityId)
-    return serialized(`${root}/${relative}`, () => this.write({ ...input, root }))
+    return serialized(`${root}\0${input.metadata.entityId}`, () => this.write({ ...input, root }))
   }
 
   async apply(input: ApplyInput): Promise<MaterialDraft> {
     const root = await realpath(input.root)
-    const relative = materialPath(input.draft.metadata.kind, input.draft.entityId)
-    return serialized(`${root}/${relative}`, async () => {
+    return serialized(`${root}\0${input.draft.entityId}`, async () => {
       const { status: _status, error: _error, ...protocol } = input.batch
       const fingerprint = digest(canonical({ action: 'apply', entityId: input.draft.entityId, batch: protocol, selectedItemIds: [...input.selectedItemIds].sort(), expectedHash: input.expectedHash }))
       const repeated = await this.receipt(root, input.draft.entityId, input.operationId, fingerprint)
@@ -76,14 +74,14 @@ export class ScenarioDocumentService {
     return undefined
   }
 
-  private async preserveConflict(input: SaveInput, external: Buffer): Promise<never> {
+  private async preserveConflict(input: SaveInput, external: Buffer, relative: string): Promise<never> {
     const store = await this.localStore(input.root)
     const prefix = `conflicts/${input.metadata.entityId}/${randomUUID()}`
     const savedPaths = { external: await containedFile(store, `${prefix}/external.md`, true), local: await containedFile(store, `${prefix}/local.md`, true) }
     await atomicWriteFile(savedPaths.external, external)
     await atomicWriteFile(savedPaths.local, materialText(input.metadata, input.body))
     let actual: MaterialDraft | undefined
-    try { actual = parseMaterial(external, materialPath(input.metadata.kind, input.metadata.entityId)) } catch { /* Preserve malformed external edits before reporting the conflict. */ }
+    try { actual = parseMaterial(external, relative) } catch { /* Preserve malformed external edits before reporting the conflict. */ }
     throw new ScenarioDocumentConflictError(actual ? { expectedHash: input.expectedHash, actual, localBody: input.body, localMetadata: input.metadata, savedPath: path.join(store, prefix) } : undefined, savedPaths, digest(external))
   }
 
@@ -93,12 +91,13 @@ export class ScenarioDocumentService {
     const fingerprint = suppliedFingerprint ?? digest(canonical({ metadata: input.metadata, body: input.body, expectedHash: input.expectedHash }))
     const repeated = await this.receipt(input.root, input.metadata.entityId, input.operationId, fingerprint)
     if (repeated) return repeated
-    const relative = materialPath('scenario', input.metadata.entityId)
-    const target = await containedFile(input.root, relative)
-    const external = await readFile(target)
-    if (digest(external) !== input.expectedHash) return this.preserveConflict(input, external)
-    const current = parseMaterial(external, relative)
-    if (current.metadata.kind !== 'scenario' || input.metadata.templateId !== current.metadata.templateId || !sameTemplate(input.metadata.templateRef, current.metadata.templateRef)) throw new Error('保存不能隐式更换场景模板绑定')
+    const current = await this.currentScenarioFile(input)
+    if (digest(current.bytes) !== input.expectedHash) return this.preserveConflict(input, current.bytes, current.relative)
+    const currentFile = await containedFile(input.root, current.relative)
+    const parsed = parseMaterial(current.bytes, current.relative)
+    if (parsed.metadata.kind !== 'scenario' || input.metadata.templateId !== parsed.metadata.templateId || !sameTemplate(input.metadata.templateRef, parsed.metadata.templateRef)) throw new Error('保存不能隐式更换场景模板绑定')
+    const relative = await materialTargetPath(input.root, 'scenario', input.metadata.entityId, input.metadata.title)
+    const target = await containedFile(input.root, relative, true)
     const text = materialText(input.metadata, input.body)
     const result = parseMaterial(Buffer.from(text), relative)
     const temporary = `${relative}.${randomUUID()}.tmp`
@@ -107,15 +106,28 @@ export class ScenarioDocumentService {
     // Prepare both files before the final comparison; serialization also prevents competing Host writes.
     try {
       await atomicWriteFile(temporaryFile, text)
-      const latest = await readFile(target)
-      if (digest(latest) !== input.expectedHash) return this.preserveConflict(input, latest)
+      const latest = await readFile(currentFile)
+      if (digest(latest) !== input.expectedHash) return this.preserveConflict(input, latest, current.relative)
       await atomicWriteFile(receiptFile, JSON.stringify({ fingerprint, result, committed: false } satisfies Receipt))
-      const beforeRename = await readFile(target)
-      if (digest(beforeRename) !== input.expectedHash) return this.preserveConflict(input, beforeRename)
+      const beforeRename = await readFile(currentFile)
+      if (digest(beforeRename) !== input.expectedHash) return this.preserveConflict(input, beforeRename, current.relative)
       await rename(temporaryFile, target)
+      // A title edit moves the material; the previous name must not survive as a second document.
+      if (currentFile !== target) await rm(currentFile, { force: true })
       await atomicWriteFile(receiptFile, JSON.stringify({ fingerprint, result, committed: true } satisfies Receipt))
       return result
     } finally { await rm(temporaryFile, { force: true }) }
+  }
+  /**
+   * Resolves the file this save edits: the material of this identity, else an
+   * unidentified file at the title's name, which is preserved rather than replaced.
+   */
+  private async currentScenarioFile(input: SaveInput): Promise<{ relative: string; bytes: Buffer }> {
+    const relative = await findMaterialFile(input.root, 'scenario', input.metadata.entityId)
+    if (relative) return { relative, bytes: await readFile(await containedFile(input.root, relative)) }
+    const unidentified = await unidentifiedMaterialFile(input.root, 'scenario', input.metadata.title)
+    if (unidentified) return { relative: unidentified, bytes: await readFile(await containedFile(input.root, unidentified)) }
+    throw Object.assign(new Error('场景文件不存在，请重新打开场景'), { code: 'ENOENT' })
   }
 }
 

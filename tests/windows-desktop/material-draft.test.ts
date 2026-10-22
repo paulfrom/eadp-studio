@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createRequire } from 'node:module'
 import { ConfirmationInputSchema, FixedManifestSchema } from '../../packages/contracts/src/index.ts'
-import { parseMaterial as parseConfirmedMaterial } from '../../packages/asset-domain/src/index.ts'
-import { checkMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
+import { isMaterialPathOf, materialPathOf, materialStem, parseMaterial as parseConfirmedMaterial } from '../../packages/asset-domain/src/index.ts'
+import { checkMaterial, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { initialMetadata } from '../../packages/studio-plugin/src/host/application/ports.ts'
 const { Value } = createRequire(new URL('../../packages/contracts/package.json', import.meta.url))('@sinclair/typebox/value')
 
@@ -16,8 +16,37 @@ test('a new material can be saved and reopened as a draft without inventing busi
   const metadata = initialMetadata({ id: 'draft', kind: 'scenario', title: '合成场景', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } })
   const draft = await saveMaterial(root, metadata, '# 待整理场景\n')
   assert.deepEqual(draft.metadata, metadata)
-  assert.equal(draft.path, '场景/draft.md')
+  assert.equal(draft.path, '场景/合成场景.md')
   assert.throws(() => checkMaterial(draft))
+})
+
+test('a material title becomes its file name, and a title edit renames the same document', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'eadp-material-name-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const metadata = initialMetadata({ id: 'named', kind: 'requirement', title: '审批流程', categoryId: 'test' })
+  const draft = await saveMaterial(root, metadata, '# 审批流程\n')
+  assert.equal(draft.path, '需求/审批流程.md')
+  // A second material with the same title takes the next free name instead of replacing the first.
+  const sibling = await saveMaterial(root, initialMetadata({ id: 'other', kind: 'requirement', title: '审批流程', categoryId: 'test' }), '# 另一份\n')
+  assert.equal(sibling.path, '需求/审批流程-2.md')
+  const renamed = await saveMaterial(root, { ...metadata, title: '审批流程（含驳回）' }, draft.body)
+  assert.equal(renamed.path, '需求/审批流程（含驳回）.md')
+  assert.deepEqual((await readdir(path.join(root, '需求'))).sort(), ['审批流程-2.md', '审批流程（含驳回）.md'].sort())
+  assert.equal((await readMaterial(root, 'requirement', 'named')).path, '需求/审批流程（含驳回）.md')
+  assert.equal((await readMaterial(root, 'requirement', 'other')).path, '需求/审批流程-2.md')
+})
+
+test('the shared naming rule keeps titles readable and accepts numbered siblings', () => {
+  assert.equal(materialPathOf('handoff', '交接 合成需求 v2'), '交接/交接 合成需求 v2.md')
+  assert.equal(materialPathOf('requirement', '   '), '需求/未命名.md')
+  assert.equal(materialPathOf('requirement', 'CON'), '需求/CON_.md')
+  const stem = materialStem('采/购:审批*流程?' + '很长'.repeat(40))
+  assert.doesNotMatch(stem, /[\\/:*?"<>|\x00-\x1f]/u)
+  assert.ok([...stem].length <= 60)
+  assert.equal(isMaterialPathOf('scenario', '场景/采购审批.md', '采购审批'), true)
+  assert.equal(isMaterialPathOf('scenario', '场景/采购审批-10.md', '采购审批'), true)
+  assert.equal(isMaterialPathOf('scenario', '场景/采购审批-1.md', '采购审批'), false)
+  assert.equal(isMaterialPathOf('scenario', '需求/采购审批.md', '采购审批'), false)
 })
 
 test('confirmation requires real business evidence at Host, wire and backend boundaries', () => {

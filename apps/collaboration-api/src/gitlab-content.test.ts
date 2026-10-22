@@ -26,7 +26,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   const templateRef = { commitSha: fixedSha, path: '.template/default.md', sha256: createHash('sha256').update(templateBytes).digest('hex') };
   const common = { entityId: 'asset-1', title: 'Accepted input', scenarioIds: kind === 'requirement' ? ['source-1'] : [], prerequisites: [], sources: kind === 'requirement' ? [{ projectId: 'project-1', entityId: 'source-1', version: 1 }] : [], businessEvidence: [{ label: 'Author', reference: 'synthetic-acceptance', files: [{ path: evidencePath, sha256: createHash('sha256').update(evidenceBytes).digest('hex') }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] };
   const metadata: MaterialMetadata = kind === 'scenario' ? { ...common, kind, templateId: 'default', templateRef } : { ...common, kind, categoryId: 'business' };
-  const materialPath = `${kind === 'scenario' ? '场景' : '需求'}/asset-1.md`;
+  const materialPath = `${kind === 'scenario' ? '场景' : '需求'}/${metadata.title}.md`;
   const body = Buffer.from('# Accepted input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
   const fixed = { commitSha: fixedSha, path: materialPath, sha256: createHash('sha256').update(body).digest('hex') };
   const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: stage === 'prototype' ? 'prototype' as const : stage === 'scenario-batch' ? 'scenario-batch' as const : 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
@@ -35,7 +35,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   const changedPath = stage === 'prototype' ? '原型代码/src/pages/index.tsx' : materialPath;
   const diff = (path: string, text = '+accepted change') => ({ old_path: path, new_path: path, deleted_file: false, renamed_file: false, diff: text });
   const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: (stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : ['materials', 'relations']).map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: stage === 'prototype' ? { ...fixed } : { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }], ...(stage === 'scenario-batch' ? { expectedAssociationRevision: 0, batchRequirementIds: [] } : {}) };
-  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
+  const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), previousMaterials: new Map<string, Uint8Array>(), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
   const reads: Array<{ path: string; ref: string | null }> = [];
   mock.method(globalThis, 'fetch', async (url: string | URL | Request, request: RequestInit) => {
     const parsed = new URL(String(url)), path = decodeURIComponent(parsed.pathname.replace(/^\/api\/v4/, ''));
@@ -51,6 +51,10 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
     if (path === '/projects/7/repository/files/project.assets.json/raw') return json(parsed.searchParams.get('ref') === candidate && controls.candidateManifest ? controls.candidateManifest : controls.projectManifest);
     if (path === '/projects/7/repository/files/.template/default.md/raw') return new Response(templateBytes);
     const filePath = path.match(/^\/projects\/7\/repository\/files\/(.+)\/raw$/)?.[1];
+    if (filePath && controls.previousMaterials.has(filePath)) {
+      reads.push({ path: filePath, ref: parsed.searchParams.get('ref') });
+      return new Response(new Uint8Array(controls.previousMaterials.get(filePath)!));
+    }
     if (filePath && (controls.files.has(filePath) || filePath.startsWith('.eadp/evidence/'))) return controls.files.has(filePath) ? new Response(controls.files.get(filePath)) : new Response('{}', { status: 404 });
     if (path === `/projects/7/repository/files/${materialPath}/raw`) {
       const ref = parsed.searchParams.get('ref'); reads.push({ path: materialPath, ref });
@@ -241,6 +245,30 @@ test('material confirmations cannot whitelist unselected drafts or arbitrary att
   await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('MATERIAL_PATH_SCOPE'));
 });
 
+test('a fixed material path follows its business title instead of its entity ID', async () => {
+  const f = fixture('material'), confirmation = f.input.confirmations[0]!;
+  const idPath = `需求/${f.metadata.entityId}.md`;
+  f.controls.previousMaterials.set(idPath, f.body);
+  await assert.rejects(f.content.verify(actor, 7, { ...confirmation.fixed, path: idPath }), code('INVALID_MATERIAL_PATH'));
+  await f.content.verify(actor, 7, confirmation.fixed);
+});
+
+test('a title edit may remove the confirmed previous path and nothing else', async () => {
+  const f = fixture('material'), previous = f.materialPath, confirmation = f.input.confirmations[0]!;
+  const metadata = { ...f.metadata, title: 'Renamed input' } as MaterialMetadata;
+  const body = Buffer.from('# Renamed input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
+  const renamed = '需求/Renamed input.md', sha = createHash('sha256').update(body).digest('hex');
+  f.controls.previousMaterials.set(previous, f.body); f.controls.previousMaterials.set(renamed, body);
+  f.materials.set(metadata.entityId, metadata);
+  f.input.confirmations[0]!.fixed = { ...confirmation.fixed, path: renamed, sha256: sha };
+  f.input.confirmations[0]!.readHash = sha;
+  const removed = { old_path: previous, new_path: previous, deleted_file: true, renamed_file: false, diff: '' };
+  f.input.allowedPaths = [previous, renamed]; f.controls.candidateDiffs = [removed, f.diff(renamed)];
+  assert.deepEqual([...(await f.content.verifyCandidate(actor, 7, f.input)).keys()], [metadata.entityId]);
+  f.controls.previousMaterials.set(previous, Buffer.from('# 其他材料\n\n```eadp-metadata\n' + JSON.stringify({ ...metadata, entityId: 'other-1', kind: 'requirement' }) + '\n```\n\n正文\n'));
+  await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('MATERIAL_PATH_SCOPE'));
+});
+
 test('scenario templates are fixed catalog references and business metadata has no category', async () => {
   const f = fixture('scenario-batch');
   await f.content.verifyCandidate(actor, 7, f.input);
@@ -260,7 +288,7 @@ test('template catalogs reject missing defaults, duplicate identities and paths 
   ]) assert.throws(() => parseProjectManifest(JSON.stringify({ ...manifest, scenarioTemplates })), error => error instanceof DomainError);
 });
 
-for (const path of ['project.assets.json', '.template/default.md', '场景/unselected.md', '需求/unselected.md', 'baseline.unselected.json', 'handoff.unselected.md']) {
+for (const path of ['project.assets.json', '.template/default.md', '场景/unselected.md', '需求/unselected.md', '交接/unselected.md', 'baseline.unselected.json']) {
   test(`declaring ${path} as an attachment cannot bypass its protected write scope`, async () => {
     const f = fixture('material'), bytes = Buffer.from('declared as an attachment');
     // Scope protection is independent of file verification, which is covered above.
@@ -285,7 +313,7 @@ test('template publication validates its own checks and never confirms a busines
 
 test('template publication cannot change project identity or include a material draft', async () => {
   const f = fixture('material'), input = templateInput(f);
-  f.controls.candidateManifest = { ...f.controls.projectManifest, schemaVersion: 1, directories: ['场景', '需求', '原型代码'], projectId: 'forged-project' };
+  f.controls.candidateManifest = { ...f.controls.projectManifest, schemaVersion: 1, directories: ['场景', '需求', '交接', '原型代码'], projectId: 'forged-project' };
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_MANIFEST_SCOPE'));
   f.controls.candidateManifest = undefined;
   input.allowedPaths.push(f.materialPath); f.controls.candidateDiffs.push(f.diff(f.materialPath));
@@ -294,7 +322,7 @@ test('template publication cannot change project identity or include a material 
 
 test('template publication preserves historical catalog identities and refuses deletion', async () => {
   const f = fixture('material'), input = templateInput(f);
-  f.controls.candidateManifest = { ...f.controls.projectManifest, schemaVersion: 1, directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'replacement', templates: [{ id: 'replacement', name: 'Replacement', path: '.template/replacement.md' }] } };
+  f.controls.candidateManifest = { ...f.controls.projectManifest, schemaVersion: 1, directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'replacement', templates: [{ id: 'replacement', name: 'Replacement', path: '.template/replacement.md' }] } };
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_DELETE_FORBIDDEN'));
   f.controls.candidateManifest = undefined; f.controls.candidateDiffs[0]!.deleted_file = true;
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_PATH_SCOPE'));

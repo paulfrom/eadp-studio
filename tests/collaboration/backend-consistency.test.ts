@@ -37,7 +37,7 @@ test('A07 claim head gates and A08 shared draft directories hold on isolated Pos
   const created = await service.createProject(author, { idempotencyKey: key(), name: '一致性验证', namespaceId: 42, path: 'backend-consistency' })
   const projectId = created.id, remote = gitlab.projects.get(created.gitlabProjectId)!
   remote.head = initialSha; remote.empty_repo = false; remote.default_branch = 'main'
-  remote.manifest = { schemaVersion: 1, projectId, gitlabProjectId: created.gitlabProjectId, repositoryUrl: created.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: templateCatalog }
+  remote.manifest = { schemaVersion: 1, projectId, gitlabProjectId: created.gitlabProjectId, repositoryUrl: created.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog }
   await service.initializeProject(author, projectId, { idempotencyKey: key(), commitSha: initialSha })
 
   let first: EntityView, second: EntityView

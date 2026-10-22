@@ -6,6 +6,7 @@ import { createApp } from '../../apps/collaboration-api/src/app.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
 import type { EntityView, IntegrationView, LoginResponse, MaterialIntegrationRequest, MaterialMetadata, ProjectState, ProjectView, RepairTaskView, TemplateIntegrationRequest } from '../../packages/contracts/src/index.ts'
+import { materialPathOf, type MaterialKind } from '../../packages/asset-domain/src/index.ts'
 import { defaultTemplate, fixtureToken, gitlabFixture, templateCatalog } from './gitlab-fixture.ts'
 
 // Real SQL transactions and a test-owned GitLab HTTP boundary. This is not an
@@ -37,7 +38,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     const project = await post<ProjectView>('/v1/projects', { idempotencyKey: key(), name, path: `scenario-${name}`, namespaceId: 42 })
     const remote = gitlab.projects.get(project.gitlabProjectId)!
     remote.head = initialSha; remote.empty_repo = false; remote.default_branch = 'main'
-    remote.manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: remote.id, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: templateCatalog }
+    remote.manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: remote.id, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog }
     const initialized = await post<ProjectView>(`/v1/projects/${project.id}/initialize`, { idempotencyKey: key(), commitSha: initialSha })
     remote.snapshots = new Map([[initialSha, new Map([
       ['project.assets.json', Buffer.from(JSON.stringify(remote.manifest) + '\n')], ['.template/default.md', defaultTemplate], [evidencePath, evidence], [attachmentPath, attachment],
@@ -63,7 +64,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     const current = (await state()).project, sha = (++candidateNumber).toString(16).padStart(40, '0')
     const files = new Map(remote.snapshots!.get(current.recognizedHead!)!)
     const confirmations = values.map(({ value, metadata }) => {
-      const path = value.kind === 'handoff' ? `handoff.${value.id}.md` : `${value.kind === 'scenario' ? '场景' : '需求'}/${value.id}.md`
+      const path = materialPathOf(value.kind as MaterialKind, value.title)
       const bytes = Buffer.from('```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 自定义业务约束\n\n订单审核退回后允许重新提交，验收时可验证循环。\n')
       files.set(path, bytes)
       return { entityId: value.id, expectedRevision: value.revision, fixed: { commitSha: sha, path, sha256: hash(bytes) }, readHash: hash(bytes), authorConfirmed: true as const, confirmationMethod: 'direct' as const }

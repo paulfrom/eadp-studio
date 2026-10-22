@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { assertSharedSourceContract, devDesktop, electronInstalled, executeDev, inputDigest, parseDevArguments, validateDevHost, withDesktopLock } from '../../scripts/dev-desktop.mjs'
+import { assertNoRunningDevelopmentApp, assertSharedSourceContract, devDesktop, developmentProfile, electronInstalled, executeDev, inputDigest, parseDevArguments, validateDevHost, withDesktopLock } from '../../scripts/dev-desktop.mjs'
+import { developmentAppPids } from '../../apps/desktop-distribution/build/desktop-processes.mjs'
 import { removeDeletedSourceOutputs, studioStagingPaths } from '../../apps/desktop-distribution/build/prepare-studio-plugin.mjs'
 
 async function fixture() {
@@ -33,7 +34,7 @@ async function fixture() {
     if (command.includes('install --no-frozen')) await put(`${tree}/node_modules/.modules.yaml`)
     if (command.includes('run build:desktop')) for (const directory of ['apps/desktop/lib', 'apps/desktop-host/lib', 'apps/cli/lib', 'apps/web/dist', 'packages/eadp/contracts/lib']) await put(`${tree}/${directory}/built.js`, 'built')
   }
-  const run = (options = {}) => withDesktopLock(path.join(root, '.local/build'), () => devDesktop({ root, sharedRoot: root, execute, verify: async () => {}, record: async () => put(`${tree}/packages/eadp/studio-plugin/assets/prototype-template.tar.gz`, 'generated archive'), tools: async () => calls.push('tools'), verifyTools: async () => {}, electronReady: async () => true, ...options }))
+  const run = (options = {}) => withDesktopLock(path.join(root, '.local/build'), () => devDesktop({ root, sharedRoot: root, execute, verify: async () => {}, record: async () => put(`${tree}/packages/eadp/studio-plugin/assets/prototype-template.tar.gz`, 'generated archive'), tools: async () => calls.push('tools'), verifyTools: async () => {}, electronReady: async () => true, appPids: async () => [], ...options }))
   const clean = async () => { assert.equal(path.dirname(root), path.resolve(tmpdir())); await rm(root, { recursive: true, force: true }) }
   return { root, calls, environments, put, run, clean, setFail: value => { fail = value } }
 }
@@ -116,6 +117,40 @@ test('build failure never launches, releases the lock, and cannot reuse a partia
     await f.run()
     assert.ok(f.calls.some(call => call.includes('build:artifacts')))
   } finally { await f.clean() }
+})
+
+test('a launch refuses to start while a development app still owns its profile', async () => {
+  const f = await fixture()
+  try {
+    const profiles = []
+    await assert.rejects(
+      f.run({ appPids: async profile => { profiles.push(profile); return [4242] } }),
+      /Desktop development app PID 4242 still owns .*electron-user-data.*tray menu/,
+    )
+    assert.deepEqual(f.calls, [], 'a running development app is reported before any preparation')
+    assert.equal(profiles[0], developmentProfile(path.join(f.root, '.local/build/dsh/apps/desktop')))
+    await f.run({ prepare: true, appPids: async () => [4242] })
+    assert.ok(f.calls.some(call => call.includes('prepare:primary-runtime')))
+    assert.ok(!f.calls.some(call => call.includes('start:desktop')))
+  } finally { await f.clean() }
+})
+
+test('the development app probe reads only main processes of the profile it is given', async () => {
+  const invocations = []
+  const spawn = (command, args, options) => {
+    invocations.push({ command, args, options })
+    return { status: 0, stdout: ' 4242 \r\n77\r\n', stderr: '' }
+  }
+  assert.deepEqual(developmentAppPids('C:\\profile dir', spawn), [4242, 77])
+  const [{ command, args, options }] = invocations
+  assert.equal(command, 'powershell.exe')
+  assert.equal(options.env.EADP_DESKTOP_DEVELOPMENT_PROFILE, 'C:\\profile dir')
+  assert.equal(options.encoding, 'utf8')
+  assert.match(args.at(-1), /--type=/)
+  assert.deepEqual(developmentAppPids('profile', () => ({ status: 0, stdout: '', stderr: '' })), [])
+  assert.throws(() => developmentAppPids('profile', () => ({ status: 1, stdout: '', stderr: 'access denied' })), /access denied/)
+  assert.throws(() => developmentAppPids('profile', () => ({ status: 1, stdout: '', stderr: '' })), /powershell exited with 1/)
+  await assert.doesNotReject(assertNoRunningDevelopmentApp(process.cwd(), async () => []))
 })
 
 test('missing dependency links and modified output force the appropriate preparation', async () => {

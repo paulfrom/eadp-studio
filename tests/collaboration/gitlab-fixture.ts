@@ -109,7 +109,7 @@ export async function gitlabFixture() {
         return
       }
       if (action === 'repository/tree') {
-        const entries = ['场景', '需求', '原型代码', '.template'].map(name => ({ id: 'c'.repeat(40), name, path: name, type: 'tree', mode: '040000' }))
+        const entries = ['场景', '需求', '交接', '原型代码', '.template'].map(name => ({ id: 'c'.repeat(40), name, path: name, type: 'tree', mode: '040000' }))
         const manifestBytes = Buffer.from(JSON.stringify(project.manifest ?? {}) + '\n')
         const manifestId = createHash('sha1').update(`blob ${manifestBytes.length}\0`).update(manifestBytes).digest('hex')
         return send(response, 200, [...entries, { id: manifestId, name: 'project.assets.json', path: 'project.assets.json', type: 'blob', mode: '100644' }])

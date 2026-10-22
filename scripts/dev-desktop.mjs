@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { acquireDesktopBuildLock } from '../apps/desktop-distribution/build/desktop-build-lock.mjs'
+import { developmentAppPids } from '../apps/desktop-distribution/build/desktop-processes.mjs'
 import { pnpmInvocation } from '../apps/desktop-distribution/build/run-pnpm.mjs'
 import { recordStudioBuild, verifyRuntimePayload, verifyStudioPlugin } from '../apps/desktop-distribution/build/studio-payload.mjs'
 import { studioStagingPaths } from '../apps/desktop-distribution/build/prepare-studio-plugin.mjs'
@@ -21,7 +22,7 @@ then launch upstream Electron with DevTools and main/renderer/Host inspectors.
 Requires native Windows x64, Node ^22.19.0 or >=24, pnpm 11.x, Git, tar,
 real symbolic-link permission and download access on first preparation.
 Unchanged inputs reuse installed dependencies and verified build outputs.
-After source edits, exit the app and run this command again; no source watcher.
+After source edits, quit the app from its tray menu and run this command again; no source watcher.
 Development data stays in .local/build/dsh/apps/desktop/.desktop-build/development.
 `
 
@@ -70,6 +71,20 @@ export async function electronInstalled(desktop, environment = process.env) {
     if (['ENOENT', 'MODULE_NOT_FOUND'].includes(error.code)) return false
     throw error
   }
+}
+
+/** The Chromium profile of the development app, resolved as the desktop launcher resolves it. */
+export function developmentProfile(desktop) {
+  return path.resolve(process.env.DSH_DESKTOP_USER_DATA_DIR ?? path.join(desktop, '.desktop-build/development/electron-user-data'))
+}
+
+/** A running development app owns its profile, so a second launch exits without a window. */
+export async function assertNoRunningDevelopmentApp(desktop, appPids = developmentAppPids) {
+  const profile = developmentProfile(desktop)
+  const pids = await appPids(profile)
+  if (pids.length === 0) return
+  const owners = pids.map(pid => `PID ${String(pid)}`).join(', ')
+  throw new Error(`Desktop development app ${owners} still owns ${profile}. Quit it from the tray menu, then run this command again.`)
 }
 
 /** Stable content keys include deleted files; generated styles are rebuilt from their inputs. */
@@ -160,9 +175,11 @@ const PRODUCT_INPUTS = [...PRODUCT_DEPENDENCIES, 'scripts/dev-desktop.mjs', 'scr
 const BUILT_OUTPUTS = ['apps/desktop/lib', 'apps/desktop-host/lib', 'apps/cli/lib', 'apps/web/dist', 'packages/eadp/contracts/lib']
 
 /** One build graph, followed by the official --skip-build launcher; failures never launch Electron. */
-export async function devDesktop({ root, sharedRoot, prepare = false, execute = executeDev, verify = verifyStudioPlugin, record = recordStudioBuild, tools, electronReady, verifyTools = verifyRuntimePayload }) {
+export async function devDesktop({ root, sharedRoot, prepare = false, execute = executeDev, verify = verifyStudioPlugin, record = recordStudioBuild, tools, electronReady, verifyTools = verifyRuntimePayload, appPids = developmentAppPids }) {
   await assertSharedSourceContract(root, sharedRoot)
   const tree = path.join(sharedRoot, '.local/build/dsh')
+  const desktop = path.join(tree, 'apps/desktop')
+  if (!prepare) await assertNoRunningDevelopmentApp(desktop, appPids)
   const statePath = path.join(sharedRoot, '.local/build/.studio-desktop-dev.json')
   const state = await json(statePath) ?? {}
   const pnpm = (operation, cwd, environment = {}) => {
@@ -207,7 +224,6 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
     state.treeDependencies = await treeDependencies()
     await save()
   } else console.log('Desktop development: reusing DSH build dependencies.')
-  const desktop = path.join(tree, 'apps/desktop')
   const checkElectron = electronReady ?? (() => electronInstalled(desktop))
   if (!await checkElectron()) {
     console.log('Desktop development: installing the fixed Electron binary...')

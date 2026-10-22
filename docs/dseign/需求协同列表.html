@@ -1,497 +1,56 @@
-<!DOCTYPE html><html lang="zh-CN" style=""><head><meta charset="utf-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="web_dashboard" name="shell-type"><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&amp;family=Plus+Jakarta+Sans:wght@100..900&amp;display=swap" rel="stylesheet"><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"on-tertiary":"#ffffff","on-primary-fixed-variant":"#173bab","primary-fixed-dim":"#b8c4ff","outline-variant":"#c4c5d5","surface-container-low":"#eff4ff","primary-container":"#1e40af","tertiary":"#002e81","surface-container":"#e5eeff","outline":"#757684","surface":"#f8f9ff","surface-container-high":"#dce9ff","inverse-primary":"#b8c4ff","on-primary":"#ffffff","on-primary-container":"#a8b8ff","on-error":"#ffffff","on-tertiary-container":"#a4b9ff","on-secondary":"#ffffff","background":"#f8f9ff","secondary-fixed-dim":"#c0c1ff","on-primary-fixed":"#001453","surface-tint":"#3755c3","surface-container-lowest":"#ffffff","surface-dim":"#cbdbf5","on-surface":"#0b1c30","on-secondary-fixed":"#07006c","tertiary-fixed":"#dbe1ff","on-surface-variant":"#444653","on-tertiary-fixed":"#00174b","primary-fixed":"#dde1ff","on-secondary-container":"#fffbff","error-container":"#ffdad6","error":"#ba1a1a","secondary-container":"#6063ee","surface-bright":"#f8f9ff","secondary":"#4648d4","on-error-container":"#93000a","inverse-surface":"#213145","tertiary-container":"#0042b2","surface-container-highest":"#d3e4fe","secondary-fixed":"#e1e0ff","surface-variant":"#d3e4fe","inverse-on-surface":"#eaf1ff","tertiary-fixed-dim":"#b4c5ff","primary":"#00288e","on-secondary-fixed-variant":"#2f2ebe","on-tertiary-fixed-variant":"#003ea8","on-background":"#0b1c30"},borderRadius:{DEFAULT:"0.125rem",lg:"0.25rem",xl:"0.5rem",full:"0.75rem"},spacing:{"space-lg":"1.25rem","space-sm":"0.5rem","space-md":"0.75rem","space-xl":"2rem",margin:"1.5rem",gutter:"1rem","space-xs":"0.25rem"},fontFamily:{"headline-sm":["Plus Jakarta Sans"],"headline-lg":["Plus Jakarta Sans"],"body-lg":["Inter"],"label-md":["Inter"],"headline-xl":["Plus Jakarta Sans"],"body-md":["Inter"],"code-sm":["JetBrains Mono"],"body-sm":["Inter"],"label-sm":["Inter"]},fontSize:{"headline-sm":["18px",{lineHeight:"24px",fontWeight:"600"}],"headline-lg":["22px",{lineHeight:"28px",letterSpacing:"-0.015em",fontWeight:"600"}],"body-lg":["15px",{lineHeight:"22px",fontWeight:"400"}],"label-md":["12px",{lineHeight:"16px",letterSpacing:"0.02em",fontWeight:"600"}],"headline-xl":["28px",{lineHeight:"36px",letterSpacing:"-0.02em",fontWeight:"700"}],"body-md":["13px",{lineHeight:"18px",fontWeight:"400"}],"code-sm":["11px",{lineHeight:"14px",fontWeight:"500"}],"body-sm":["12px",{lineHeight:"16px",fontWeight:"400"}],"label-sm":["11px",{lineHeight:"14px",letterSpacing:"0.04em",fontWeight:"600"}]}}}};</script></head><body class="bg-surface font-body-md text-on-surface select-none"><header class="fixed top-0 left-0 right-0 h-10 z-50 bg-surface-container-lowest/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] flex items-center justify-between px-space-md"><div class="flex items-center gap-space-md"><button class="w-7 h-7 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface rounded" type="button"><span class="material-symbols-outlined text-[18px]">menu</span></button><div class="flex items-center gap-space-xs font-label-md text-label-md"><span class="text-on-surface-variant hover:text-on-surface cursor-pointer px-space-xs py-0.5 rounded hover:bg-surface-container-high">应用(A)</span><span class="text-on-surface-variant hover:text-on-surface cursor-pointer px-space-xs py-0.5 rounded hover:bg-surface-container-high">编辑(E)</span></div><div class="h-3.5 w-px bg-outline-variant/40 mx-space-xs"></div><div class="flex items-center gap-space-sm"><span class="font-headline-sm text-headline-sm text-primary tracking-tight font-bold">EADP Studio</span><span class="font-code-sm text-code-sm text-on-surface-variant bg-surface-container-low px-space-xs py-0.5 rounded flex items-center gap-1"><span class="material-symbols-outlined text-[12px] text-tertiary">folder_open</span>eadp-core-design</span><span class="font-code-sm text-code-sm text-primary bg-primary-fixed/40 px-space-xs py-0.5 rounded flex items-center gap-1 font-semibold"><span class="w-1.5 h-1.5 rounded-full bg-primary"></span>main (已同步)</span></div></div><div class="flex items-center gap-space-md"><div class="h-4 w-px bg-outline-variant/40 ml-space-xs"></div><div class="flex items-center h-10 -mr-space-md"><button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface" title="最小化" type="button"><span class="font-code-sm text-[12px] leading-none mb-1">―</span></button><button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface" title="最大化" type="button"><span class="font-code-sm text-[12px] leading-none">▢</span></button><button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-error hover:text-on-error" title="关闭" type="button"><span class="font-code-sm text-[13px] leading-none">✕</span></button></div></div></header><aside class="fixed left-0 top-10 bottom-0 w-64 bg-surface-container-low/80 backdrop-blur-xl z-40 flex flex-col justify-between shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="flex flex-col"><div class="p-3 border-b border-slate-100 flex items-center justify-between bg-surface-container-lowest/50"><div class="flex items-center space-x-2"><div class="w-6 h-6 rounded bg-blue-100 text-blue-700 font-mono text-xs flex items-center justify-center font-bold">&lt;/&gt;</div><div class="leading-tight"><div class="text-xs font-bold text-slate-800 flex items-center gap-1">eadp-core-design</div><div class="text-[10px] text-emerald-600 font-medium">main • local ready</div></div></div><svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4"></path></svg></div><div class="px-space-md py-space-xs pt-3"><span class="font-label-sm text-[10px] text-on-surface-variant tracking-wider uppercase px-space-sm font-semibold">STUDIO NAVIGATION</span></div><nav class="flex flex-col gap-0.5 px-space-md"><a class="flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="project-scenarios" href="#"><span class="material-symbols-outlined text-[18px]">view_quilt</span><span class="">项目场景</span></a><div class="flex flex-col"><a aria-current="page" class="flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md bg-primary-container text-on-primary font-semibold shadow-sm transition-colors" data-path="requirements-collaboration" href="#"><div class="flex items-center gap-space-sm"><span class="material-symbols-outlined text-[18px]">assignment</span><span class="">需求协同</span></div><span class="text-[10px] px-1.5 py-0.5 rounded bg-white/20 font-mono leading-none">9</span></a><div class="ml-4 pl-3 border-l-2 border-primary/30 mt-1 mb-1 flex flex-col gap-1"><div class="flex items-center justify-between px-2 py-1.5 rounded bg-primary-fixed/30 text-primary font-code-sm text-[11px] font-semibold cursor-pointer"><div class="flex items-center gap-1.5 truncate"><span class="text-primary font-bold">↳</span><span class="truncate">REQ-202610-09</span></div><span class="text-[10px] bg-secondary-fixed text-on-secondary-fixed px-1 rounded">编辑中</span></div></div></div><a class="flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="prototype-display" href="#"><span class="material-symbols-outlined text-[18px]">devices</span><span class="">原型展示</span></a><a class="flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="baseline-confirmation" href="#"><span class="material-symbols-outlined text-[18px]">verified</span><span class="">基线确认</span></a><a class="flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="handover-manifest" href="#"><span class="material-symbols-outlined text-[18px]">receipt_long</span><span class="">交接清单</span></a></nav></div><div class="p-3 border-t border-slate-100 flex items-center justify-between bg-slate-50/50"><div class="flex items-center space-x-2"><div class="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs flex items-center justify-center font-bold">189</div><div class="leading-tight"><div class="text-[11px] font-semibold text-slate-800">189******70</div><div class="text-[9px] text-slate-400">li.yuchen @ GitLab</div></div></div><button class="text-slate-400 hover:text-slate-600 p-1 rounded" type="button" title="设置"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></button></div></aside><div class="pl-64"><main class="w-full pt-10 min-h-screen bg-surface"><div class="flex flex-col w-full">
-<!-- Interactive Navigation Script -->
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>需求协同 · EADP Studio</title><link rel="stylesheet" href="requirements-demo.css"></head>
+<body><div id="app-shell"></div><main class="main-content"><div class="page requirements-list">
+<header class="page-title"><div class="title-identity"><span class="list-title-icon">▤</span><div><h1>需求协同 <span class="title-count" id="heading-count"></span></h1><p class="muted">从场景细化业务能力，独立整理与确认每一项需求。</p></div></div><div class="actions"><button class="btn" id="all-findings">项目差异</button><button class="btn" id="split-open">从场景拆分</button><button class="btn primary" id="create-open">＋ 新建需求</button></div></header>
+<div class="list-toolbar"><div class="tabs" role="tablist" aria-label="需求状态"><button type="button" role="tab" data-status="all" class="active">全部需求 <span class="tab-count" id="count-all"></span></button><button type="button" role="tab" data-status="draft">草稿 <span class="tab-count" id="count-draft"></span></button><button type="button" role="tab" data-status="confirmed">已确认 <span class="tab-count" id="count-confirmed"></span></button></div>
+<div class="filter-bar"><label class="search-wrap"><span class="search-symbol">⌕</span><span class="sr-only">搜索需求名称或编号</span><input id="search" type="search" placeholder="搜索需求名称或编号"></label><label><span class="sr-only">来源场景筛选</span><select id="source"><option value="">全部来源场景</option></select></label><label><span class="sr-only">排序</span><select id="sort"><option value="updated">最近更新</option><option value="code">编号升序</option><option value="title">名称排序</option></select></label><button class="btn ghost" id="clear">清除筛选</button></div></div>
+<div class="grid-summary"><span id="result-count"></span><span>业务内容与独立差异分别管理</span></div><section id="requirements-grid" class="requirements-grid" aria-label="需求列表"></section><footer class="pagination"><span id="page-summary"></span><div id="pages" class="pages"></div></footer>
+</div></main><div id="overlays"></div><script src="requirements-demo.js"></script><script>
+'use strict';
+const D=window.RequirementsDemo,E=D.escape;let status='all',page=1;const pageSize=8;
+D.mountShell({active:'requirements'});
+const $=id=>document.getElementById(id);
+function count(value){return Array.isArray(value)?value.length:'未统计';}
+function render(){const data=D.load(),all=data.requirements,q=$('search').value.trim().toLocaleLowerCase(),source=$('source').value;
+document.querySelector('.nav-count').textContent=all.length;
+$('heading-count').textContent=all.length+' 项';
+['all','draft','confirmed'].forEach(s=>{$('count-'+s).textContent=s==='all'?all.length:all.filter(r=>r.status===s).length;});
+document.querySelectorAll('[data-status]').forEach(b=>{b.classList.toggle('active',b.dataset.status===status);b.setAttribute('aria-selected',String(b.dataset.status===status));});
+let items=all.filter(r=>(status==='all'||r.status===status)&&(!source||r.scenarioIds.includes(source))&&(!q||r.title.toLocaleLowerCase().includes(q)||r.code.toLowerCase().includes(q)));
+items.sort((a,b)=>$('sort').value==='code'?a.code.localeCompare(b.code):$('sort').value==='title'?a.title.localeCompare(b.title,'zh-CN'):b.updatedAt.localeCompare(a.updatedAt)||b.code.localeCompare(a.code));
+const total=items.length,totalPages=Math.max(1,Math.ceil(total/pageSize));page=Math.min(page,totalPages);const visible=items.slice((page-1)*pageSize,page*pageSize);
+$('result-count').textContent='共 '+total+' 项需求'+(q||source||status!=='all'?' · 已筛选':'');
+$('requirements-grid').innerHTML=visible.length?visible.map(r=>{const fs=data.findings.filter(f=>f.requirementId===r.id),pending=fs.filter(f=>f.status==='pending').length;const rules=r.metricsStale?'未统计':count(r.rules);const questions=r.metricsStale?'未统计':Array.isArray(r.questions)?r.questions.filter(x=>x.core!==false&&!x.resolved).length:'未统计';return '<article class="card requirement-card '+r.status+'"><div class="card-body"><div class="card-header"><span class="req-code">'+E(r.code)+'</span><span class="badge '+(r.status==='confirmed'?'blue':'gray')+'">'+(r.status==='confirmed'?'已确认 · '+E(r.version):'草稿')+'</span></div><a class="requirement-title" href="需求协同新增编辑.html?id='+encodeURIComponent(r.id)+'">'+E(r.title)+'</a><p class="requirement-summary">'+E(r.summary||'正文空白，等待整理需求。')+'</p><div class="source-chips">'+r.scenarioIds.map(id=>{const s=D.scene(id);return s?'<span class="source-chip">'+E(s.code)+' '+E(s.title)+(s.builtin?' · 系统内置':' · '+E(r.sourceRefs.find(ref=>ref.scenarioId===id)?.version||'引用不可读'))+'</span>':'<span class="badge amber">来源不可读</span>';}).join('')+'</div><div class="card-metrics"><div class="metric"><span>业务规则</span><strong>'+rules+(rules==='未统计'?'':' 条')+'</strong></div><div class="metric"><span>核心待澄清</span><strong class="'+(questions>0?'amber':'')+'">'+questions+(questions==='未统计'?'':' 项')+'</strong></div><button class="metric clickable" data-findings="'+E(r.id)+'" type="button"><span>独立差异 · 查看</span><strong class="'+(pending?'amber':'')+'">'+pending+' 待处理 <small class="muted">/ '+fs.length+'</small></strong></button></div></div><footer class="card-footer"><div class="people"><span>创建 '+E(r.creator)+'</span><span>编辑 '+E(r.editor)+'</span></div><span>修订 '+r.revision+' · '+E(r.updatedAt.slice(0,10))+'</span></footer></article>';}).join(''):'<div class="empty-state"><div class="empty-icon">▤</div><h2>'+(all.length?'未找到匹配的需求':'尚无协同需求')+'</h2><p>'+(all.length?'试试其他名称、编号或来源场景。':'命名并选择来源场景，开始整理第一项需求。')+'</p><button class="btn" id="empty-clear">'+(all.length?'清除筛选':'新建需求')+'</button></div>';
+$('page-summary').textContent=total?'显示 '+((page-1)*pageSize+1)+'—'+Math.min(page*pageSize,total)+' / 共 '+total+' 项':'显示 0 / 共 0 项';
+$('pages').innerHTML='<button class="btn small" data-page="'+(page-1)+'" '+(page===1?'disabled':'')+'>← 上一页</button>'+Array.from({length:totalPages},(_,i)=>'<button class="btn small page-number '+(i+1===page?'active':'')+'" data-page="'+(i+1)+'">'+(i+1)+'</button>').join('')+'<button class="btn small" data-page="'+(page+1)+'" '+(page===totalPages?'disabled':'')+'>下一页 →</button>';
+}
+function clearFilters(){status='all';page=1;$('search').value='';$('source').value='';$('sort').value='updated';render();}
+$('source').insertAdjacentHTML('beforeend',D.load().scenarios.map(s=>'<option value="'+E(s.id)+'">'+E(s.code+' '+s.title)+(s.builtin?'（系统内置）':'')+'</option>').join(''));
+$('search').addEventListener('input',()=>{page=1;render();});['source','sort'].forEach(id=>$(id).addEventListener('change',()=>{page=1;render();}));$('clear').onclick=clearFilters;
+document.addEventListener('click',event=>{const tab=event.target.closest('[data-status]'),p=event.target.closest('[data-page]');if(tab){status=tab.dataset.status;page=1;render();}if(p&&!p.disabled){page=Number(p.dataset.page);render();document.querySelector('.main-content').scrollTo({top:0,behavior:'smooth'});}if(event.target.id==='empty-clear'){if(D.list().length)clearFilters();else $('create-open').click();}});
+render();
+</script>
 <script>
-    // Synchronize Left Sidebar Navigation Active State
-    (function initSidebarSync() {
-      const links = document.querySelectorAll('aside nav a');
-      links.forEach(link => {
-        const path = link.getAttribute('data-path');
-        if (path === 'requirements-collaboration') {
-          link.className = 'flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md bg-primary-container text-on-primary font-semibold shadow-sm transition-colors';
-        } else {
-          link.className = 'flex items-center gap-space-sm px-space-sm py-2 rounded font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors';
-        }
-      });
-    })();
+// Manual creation explicitly binds sources; the body starts empty.
+function dialog(title,subtitle,content,buttons){const old=$('work-modal');if(old)old.remove();$('overlays').insertAdjacentHTML('beforeend','<dialog id="work-modal"><div class="modal-head"><div><h2>'+title+'</h2><p>'+subtitle+'</p></div><button class="btn ghost" data-close-modal aria-label="关闭">✕</button></div><div class="modal-body">'+content+'</div><div class="modal-footer">'+buttons+'</div></dialog>');$('work-modal').showModal();}
+function sourceChoices(name,builtin){return D.load().scenarios.filter(s=>builtin||!s.builtin).map(s=>'<label class="check-row"><input type="checkbox" name="'+name+'" value="'+E(s.id)+'"><span><strong>'+E(s.code+' '+s.title)+(s.builtin?' <span class="badge blue">系统内置</span>':'')+'</strong><small>'+E(s.version)+(s.builtin?' · 仅提供来源归属':' · 已确认')+'</small></span></label>').join('');}
+function selected(name){return [...document.querySelectorAll('input[name="'+name+'"]:checked')].map(input=>input.value);}
+function templateOptions(){return D.load().templates.map(t=>'<option value="'+E(t.id)+'">'+E(t.title+' · '+t.version)+'</option>').join('');}
+function openCreate(){dialog('新建需求','名称与来源是创建需求的起点。','<div class="field"><label for="new-title">需求名称 <span class="muted">必填</span></label><input id="new-title" maxlength="100" placeholder="输入一项可独立交付的业务能力" autofocus></div><div class="field"><label>来源场景 <span class="muted">至少选择一项，可多选</span></label><div class="check-list">'+sourceChoices('new-source',true)+'</div></div><div class="field"><label for="new-template">需求模板</label><select id="new-template">'+templateOptions()+'</select><small class="muted">正文从空白开始，模板用于后续整理建议。</small></div><div id="create-error" class="error-line" role="alert"></div>','<button class="btn" data-close-modal>取消</button><button class="btn primary" id="create-submit">创建并整理 →</button>');}
+$('create-open').onclick=openCreate;
+let splitCandidates=[];
+function openSplit(){dialog('从场景拆分需求','可选择一个或多个已确认普通场景，多轮补拆不会修改已有需求。','<div class="field"><label>业务来源场景 <span class="muted">支持联合拆分</span></label><div class="check-list">'+sourceChoices('split-source',false)+'</div><small class="muted">通用场景不参与业务拆分。</small></div><div class="field"><label for="split-template">需求模板</label><select id="split-template">'+templateOptions()+'</select></div><div class="info-band">参考已有需求减少重复，由你选择采用哪些候选。</div><div id="split-error" class="error-line" role="alert"></div>','<button class="btn" data-close-modal>取消</button><button class="btn primary" id="split-generate">预览拆分候选</button>');}
+$('split-open').onclick=openSplit;
+function previewSplit(){const ids=selected('split-source');if(!ids.length){$('split-error').textContent='请至少选择一个已确认普通场景。';return;}const templateId=$('split-template').value;splitCandidates=ids.map((id,index)=>{const s=D.scene(id),existing=D.list().filter(r=>r.scenarioIds.includes(id));const title=s.title+'业务处理与异常核实';const summary=s.excerpt;return {title,summary,scenarioIds:[id],templateId,existing,rules:[{title:s.excerpt}],questions:[{title:'请结合实际业务资料补充处理角色、边界与异常验收依据。',core:true,resolved:false}],body:'# '+title+'\n\n## 目标\n\n'+summary+'\n\n## 范围\n\n本候选仅承接 '+s.code+' '+s.title+' 的已读片段，范围需要用户进一步确认。\n\n## 来源\n\n'+s.code+' '+s.version+'\n\n> '+s.excerpt+'\n\n## 业务规则\n\n- '+s.excerpt+'\n\n## 验收依据\n\n待根据正式业务依据补充可判断的验收结果。\n\n## 待澄清\n\n- [ ] 请补充处理角色、边界与异常验收依据。'};});
+dialog('拆分候选','候选按实际相关来源分别归属；只有选中并采用后才创建需求。','<div class="info-band">本轮已选 '+ids.length+' 个来源，展示 '+splitCandidates.length+' 项有限示例候选。请核对已有需求，避免重复采用。</div>'+splitCandidates.map((c,i)=>'<article class="candidate-card"><label><input type="checkbox" name="candidate" value="'+i+'">'+E(c.title)+'</label><p>'+E(c.summary)+'</p><div class="source-chips">'+c.scenarioIds.map(id=>'<span class="source-chip">'+E(D.scene(id).code+' '+D.scene(id).version)+'</span>').join('')+'</div><p><small>已有相关需求：'+(c.existing.length?c.existing.map(r=>E(r.code+' '+r.title)).join('；'):'暂无')+'</small></p></article>').join('')+'<div class="error-line" id="candidate-error" role="alert"></div>','<button class="btn" id="split-back">重新选择</button><button class="btn primary" id="candidate-create">采用选中候选</button>');}
+document.addEventListener('click',event=>{if(event.target.closest('[data-close-modal]'))$('work-modal')?.close();if(event.target.id==='create-submit'){try{const req=D.create({title:$('new-title').value,scenarioIds:selected('new-source'),templateId:$('new-template').value});location.href='需求协同新增编辑.html?id='+encodeURIComponent(req.id);}catch(error){$('create-error').textContent=error.message;}}if(event.target.id==='split-generate')previewSplit();if(event.target.id==='split-back')openSplit();if(event.target.id==='candidate-create'){const indexes=selected('candidate');if(!indexes.length){$('candidate-error').textContent='请先选择要采用的候选。';return;}const created=[];for(const index of indexes){try{const {existing,...candidate}=splitCandidates[Number(index)];created.push(D.create(candidate));}catch(error){$('candidate-error').textContent=error.message;return;}}$('work-modal').close();render();D.toast('已创建 '+created.length+' 项需求，原有需求保持独立。');}});
+</script>
 
-    // Filter Logic for Requirements Cards
-    function filterCards(filterKey, buttonEl) {
-      const tabs = document.querySelectorAll('[data-filter-tab]');
-      tabs.forEach(tab => {
-        tab.className = 'px-space-md py-1.5 rounded font-label-md text-label-md transition-all text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high';
-      });
-      buttonEl.className = 'px-space-md py-1.5 rounded font-label-md text-label-md transition-all bg-surface-container-lowest text-primary font-bold shadow-sm';
-
-      const cards = document.querySelectorAll('[data-req-category]');
-      cards.forEach(card => {
-        const cat = card.getAttribute('data-req-category');
-        if (filterKey === 'all' || cat === filterKey) {
-          card.classList.remove('hidden');
-        } else {
-          card.classList.add('hidden');
-        }
-      });
-    }
-
-    // Modal Simulation for Requirement Editor
-    function openRequirementEditor(reqId) {
-      const drawer = document.getElementById('req-editor-drawer');
-      const titleEl = document.getElementById('drawer-req-id');
-      if (drawer) {
-        if (titleEl && reqId) titleEl.innerText = reqId;
-        drawer.classList.remove('translate-x-full');
-        drawer.classList.remove('pointer-events-none');
-      }
-    }
-
-    function closeRequirementEditor() {
-      const drawer = document.getElementById('req-editor-drawer');
-      if (drawer) {
-        drawer.classList.add('translate-x-full');
-        drawer.classList.add('pointer-events-none');
-      }
-    }
-  </script>
-<!-- Top Operational Control Panel -->
-<section class="w-full bg-surface-container-lowest shadow-sm px-margin py-space-md flex flex-col gap-space-sm">
-<div class="flex flex-col md:flex-row md:items-center justify-between gap-space-sm">
-<div class="flex items-center gap-space-sm flex-wrap">
-<h1 class="font-headline-lg text-headline-lg text-on-surface tracking-tight flex items-center gap-space-sm">
-<span class="">需求协同</span>
-</h1>
-<div class="flex items-center gap-1.5">
-
-
-</div>
-</div>
-<!-- Action Buttons -->
-<div class="flex items-center gap-space-xs flex-wrap">
-
-
-<button class="h-8 px-space-md rounded bg-primary text-on-primary hover:bg-primary-container font-label-md text-label-md flex items-center gap-1.5 shadow-sm transition-colors" onclick="openRequirementEditor('REQ-202610-09')" type="button">
-<span class="material-symbols-outlined text-[16px]">add</span>
-<span class="">新建需求</span>
-</button>
-</div>
-</div>
-<!-- Metadata Subtitle & KPI Metrics Line -->
-
-</section>
-<!-- Filter & Realtime Indicators Bar -->
-<section class="px-margin py-space-sm bg-surface-container-low flex flex-col md:flex-row md:items-center justify-between gap-space-sm">
-<!-- Category Tabs -->
-<div class="flex items-center gap-1 overflow-x-auto py-0.5">
-<button class="px-space-md py-1.5 rounded font-label-md text-label-md transition-all bg-surface-container-lowest text-primary font-bold shadow-sm" data-filter-tab="" onclick="filterCards('all', this)" type="button">
-        全部需求 (9)
-      </button>
-
-
-<button class="px-space-md py-1.5 rounded font-label-md text-label-md transition-all text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high" data-filter-tab="" onclick="filterCards('baseline', this)" type="button">
-        已固化基线 (5)
-      </button>
-
-</div>
-<!-- Right-side status indicators -->
-
-</section>
-<!-- Requirements Grid Container (2 Columns Mirroring SCREEN_35 Architecture) -->
-<main class="px-margin py-space-lg">
-<div class="grid grid-cols-1 xl:grid-cols-2 gap-space-md w-full">
-<!-- CARD 1: REQ-202610-09 (AI协同就绪) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative group cursor-pointer" data-req-category="ai_ready" onclick="openRequirementEditor('REQ-202610-09')">
-<!-- Accent indicator bar -->
-<div class="h-1 w-full bg-secondary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<!-- Card Header & Metadata -->
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-09</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-09 跨境多级保理池</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                跨境保理池动态贴现与结算规约
-              </h2>
-</div>
-<!-- Status Tag -->
-
-</div>
-<!-- Description -->
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            面向全球供应链核心企业与跨国 Tier-1 供应商的实时贴现与智能资金融通协议，支持60s汇率锁定与分账划拨。
-          </p>
-<!-- Metrics Micro-Grid -->
-<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-space-xs">
-
-
-
-
-</div>
-</div>
-<!-- Card Footer & Action Buttons -->
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-primary text-on-primary font-code-sm text-[10px] flex items-center justify-center font-bold">LC</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Lead PM · 李宇晨</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 2: REQ-202610-01 (已固化基线) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="baseline" onclick="openRequirementEditor('REQ-202610-01')">
-<div class="h-1 w-full bg-primary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-01</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-01 准入流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                核心企业准入与授信初审规约
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container text-on-surface shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px] text-primary">lock</span>
-              已固化基线
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            核心企业资质透视与供应链信用穿透规则，支持工商多源核查与动态信用评分判定。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">3项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">MSW 仿真</span>
-<span class="font-code-sm text-code-sm font-bold text-primary mt-0.5">已模拟</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">Docs 规范</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">v2.2 Spec</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-secondary text-on-secondary font-code-sm text-[10px] flex items-center justify-center font-bold">ZH</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Arch · 赵宏</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 3: REQ-202610-02 (待解决冲突) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="conflict" onclick="openRequirementEditor('REQ-202610-02')">
-<div class="h-1 w-full bg-error"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-error font-bold tracking-wider">REQ-202610-02</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-02 冲销流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                对账单冲销与汇差异常处理
-              </h2>
-</div>
-
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            包含多币种账期核算与对账平账，存在外币折算损益争议规则，待财务与业务协同仲裁。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">2项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">MSW 仿真</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">联调中</span>
-</div>
-<div class="p-2 rounded bg-error-container/30 flex flex-col">
-<span class="font-label-sm text-label-sm text-error">规则分歧</span>
-<span class="font-code-sm text-code-sm font-bold text-error mt-0.5">冲突: 1项</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-error text-on-error font-code-sm text-[10px] flex items-center justify-center font-bold">WF</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">FinOps · 王芳</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 4: REQ-202610-03 (已固化基线) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="baseline" onclick="openRequirementEditor('REQ-202610-03')">
-<div class="h-1 w-full bg-primary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-03</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-03 资产流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                电子商业汇票质押与挂账
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container text-on-surface shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px] text-primary">lock</span>
-              已固化基线
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            银企直连通道下的电票状态查验、质押授信背书与解质押预警机制，全生命周期存证。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">5项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">原型验证</span>
-<span class="font-code-sm text-code-sm font-bold text-primary mt-0.5">验收完</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">状态</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">已发布</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-primary text-on-primary font-code-sm text-[10px] flex items-center justify-center font-bold">LX</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Dev · 刘潇</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 5: REQ-202610-04 (已固化基线) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="baseline" onclick="openRequirementEditor('REQ-202610-04')">
-<div class="h-1 w-full bg-primary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-04</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-04 清算流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                资金实时划拨与分账结算
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container text-on-surface shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px] text-primary">lock</span>
-              已固化基线
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            三方监管账户按结算协议执行头寸分流，保障全时段秒级分账，满足穿透式监管归档要求。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">2项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">MSW 仿真</span>
-<span class="font-code-sm text-code-sm font-bold text-primary mt-0.5">已模拟</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">执行延迟</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">&lt; 1.2s</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-secondary-container text-on-secondary font-code-sm text-[10px] flex items-center justify-center font-bold">CY</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">BA · 陈越</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 6: REQ-202610-05 (草稿编辑中) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="draft" onclick="openRequirementEditor('REQ-202610-05')">
-<div class="h-1 w-full bg-outline-variant"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-on-surface-variant font-bold tracking-wider">REQ-202610-05</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-05 异常流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                保证金追缴与违约罚息机制
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container-high text-on-surface-variant shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px]">pending</span>
-              草稿编辑中
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            当履约保证金低于阈值时自动触发追缴机制，待业务团队确认多阶梯罚息公式与宽限期。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">置信度评估</span>
-<span class="font-code-sm text-code-sm font-bold text-secondary mt-0.5">置信度 82%</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">待补全项</span>
-<span class="font-code-sm text-code-sm font-bold text-error mt-0.5">待补规则</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">预计锁版</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface-variant mt-0.5">T+2 日</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-surface-tint text-on-primary font-code-sm text-[10px] flex items-center justify-center font-bold">SL</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Risk PM · 孙立</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 7: REQ-202610-06 (已固化基线) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="baseline" onclick="openRequirementEditor('REQ-202610-06')">
-<div class="h-1 w-full bg-primary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-06</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-06 报表流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                多边对照差异调节表生成
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container text-on-surface shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px] text-primary">lock</span>
-              已固化基线
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            商户端、核心企业端与银行端对账流水自动平衡与差异挂账标记，支持批量溯源调节。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">2项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">MSW 仿真</span>
-<span class="font-code-sm text-code-sm font-bold text-primary mt-0.5">已模拟</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">核算频度</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">日切自动</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-primary text-on-primary font-code-sm text-[10px] flex items-center justify-center font-bold">HM</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Data Lead · 黄敏</span>
-</div>
-
-</div>
-</article>
-<!-- CARD 8: REQ-202610-07 (已固化基线) -->
-<article class="bg-surface-container-lowest rounded shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden relative cursor-pointer" data-req-category="baseline" onclick="openRequirementEditor('REQ-202610-07')">
-<div class="h-1 w-full bg-primary-container"></div>
-<div class="p-space-lg flex flex-col gap-space-sm">
-<div class="flex items-start justify-between gap-space-sm">
-<div class="flex flex-col gap-0.5 min-w-0">
-<div class="flex items-center gap-2 flex-wrap">
-<span class="font-code-sm text-code-sm text-primary font-bold tracking-wider">REQ-202610-07</span>
-<span class="text-outline-variant font-code-sm">/</span>
-<span class="font-code-sm text-code-sm px-space-xs py-0.5 rounded bg-surface-container-high text-on-surface-variant font-medium">SC-07 结算流</span>
-</div>
-<h2 class="font-headline-sm text-headline-sm text-on-surface font-semibold tracking-tight truncate mt-1">
-                税费自动代扣与电子发票匹配
-              </h2>
-</div>
-<span class="px-space-sm py-1 rounded font-code-sm text-code-sm font-bold bg-surface-container text-on-surface shrink-0 flex items-center gap-1">
-<span class="material-symbols-outlined text-[13px] text-primary">lock</span>
-              已固化基线
-            </span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant line-clamp-2 leading-relaxed">
-            结算清单触发税务前置校验，自动开具数电票并校验发票抵扣链，杜绝税务申报断层。
-          </p>
-<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-space-xs">
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">BDD 契约</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">1项契约</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">MSW 仿真</span>
-<span class="font-code-sm text-code-sm font-bold text-primary mt-0.5">已模拟</span>
-</div>
-<div class="p-2 rounded bg-surface-container-low flex flex-col">
-<span class="font-label-sm text-label-sm text-on-surface-variant">税局直连</span>
-<span class="font-code-sm text-code-sm font-bold text-on-surface mt-0.5">TLS 1.3</span>
-</div>
-</div>
-</div>
-<div class="px-space-lg py-space-sm bg-surface-container flex items-center justify-between">
-<div class="flex items-center gap-2">
-<div class="w-5 h-5 rounded-full bg-primary text-on-primary font-code-sm text-[10px] flex items-center justify-center font-bold">WQ</div>
-<span class="font-code-sm text-code-sm text-on-surface-variant">Tax Lead · 吴倩</span>
-</div>
-
-</div>
-</article>
-</div>
-<!-- Bottom Summary & Pagination Bar -->
-<footer class="w-full bg-surface-container-lowest px-margin py-space-md shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-space-sm">
-<div class="flex items-center gap-space-sm font-code-sm text-code-sm text-on-surface-variant flex-wrap">
-<span class="font-semibold text-on-surface">统计汇总:</span>
-<span class="">展示 <strong class="text-primary font-bold">8</strong> / 共 9 个协同需求</span>
-<span class="text-outline-variant">|</span>
-<span class=""><strong class="text-on-surface font-bold">5</strong> 个基线已锁定</span>
-<span class="text-outline-variant">|</span>
-<span class=""><strong class="text-error font-bold">2</strong> 个待决策复核/补齐规则</span>
-<span class="text-outline-variant">|</span>
-<span class="">契约总数: <strong class="text-primary font-bold">19 条 BDD</strong></span>
-</div>
-<!-- Pagination Controls -->
-<div class="flex items-center gap-space-xs font-label-md text-label-md">
-<button class="h-7 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1" type="button">
-<span class="material-symbols-outlined text-[14px]">chevron_left</span>
-<span class="">上一页</span>
-</button>
-<div class="flex items-center gap-1 px-1">
-<span class="w-6 h-6 rounded bg-primary text-on-primary flex items-center justify-center font-bold text-code-sm">1</span>
-<span class="w-6 h-6 rounded hover:bg-surface-container text-on-surface-variant flex items-center justify-center font-semibold text-code-sm cursor-pointer">2</span>
-</div>
-<button class="h-7 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors flex items-center gap-1" type="button">
-<span class="">下一页</span>
-<span class="material-symbols-outlined text-[14px]">chevron_right</span>
-</button>
-</div>
-</footer>
-<!-- Slide-out Contextual Drawer (REQ Editor Panel Triggered by Button) -->
-
-</main></div></main></div>
-
-
-
-</body></html>
+<script>
+let findingScope=null;
+function openFindings(id){findingScope=id||null;document.querySelector('.drawer')?.remove();document.querySelector('.drawer-backdrop')?.remove();const data=D.load(),req=id?D.get(id):null,items=data.findings.filter(f=>!id||f.requirementId===id);$('overlays').insertAdjacentHTML('beforeend','<div class="drawer-backdrop" data-close-drawer></div><section class="drawer" role="dialog" aria-modal="true" aria-label="独立差异"><header class="drawer-head"><div><h2>独立差异'+(req?' · '+E(req.code):' · 全项目')+'</h2><p>差异记录与材料状态分别管理，处理记录不会修改材料。</p></div><button class="btn ghost" data-close-drawer aria-label="关闭差异面板">✕</button></header><div class="drawer-content"><div class="grid-summary"><span>'+items.length+' 条记录 · '+items.filter(f=>f.status==='pending').length+' 条待处理</span><button class="btn small" id="finding-all" '+(!id?'disabled':'')+'>查看全项目</button></div>'+(!items.length?'<div class="empty-state"><h3>暂无独立差异记录</h3><p>暂无记录不代表材料已完全一致。</p></div>':items.map(f=>{const r=D.get(f.requirementId),s=D.scene(f.scenarioId);return '<article class="finding" data-finding="'+E(f.id)+'"><div class="finding-meta"><a href="需求协同新增编辑.html?id='+encodeURIComponent(f.requirementId)+'" class="mono">'+E(r?.code||'需求不存在')+'</a><span class="badge '+(f.status==='pending'?'amber':f.status==='handled'?'blue':'gray')+'">'+({pending:'待处理',handled:'已登记处理',ignored:'已忽略'}[f.status])+'</span></div><p>'+E(f.summary)+'</p><small class="muted">来源 '+E(s?s.code+' '+s.title+' · '+s.version:'不可读')+' · 记录修订 '+f.revision+'</small>'+(f.note?'<div class="finding-note">处理说明：'+E(f.note)+'</div>':'')+'<label class="field" style="margin:10px 0 0"><span class="sr-only">差异处理说明</span><textarea placeholder="填写处理说明（登记处理时必填）" data-finding-note>'+E(f.note)+'</textarea></label><div class="actions"><button class="btn small" data-handle="'+E(f.id)+'">登记已处理</button><button class="btn small" data-ignore="'+E(f.id)+'">忽略</button><label class="switch-label"><input type="checkbox" data-reminder="'+E(f.id)+'" '+(f.reminder?'checked':'')+'>提醒</label></div><div class="error-line" data-finding-error></div></article>';}).join(''))+'</div></section>');document.querySelector('[data-close-drawer]').focus();}
+$('all-findings').onclick=()=>openFindings();
+document.addEventListener('click',event=>{const finding=event.target.closest('[data-findings]');if(finding)openFindings(finding.dataset.findings);if(event.target.closest('[data-close-drawer]')){document.querySelector('.drawer')?.remove();document.querySelector('.drawer-backdrop')?.remove();}if(event.target.id==='finding-all')openFindings();const handle=event.target.closest('[data-handle]'),ignore=event.target.closest('[data-ignore]');if(handle||ignore){const card=event.target.closest('.finding'),note=card.querySelector('[data-finding-note]').value.trim();if(handle&&!note){card.querySelector('[data-finding-error]').textContent='请填写处理说明，再登记已处理。';return;}try{D.updateFinding(handle?handle.dataset.handle:ignore.dataset.ignore,{status:handle?'handled':'ignored',note});render();openFindings(findingScope);D.toast(handle?'已登记处理说明，材料确认状态未改变。':'已忽略该记录，材料确认状态未改变。');}catch(error){card.querySelector('[data-finding-error]').textContent=error.message;}}});
+document.addEventListener('change',event=>{if(event.target.matches('[data-reminder]')){try{D.updateFinding(event.target.dataset.reminder,{reminder:event.target.checked});D.toast(event.target.checked?'已开启该差异提醒。':'已关闭该差异提醒。');}catch(error){D.toast(error.message);}}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'){document.querySelector('.drawer')?.remove();document.querySelector('.drawer-backdrop')?.remove();}});
+</script></body></html>

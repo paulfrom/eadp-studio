@@ -459,7 +459,7 @@ for (const action of ['claimPrototype', 'startSession'] as const) test(action + 
     entity.occupation.purpose = 'design'
     const local = await store.read(); local.tasks.push({ ...task, purpose: 'material', sessionId: 'design-session' }); await store.save()
     assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'material' })).ok, true)
-    assert.match(rules[2]!, /仅编辑 需求\/scenario.md/)
+    assert.ok(rules[2]!.includes(`仅编辑 ${draft.path}`), rules[2])
     assert.match(rules[2]!, /不得自行确认、释放占用、修改Git\/模板规则或执行shell/)
   } finally { await f.dispose() }
 })
@@ -516,8 +516,7 @@ test('a broken official preset prevents publication and cannot fall through to a
 
 test('an already live conversation Agent is reused and receives the Studio task scope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-live-reuse-'))
-  await mkdir(path.join(root, '需求'), { recursive: true })
-  await writeFile(path.join(root, '需求', 'entity.md'), '# entity\n')
+  const material = await saveMaterial(root, initialMetadata({ id: 'entity', kind: 'requirement', title: '合成需求', categoryId: 'cat' }), '# entity\n')
   const live = {
     session: { header: { id: 'live-session', cwd: root }, requestHeader: () => undefined },
     ctx: { systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { register() } },
@@ -538,7 +537,7 @@ test('an already live conversation Agent is reused and receives the Studio task 
   const sessions = new DshTaskSessions(context as never, '', async () => {})
   try {
     await sessions.open({ projectId: 'project', entityId: 'entity', sessionId: 'live-session', worktree: root, purpose: 'material', inputHash: '' }, 'fixed rules', undefined)
-    assert.equal(studioToolGuard({ name: 'write', arguments: { file_path: '需求/entity.md' }, agent: live }), undefined)
+    assert.equal(studioToolGuard({ name: 'write', arguments: { file_path: material.path }, agent: live }), undefined)
     assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: '需求/other.md' }, agent: live }))
   } finally { await sessions.dispose(); await rm(root, { recursive: true, force: true }) }
 })

@@ -3,10 +3,9 @@ import type { EntityView, MaterialMetadata, StudioCommand, StudioReply, StudioSt
 import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { StudioProps } from '../studio/StudioPanel.tsx'
 import { NativeConversation } from '../components/NativeConversation.tsx'
-import { ScenarioEditor } from './ScenarioEditor.tsx'
-import { ScenarioEvidence } from './ScenarioEvidence.tsx'
+import { ScenarioChatPanel, type ScenarioCandidateFace, type ScenarioChatActions, type ScenarioRevisionFace, type ScenarioSplitFace } from './ScenarioChatPanel.tsx'
 import { ScenarioGates } from './ScenarioGates.tsx'
-import { ScenarioSuggestions } from './ScenarioSuggestions.tsx'
+import { ScenarioSpecPanel } from './ScenarioSpecPanel.tsx'
 import { useDraftBuffer } from './useDraftBuffer.ts'
 import css from '../studio.module.css'
 
@@ -15,7 +14,10 @@ interface WorkspaceProps {
   call(command: StudioCommand): Promise<StudioReply | undefined>;
   registerFlush(flush?: () => Promise<boolean>): void;
 }
-/** Owns the scenario draft boundary; every version-changing action first flushes the shared buffer. */
+/**
+ * Scenario page: the AI conversation beside the material spec. Owns the draft
+ * boundary, so every version-changing action first flushes the shared buffer.
+ */
 export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call, registerFlush }: WorkspaceProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [showImpact, setShowImpact] = useState(false)
@@ -67,22 +69,43 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   const selectedCategory = categoryId || categories[0]?.id || ''
   const candidates = state.candidates.filter(candidate => candidate.scenarioId === entity.id)
   const locked = busy || !!snapshot.conflict || workspace.repair?.status === 'active'
-  return <div className={`${css.workspace} ${css.materialWorkspace} ${collapsed ? css.materialCollapsed : ''}`}>
-    <section className={css.taskArea}>
-      <div className={css.taskHeader}><div><span className={css.eyebrow}>{entity.code}</span><h2>场景 AI 工作区</h2></div><button onClick={() => faces.openSettings('studio-scenario-templates')}>场景模板设置</button></div>
-      <div className={css.contextStrip}><span>{workspace.readOnly ? `确认版本 ${entity.materialVersion}` : '本地草稿'}</span><span>{entity.occupation ? `当前编辑人 #${entity.occupation.ownerId}` : '无设计占用'}</span><span>创建人 {entity.creator?.name ?? `#${entity.authorId}`}</span></div>
-      {workspace.readOnly && <div className={css.notice}>确认人 #{workspace.confirmedBy ?? entity.current?.confirmedBy} · {workspace.confirmedAt ?? entity.current?.confirmedAt}<button disabled={busy} onClick={async () => { const result = await execute({ action: 'scenarioRevisionImpact', entityId: entity.id }); if (result?.ok) setShowImpact(true) }}>开始修订：查看影响</button></div>}
-      {showImpact && <section className={css.revisionImpact}><h3>修订影响清单</h3><p>启动后会领取设计占用，关联需求进入场景批次冻结，并按同批规则处理及确认。</p>{workspace.impact?.length ? <ul>{workspace.impact.map(item => <li key={item.id}>{item.code ?? item.id} · {item.title}</li>)}</ul> : <p>没有关联需求。</p>}<button className={css.primary} disabled={busy || workspace.impact === undefined} onClick={async () => { const result = await execute({ action: 'startScenarioRevision', entityId: entity.id, expectedRevision: entity.revision, expectedAssociationRevision: entity.associationRevision }); if (result?.ok) setShowImpact(false) }}>确认影响并启动修订</button><button onClick={() => setShowImpact(false)}>取消</button></section>}
-      {!workspace.readOnly && <div className={css.actionBar}><button disabled={locked} onClick={() => void execute({ action: 'newScenarioSession', entityId: entity.id })}>新建场景会话</button><label>恢复历史会话<select disabled={locked} value={workspace.activeSessionId ?? ''} onChange={event => { if (event.target.value) void execute({ action: 'selectScenarioSession', entityId: entity.id, sessionId: event.target.value }) }}><option value="">选择场景会话</option>{sessions.map((session, index) => <option key={session.sessionId} value={session.sessionId}>会话 {index + 1} · {session.sessionId.slice(0, 8)}</option>)}</select></label></div>}
-      {activeTask?.error && <div className={css.notice}>{activeTask.error}</div>}
+  const chat = useMemo<ScenarioChatActions>(() => ({
+    refresh: () => { void execute({ action: 'openScenario', entityId: entity.id }) },
+    newSession: () => { void execute({ action: 'newScenarioSession', entityId: entity.id }) },
+    selectSession: sessionId => { void execute({ action: 'selectScenarioSession', entityId: entity.id, sessionId }) },
+    openTemplates: () => faces.openSettings('studio-scenario-templates'),
+    setAutoWrite: (enabled: boolean) => { void execute({ action: 'setScenarioAutoWrite', entityId: entity.id, enabled }) },
+    importSource: actions.importSource,
+    retrySource: actions.retrySource,
+    selectSource: actions.selectSource,
+    adoptSuggestions: actions.adopt,
+  }), [execute, entity.id, faces, actions])
+  const revision: ScenarioRevisionFace = {
+    shown: showImpact,
+    ...(workspace.impact ? { impact: workspace.impact } : {}),
+    inspect: () => { void execute({ action: 'scenarioRevisionImpact', entityId: entity.id }).then(result => { if (result?.ok) setShowImpact(true) }) },
+    start: () => { void execute({ action: 'startScenarioRevision', entityId: entity.id, expectedRevision: entity.revision, expectedAssociationRevision: entity.associationRevision }).then(result => { if (result?.ok) setShowImpact(false) }) },
+    dismiss: () => setShowImpact(false),
+  }
+  const split: ScenarioSplitFace = {
+    offered: workspace.splitOffered === true,
+    deferred: splitLater,
+    split: () => { void execute({ action: 'splitScenario', entityId: entity.id }) },
+    defer: () => setSplitLater(true),
+  }
+  const candidateFace: ScenarioCandidateFace = {
+    items: candidates,
+    categories,
+    categoryId: selectedCategory,
+    selectCategory: setCategoryId,
+    create: candidateId => { void execute({ action: 'selectCandidate', candidateId, categoryId: selectedCategory }) },
+  }
+  return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
+    <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
       {activeSessionId ? <NativeConversation key={activeSessionId} run={faces.run} retainSession={faces.retainSession} SessionProvider={faces.SessionProvider} renderFactorySlot={faces.renderFactorySlot} sessionId={activeSessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。普通建议只在采纳后写入。'}</p></div>}
-      <ScenarioEvidence sources={workspace.sources} disabled={locked} readOnly={workspace.readOnly} onImport={actions.importSource} onRetry={actions.retrySource} onSelect={actions.selectSource} />
-      <ScenarioSuggestions batches={workspace.suggestions} hash={snapshot.sha256} disabled={locked || workspace.readOnly || snapshot.dirty} onAdopt={actions.adopt} />
+    </ScenarioChatPanel>
+    <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.scenarioTemplates} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
       <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
-      {workspace.readOnly && <section className={css.splitOffer}><h3>{workspace.splitOffered && !splitLater ? '场景已被后台接受，是否立即拆分需求？' : '从当前确认版拆分需求'}</h3><button disabled={busy} onClick={() => void execute({ action: 'splitScenario', entityId: entity.id })}>{workspace.splitOffered && !splitLater ? '立即生成拆分候选' : '生成需求候选'}</button>{workspace.splitOffered && !splitLater && <button onClick={() => setSplitLater(true)}>稍后拆分</button>}<p>仅生成候选，选用后才创建需求草稿。</p></section>}
-      {candidates.length > 0 && <section className={css.candidates}><h3>需求拆分候选</h3><label>需求业务分类<select value={selectedCategory} onChange={event => setCategoryId(event.target.value)}>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>{candidates.map(candidate => <div key={candidate.id}><div><strong>{candidate.title}</strong><p>{candidate.summary}</p></div><button disabled={busy || !selectedCategory || !!candidate.selectedEntityId} onClick={() => void execute({ action: 'selectCandidate', candidateId: candidate.id, categoryId: selectedCategory })}>{candidate.selectedEntityId ? '已创建草稿' : '选用并创建需求草稿'}</button></div>)}</section>}
-    </section>
-    <aside className={`${css.inspector} ${collapsed ? css.hiddenMaterial : ''}`} aria-label="场景材料"><div className={css.tabs}><button onClick={() => setCollapsed(true)}>收起材料 →</button><span>Markdown 与业务确认信息</span></div><ScenarioEditor draft={workspace.draft} buffer={buffer} snapshot={snapshot} readOnly={workspace.readOnly} editingDisabled={workspace.repair?.status === 'active'} templates={state.scenarioTemplates} busy={busy} onBindTemplate={actions.bindTemplate} onResolve={resolve} /></aside>
-    {collapsed && <button className={css.restoreMaterial} onClick={() => setCollapsed(false)}>← 展开材料</button>}
+    </ScenarioSpecPanel>
   </div>
 }

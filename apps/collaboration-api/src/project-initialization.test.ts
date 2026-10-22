@@ -13,7 +13,7 @@ const gitlab = new GitLab(config), rootSha = 'a'.repeat(40);
 const actor: Actor = { id: 1, name: '测试管理员', username: 'studioAdmin', email: 'songlin.liu@changhong.com', admin: true, gitlabUserId: 42, gitlabUsername: 'bound-user', sessionHash: 'b'.repeat(64) };
 const project: ProjectView = { id: 'server-project', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: '项目', namespaceId: 2, namespacePath: 'team', initializationStatus: 'pending', revision: 0, recognizedHead: null, categories: [] };
 const remote = { id: 7, name: '项目', path: 'project', path_with_namespace: 'team/project', http_url_to_repo: project.repositoryUrl, namespace: { id: 2, full_path: 'team' }, visibility: 'private', default_branch: null, description: 'marker' };
-const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } };
+const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } };
 const code = (expected: string) => (error: unknown) => error instanceof DomainError && error.code === expected;
 const json = (value: unknown) => new Response(JSON.stringify(value));
 afterEach(() => mock.restoreAll());
@@ -41,7 +41,7 @@ function fixture(options: { body?: Buffer; root?: boolean; missingDirectory?: bo
   return calls;
 }
 
-test('initialization verifies the exact pushed root commit, regular manifest blob bytes and all three versioned directories', async () => {
+test('initialization verifies the exact pushed root commit, regular manifest blob bytes and all versioned business directories', async () => {
   const calls = fixture(); await verifyProjectInitialization(gitlab, actor, project, rootSha);
   assert.equal(calls.filter(path => path === '/projects/7/repository/branches/main').length, 2);
   assert.ok(calls.some(path => path.endsWith('/raw')));

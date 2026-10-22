@@ -62,14 +62,14 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
       commitFiles: async (directory: string, _files: string[], _message: string, identity: object) => {
         ++commits; assert.deepEqual(identity, { name: user.name, email: user.gitlabEmail })
         const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8'))
-        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } })
+        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } })
         assert.ok(_files.includes('.template/default.md'), 'initial commit must include the declared default template')
         assert.match(await readFile(path.join(directory, '.template/default.md'), 'utf8'), /目标与范围/)
         localHead = sha; return sha
       },
       push: async () => { ++pushes; remoteHead = sha; if (failure === 'push-response' && !failed) { failed = true; throw new Error('推送响应丢失') } },
     },
-    gitLocal: async () => 'project.assets.json\0.gitattributes\0.template/default.md\0场景/.gitkeep\0需求/.gitkeep\0原型代码/package.json\0',
+    gitLocal: async () => 'project.assets.json\0.gitattributes\0.template/default.md\0场景/.gitkeep\0需求/.gitkeep\0交接/.gitkeep\0原型代码/package.json\0',
     installTemplate: async (directory: string) => { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'package.json'), '{}\n') },
   } as unknown as HostPorts
   const store = new StudioStore(storeRoot); store.useUser(user.id)

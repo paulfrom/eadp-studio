@@ -12,6 +12,39 @@ export function repositoryPath(path: string): string {
   requireCondition(parts.every(p => p.length > 0 && p !== '.' && p !== '..' && !/[. ]$/.test(p) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p)), 'INVALID_PATH', 'Invalid repository path', 400);
   return path;
 }
+/** Material kinds that live as versioned Markdown in the user's project. */
+export type MaterialKind = 'scenario' | 'requirement' | 'handoff';
+const materialDirectories: Record<MaterialKind, string> = { scenario: '场景', requirement: '需求', handoff: '交接' };
+const reservedFileNames = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const materialNameLimit = 60;
+const forbiddenNameCharacters = /[\\/\x00-\x1f:*?"<>|]/gu;
+export function materialDirectoryOf(kind: MaterialKind): string { return materialDirectories[kind]; }
+/**
+ * Derives the readable file-name stem of a material from its business title.
+ * Only characters a file system cannot hold are replaced; the result stays far
+ * below the repository path limit and is never a directory or reserved name.
+ */
+export function materialStem(title: string): string {
+  const cleaned = title.normalize('NFC').replace(forbiddenNameCharacters, '_').replace(/\s+/gu, ' ').replace(/^[\s.]+|[\s.]+$/gu, '');
+  const stem = [...cleaned].slice(0, materialNameLimit).join('').replace(/[\s.]+$/gu, '');
+  return reservedFileNames.test(stem) ? `${stem}_` : stem || '未命名';
+}
+/** Relative Markdown path for a material title; `suffix` disambiguates same-title materials. */
+export function materialPathOf(kind: MaterialKind, title: string, suffix = 1): string {
+  const stem = materialStem(title);
+  return `${materialDirectories[kind]}/${suffix === 1 ? stem : `${stem}-${suffix}`}.md`;
+}
+/** Whether a path is a Markdown material file inside its kind's directory. */
+export function isMaterialPath(kind: MaterialKind, file: string): boolean {
+  const prefix = `${materialDirectories[kind]}/`, name = file.slice(prefix.length);
+  return file.startsWith(prefix) && name.endsWith('.md') && name.length > 3 && !name.includes('/');
+}
+/** Whether a committed path still follows the title rule of its material kind. */
+export function isMaterialPathOf(kind: MaterialKind, file: string, title: string): boolean {
+  if (!isMaterialPath(kind, file)) return false;
+  const name = file.slice(materialDirectories[kind].length + 1, -3), stem = materialStem(title).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`^${stem}(?:-(?:[2-9]|[1-9][0-9]+))?$`, 'u').test(name);
+}
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;

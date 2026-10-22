@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import type { EntityView, OccupationToken, ProjectState, RepairStartRequest } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
 import type { ScenarioCommand, ScenarioConflict, ScenarioSource, ScenarioSuggestionBatch, ScenarioWorkspace } from '../../shared/scenarios.ts'
-import { containedFile, digest, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
+import { containedFile, digest, findMaterialFile, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import type { StudioStore } from './state.ts'
@@ -14,7 +14,7 @@ import { ScenarioDocumentService, checkScenarioDocument, scenarioFileErrors } fr
 import { parseSuggestionBatch } from './scenario-suggestions.ts'
 import { archiveSelectedEvidence } from './scenario-evidence.ts'
 
-export interface ScenarioRecord { projectId: string; entityId: string; suggestions: ScenarioSuggestionBatch[]; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string } }
+export interface ScenarioRecord { projectId: string; entityId: string; suggestions: ScenarioSuggestionBatch[]; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; autoWrite?: boolean; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string } }
 export interface ScenarioDependencies {
   entity(id: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView }>
   task(remote: ProjectState, entity: EntityView): Promise<TaskView>
@@ -31,7 +31,7 @@ export class ScenarioWorkspaces {
   constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {}
   stopObservation(task: ScenarioObservedTask): void { this.observer?.unobserve(task) }
   dispose(): void { this.observer?.dispose(); this.observer = undefined; this.observerDirectory = undefined; this.activeEntityId = undefined }
-  private observe(task: TaskView): void {
+  private observe(task: TaskView, relative: string): void {
     const directory = this.store.directory
     if (this.observerDirectory !== directory) {
       this.observer?.dispose(); this.observerDirectory = directory
@@ -43,7 +43,7 @@ export class ScenarioWorkspaces {
         await this.store.save()
       }))
     }
-    if (this.observer!.observe(task)) {
+    if (this.observer!.observe(task, relative)) {
       void this.record(task.entityId, task.projectId).then(record => { delete record.observationError }).catch(() => undefined)
     }
   }
@@ -60,7 +60,8 @@ export class ScenarioWorkspaces {
     const task = await this.deps.task(context.remote, context.entity)
     const fresh = await this.deps.entity(entityId, projectId)
     await this.deps.owned(fresh.entity)
-    this.observe(task)
+    const relative = await findMaterialFile(task.worktree, 'scenario', task.entityId)
+    if (relative) this.observe(task, relative)
     return { ...fresh, task }
   }
   async snapshot(remote: ProjectState): Promise<ScenarioWorkspace | undefined> {
@@ -86,12 +87,12 @@ export class ScenarioWorkspaces {
     const fixed = draft.metadata.templateRef, fixedTemplate = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
     if (!fixedTemplate) return undefined
     const templateBody = Buffer.from(fixedTemplate).toString('utf8')
-    for (const batch of record.suggestions) if (batch.status === 'current' && (batch.baseHash !== draft.sha256 || JSON.stringify(batch.templateRef) !== JSON.stringify(fixed))) batch.status = 'stale'
+    for (const batch of record.suggestions) if (batch.status === 'current' && batch.baseHash !== draft.sha256) batch.status = 'stale'
     const check = checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: !!account, hasOccupation: !!owned, conflict: !!record.conflict, structureCheck: local.scenarioStructureCheck, templateBody, fileErrors: !readOnly && task ? await scenarioFileErrors(task.worktree, draft) : [] })
     const gates = check.groups
-    if (!readOnly && task) this.observe(task)
+    if (!readOnly && task) this.observe(task, draft.path)
     if (record.observationError) { const versionGate = gates.find(gate => gate.id === 'version')!; versionGate.status = 'blocked'; versionGate.messages.push(record.observationError) }
-    return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, suggestions: readOnly ? [] : record.suggestions, sources: readOnly ? await this.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources.map(source => ({ ...source, text: '' })), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
+    return { entityId: entity.id, draft, readOnly, autoWrite: record.autoWrite === true, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, suggestions: readOnly ? [] : record.suggestions, sources: readOnly ? await this.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources.map(source => ({ ...source, text: '' })), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
   }
@@ -127,22 +128,45 @@ export class ScenarioWorkspaces {
     if (record.conflict) throw new Error('请先解决文件冲突')
     const batch = record.suggestions.find(b => b.id === command.batchId)
     if (!batch || batch.status !== 'current' && batch.status !== 'applied') throw new Error('建议已过期，请按当前材料重新生成')
-    const draft = await readMaterial(task.worktree, 'scenario', command.entityId)
-    await this.documents.apply({ root: task.worktree, draft, batch, selectedItemIds: command.itemIds, expectedHash: command.expectedHash, operationId: command.operationId, readEvidenceIds: record.sources.filter(s => (s.status === 'read' || s.status === 'partial') && s.selected).map(s => s.id) })
+    await this.writeBatch(task, record, batch, command.itemIds, command.expectedHash, command.operationId)
+  }
+  async setAutoWrite(entityId: string, enabled: boolean): Promise<void> {
+    const { entity } = await this.editable(entityId), record = await this.record(entity.id)
+    record.autoWrite = enabled; await this.store.save()
+  }
+  /**
+   * Writes one batch through the serialized document service; explicit adoption
+   * and the authorized auto write share it so both keep the same hash, receipt
+   * and conflict behaviour.
+   */
+  private async writeBatch(task: TaskView, record: ScenarioRecord, batch: ScenarioSuggestionBatch, itemIds: readonly string[], expectedHash: string, operationId: string): Promise<void> {
+    const draft = await readMaterial(task.worktree, 'scenario', task.entityId)
+    await this.documents.apply({ root: task.worktree, draft, batch, selectedItemIds: itemIds, expectedHash, operationId, readEvidenceIds: record.sources.filter(s => (s.status === 'read' || s.status === 'partial') && s.selected).map(s => s.id) })
     batch.status = 'applied'; for (const other of record.suggestions) if (other !== batch && other.status === 'current') other.status = 'stale'
     await this.store.save()
+  }
+  /**
+   * Writes a freshly parsed batch without waiting for adoption. A batch about
+   * another version, an unresolved conflict or a rejected batch stays a normal
+   * adoptable/expired card, so nothing is written silently.
+   */
+  private async autoWrite(task: TaskView, record: ScenarioRecord, batch: ScenarioSuggestionBatch, draft: MaterialDraft): Promise<void> {
+    if (!record.autoWrite || batch.baseHash !== draft.sha256) return
+    if (record.conflict) { batch.error = '文件冲突尚未解决，建议未自动写入'; await this.store.save(); return }
+    try { await this.writeBatch(task, record, batch, batch.groups.flatMap(group => group.items.map(item => item.id)), draft.sha256, `${batch.id}-auto-${randomUUID()}`) }
+    catch (error) { batch.error = `自动写入未完成：${error instanceof Error ? error.message : '未知原因'}`; await this.store.save() }
   }
   async newSession(entityId: string): Promise<string> {
     const { task } = await this.editable(entityId), local = await this.store.read(), record = await this.record(entityId)
     const next = { ...task, sessionId: `studio-${randomUUID()}` }; local.tasks.push(next); record.activeSessionId = next.sessionId; await this.store.save()
-    return this.ports.session(next, '你是场景设计助手。普通整理只输出 eadp-suggestions 候选，绝不直接写入文件或确认。')
+    return this.ports.session(next, '你是场景设计助手。回答先用可读中文说明改什么、为什么、缺什么；仅当用户要求修改或补齐正文时才在回答最后给出 eadp-suggestions 候选，绝不直接写入文件或确认。')
   }
   async selectSession(entityId: string, sessionId: string): Promise<string> {
     const { task } = await this.editable(entityId), local = await this.store.read()
     const found = local.tasks.find(t => t.projectId === task.projectId && t.entityId === entityId && t.sessionId === sessionId && t.purpose === 'material')
     if (!found) throw new Error('此会话不属于当前场景')
     const record = await this.record(entityId); record.activeSessionId = sessionId; await this.store.save()
-    return this.ports.session(found, '场景设计会话：读取当前上下文后输出建议，不直接写入文件。')
+    return this.ports.session(found, '场景设计会话：回答先用可读中文说明，仅当用户要求修改或补齐正文时才在最后给出 eadp-suggestions 候选，不直接写入文件。')
   }
   async importSource(command: Extract<ScenarioCommand, { action: 'importScenarioSource' }>): Promise<void> {
     await this.editable(command.entityId)
@@ -231,8 +255,10 @@ export class ScenarioWorkspaces {
     const sources = record.sources.filter(s => s.selected && (s.status === 'read' || s.status === 'partial'))
     const pendingImages = record.sources.filter(s => s.selected && ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(s.format)).map(s => ({ id: s.id, path: record.sourcePaths[s.id], status: s.status }))
     const protocol = task.scenarioRepair
-      ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认。遵循可信Host本轮输入，输出唯一 eadp-repair 代码块；缺业务答案只输出question，不能编造。`
-      : `当前场景 ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认。所有替换start/end为正文JS字符偏移，original须精确匹配。禁止引用未读取资料。建议唯一代码块 eadp-suggestions，JSON格式：{"id":"批次ID","entityId":"${task.entityId}","baseHash":"${draft.sha256}","templateRef":${JSON.stringify(ref)},"groups":[{"id":"组ID","title":"说明","items":[{"id":"条目ID","start":0,"end":${draft.body.length},"original":${JSON.stringify(draft.body)},"replacement":"新正文","evidenceIds":[]}]}]}。`
+      ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
+      : `当前场景 ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认，禁止引用未读取资料。
+回答规则：先用可读中文说明本轮要改什么、为什么、依据哪些已读资料、还缺哪些业务答案；只有用户要求修改或补齐正文时，才在回答最后追加唯一 eadp-suggestions 代码块，提问、讨论、澄清不输出块，不输出空批次。
+块内只写必要字段，不要回显被替换的原文：{"id":"批次ID","entityId":"${task.entityId}","baseHash":"${draft.sha256}","groups":[{"id":"组ID","title":"这条建议改什么","items":[{"id":"条目ID","start":0,"end":${draft.body.length},"anchor":"被替换文本的开头最多40字，插入时为空串","replacement":"新正文","evidenceIds":[]}]}]}；start/end 为正文 JS 字符偏移，整篇替换用 start 0 与 end ${draft.body.length}，Host 按 anchor 校验范围并从当前正文取回原文。`
     return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n可用原生read_image读取的图片（未读取前禁止引用）：${JSON.stringify(pendingImages)}\n实际已读资料：\n${JSON.stringify(sources.map(s => ({ id: s.id, name: s.name, sha256: s.sha256, ranges: s.ranges, text: s.text })))}`
   }
   async accept(sessionId: string, content: string): Promise<boolean> {
@@ -240,10 +266,15 @@ export class ScenarioWorkspaces {
     if (!task || !content.includes('```eadp-suggestions')) return false
     const record = await this.record(task.entityId, task.projectId)
     try {
-      const batch = parseSuggestionBatch(content)
+      const draft = await readMaterial(task.worktree, 'scenario', task.entityId)
+      const batch = parseSuggestionBatch(content, draft)
       if (batch.entityId !== task.entityId) throw new Error('候选场景身份不一致')
-      if (!record.suggestions.some(b => b.id === batch.id)) record.suggestions.push({ ...batch, status: 'current' })
-    } catch (error) { record.suggestions.push({ id: randomUUID(), entityId: task.entityId, baseHash: '', templateRef: { commitSha: '', path: '', sha256: '' }, groups: [], status: 'invalid', error: error instanceof Error ? error.message : '候选格式无效' }) }
+      // A repeated batch id is already a stored proposal; only a fresh one may be auto written.
+      if (record.suggestions.some(b => b.id === batch.id)) { await this.store.save(); return true }
+      const stored: ScenarioSuggestionBatch = { ...batch, status: 'current' }
+      record.suggestions.push(stored)
+      await this.autoWrite(task, record, stored, draft)
+    } catch (error) { record.suggestions.push({ id: randomUUID(), entityId: task.entityId, baseHash: '', groups: [], status: 'invalid', error: error instanceof Error ? error.message : '候选格式无效' }) }
     await this.store.save(); return true
   }
 }

@@ -41,7 +41,7 @@ export class AuthorReviews {
       if (existing.head !== review.candidateSha || existing.dirty) throw new Error('评审固定快照已变化，请保留现场并重新评审')
       await this.ports.session(review.task, rules)
       if (!review.sent) {
-        await this.ports.prompt(review.task.sessionId, '固定候选 ' + review.candidateSha + '，固定输入哈希 ' + review.inputHash + '。检查范围 ' + JSON.stringify(review.paths) + '，工程检查证据哈希 ' + digest(JSON.stringify(review.checks)) + '。仅评审该快照与其中的固定业务依据，输出唯一代码块 eadp-review，JSON格式 {"summary":"整体评审说明","findings":[{"severity":"info|warning|blocking","message":"具体问题或建议"}]}。不能自行确认或修改成果。')
+        await this.ports.prompt(review.task.sessionId, '固定候选 ' + review.candidateSha + '，固定输入哈希 ' + review.inputHash + '。检查范围 ' + JSON.stringify(review.paths) + '，工程检查证据哈希 ' + digest(JSON.stringify(review.checks)) + '。仅评审该快照与其中的固定业务依据。先用可读中文说明评审结论和主要问题，再在回答最后输出唯一代码块 eadp-review，JSON格式 {"summary":"整体评审说明","findings":[{"severity":"info|warning|blocking","message":"具体问题或建议"}]}。不能自行确认或修改成果。')
         review.sent = true; review.task.reviewSent = true
       }
       review.status = 'pending'; delete review.error; await this.store.save()

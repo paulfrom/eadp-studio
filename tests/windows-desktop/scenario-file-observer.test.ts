@@ -10,9 +10,9 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   t.after(() => rm(root, { recursive: true, force: true }))
   await mkdir(path.join(root, '场景'))
   const task: ScenarioObservedTask = { projectId: 'project', entityId: 'scene', worktree: root }
-  const filename = path.join(root, '场景', 'scene.md')
+  const relative = '场景/合成场景.md', filename = path.join(root, relative)
   await writeFile(filename, '初稿')
-  return { root, task, filename }
+  return { root, task, relative, filename }
 }
 
 test('directory observation survives repeated atomic replacements and stops after disposal', async t => {
@@ -20,7 +20,7 @@ test('directory observation survives repeated atomic replacements and stops afte
   let next: (() => void) | undefined
   const observer = new ScenarioFileObserver(event => { events.push(event); next?.(); next = undefined })
   t.after(async () => observer.dispose())
-  assert.equal(observer.observe(f.task), true)
+  assert.equal(observer.observe(f.task, f.relative), true)
   const replacement = async (body: string) => {
     const arrived = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('文件变更没有触发观察通知')), 1500)
@@ -42,7 +42,7 @@ test('directory observation survives repeated atomic replacements and stops afte
 test('a pending debounce is cancelled by unobserve and duplicate observations share their slot', async t => {
   const f = await fixture(t), events: ScenarioFileEvent[] = [], observer = new ScenarioFileObserver(event => events.push(event))
   t.after(async () => observer.dispose())
-  assert.equal(observer.observe(f.task), true); assert.equal(observer.observe(f.task), true)
+  assert.equal(observer.observe(f.task, f.relative), true); assert.equal(observer.observe(f.task, f.relative), true)
   await writeFile(f.filename, '即将停止观察的修改')
   observer.unobserve(f.task)
   await new Promise(resolve => setTimeout(resolve, 100))
@@ -52,12 +52,12 @@ test('a pending debounce is cancelled by unobserve and duplicate observations sh
 test('missing directories and capacity exhaustion explicitly report unavailable without evicting existing observations', async t => {
   const f = await fixture(t), events: ScenarioFileEvent[] = [], observer = new ScenarioFileObserver(event => events.push(event))
   t.after(async () => observer.dispose())
-  assert.equal(observer.observe({ ...f.task, worktree: path.join(f.root, 'missing') }), false)
+  assert.equal(observer.observe({ ...f.task, worktree: path.join(f.root, 'missing') }, f.relative), false)
   assert.equal(events[0]?.kind, 'unavailable')
-  for (let index = 0; index < 128; index++) assert.equal(observer.observe({ ...f.task, entityId: `scene-${index}` }), true)
-  assert.equal(observer.observe({ ...f.task, entityId: 'overflow' }), false)
+  for (let index = 0; index < 128; index++) assert.equal(observer.observe({ ...f.task, entityId: `scene-${index}` }, `场景/scene-${index}.md`), true)
+  assert.equal(observer.observe({ ...f.task, entityId: 'overflow' }, '场景/overflow.md'), false)
   assert.equal(events.at(-1)?.kind, 'unavailable')
   assert.match(events.at(-1)!.kind === 'unavailable' ? (events.at(-1)! as Extract<ScenarioFileEvent, { kind: 'unavailable' }>).message : '', /128/)
   observer.unobserve({ ...f.task, entityId: 'scene-0' })
-  assert.equal(observer.observe({ ...f.task, entityId: 'overflow' }), true)
+  assert.equal(observer.observe({ ...f.task, entityId: 'overflow' }, '场景/overflow.md'), true)
 })

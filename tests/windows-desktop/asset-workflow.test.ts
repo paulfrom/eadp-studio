@@ -177,7 +177,7 @@ test('adoption success binds the accepted target confirmation and survives a los
 
 test('accepted handoff generation is durable per fixed baseline and never overwrites author edits on retry', async t => {
   const f = await fixture(t, 'handoff')
-  f.value.title = '交接 baseline'
+  f.value.title = '交接 requirement v2'
   const requirement = entity('requirement'); requirement.materialVersion = 2
   f.remote.entities.push(requirement)
   f.remote.baselines.push({ id: 'baseline', entityId: requirement.id, version: 2, commitSha: candidate, confirmationId: 'completed', createdAt: '' })
@@ -234,7 +234,7 @@ test('a confirmed target without the exact adopted source cannot report reuse su
 
 for (const failure of ['session', 'prompt'] as const) test('failed handoff ' + failure + ' retries its fixed task without replacing author content', async t => {
   const f = await fixture(t, 'handoff')
-  f.value.title = '交接 baseline'
+  f.value.title = '交接 requirement v2'
   const requirement = entity('requirement'); requirement.materialVersion = 2
   f.remote.entities.push(requirement)
   f.remote.baselines.push({ id: 'baseline', entityId: requirement.id, version: 2, commitSha: candidate, confirmationId: 'completed', createdAt: '' })

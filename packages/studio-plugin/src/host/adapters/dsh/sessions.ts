@@ -1,5 +1,3 @@
-import { access } from 'node:fs/promises'
-import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection, type AgentHandle, type AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -11,7 +9,7 @@ import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
-import { materialPath } from '../assets/materials.ts'
+import { findMaterialFile } from '../assets/materials.ts'
 import { inheritStudioExecutionScope, registerStudioExecutionScope } from '../platform/execution-guard.js'
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.js'
 import { readTemplateManifest } from '../../prototype/template.js'
@@ -41,7 +39,9 @@ export class DshTaskSessions {
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
     if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
-    const scenarioTask = task.scenarioRepair === true || task.purpose === 'material' && await access(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => true, () => false)
+    // Materials are named after their titles, so the session resolves their current paths instead of deriving them.
+    const scenarioFile = task.purpose === 'material' ? await findMaterialFile(task.worktree, 'scenario', task.entityId) : undefined
+    const scenarioTask = task.scenarioRepair === true || (task.purpose === 'material' && scenarioFile !== undefined)
     if (scenarioTask && input) throw new Error('场景会话不能取得原型写入权限')
     const replay = task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
     if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
@@ -115,8 +115,9 @@ export class DshTaskSessions {
       } else if (task.purpose === 'review') {
         scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: [] }, agent), 'studio: readonly fixed review boundary')
       } else {
-        const kind = task.purpose === 'handoff' ? 'handoff' : (await access(path.join(task.worktree, '场景', `${task.entityId}.md`)).then(() => 'scenario' as const, () => 'requirement' as const))
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: task.purpose === 'split' || kind === 'scenario' ? [] : [materialPath(kind, task.entityId)] }, agent), 'studio: material file boundary')
+        const kind = task.purpose === 'handoff' ? 'handoff' : scenarioFile !== undefined ? 'scenario' : 'requirement'
+        const writable = task.purpose === 'split' || kind === 'scenario' ? undefined : await findMaterialFile(task.worktree, kind, task.entityId)
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: writable ? [writable] : [] }, agent), 'studio: material file boundary')
       }
       configuredAgents.add(agent)
     }

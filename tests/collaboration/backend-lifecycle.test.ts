@@ -131,7 +131,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const notPushed = await initialize()
     assert.ok(notPushed.statusCode >= 400, notPushed.body)
     remote.head = initialSha; remote.default_branch = 'main'; remote.empty_repo = false
-    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: templateCatalog }
+    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog }
     const wrongIdentity = await initialize()
     assert.ok(wrongIdentity.statusCode >= 400, wrongIdentity.body)
     assert.equal((await database.query('SELECT state,recognized_head FROM studio_projects WHERE id=$1', [created.id])).rows[0].state, 'assigned')

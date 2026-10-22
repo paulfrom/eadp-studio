@@ -80,6 +80,9 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   return { root, localRoot, store, local, loseNext(kind: typeof loseResponse) { loseResponse = kind }, loseStartRequest() { failBeforeStart = true }, task, entity, remote, token, workspaces, record, draft, repairs, events, calls, prompts, confirmations, api, ports, projects, getRepair: () => repairView }
 }
 const reply = (value: unknown) => ({ kind: 'assistant', content: '```eadp-repair\n' + JSON.stringify(value) + '\n```' })
+/** Business declarations a repair candidate restates; identity stays with the current file. */
+const quality = (draft: { metadata: MaterialMetadata }, changes: Partial<Pick<MaterialMetadata, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'>> = {})
+  : Pick<MaterialMetadata, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'> => ({ coreRulesPresent: draft.metadata.coreRulesPresent, acceptanceCriteriaPresent: draft.metadata.acceptanceCriteriaPresent, openQuestions: draft.metadata.openQuestions, ...changes })
 
 test('opening and snapshotting an accepted scenario reads its fixed version without acquiring an occupation', async t => {
   const f = await fixture(t), fixedText = materialText(metadata(), '已确认正文')
@@ -104,12 +107,12 @@ test('repair pauses for an explicit answer, keeps its round budget and confirms 
   let draft = await saveMaterial(f.root, initial, f.draft.body)
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: draft.sha256, userActionId: 'authorize' })
   const sessionId = f.local.scenarioRepairs[0]!.task.sessionId
-  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n规则已补充', metadata: { ...draft.metadata, coreRulesPresent: true }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n规则已补充', ...quality(draft, { coreRulesPresent: true }), evidenceIds: ['evidence'] }))
   assert.equal(f.prompts.length, 1, 'the next round waits until the current DSH turn ends')
   await f.repairs.accept(sessionId, { kind: 'turn-ended' })
   assert.equal(f.prompts.length, 2)
   draft = await readMaterial(f.root, 'scenario', 'scene')
-  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n验收已补充', metadata: { ...draft.metadata, acceptanceCriteriaPresent: true }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n验收已补充', ...quality(draft, { acceptanceCriteriaPresent: true }), evidenceIds: ['evidence'] }))
   await f.repairs.accept(sessionId, { kind: 'turn-ended' })
   draft = await readMaterial(f.root, 'scenario', 'scene')
   assert.equal(f.getRepair()!.roundsUsed, 2)
@@ -121,7 +124,7 @@ test('repair pauses for an explicit answer, keeps its round budget and confirms 
   assert.equal(f.prompts.length, count); assert.equal(f.getRepair()!.status, 'paused')
   await f.repairs.resume({ action: 'resumeScenarioRepair', entityId: 'scene', answer: '允许重试', expectedHash: draft.sha256, userActionId: 'answer-and-continue' })
   assert.equal(f.getRepair()!.roundsUsed, 2); assert.equal(f.prompts.length, count + 1)
-  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n异常审批可重试。', metadata: { ...draft.metadata, openQuestions: [] }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: draft.sha256, body: draft.body + '\n异常审批可重试。', ...quality(draft, { openQuestions: [] }), evidenceIds: ['evidence'] }))
   await f.repairs.accept(sessionId, { kind: 'turn-ended' })
   assert.equal(f.getRepair()!.roundsUsed, 3); assert.equal(f.getRepair()!.status, 'completed')
   assert.equal(f.confirmations.length, 1)
@@ -134,7 +137,7 @@ test('external edits terminate repair and the old authorization cannot overwrite
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, userActionId: 'authorize' })
   const sessionId = f.local.scenarioRepairs[0]!.task.sessionId
   const external = await saveMaterial(f.root, f.draft.metadata, '用户并发修改')
-  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: 'AI不应写入', metadata: f.draft.metadata, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: 'AI不应写入', ...quality(f.draft), evidenceIds: ['evidence'] }))
   assert.equal(f.getRepair()!.status, 'terminated'); assert.equal(f.getRepair()!.terminationReason, 'concurrent-edit')
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, external.sha256)
   assert.equal(f.confirmations.length, 0)
@@ -149,9 +152,46 @@ test('repair with no usable source terminates; an unchanged set of blockers stop
   f.record.sources[0]!.selected = true
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, userActionId: 'new-authorization' })
   const sessionId = f.local.scenarioRepairs.at(-1)!.task.sessionId
-  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n空泛描述', metadata: f.draft.metadata, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n空泛描述', ...quality(f.draft), evidenceIds: ['evidence'] }))
   assert.equal(f.getRepair()!.roundsUsed, 1); assert.equal(f.getRepair()!.terminationReason, 'no-improvement')
   assert.equal(f.confirmations.length, 0)
+})
+
+test('a suggestion reply stores the Host-derived original and rejects an anchor that does not match its range', async t => {
+  const f = await fixture(t)
+  const block = (item: object, group = 'rules') => '本轮补齐正文要点见下。\n```eadp-suggestions\n' + JSON.stringify({ id: 'batch', entityId: 'scene', baseHash: f.draft.sha256, groups: [{ id: group, title: '补齐规则', items: [{ id: 'body', evidenceIds: ['evidence'], ...item }] }] }) + '\n```'
+  const whole = { start: 0, end: f.draft.body.length, anchor: f.draft.body.slice(0, 12), replacement: f.draft.body + '\n补充规则' }
+  assert.equal(await f.workspaces.accept(f.task.sessionId, block(whole)), true)
+  const stored = f.record.suggestions.at(-1)!
+  assert.equal(stored.status, 'current')
+  assert.equal(stored.groups[0]!.items[0]!.original, f.draft.body)
+  assert.equal(await f.workspaces.accept(f.task.sessionId, block({ ...whole, anchor: '不相符的原文' })), true)
+  assert.equal(f.record.suggestions.at(-1)!.status, 'invalid')
+  // The protocol asks for a readable answer first and forbids echoing the replaced text.
+  const context = await f.workspaces.context(f.task)
+  assert.match(context, /回答规则：先用可读中文说明/)
+  assert.ok(context.includes('"anchor"') && !context.includes('"original"'))
+})
+
+test('the authorized auto write applies a valid batch and keeps an unwritable one as a card', async t => {
+  const f = await fixture(t)
+  const block = (id: string, hash: string, body: string, evidenceIds = ['evidence']) => '```eadp-suggestions\n' + JSON.stringify({ id, entityId: 'scene', baseHash: hash, groups: [{ id: 'rules', title: '补齐规则', items: [{ id: 'body', start: 0, end: body.length, anchor: body.slice(0, 12), replacement: `${body}\n补充规则`, evidenceIds }] }] }) + '\n```'
+  await f.workspaces.setAutoWrite('scene', true)
+  await f.workspaces.accept(f.task.sessionId, block('auto-one', f.draft.sha256, f.draft.body))
+  const written = await readMaterial(f.root, 'scenario', 'scene')
+  assert.equal(written.body, `${f.draft.body}\n补充规则`)
+  assert.equal(f.record.suggestions.at(-1)!.status, 'applied')
+  // An evidence reference that was never read cannot be written automatically; the card keeps the reason.
+  await f.workspaces.accept(f.task.sessionId, block('auto-two', written.sha256, written.body, ['unread']))
+  const blocked = f.record.suggestions.at(-1)!
+  assert.equal(blocked.status, 'current')
+  assert.match(blocked.error ?? '', /自动写入未完成/)
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, written.sha256)
+  // Switching auto write off restores proposal-only behaviour.
+  await f.workspaces.setAutoWrite('scene', false)
+  await f.workspaces.accept(f.task.sessionId, block('auto-three', written.sha256, written.body))
+  assert.equal(f.record.suggestions.at(-1)!.status, 'current')
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, written.sha256)
 })
 
 test('template preview rejects deleting historical identities and publication stops before touching materials when the accepted head changes', async t => {
@@ -174,7 +214,7 @@ test('template preview rejects deleting historical identities and publication st
 
 test('template publication builds outside the material worktree and rejects a candidate containing a scene', async t => {
   const f = await fixture(t)
-  const manifest = { schemaVersion: 1, projectId: 'project', gitlabProjectId: 1, repositoryUrl: 'https://git.example/project.git', stableBranch: 'main', directories: ['场景', '需求', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', path: '.template/default.md' }] } }
+  const manifest = { schemaVersion: 1, projectId: 'project', gitlabProjectId: 1, repositoryUrl: 'https://git.example/project.git', stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', path: '.template/default.md' }] } }
   const read = async (_project: string, _sha: string, relative: string) => Buffer.from(relative === 'project.assets.json' ? JSON.stringify(manifest) : templateBody)
   const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   const lane = new BackgroundLane(), directories: string[] = [], staged: string[][] = []
@@ -253,7 +293,7 @@ test('a lost round response recovers the same event and starts the remaining rou
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, userActionId: 'authorize' })
   const repair = f.local.scenarioRepairs[0]!, sessionId = repair.task.sessionId
   f.loseNext('round')
-  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', metadata: { ...f.draft.metadata, coreRulesPresent: true }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', ...quality(f.draft, { coreRulesPresent: true }), evidenceIds: ['evidence'] }))
   const written = await readMaterial(f.root, 'scenario', 'scene'), key = repair.pending!.idempotencyKey
   assert.equal(f.getRepair()!.roundsUsed, 1); assert.equal(f.prompts.length, 1)
   await assert.rejects(f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: written.sha256, userActionId: 'new-action' }), /待核对/)
@@ -272,7 +312,7 @@ test('a lost passing round response recovers confirmation once using the final f
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: draft.sha256, userActionId: 'authorize' })
   const repair = f.local.scenarioRepairs[0]!
   f.loseNext('round')
-  await f.repairs.accept(repair.task.sessionId, reply({ baseHash: draft.sha256, body: '## 范围\n审批流程允许退回重试。\n## 规则\n异常审批可重试。', metadata: { ...draft.metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(repair.task.sessionId, reply({ baseHash: draft.sha256, body: '## 范围\n审批流程允许退回重试。\n## 规则\n异常审批可重试。', ...quality(draft, { coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }), evidenceIds: ['evidence'] }))
   assert.equal(f.confirmations.length, 0)
   await f.repairs.checkConcurrent('scene')
   assert.equal(f.getRepair()!.roundsUsed, 1); assert.equal(f.getRepair()!.status, 'completed')
@@ -336,7 +376,7 @@ test('native abort cancels a repair with an unresolved round without confirming 
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, userActionId: 'authorize' })
   const repair = f.local.scenarioRepairs[0]!
   f.loseNext('round')
-  await f.repairs.accept(repair.task.sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', metadata: { ...f.draft.metadata, coreRulesPresent: true }, evidenceIds: ['evidence'] }))
+  await f.repairs.accept(repair.task.sessionId, reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', ...quality(f.draft, { coreRulesPresent: true }), evidenceIds: ['evidence'] }))
   await f.repairs.accept(repair.task.sessionId, { kind: 'turn-ended', reason: 'aborted' })
   assert.equal(f.getRepair()!.terminationReason, 'cancelled'); assert.equal(f.getRepair()!.roundsUsed, 1)
   assert.equal(f.prompts.length, 1); assert.equal(f.confirmations.length, 0)
@@ -345,7 +385,7 @@ test('native abort cancels a repair with an unresolved round without confirming 
 test('replayed DSH assistant and turn-end sequences cannot alter the current repair round', async t => {
   const f = await fixture(t)
   await f.repairs.start({ action: 'startScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, userActionId: 'authorize' })
-  const repair = f.local.scenarioRepairs[0]!, firstReply = { ...reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', metadata: { ...f.draft.metadata, coreRulesPresent: true }, evidenceIds: ['evidence'] }), seq: 10 }
+  const repair = f.local.scenarioRepairs[0]!, firstReply = { ...reply({ baseHash: f.draft.sha256, body: f.draft.body + '\n规则已补齐', ...quality(f.draft, { coreRulesPresent: true }), evidenceIds: ['evidence'] }), seq: 10 }
   await f.repairs.accept(repair.task.sessionId, firstReply)
   await f.repairs.accept(repair.task.sessionId, { kind: 'turn-ended', seq: 11 })
   const draft = await readMaterial(f.root, 'scenario', 'scene')

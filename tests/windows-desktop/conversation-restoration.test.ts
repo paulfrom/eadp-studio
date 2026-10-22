@@ -103,10 +103,10 @@ test('a repeated restore checks new authority even after the same Host has opene
 
 for (const purpose of ['material', 'handoff'] as const) test(`${purpose} restoration preserves the author's unconfirmed edited draft`, async t => {
   const f = await fixture(t, purpose)
-  await saveMaterial(f.task.worktree, initialMetadata(f.entity), '# 作者后续修改\n\n未确认的现场。')
-  const before = await readFile(path.join(f.task.worktree, purpose === 'handoff' ? 'handoff.asset.md' : '需求/asset.md'), 'utf8')
+  const saved = await saveMaterial(f.task.worktree, initialMetadata(f.entity), '# 作者后续修改\n\n未确认的现场。')
+  const before = await readFile(path.join(f.task.worktree, saved.path), 'utf8')
   assert.equal((await restore(f.reboot())).ok, true)
-  assert.equal(await readFile(path.join(f.task.worktree, purpose === 'handoff' ? 'handoff.asset.md' : '需求/asset.md'), 'utf8'), before)
+  assert.equal(await readFile(path.join(f.task.worktree, saved.path), 'utf8'), before)
 })
 
 test('prototype restoration rejects modified local requirement bytes even while the remote hash is unchanged', async t => {

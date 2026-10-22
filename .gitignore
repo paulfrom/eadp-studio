@@ -21,6 +21,7 @@
 *.p12
 .DS_Store
 Thumbs.db
+.zcode/
 
 # build/ contains maintained scripts; never ignore it globally.
 
