@@ -118,3 +118,12 @@
 ## 后续修订（本轮）
 
 按条／按组／按批建议采纳与「自动写入 AI 建议」开关被取消，场景与需求统一为写入提议＋整篇写入：AI 只讨论并归纳结论，主动提问是否把本轮结论写入目标文件，用户明确回答（按钮或回答“是”）后由 Host 校验正文 hash、模板固定引用、项目上下文 hash 与所选依据集合并整篇写入，写入返回变更摘要且可按本地差异撤销；任一条件变化即提议作废并重新提问，同一提议重复回答只生效一次。上文 2026-10-21 记录保持原样，属于当时的实现与校验事实；后续代码调整与验证随本文追加。
+
+## 协同后端路径范围修正（2026-10-22）
+
+本轮只实施开发清单涉及协同后端的两项路径范围，不新增契约字段、端点或数据库结构。
+
+- SC03：`stage:"template"` 的受控配置集成允许在项目根更新 `CONTEXT.md`；仅更新该文件时不要求重复声明模板目录，发布模板文件或 `project.assets.json` 时仍须声明目录。项目身份、四目录声明与已发布模板身份不可改写或删除。
+- SC06：材料与场景批次集成的写入范围在项目根只放行 `CONTEXT.md`；其他根目录文件即使被列为关联文件也不得进入 `allowedPaths`。关联文件仍须在材料 `metadata.files` 中声明并经内容 hash 校验。
+
+校验：`pnpm --filter @eadp/collaboration-api typecheck` 通过；`src/gitlab-content.test.ts` 44 项通过（新增材料与模板两侧的 `CONTEXT.md` 放行、任意根目录拒绝、无模板目录项目仅更新上下文四类用例）；`src/modules/integration.test.ts`、`src/project-initialization.test.ts`、`src/auth/gitlab.test.ts`、`src/desktop-update.test.ts` 共 43 项通过。已重建并启动 Docker 镜像，`GET /health` 返回 `{"status":"ok"}`，api／db／cache 容器均为 healthy。本轮未连接真实企业 GitLab，也未执行桌面端与完整产品验收。

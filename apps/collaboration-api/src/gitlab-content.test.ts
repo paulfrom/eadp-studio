@@ -239,6 +239,22 @@ test('associated files may exist unchanged in the commit and retain their own co
   await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('FILE_HASH_MISMATCH'));
 });
 
+test('material integrations may freeze the project CONTEXT.md as a declared root file', async () => {
+  const f = fixture('material'), path = 'CONTEXT.md', bytes = Buffer.from('# 项目上下文\n\n业务范围与已明确规则。\n');
+  const metadata = { ...f.metadata, files: [{ path, sha256: createHash('sha256').update(bytes).digest('hex') }] };
+  f.controls.files.set(path, bytes); updateFixed(f, metadata);
+  f.input.allowedPaths.push(path); f.controls.candidateDiffs.push(f.diff(path));
+  assert.deepEqual([...(await f.content.verifyCandidate(actor, 7, f.input)).keys()], [metadata.entityId]);
+});
+
+test('material integrations cannot open unrelated project root files', async () => {
+  const f = fixture('material'), path = 'README.md', bytes = Buffer.from('unrelated root file');
+  const metadata = { ...f.metadata, files: [{ path, sha256: createHash('sha256').update(bytes).digest('hex') }] };
+  f.controls.files.set(path, bytes); updateFixed(f, metadata);
+  f.input.allowedPaths.push(path); f.controls.candidateDiffs.push(f.diff(path));
+  await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('MATERIAL_PATH_SCOPE'));
+});
+
 test('material confirmations cannot whitelist unselected drafts or arbitrary attachments', async () => {
   const f = fixture('material'), path = '场景/unselected.md';
   f.input.allowedPaths.push(path); f.controls.candidateDiffs.push(f.diff(path));
@@ -339,4 +355,26 @@ test('the first template publication may declare the catalog of a project accept
   f.controls.projectManifest = legacy;
   f.controls.candidateManifest = { ...legacy, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: '.template/default.md' }] } };
   assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
+});
+
+test('controlled configuration publication may update only the project CONTEXT.md', async () => {
+  const f = fixture('material'), input = templateInput(f);
+  f.controls.candidateDiffs = [f.diff('CONTEXT.md')];
+  input.allowedPaths = ['CONTEXT.md'];
+  assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
+});
+
+test('a CONTEXT.md-only configuration change does not require republishing a template catalog', async () => {
+  const f = fixture('material'), input = templateInput(f), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
+  f.controls.projectManifest = legacy;
+  f.controls.candidateDiffs = [f.diff('CONTEXT.md')];
+  input.allowedPaths = ['CONTEXT.md'];
+  assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
+});
+
+test('controlled configuration publication cannot open unrelated project root files', async () => {
+  const f = fixture('material'), input = templateInput(f);
+  f.controls.candidateDiffs = [f.diff('README.md')];
+  input.allowedPaths = ['README.md'];
+  await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_PATH_SCOPE'));
 });

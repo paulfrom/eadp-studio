@@ -8,6 +8,8 @@ type Reader = Pick<Actor, 'gitlabUserId'>;
 type Diff = { old_path: string; new_path: string; deleted_file: boolean; renamed_file: boolean; too_large?: boolean; collapsed?: boolean; diff: string };
 type Compare = { compare_timeout?: boolean; compare_same_ref?: boolean; diffs: Diff[] };
 export interface ProjectTemplates { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> }
+/** The only project-root file that a material or configuration integration may change. */
+const PROJECT_CONTEXT_PATH = 'CONTEXT.md';
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 function utf8(bytes: Uint8Array, code: string): string {
   requireCondition(!(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) && !bytes.includes(13), code, 'Text must use UTF-8 without BOM and LF line endings', 422);
@@ -104,7 +106,8 @@ export class GitLabContent {
     for (const path of input.allowedPaths) {
       repositoryPath(path);
       if (input.stage === 'prototype') requireCondition(path.startsWith('原型代码/'), 'PROTOTYPE_PATH_SCOPE', 'Prototype integration can only change prototype source files', 422);
-      if (input.stage === 'template') requireCondition(path === 'project.assets.json' || /^\.template\/[A-Za-z0-9][A-Za-z0-9_.-]*\.md$/.test(path), 'TEMPLATE_PATH_SCOPE', 'Template publication can only change the project catalog and template files', 422);
+      if (input.stage === 'template') requireCondition(path === 'project.assets.json' || path === PROJECT_CONTEXT_PATH || /^\.template\/[A-Za-z0-9][A-Za-z0-9_.-]*\.md$/.test(path), 'TEMPLATE_PATH_SCOPE', 'Template publication can only change the project catalog, template files and project context', 422);
+      if (input.stage === 'material' || input.stage === 'scenario-batch') requireCondition(path.includes('/') || path === PROJECT_CONTEXT_PATH, 'MATERIAL_PATH_SCOPE', 'Material integrations may only change related files below project directories or the project CONTEXT.md', 422);
     }
     const prefix = `/projects/${gitlabProjectId}/repository`;
     const commit = await this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.candidateSha}`);
@@ -158,11 +161,14 @@ export class GitLabContent {
     const before = await this.manifest(gitlabProjectId, expectedHead), after = await this.manifest(gitlabProjectId, candidateSha);
     const { scenarioTemplates: oldCatalog, ...oldIdentity } = before, { scenarioTemplates: newCatalog, ...newIdentity } = after;
     requireCondition(canonical(oldIdentity) === canonical(newIdentity), 'TEMPLATE_MANIFEST_SCOPE', 'Template publication cannot change project identity or directory declarations', 422);
+    const catalog = newCatalog?.templates ?? [];
+    // Publishing templates declares the catalog; a project context change does not.
+    const publishesCatalog = diffs.some(d => d.new_path === 'project.assets.json' || d.new_path.startsWith('.template/'));
+    requireCondition(newCatalog || !publishesCatalog, 'TEMPLATE_CATALOG_REQUIRED', 'Template publication must declare the project template catalog', 422);
     // The first publication of a project accepted without a catalog declares it;
     // afterwards a published template identity can never be removed.
-    requireCondition(newCatalog, 'TEMPLATE_CATALOG_REQUIRED', 'Template publication must declare the project template catalog', 422);
-    requireCondition((oldCatalog?.templates ?? []).every(t => newCatalog.templates.some(n => t.id === n.id && t.path === n.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
-    requireCondition(diffs.every(d => !d.deleted_file && !d.renamed_file && (d.new_path === 'project.assets.json' || newCatalog.templates.some(t => t.path === d.new_path))), 'TEMPLATE_PATH_SCOPE', 'Template publication cannot delete templates or change files outside the catalog', 422);
+    requireCondition((oldCatalog?.templates ?? []).every(t => catalog.some(n => t.id === n.id && t.path === n.path)), 'TEMPLATE_DELETE_FORBIDDEN', 'Published template identities must remain in the project catalog', 422);
+    requireCondition(diffs.every(d => !d.deleted_file && !d.renamed_file && (d.new_path === 'project.assets.json' || d.new_path === PROJECT_CONTEXT_PATH || catalog.some(t => t.path === d.new_path))), 'TEMPLATE_PATH_SCOPE', 'Template publication cannot delete templates or change files outside the catalog and project context', 422);
     await this.loadProjectTemplates(actor, gitlabProjectId, candidateSha);
   }
   async verifyCorrection(actor: Reader, gitlabProjectId: number, expectedHead: string, correctedHead: string): Promise<void> {

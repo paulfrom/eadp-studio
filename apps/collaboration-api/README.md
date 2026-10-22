@@ -151,7 +151,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 
 材料与原型复用集成底座，材料分支的 `stage` 为 `material`、`prototype` 或 `scenario-batch`，携带 `entityId`、`token`、`sourceSha`、`expectedHead`、`candidateSha`、`allowedPaths`、`checks` 和 `confirmations`。每项 confirmation 包含 `{entityId,expectedRevision,fixed,readHash,authorConfirmed:true,confirmationMethod}`，其中 `fixed={commitSha,path,sha256}`，`readHash` 必须等于最终固定材料的 SHA-256；不传 `metadata` 或业务清单。`direct` 对应用户阅读版本；`ai-assisted` 另传绑定候选与输入的 `reviewEvidence`；`ai-repair` 另传 `repairTaskId`，对应任务最终已记录 hash。
 
-Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、冻结、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
+Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、冻结、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；项目根目录只允许 `CONTEXT.md`，其余根目录文件不进入写入范围。材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
 
 场景模板保存在 `.template/<模板ID>.md`。项目 `project.assets.json` 的共享模板声明为：
 
@@ -164,7 +164,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 }
 ```
 
-该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/` 与 `project.assets.json` 的模板声明变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。已有模板身份不能删除，项目身份与四目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
+该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/`、`project.assets.json` 的模板声明以及项目根 `CONTEXT.md` 的变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。只发布 `CONTEXT.md` 时不需要重复声明模板目录；发布模板仍须声明目录。已有模板身份不能删除，项目身份与四目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
 
 清单的 `scenarioTemplates` 只对新初始化必填。早于模板目录存在的已接受项目没有该片段：读取其清单不失败，`GET /projects/:id/templates` 返回空目录（`templates: []`、无默认项），此时新建场景以 `PROJECT_TEMPLATES_REQUIRED` 阻断；用户发布模板即按上面的模板分支补齐清单与 `.template/`。详见 [ADR-0006](../../docs/adr/0006-legacy-project-readonly-compatibility.md)。
 
