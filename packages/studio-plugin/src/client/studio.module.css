@@ -466,9 +466,8 @@
 .summaryLabel { color: var(--text-3); font-size: 11px; }
 
 /* ==========================================================================
-   Scenario page — two panes: the AI conversation with its evidence and
-   suggestion cards on the left, the material spec with its gate footer on the
-   right. Every surface stays on the Studio tokens.
+   Scenario page — two panes: the AI conversation on the left and the material
+   spec with its gate footer on the right. Every surface stays on Studio tokens.
    ========================================================================== */
 .compactHeader { padding: 8px 20px; }
 .compactHeader .backToList { margin-bottom: 0; }
@@ -517,19 +516,6 @@
 .dockNotice { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 10.5px; color: var(--text-3); }
 .dockNotice [role='alert'], .dockNotice [role='status'] { color: var(--warn); }
 
-.suggestionList { display: flex; flex-direction: column; gap: 10px; }
-.suggestionBatch { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.suggestionGroup { margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
-.suggestionGroupHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.suggestionGroupHead strong { font-size: 11.5px; }
-.suggestionGroupHead small { color: var(--text-3); font-size: 10.5px; }
-.studio .suggestionGroupHead button { margin-left: auto; padding: 3px 8px; font-size: 10.5px; }
-.suggestionItems { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
-.suggestionItems > li { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
-.suggestionText { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 11.5px; line-height: 1.75; overflow-wrap: anywhere; }
-.suggestionText del { opacity: .6; }
-.suggestionText ins { border-left: 2px solid currentColor; padding-left: 8px; text-decoration: none; }
-.studio .suggestionItems button { flex: 0 0 auto; padding: 3px 8px; font-size: 10.5px; }
 .candidateRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .candidateRow strong { font-size: 11.5px; }
 .candidateRow p { color: var(--text-3); font-size: 10.5px; }
@@ -541,22 +527,23 @@
 .revisionImpact ul { margin: 6px 0; padding-left: 18px; }
 
 .specBody { display: flex; flex: 1; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; padding: 12px; }
-.frontmatterCard { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.frontmatterCard > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
-.frontmatterCard[open] > summary { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.frontmatterCard > summary::after { content: '展开'; margin-left: auto; color: var(--text-3); font-size: 10px; }
-.frontmatterCard[open] > summary::after { content: '收起'; }
+.scenarioMeta { display: grid; gap: 7px; padding: 2px 0 10px; border-bottom: 1px solid var(--border); }
+.scenarioMetaHeading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 12px; }
+.scenarioMetaHeading strong { font-size: 12px; }
+.scenarioMetaHeading span { color: var(--text-3); font-size: 10.5px; }
 .frontmatterRows { display: flex; flex-direction: column; margin: 0; }
-.frontmatterRows > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent); }
+.frontmatterRows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.frontmatterRows > div { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 3px 0; }
 .frontmatterRows > div:last-child { border-bottom: 0; }
 .frontmatterRows dt { color: var(--text-3); font: 10.5px var(--mono); }
 .frontmatterRows dd { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin: 0; font-size: 11.5px; overflow-wrap: anywhere; }
 .frontmatterRows dd small { color: var(--text-3); font: 10px var(--mono); }
-.frontmatterCard input { padding: 3px 7px; font-size: 11.5px; }
-.frontmatterExtra { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 11px; }
-.frontmatterExtra[open] { display: flex; flex-direction: column; gap: 6px; }
-.frontmatterExtra > summary { font-size: 11px; font-weight: 600; color: var(--text-2); }
-.frontmatterExtra fieldset { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.scenarioMeta input { padding: 3px 7px; font-size: 11.5px; }
+.templateBinding { display: grid; gap: 6px; color: var(--text-2); font-size: 11px; }
+.templateBinding > summary { font-weight: 600; }
+.confirmChecklist { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); font-size: 10.5px; }
+.confirmChecklist > summary { font-weight: 600; color: var(--text-2); }
+.confirmChecklist fieldset { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
 .checkbox { display: flex; flex-direction: row; align-items: center; gap: 7px; }
 .specSections { display: flex; flex-direction: column; gap: 12px; }
 .specSection { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
@@ -582,7 +569,12 @@
 .gateReasons article { padding: 6px 0; }
 .gateReasons p { margin: 3px 0 0; }
 .footerBar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.gitState { color: var(--text-3); font-size: 10.5px; }
+.gitDiagnostics { color: var(--text-3); font-size: 10.5px; }
+.gitDiagnostics > summary { cursor: pointer; }
+.gitState { display: block; margin-top: 4px; color: var(--text-3); font-size: 10.5px; }
+.settlementState { margin-left: auto; padding: 2px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 10.5px; }
+.settlementState[data-state='sync-pending'], .settlementState[data-state='cleanup-pending'] { background: var(--warn-soft); color: var(--warn); }
+.settlementState[data-state='settled'] { background: var(--accent-soft); color: var(--accent-text); }
 .footerActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .studio .footerActions button { font-size: 11px; }
 .repairPanel { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font-size: 11px; }

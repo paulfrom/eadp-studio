@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, realpath, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { canonical, validateMaterialMetadata } from '@eadp/asset-domain'
-import { isMaterialMetadata, type MaterialMetadata } from '@eadp/contracts'
+import { isMaterialMetadata, type FixedReference, type MaterialMetadata } from '@eadp/contracts'
 import type { MaterialDraft } from '../../shared/studio.ts'
-import type { ScenarioConflict, ScenarioGate, ScenarioSuggestionBatch } from '../../shared/scenarios.ts'
+import type { ScenarioConflict, ScenarioGate } from '../../shared/scenarios.ts'
 import { atomicWriteFile, containedFile, digest, findMaterialFile, materialTargetPath, materialText, parseMaterial, readMaterial, unidentifiedMaterialFile } from '../adapters/assets/materials.ts'
-import { sameTemplate, suggestionBody } from './scenario-suggestions.ts'
+
+function sameTemplate(a: FixedReference, b: FixedReference): boolean { return a.commitSha === b.commitSha && a.path === b.path && a.sha256 === b.sha256 }
 
 interface SaveInput { root: string; metadata: MaterialMetadata; body: string; expectedHash: string; operationId: string }
-interface ApplyInput { root: string; draft: MaterialDraft; batch: ScenarioSuggestionBatch; selectedItemIds: readonly string[]; expectedHash: string; operationId: string; readEvidenceIds: readonly string[] }
 interface Receipt { fingerprint: string; result: MaterialDraft; committed: boolean }
 const queues = new Map<string, Promise<unknown>>()
 
@@ -41,19 +41,6 @@ export class ScenarioDocumentService {
   async save(input: SaveInput): Promise<MaterialDraft> {
     const root = await realpath(input.root)
     return serialized(`${root}\0${input.metadata.entityId}`, () => this.write({ ...input, root }))
-  }
-
-  async apply(input: ApplyInput): Promise<MaterialDraft> {
-    const root = await realpath(input.root)
-    return serialized(`${root}\0${input.draft.entityId}`, async () => {
-      const { status: _status, error: _error, ...protocol } = input.batch
-      const fingerprint = digest(canonical({ action: 'apply', entityId: input.draft.entityId, batch: protocol, selectedItemIds: [...input.selectedItemIds].sort(), expectedHash: input.expectedHash }))
-      const repeated = await this.receipt(root, input.draft.entityId, input.operationId, fingerprint)
-      if (repeated) return repeated
-      if (input.expectedHash !== input.draft.sha256) throw new Error('采纳时读取的场景版本无效')
-      const body = suggestionBody(input.draft, input.batch, input.selectedItemIds, input.readEvidenceIds)
-      return this.write({ root, metadata: input.draft.metadata, body, expectedHash: input.expectedHash, operationId: input.operationId }, fingerprint)
-    })
   }
 
   private receiptPath(entityId: string, id: string): string { operationId(entityId); operationId(id); return `operations/${entityId}/${id}.json` }

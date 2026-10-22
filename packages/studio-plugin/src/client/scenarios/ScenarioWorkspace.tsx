@@ -52,7 +52,6 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   }, [buffer, execute, entity.id, operationId])
   const actions = useMemo(() => ({
     bindTemplate: (templateId: string) => { void execute({ action: 'bindScenarioTemplate', entityId: entity.id, templateId }) },
-    adopt: async (batchId: string, itemIds: string[]) => { await execute(hash => ({ action: 'adoptScenarioSuggestions', entityId: entity.id, batchId, itemIds, expectedHash: hash, operationId: operationId('adopt', { batchId, itemIds: [...itemIds].sort(), hash }) })) },
     importSource: async (name: string, base64: string) => { const result = await execute({ action: 'importScenarioSource', entityId: entity.id, name, base64, operationId: crypto.randomUUID() }); if (!result?.ok) throw new Error('资料未能导入，请查看错误并重试。') },
     retrySource: (sourceId: string) => { void execute({ action: 'retryScenarioSource', entityId: entity.id, sourceId }) },
     selectSource: (source: ScenarioSource, selected: boolean, formal: boolean) => { void execute({ action: 'selectScenarioSource', entityId: entity.id, sourceId: source.id, selected, formal }) },
@@ -74,11 +73,9 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     newSession: () => { void execute({ action: 'newScenarioSession', entityId: entity.id }) },
     selectSession: sessionId => { void execute({ action: 'selectScenarioSession', entityId: entity.id, sessionId }) },
     openTemplates: () => faces.openSettings('studio-scenario-templates'),
-    setAutoWrite: (enabled: boolean) => { void execute({ action: 'setScenarioAutoWrite', entityId: entity.id, enabled }) },
-    adoptSuggestions: actions.adopt,
     resolveWriteProposal: decision => {
       const proposal = workspace.writeProposal
-      if (proposal) void execute(hash => ({ action: 'resolveScenarioWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, expectedHash: hash }))
+      if (proposal) void execute(hash => ({ action: 'resolveScenarioWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, expectedHash: hash })).then(result => { if (!result?.ok) void call({ action: 'state' }) })
     },
     undoWrite: () => {
       const receipt = workspace.writeReceipt
@@ -112,7 +109,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
       </MaterialConversation>
     </ScenarioChatPanel>
     <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.scenarioTemplates} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
-      <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
+      <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
     </ScenarioSpecPanel>
   </div>
 }

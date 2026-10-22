@@ -59,7 +59,7 @@ export function ScenarioSpecPanel({ entity, draft, buffer, snapshot, workspace, 
         </section>)}
         {!cards.length && <section className={css.specSection}>
           <header className={css.sectionHead}><h3>还没有正文</h3><small>{templateSections.length} 个模板章节</small></header>
-          <div className={css.sectionBody}><p className={css.muted}>当前材料正文为空。按模板章节补充内容，或与左侧 AI 一起整理后再采纳。</p><ul className={css.templateSections}>{templateSections.map(title => <li key={title}>{title}</li>)}</ul></div>
+          <div className={css.sectionBody}><p className={css.muted}>当前材料正文为空。按模板章节补充内容，或与左侧 AI 讨论并通过写入提议更新整篇正文。</p><ul className={css.templateSections}>{templateSections.map(title => <li key={title}>{title}</li>)}</ul></div>
         </section>}
       </div> : <label className={css.bodyLabel}>场景 Markdown<textarea className={css.materialBody} spellCheck={false} readOnly={!editable} aria-label="场景 Markdown 正文" value={snapshot.body} onChange={event => buffer.edit({ body: event.target.value, metadata: snapshot.metadata })} /></label>}
     </div>

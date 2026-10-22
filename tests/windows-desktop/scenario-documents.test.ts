@@ -4,10 +4,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import type { MaterialMetadata } from '../../packages/contracts/src/index.ts'
-import type { ScenarioSource, ScenarioSuggestionBatch } from '../../packages/studio-plugin/src/shared/scenarios.ts'
+import type { ScenarioSource } from '../../packages/studio-plugin/src/shared/scenarios.ts'
 import { digest, materialText, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { ScenarioDocumentConflictError, ScenarioDocumentService, checkScenarioDocument, scenarioFileErrors } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
-import { parseSuggestionBatch, suggestionBody } from '../../packages/studio-plugin/src/host/application/scenario-suggestions.ts'
 import { archiveSelectedEvidence } from '../../packages/studio-plugin/src/host/application/scenario-evidence.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
@@ -20,20 +19,6 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }, body =
   const draft = await saveMaterial(root, metadata(), body)
   return { root, localRoot, draft, service: new ScenarioDocumentService(localRoot) }
 }
-function batch(draft: Awaited<ReturnType<typeof readMaterial>>): ScenarioSuggestionBatch {
-  return { id: 'batch-one', entityId: draft.entityId, baseHash: draft.sha256, status: 'current', groups: [{ id: 'rules', title: '规则', items: [
-    { id: 'first', start: 0, end: 1, original: '甲', replacement: '第一', evidenceIds: ['source-one'] },
-    { id: 'second', start: 2, end: 4, original: '丙丁', replacement: '第三四', evidenceIds: [] },
-  ] }] }
-}
-/** Wire shape the Agent sends: ranges plus anchors, never the replaced text itself. */
-function wireBatch(draft: Awaited<ReturnType<typeof readMaterial>>) {
-  return { id: 'batch-one', entityId: draft.entityId, baseHash: draft.sha256, groups: [{ id: 'rules', title: '规则', items: [
-    { id: 'first', start: 0, end: 1, anchor: '甲', replacement: '第一', evidenceIds: ['source-one'] },
-    { id: 'second', start: 2, end: 4, anchor: '丙丁', replacement: '第三四', evidenceIds: [] },
-  ] }] }
-}
-const response = (value: unknown) => '```eadp-suggestions\n' + JSON.stringify(value) + '\n```'
 
 test('precise body whitespace survives save and reopen; the file hash covers all metadata and body bytes', async t => {
   const { root } = await fixture(t)
@@ -81,44 +66,6 @@ test('an invalid external file is retained with the local input and never overwr
     return true
   })
   assert.equal(await readFile(path.join(root, draft.path), 'utf8'), '损坏的外部文件')
-})
-
-test('suggestions accept one strict block, derive the original text from the draft, and reject malformed ranges', async t => {
-  const { draft } = await fixture(t), wire = wireBatch(draft)
-  const parsed = parseSuggestionBatch(response(wire), draft)
-  assert.equal(parsed.status, 'current')
-  assert.deepEqual(parsed.groups[0]!.items.map(item => item.original), ['甲', '丙丁'])
-  assert.throws(() => parseSuggestionBatch(response({ ...wire, status: 'current' }), draft))
-  assert.throws(() => parseSuggestionBatch(response(wire) + '\n' + response(wire), draft))
-  const first = wire.groups[0]!.items[0]
-  for (const changed of [
-    { ...wire, groups: [...wire.groups, wire.groups[0]] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [first, first] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, anchor: '乙' }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, end: 9 }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, start: 0, end: 0 }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, anchor: '甲'.repeat(41) }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, replacement: '甲' }] }] },
-    { ...wire, groups: [{ ...wire.groups[0], items: [{ ...first, evidenceIds: ['source-one', 'source-one'] }] }] },
-  ]) assert.throws(() => parseSuggestionBatch(response(changed), draft))
-  // A batch about another version still arrives as history, with empty originals.
-  const older = parseSuggestionBatch(response({ ...wire, baseHash: 'f'.repeat(64) }), draft)
-  assert.deepEqual(older.groups[0]!.items.map(item => item.original), ['', ''])
-})
-
-test('a selected batch applies once; stale, overlapping, mismatched and unread suggestions never write', async t => {
-  const { root, draft, service } = await fixture(t), proposal = batch(draft)
-  const input = { root, draft, batch: proposal, selectedItemIds: ['first', 'second'], expectedHash: draft.sha256, operationId: 'adopt-one', readEvidenceIds: ['source-one'] }
-  const applied = await service.apply(input)
-  assert.equal(applied.body, '第一乙第三四')
-  assert.deepEqual(await service.apply({ ...input, batch: { ...proposal, status: 'applied' } }), applied)
-  assert.deepEqual(await service.apply({ ...input, draft: applied, batch: { ...proposal, status: 'applied' }, readEvidenceIds: [] }), applied)
-  assert.throws(() => suggestionBody(applied, proposal, ['first'], ['source-one']), /过期/)
-  assert.throws(() => suggestionBody(draft, proposal, ['first'], []), /未实际读取/)
-  assert.throws(() => suggestionBody(draft, { ...proposal, groups: [{ ...proposal.groups[0]!, items: [{ ...proposal.groups[0]!.items[0]!, end: 99 }] }] }, ['first'], ['source-one']), /超出当前正文/)
-  const overlapping = { ...proposal, groups: [{ ...proposal.groups[0]!, items: [...proposal.groups[0]!.items, { id: 'overlap', start: 0, end: 2, original: '甲乙', replacement: '替代', evidenceIds: [] }] }] }
-  assert.throws(() => suggestionBody(draft, overlapping, ['first', 'overlap'], ['source-one']), /重叠/)
-  assert.equal((await readMaterial(root, 'scenario', draft.entityId)).sha256, applied.sha256)
 })
 
 test('formal evidence archives only explicit selected versions with original bytes and read scope', async t => {

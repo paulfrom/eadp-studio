@@ -226,7 +226,7 @@ test('late image read evidence is rejected immediately after the account changes
     const local = await f.store.read(), sourcePath = path.join(f.store.directory, 'scenario-sources', 'image.png')
     const source = { id: 'image', name: 'image.png', format: 'png', sha256: 'a'.repeat(64), status: 'failed' as const, ranges: [] as string[], text: '', selected: true, formal: false }
     local.tasks.push({ projectId: 'project-1', entityId: 'scene', sessionId: 'user-one-session', purpose: 'material', inputHash: '', worktree: local.projects[0]!.directory })
-    local.scenarios.push({ projectId: 'project-1', entityId: 'scene', sources: [source], sourcePaths: { image: sourcePath }, suggestions: [] })
+    local.scenarios.push({ projectId: 'project-1', entityId: 'scene', sources: [source], sourcePaths: { image: sourcePath } })
     await f.store.save()
     const app = new StudioApplication(f.store, f.api, f.ports)
     const before = await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8')

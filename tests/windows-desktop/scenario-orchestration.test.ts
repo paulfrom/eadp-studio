@@ -88,6 +88,8 @@ test('opening and snapshotting an accepted scenario reads its fixed version with
   const f = await fixture(t), fixedText = materialText(metadata(), '已确认正文')
   delete f.entity.occupation
   f.entity.current = { fixed: { commitSha: 'd'.repeat(40), path: '场景/scene.md', sha256: digest(fixedText) }, confirmedBy: 1, confirmedAt: '2026-10-20T00:00:00Z' } as NonNullable<EntityView['current']>
+  f.local.projects[0]!.sync = { status: 'pending', commit: 'd'.repeat(40) }
+  f.task.cleanup = { status: 'pending', steps: { resources: true, archive: false, worktree: false, branch: false, history: false } }
   const read = async (_projectId: string, _commit: string, relative: string) => Buffer.from(relative === '场景/scene.md' ? fixedText : templateBody)
   const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   let taskCalls = 0, ownershipCalls = 0
@@ -96,6 +98,11 @@ test('opening and snapshotting an accepted scenario reads its fixed version with
   const snapshot = await workspaces.snapshot(f.remote)
   assert.equal(snapshot?.readOnly, true)
   assert.equal(snapshot?.draft.body, '已确认正文')
+  assert.equal(snapshot?.settlement.status, 'sync-pending')
+  f.local.projects[0]!.sync = { status: 'synced', commit: 'd'.repeat(40) }
+  assert.equal((await workspaces.snapshot(f.remote))?.settlement.status, 'cleanup-pending')
+  f.task.cleanup = { status: 'done', steps: { resources: true, archive: true, worktree: true, branch: true, history: true } }
+  assert.equal((await workspaces.snapshot(f.remote))?.settlement.status, 'settled')
   assert.equal(taskCalls, 0); assert.equal(ownershipCalls, 0)
   assert.equal(f.calls.some(call => call.includes('/claim')), false)
 })
@@ -157,20 +164,12 @@ test('repair with no usable source terminates; an unchanged set of blockers stop
   assert.equal(f.confirmations.length, 0)
 })
 
-test('a suggestion reply stores the Host-derived original and rejects an anchor that does not match its range', async t => {
+test('scenario sessions use explicit whole-body write proposals after summarizing conclusions', async t => {
   const f = await fixture(t)
-  const block = (item: object, group = 'rules') => '本轮补齐正文要点见下。\n```eadp-suggestions\n' + JSON.stringify({ id: 'batch', entityId: 'scene', baseHash: f.draft.sha256, groups: [{ id: group, title: '补齐规则', items: [{ id: 'body', evidenceIds: ['evidence'], ...item }] }] }) + '\n```'
-  const whole = { start: 0, end: f.draft.body.length, anchor: f.draft.body.slice(0, 12), replacement: f.draft.body + '\n补充规则' }
-  assert.equal(await f.workspaces.accept(f.task.sessionId, block(whole)), true)
-  const stored = f.record.suggestions.at(-1)!
-  assert.equal(stored.status, 'current')
-  assert.equal(stored.groups[0]!.items[0]!.original, f.draft.body)
-  assert.equal(await f.workspaces.accept(f.task.sessionId, block({ ...whole, anchor: '不相符的原文' })), true)
-  assert.equal(f.record.suggestions.at(-1)!.status, 'invalid')
-  // The prompt asks for conclusions first; any write is a separate explicit proposal, not a suggestion block.
   const context = await f.workspaces.context(f.task)
   assert.match(context, /回答规则：先用可读中文归纳本轮明确结论/)
-  assert.ok(context.includes('eadp-write-proposal') && !context.includes('eadp-suggestions'))
+  assert.match(context, /eadp-write-proposal/)
+  assert.match(context, /整篇新正文/)
 })
 
 test('an accepted context proposal writes only the project root snapshot and binds the new hash to the scenario package', async t => {
@@ -201,6 +200,7 @@ test('a concurrently accepted context returns to the conversation instead of ove
   await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /其他已确认版本/)
   assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), '旧上下文')
   assert.equal(f.record.writeProposal!.status, 'pending')
+  assert.match(f.record.writeProposal!.error ?? '', /其他已确认版本/)
 })
 
 test('a context proposal expires when the worktree file changes after the question', async t => {
@@ -213,27 +213,7 @@ test('a context proposal expires when the worktree file changes after the questi
   await writeFile(path.join(f.root, 'CONTEXT.md'), '作者刚刚修改的上下文')
   await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /CONTEXT\.md 已变化/)
   assert.equal(f.record.writeProposal!.status, 'pending')
-})
-
-test('the authorized auto write applies a valid batch and keeps an unwritable one as a card', async t => {
-  const f = await fixture(t)
-  const block = (id: string, hash: string, body: string, evidenceIds = ['evidence']) => '```eadp-suggestions\n' + JSON.stringify({ id, entityId: 'scene', baseHash: hash, groups: [{ id: 'rules', title: '补齐规则', items: [{ id: 'body', start: 0, end: body.length, anchor: body.slice(0, 12), replacement: `${body}\n补充规则`, evidenceIds }] }] }) + '\n```'
-  await f.workspaces.setAutoWrite('scene', true)
-  await f.workspaces.accept(f.task.sessionId, block('auto-one', f.draft.sha256, f.draft.body))
-  const written = await readMaterial(f.root, 'scenario', 'scene')
-  assert.equal(written.body, `${f.draft.body}\n补充规则`)
-  assert.equal(f.record.suggestions.at(-1)!.status, 'applied')
-  // An evidence reference that was never read cannot be written automatically; the card keeps the reason.
-  await f.workspaces.accept(f.task.sessionId, block('auto-two', written.sha256, written.body, ['unread']))
-  const blocked = f.record.suggestions.at(-1)!
-  assert.equal(blocked.status, 'current')
-  assert.match(blocked.error ?? '', /自动写入未完成/)
-  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, written.sha256)
-  // Switching auto write off restores proposal-only behaviour.
-  await f.workspaces.setAutoWrite('scene', false)
-  await f.workspaces.accept(f.task.sessionId, block('auto-three', written.sha256, written.body))
-  assert.equal(f.record.suggestions.at(-1)!.status, 'current')
-  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, written.sha256)
+  assert.match(f.record.writeProposal!.error ?? '', /CONTEXT\.md 已变化/)
 })
 
 test('template preview rejects deleting historical identities and publication stops before touching materials when the accepted head changes', async t => {

@@ -135,7 +135,7 @@
 - 消费只由界面按钮产生：`resolveScenarioWriteProposal` 的 `write`/`reject`。聊天文本不解析肯定或否定。写入前重新核对正文 hash、模板固定引用、`CONTEXT.md` hash 与依据集合，任一变化即拒绝并要求重新提问；整篇写入复用 `ScenarioDocumentService.save`，以提议 ID 作为幂等 receipt，重复消费只生效一次。
 - 拒绝时按结论文本生成稳定键存入 `rejectedConclusions`（最多保留 200 条）；同一结论换 ID 再问也会被 Host 丢弃，出现新结论后才可再次提问。
 - 不可解析或引用未读资料的提议不会落盘，回答仅保留为聊天内容。
-- 最小界面：对话区新增写入提议卡，展示结论与已读依据数量，只有“写入整篇正文／不写入”两个动作；卡片上的旧建议链路按 SC14 计划留待删除。
+- 最小界面：对话区新增写入提议卡，展示结论与已读依据数量，只有“写入整篇正文／不写入”两个动作；旧建议卡片与采纳入口已由 SC14 删除。
 
 校验：`prepare-studio-plugin.mjs` 完整装配通过，装配树 `tsc -b` 的 host 与 client 两个工程均通过；`tsx --test tests/windows-desktop/scenario-write-proposals.test.ts tests/windows-desktop/scenario-documents.test.ts tests/windows-desktop/scenario-orchestration.test.ts` 共 31 项通过（新增 5 项覆盖伪造字段、未读依据、过期判定、拒绝键与重复消费）。未调用真实模型，未做桌面交互走查。
 
@@ -183,7 +183,7 @@
 - 固定快照 `.local/skills/mattpocock/` 中的 `grilling`、`grill-with-docs`、`domain-modeling` 原样复制到 `packages/studio-plugin/assets/skills/`，连同 `LICENSE`、`SOURCE.json` 一起随插件发行；装配脚本把它加入 staging 路径并复制进装配树，`package.json` 的 `files` 覆盖该目录。
 - `cordis.patch.yml` 的 `eadp-scenario` 增加 `@deepseek-ai/dsh-tool-skill`，persona 改为 grill/domain-modeling 编排：逐问推进、只归纳结论与提问、ADR 关闭、写入仅在作者通过写入提议卡同意后由 Host 执行。
 - 场景会话在 `sessions.ts` 中以运行时路径挂载 `@deepseek-ai/dsh-skill-filesystem`：`includeDefaultRoots:false`、唯一 `customSkillDirs` 为随包目录、`providerName:'eadp-bundled'`、`watch:false`，因此不读取项目根或用户机器的技能。
-- 会话提示词与 `studio.ts` 的场景规则不再要求 `eadp-suggestions`；旧建议解析与 UI 仍按 SC14 待删除，但新会话不会收到该协议。
+- 会话提示词与 `studio.ts` 的场景规则采用结论归纳与整篇写入提议；旧建议解析与 UI 已由 SC14 删除。
 - 需求侧已接入同一编排：`sessions.ts` 同时识别场景与需求材料文件，需求材料任务也解析到 `eadp-scenario` preset、挂载同一技能目录，并以只读工具运行；`scenarioSessionContext` 为需求材料生成包含 baseHash、绝对路径、元数据与正文的运行时上下文，`readPaths` 为空（不授予 worktree 之外的读取范围）。
 - 需求材料的会话规则改为只归纳结论与提问、不写正文；需求侧写入提议与摘要撤销仍属阶段二，本轮不新建第二套文件规则。行为变化：需求材料会话从可写改为只读，正文修改走手工编辑，不再由会话直接落盘。
 
@@ -225,7 +225,7 @@
 ## SC12 附件入口与资料状态（2026-10-22）
 
 - 复用原生 `conversation.input.left` 工具栏插槽，附件按钮打开共用的资料面板；使用原生 dialog 管理焦点、关闭与 Escape。`MaterialConversation` 使场景与需求共用入口：会话未创建、恢复中或恢复失败时仍能打开资料，恢复完成后由输入区按钮承载，同一时刻只有一个入口；无关会话不展示。
-- `ScenarioChatPanel` 删除原「资料与 AI 建议」折叠组中的资料入口，导入、状态、范围、重试与正式依据勾选全部迁入附件面板。旧建议 UI、开关和协议暂按 SC14 保留；SC13 的页面与四态展示未实施，当前色系未改。
+- `ScenarioChatPanel` 删除原「资料与 AI 建议」折叠组中的资料入口，导入、状态、范围、重试与正式依据勾选全部迁入附件面板。旧建议 UI、开关和协议已由 SC14 删除；SC13 后续将身份与门禁信息归位并完成四态展示，当前色系未改。
 - 抽取 `MaterialSources` 复用场景与需求的导入、读取、选择、归档和清理；沿用既有 `scenarios` 集合与 `scenario-sources/<project>/<entity>`，未新建本地集合。需求通过 `StudioState.materialSources` 获取去除提取正文的资料投影，会话使用同一来源内容与受控 `readPaths`。需求依据元数据写入复用原串行、expectedHash、冲突双份与持久 receipt 服务。
 - 资料面板区分「正在导入」与 reader 返回的「正在读取／已读取／部分读取／读取失败」，展示实际范围与限制；PDF/Office 仍使用现有服务，图片只在原生 `read_image` 成功后更新状态，并校验当前设计占用、任务目录、已选资料与原始 hash。
 - 已确认正式依据校验固定 `reading-*.json` 的 hash、来源身份和原始文件关联，恢复原格式、实际读取状态、范围与限制；缺失或损坏的记录明确显示无法验证，不再把固定 PDF 的部分提取标成完整已读。历史旧契约材料继续走原只读展示，不进入新投影。
@@ -233,4 +233,22 @@
 
 校验：`node apps/desktop-distribution/build/prepare-studio-plugin.mjs --dev-stage` 仅更新装配树后，Host/Client `tsc -b` 均通过。`node --test tests/scenario-client/*.test.mjs tests/scenario-client/draft-buffer.test.ts tests/scripts/studio-conversation-restoration.test.mjs tests/scripts/studio-task-purpose.test.mjs` 共 36 项全部通过；其中新增 `material-attachments.test.mjs` 12 项，覆盖入口会话隔离、弹窗关闭/取消、会话恢复全程唯一入口、读取状态与范围、导入失败、只读及手工编辑 flush，`studio-task-purpose.test.mjs` 补充保存失败阻止全部资料命令的验证。`apps/collaboration-api/node_modules/.bin/tsx --test tests/windows-desktop/*.test.ts` 共 183 项中 182 通过、1 项因未配置测试数据库跳过；新增需求资料生命周期、图片读取归属/hash 校验、固定读取记录和需求文档 CAS 测试，并修正恢复测试中缺少必填字段的材料元数据 fixture。`git diff --check` 通过。
 
-验证边界：组件测试使用真实 React 与 jsdom，dialog 的浏览器原生聚焦/取消行为使用测试内 shim，不替代实机交互验收。未执行视觉审查、打包校验、真实企业 GitLab、双客户端、Windows 实机或真实模型验证。当前检查点为 SC12，下一项为 SC13。
+验证边界：组件测试使用真实 React 与 jsdom，dialog 的浏览器原生聚焦/取消行为使用测试内 shim，不替代实机交互验收。未执行视觉审查、打包校验、真实企业 GitLab、双客户端、Windows 实机或真实模型验证。SC13 与 SC14 已完成；SC15 的 Linux 层验证记录于后文。
+
+## SC14 删除旧场景建议链路（2026-10-22）
+
+- 删除共享建议批次类型、建议与自动写入状态、`adoptScenarioSuggestions`/`setScenarioAutoWrite` 命令，以及 Host 的旧协议解析、字符范围应用、显式采纳和自动写入分支。
+- 删除 `ScenarioSuggestions` UI、专属 CSS、仅覆盖旧批次协议/应用的 `scenario-suggestions.ts` 与相关用例，也删除只验证旧原生采纳按钮的 `work/validation/native-adoption/` 专用探针；更新会话提示词，去掉采纳建议措辞。`ScenarioDocumentService` 保留受控整篇保存与 hash 冲突处理。
+- 未新增或删除本地状态集合；需求候选、独立评审、修复、资料附件路径不变。
+
+校验：重新装配后 Typert 生成 31 个包；Host/Client `tsc -b` 通过。`tests/windows-desktop/*.test.ts` 共 180 项，179 通过、1 项因未配置测试数据库跳过；客户端与相关脚本共 41 项全部通过；活跃源码、测试与插件提示文件中的旧链路标识扫描无匹配。`git diff --check` 通过。
+
+状态：SC14 与 SC13 已完成；SC15 Linux 层已执行，数据库/API 集成问题及真实协同双客户端、Windows 实机、真实模型验收仍未完成。
+
+## SC13 页面精简与 SC15 Linux 验证（2026-10-22）
+
+- SC13 已将场景编号/名称、模板固定版本、本地草稿或固定版本状态与审计时间放在正文上方；业务完整性、待澄清项和模板结构检查归入确认检查；Git 技术信息折叠在按需诊断中。Host 投影写入提议待回答、失败重试、已写入/已拒绝，以及草稿、待同步、待清理和本机收整完成四态。
+- 装配树 Typert 生成 31 个包；Host/Client `tsc -b` 通过。contracts、asset-domain、collaboration-api 类型检查通过；collaboration-api 源码测试 92 项通过；客户端与脚本测试 41 项通过（含 3 项场景状态组件验证）；Host 测试 180 项中 179 项通过、1 项因未配置该套件数据库而跳过。Host 用例包含真实临时 Git 仓库上的快进、脏目录保护、归档和幂等收整验证。
+- 独立 PostgreSQL 数据库验证 `scenario-schema.test.mjs` 有 9 项通过、1 项失败：`cancelled` 记录的 CHECK 约束接受 NULL `failure_code`（SQL UNKNOWN）。数据库/API `backend-lifecycle.test.ts` 在项目查询时失败：`repository.projectView` 查询当前 schema 不存在的 `studio_categories` 表，并返回 503。
+- 执行 `./start-backend.sh` 重建并重启协同 API；宿主机 `GET http://127.0.0.1:6972/health` 返回 `{"status":"ok"}`，容器状态 healthy。
+- 未执行真实 GitLab、真实协同双客户端、Windows 实机、桌面视觉/打包或真实模型验收；SC15 整体未完成。分类路径与需求分类、一致性比较约束属于阶段二范围，本轮不扩展修改。

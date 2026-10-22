@@ -219,7 +219,7 @@ export class StudioApplication {
     if (!relative) throw new Error('当前需求的本地材料不存在')
     const draft = await readMaterial(task.worktree, 'requirement', task.entityId)
     return `当前需求 ${task.entityId}，整文件 baseHash=${draft.sha256}。
-回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；不输出采纳建议或分段候选，不写正文。
+回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
 当前有效材料绝对路径：${path.join(task.worktree, draft.path)}
 当前元数据：${JSON.stringify(draft.metadata)}
 当前Markdown正文：
@@ -230,12 +230,10 @@ ${await this.scenarios.sources.context(task)}`
     switch (command.action) {
       case 'openScenario': await this.scenarios.open(command.entityId); break
       case 'saveScenario': case 'resolveScenarioConflict': await this.repairs.checkConcurrent(command.entityId); await this.scenarios.save(command); await this.repairs.checkConcurrent(command.entityId); break
-      case 'adoptScenarioSuggestions': await this.scenarios.adopt(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'resolveScenarioWriteProposal': await this.scenarios.resolveWriteProposal(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'undoScenarioWrite': await this.scenarios.undoWrite(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'newScenarioSession': return this.scenarios.newSession(command.entityId)
       case 'selectScenarioSession': return this.scenarios.selectSession(command.entityId, command.sessionId)
-      case 'setScenarioAutoWrite': await this.scenarios.setAutoWrite(command.entityId, command.enabled); break
       case 'setScenarioStructureCheck': { const local = await this.store.read(); local.scenarioStructureCheck = command.enabled; await this.store.save(); break }
       case 'importScenarioSource': await this.scenarios.sources.importSource(command); break
       case 'retryScenarioSource': await this.scenarios.sources.retrySource(command.entityId, command.sourceId); break

@@ -572,7 +572,7 @@ test('requirement attachments share source extraction, retry, context, formal ar
   const context = await app.scenarioSessionContext(f.local.tasks[0]!)
   assert.deepEqual(context.readPaths, [record.sourcePaths[source.id]])
   assert.match(context.text, /实际读取的需求规则/); assert.match(context.text, /page:1/)
-  assert.doesNotMatch(context.text, /eadp-write-proposal|eadp-suggestions/)
+  assert.doesNotMatch(context.text, /eadp-write-proposal/)
   const original = await readMaterial(f.worktree, 'requirement', f.value.id)
   reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: true, formal: true })
   assert.equal(reply.ok, true, JSON.stringify(reply))
@@ -616,7 +616,7 @@ test('confirmed requirement attachment projections use fixed evidence and reject
   const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   const archived = await archiveSelectedEvidence(f.worktree, [{ source: { id: 'fixed-pdf', name: '已确认部分读取.pdf', format: 'pdf', sha256: digest('原始PDF'), status: 'partial', ranges: ['page:1'], text: '仅读取第一页', error: '第 2 页提取失败', selected: true, formal: true }, original: Buffer.from('原始PDF') }], ['fixed-pdf'])
   f.value.current = { version: 1, fixed: { commitSha: head, path: draft.path, sha256: draft.sha256 }, metadata: { ...draft.metadata, businessEvidence: archived }, confirmationId: 'accepted', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
-  const record = { projectId: 'project', entityId: f.value.id, suggestions: [], sources: [{ id: 'local', name: '未确认本地资料', format: 'txt', sha256: digest('local'), status: 'read' as const, ranges: ['line:1'], text: '本地未确认文本', selected: true, formal: false }], sourcePaths: {} }
+  const record = { projectId: 'project', entityId: f.value.id, sources: [{ id: 'local', name: '未确认本地资料', format: 'txt', sha256: digest('local'), status: 'read' as const, ranges: ['line:1'], text: '本地未确认文本', selected: true, formal: false }], sourcePaths: {} }
   f.local.scenarios.push(record); await f.store.save()
   delete f.value.occupation
   let projection = (await app.state()).materialSources!.find(value => value.entityId === f.value.id)!
