@@ -11,9 +11,17 @@ export interface ReviewView {
   findings?: Array<{ severity: 'info' | 'warning' | 'blocking'; message: string }>; error?: string;
 }
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
-export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string }
+/** Main checkout synchronization after an accepted integration; `blocked` keeps the accepted business state. */
+export interface ProjectSync { status: 'pending' | 'blocked' | 'synced'; commit: string; message?: string }
+export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string; sync?: ProjectSync }
+/** Per-task settlement: released resources, archived worktree bytes and removed Git registrations. */
+export interface TaskCleanup {
+  status: 'pending' | 'blocked' | 'done';
+  steps: { resources: boolean; archive: boolean; worktree: boolean; branch: boolean; history: boolean };
+  archive?: string; head?: string; branch?: string; message?: string;
+}
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
 export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
@@ -52,6 +60,8 @@ export type StudioCommand = ScenarioCommand
   | { action: 'setEligibility'; entityId: string; version: number; enabled: boolean; reason: string }
   | { action: 'adopt'; sourceProjectId: string; sourceEntityId: string; version: number; targetEntityId: string; reason: string }
   | { action: 'retryOperation'; operationId: string }
+  | { action: 'syncMainCheckout'; projectId: string }
+  | { action: 'retryTaskSettlement'; projectId: string; worktree: string }
   | { action: 'generateHandoff'; baselineId: string }
   | { action: 'acknowledgeHandoff'; entityId: string; note: string }
   | { action: 'publish' | 'revokePublication' }

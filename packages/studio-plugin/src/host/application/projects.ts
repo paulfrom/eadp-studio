@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
-import type { StudioCommand, LocalProject } from '../../shared/studio.ts'
+import type { StudioCommand, LocalProject, ProjectSync } from '../../shared/studio.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import type { BackgroundLane } from './background-lane.ts'
@@ -166,6 +166,33 @@ export class ProjectWorkspaces {
     this.caches.set(cacheId, directory)
     try { await this.ports.git.clone(repositoryUrl, directory) }
     catch (error) { this.caches.delete(cacheId); await rm(directory, { recursive: true, force: true }); throw error }
+  }
+  /**
+   * Fast-forward the main checkout to an accepted head without touching local
+   * work. A dirty checkout, another branch or a failed fast-forward is recorded
+   * as blocked: the accepted business state is never rolled back and the user's
+   * own changes are never stashed, reset, cleaned or overwritten.
+   * @param projectId - project whose main checkout is synchronized.
+   * @param commit - accepted head the checkout must contain.
+   */
+  async syncMain(projectId: string, commit: string): Promise<void> {
+    const local = await this.store.read(), project = local.projects.find(p => p.id === projectId)
+    if (!project) throw new Error('项目未在本机登记')
+    const record = (status: ProjectSync['status'], detail?: string): void => { project.sync = { status, commit, ...(detail ? { message: detail } : {}) } }
+    record('pending'); await this.store.save()
+    try {
+      const state = await this.ports.git.state(project.directory)
+      const stable = (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(projectId)}`)).project.stableBranch
+      if (state.branch !== stable) { record('blocked', '主目录不在稳定分支，已记录为已确认待同步'); return }
+      if (state.dirty) { record('blocked', '主目录有未提交改动，已记录为已确认待同步'); return }
+      if (state.head === commit) { record('synced'); return }
+      if (!await this.ports.git.hasCommit(project.directory, commit)) await this.ports.git.fetchCommit(project.directory, commit)
+      await this.ports.git.fastForward(project.directory, commit)
+      record('synced')
+    } catch (error) {
+      record('blocked', `主目录同步未完成：${error instanceof Error ? error.message : '未知原因'}`)
+      throw error
+    } finally { await this.store.save() }
   }
   async dispose(): Promise<void> { const owned = [...this.caches.values()]; this.caches.clear(); this.fixedBytes.clear(); await Promise.all(owned.map(directory => rm(directory, { recursive: true, force: true }))) }
   private async project(id: string): Promise<ProjectView> { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id)) throw new Error('项目身份无效。'); return (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(id)}`)).project }

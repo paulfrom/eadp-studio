@@ -17,6 +17,8 @@ export interface HostPorts {
   session(task: TaskView, rules: string): Promise<string>
   prompt(sessionId: string, text: string): Promise<void>
   cancelSession?(sessionId: string): Promise<void>
+  /** Release the Agent handles owned by one task worktree; other tasks stay live. */
+  releaseTask?(worktree: string): Promise<void>
   readScenarioSource?(source: { path: string; name: string }): Promise<ScenarioSourceRead>
   checks(task: TaskView, sourceSha: string): Promise<CheckEvidence>
   preview(task: TaskView): Promise<{ url: string }>

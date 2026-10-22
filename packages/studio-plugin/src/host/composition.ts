@@ -113,7 +113,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
-    prompt: (id, text) => sessions.prompt(id, text), cancelSession: id => sessions.cancel(id), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
+    prompt: (id, text) => sessions.prompt(id, text), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
     preview: async task => {
         try {
           const { input, binding } = await bind(task)

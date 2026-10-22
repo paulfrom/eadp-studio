@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
+import path from 'node:path'
 import { installModelSelection, type AgentHandle, type AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -19,6 +20,7 @@ export type ScenarioContextReader = (task: TaskView, signal: AbortSignal) => Pro
 
 export class DshTaskSessions {
   private readonly handles = new Map<string, AgentHandle>()
+  private readonly worktrees = new Map<string, string>()
   private readonly durableSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
   private readonly imageCalls = new Map<string, string>()
@@ -138,6 +140,7 @@ export class DshTaskSessions {
     } else if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, agentOptions, setup })
     this.handles.set(task.sessionId, handle)
+    this.worktrees.set(task.sessionId, path.resolve(task.worktree))
     if (replay && inspection) {
       // Do not await application delivery: open runs inside its serialized command queue.
       for (const event of inspection.events) this.enqueueOutput(task.sessionId, event)
@@ -198,6 +201,18 @@ export class DshTaskSessions {
   async cancel(sessionId: string): Promise<void> {
     if (this.ctx.agents.get(sessionId as SessionId)) this.ctx.sessionController.cancel({ sessionId: sessionId as SessionId })
   }
-  async dispose(): Promise<void> { this.releaseOutput(); this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
+  /** Release only the Agent handles owned by one task worktree; other tasks keep running. */
+  async releaseWorktree(worktree: string): Promise<void> {
+    const target = path.resolve(worktree), released: AgentHandle[] = []
+    for (const [sessionId, directory] of [...this.worktrees]) {
+      if (directory !== target) continue
+      const handle = this.handles.get(sessionId)
+      this.worktrees.delete(sessionId); this.handles.delete(sessionId); this.durableSessions.delete(sessionId); this.bindings.delete(sessionId)
+      for (const key of [...this.imageCalls.keys()]) if (key.startsWith(`${sessionId}:`)) this.imageCalls.delete(key)
+      if (handle) released.push(handle)
+    }
+    await Promise.allSettled(released.map(handle => handle.dispose()))
+  }
+  async dispose(): Promise<void> { this.releaseOutput(); this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
 }
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task' } } }

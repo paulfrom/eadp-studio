@@ -53,6 +53,12 @@ export class ScenarioFileObserver {
     if (observation) this.close(key, observation)
   }
 
+  /** Stop every observation inside one task worktree before that worktree is released. */
+  unobserveWorktree(worktree: string): void {
+    const target = path.resolve(worktree)
+    for (const [key, observation] of [...this.observations]) if (path.resolve(observation.task.worktree) === target) this.close(key, observation)
+  }
+
   dispose(): void {
     this.disposed = true
     for (const [key, observation] of this.observations) this.close(key, observation)

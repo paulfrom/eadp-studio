@@ -199,3 +199,25 @@
 - 界面：写入提议卡按目标显示“写入项目根 CONTEXT.md”与对应提示，不暴露 hash 或正文。
 
 校验：装配树 `tsc -b` host/client 通过；`scenario-write-proposals.test.ts` 9 项、`scenario-orchestration.test.ts` 20 项通过（新增上下文提议解析/失效、成功写入并同步文件包、并发接受冲突返回对话、提问后文件变化作废四项）；`tests/windows-desktop` 全量 173 通过、1 项因未配置测试数据库跳过。未做桌面交互走查，未验证真实模板发布链路。
+
+## SC09 主项目安全同步（2026-10-22）
+
+- 集成被接受后，`resumeOperation` 在后台车道排队 `TaskMaintenance.settle`；同步目标取接受后重新读取的 `recognizedHead`，因此认可头已前进时同步后继头，而不是本次候选提交。
+- `ProjectWorkspaces.syncMain` 先记录 `pending`，再按顺序判断：主目录不在稳定分支、工作区有未提交改动均只记录 `blocked`（“已确认待同步”）并返回；否则提交对象缺失时先取回，再只做 `merge --ff-only`。不 stash、不 reset、不 clean、不覆盖用户文件；快进失败同样记录 `blocked` 并保留业务接受状态。
+- 重试入口为 `syncMainCheckout`（按项目重读认可头）与 `retryTaskSettlement`（重跑整条收整），都经 `lane.append`，不受车道去重键影响。状态落在既有 `local.projects[].sync` 字段，未新增集合，旧记录仍按原判据解析。
+
+## SC10 任务身份与逐任务资源释放（2026-10-22）
+
+- 会话句柄在 `DshTaskSessions.open` 时登记所属 worktree 的规范化路径；新增 `releaseWorktree` 只释放该 worktree 的句柄、绑定、可恢复会话标记与 `read_image` 调用记录，其他任务的会话继续可用。
+- 场景文件观察器新增 `unobserveWorktree`，按规范化 worktree 解除全部观察；`ScenarioWorkspaces.stopWorktree` 转调。预览只在被释放的是原型任务且 `previewState.entityId` 一致时停止，避免顺手关掉其他任务的原型预览。
+- 会话与临时资料仍从既有 `local.tasks`（作为历史记录保留）与 `scenario-sources/<project>/<entity>` 读取；收整不删除任务行，行上的 `cleanup.status='done'` 表明它不再指向活动 worktree。接受事务本身已释放远端占用，本轮未新增“只释放占用、不取消资产”的接口。
+
+## SC11 安全 worktree 清理（2026-10-22）
+
+- 新增 `host/application/task-maintenance.ts`：收整顺序为归档 → 移除 worktree → 保留归档引用并删除临时分支 → 标记任务行已收整。每步完成后先落盘，再执行下一步；重复执行直接跳过已完成步骤。
+- 归档前用 `git status --ignored --untracked-files=all` 审计工作区全部路径，包括已跟踪文件的未提交修改、未跟踪文件、忽略文件与重命名的两侧。普通文件按相对路径复制到 `archive/<projectId>/<taskId>/` 并记录 SHA-256 与大小；依赖目录（`node_modules`、`dist`）、`.git`、符号链接、单文件超过 4 MiB 或总量超过 64 MiB 的条目标记为跳过并给出原因，不静默丢弃。清单写入 `manifest.json`。
+- 移除前核对 `git state` 的规范化根目录必须等于任务记录的 worktree，目录身份不符即保留现场；目录已不存在但无归档记录时抛出错误而不是当作成功。移除使用 `worktree remove --force`（审计与归档已完成），临时分支只在仍指向记录的 HEAD 时删除，HEAD 保留在 `refs/eadp/archive/<projectId>/<taskId>`。
+- 评审 worktree 随同一实体接受一并收整；评审报告行保留，worktree、分支与活动登记不再存在。共享同一 worktree 的冻结需求任务行同时标记为历史。材料 worktree 已清理时，场景拆分改在主 checkout（已包含认可头）运行并读取固定字节，不依赖待删目录。`state-recovery` 的严格记录判据未改动（只加字段与命令）。
+- 边界：临时资料目录 `scenario-sources/` 不随任务删除（属于历史附件读取）；主目录同步失败不阻塞清理，任务状态为 `blocked` 并写明“主目录同步待重试”。
+
+校验：装配树 `tsc -b` host/client 通过；新增 `tests/windows-desktop/task-settlement.test.ts` 3 项（真实临时 Git 仓库）覆盖：接受后主目录快进、未跟踪与忽略文件按 SHA-256 归档、worktree/临时分支/归档引用处理、重复收整不重复执行；脏主目录记为待同步且用户文件原样保留；目录缺失且无归档记录时拒绝宣告完成。`tests/windows-desktop` 全量 TS 用例 179 项中 178 通过、1 项因未配置测试数据库跳过。未在真实桌面、真实 GitLab 与 Windows 实机验证本机收整。

@@ -45,7 +45,22 @@ export class WorkspaceGit {
     await mkdir(path.dirname(destination), { recursive: true })
     await this.command(root, ['worktree', 'add', '-b', branchName(branch), destination, fixedSha(baseSha)])
   }
-  async removeWorktree(root: string, destination: string): Promise<void> { await this.command(root, ['worktree', 'remove', '--', destination]) }
+  async removeWorktree(root: string, destination: string, force = false): Promise<void> { await this.command(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', destination]) }
+  /** Fast-forward only: a diverged checkout or one with conflicting local bytes stays exactly as it was. */
+  async fastForward(root: string, commit: string): Promise<void> { await this.command(root, ['merge', '--ff-only', '--no-edit', fixedSha(commit)]) }
+  /** Keep a cleaned worktree's commit reachable after its temporary branch is deleted. */
+  async keepRef(root: string, ref: string, commit: string): Promise<void> {
+    if (!/^refs\/eadp\/archive\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) throw new Error('归档引用无效。')
+    await this.command(root, ['update-ref', ref, fixedSha(commit)])
+  }
+  /** Delete a temporary branch only while it still points at the commit the cleanup recorded. */
+  async deleteBranch(root: string, branch: string, commit: string): Promise<void> {
+    const name = branchName(branch), sha = fixedSha(commit)
+    const existing = (await this.result(root, ['rev-parse', '--verify', `refs/heads/${name}`])).stdout.trim()
+    if (!existing) return
+    if (existing !== sha) throw new Error('临时分支已指向其他提交，保留现场')
+    await this.command(root, ['branch', '-D', name])
+  }
   async fetch(root: string, branch: string): Promise<void> { await this.command(root, ['fetch', '--no-tags', 'origin', branchName(branch)], true) }
   async remoteHead(root: string, branch: string): Promise<string> {
     const result = await this.command(root, ['ls-remote', '--exit-code', 'origin', `refs/heads/${branchName(branch)}`], true)

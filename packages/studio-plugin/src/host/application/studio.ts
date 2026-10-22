@@ -3,7 +3,7 @@ import { ScenarioTemplates } from './scenario-templates.ts'
 import { ScenarioRepairs } from './scenario-repairs.ts'
 import { scenarioFileErrors } from './scenario-documents.ts'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { reviewInputText } from '@eadp/contracts'
 import { canonical, prototypeBindings } from '@eadp/asset-domain'
 import path from 'node:path'
@@ -14,6 +14,7 @@ import { CollaborationClient, CollaborationError } from '../adapters/collaborati
 import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
 import { StudioStore, type PendingOperation, type AdoptionOperation, type MaterialReservation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
+import { TaskMaintenance } from './task-maintenance.ts'
 import { AuthorReviews, type ReviewCandidate, type ReviewFile } from './reviews.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import { BackgroundLane } from './background-lane.ts'
@@ -22,6 +23,7 @@ const prototypeRules = '按已确认需求完成原型；发现冲突时保留�
 const key = (): string => randomUUID()
 const sameSource = (left: { projectId: string; entityId: string; version: number }, right: { projectId: string; entityId: string; version: number }) => left.projectId === right.projectId && left.entityId === right.entityId && left.version === right.version
 const isEntityView = (value: EntityView | EntityOccupancyView): value is EntityView => 'generation' in value
+const exists = (target: string): Promise<boolean> => stat(target).then(() => true, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false })
 const starter = (title: string) => `# ${title}\n\n## 业务背景\n\n请与 AI 整理实际业务背景与使用者。\n\n## 核心业务规则\n\n待补充。\n\n## 验收条件\n\n待补充。\n\n## 限制与不适用范围\n\n待澄清。\n`
 /** One failure mapping for every command: an operation that fails answers with a typed reply, never a rejected promise. */
 const respond = (result: Promise<StudioReply>): Promise<StudioReply> =>
@@ -37,10 +39,12 @@ export class StudioApplication {
   private namespaces: NamespaceView[] = []
   private readonly reviews: AuthorReviews
   private readonly projects: ProjectWorkspaces
+  private readonly maintenance: TaskMaintenance
   private readonly scenarios: ScenarioWorkspaces
   private readonly templates: ScenarioTemplates
   private readonly repairs: ScenarioRepairs
   constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane); this.reviews = new AuthorReviews(store, ports)
+    this.maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => this.projects.syncMain(projectId, commit), release: task => this.releaseTask(task) })
     this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
     this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
     this.repairs = new ScenarioRepairs(this.scenarios, (id, hash, repairId) => this.confirmRepairedScenario(id, hash, repairId))
@@ -170,6 +174,20 @@ export class StudioApplication {
             else if (local.templateOperations.some(op => op.preview.operationId === command.operationId)) { const { remote } = await this.selected(); await this.templates.publish(command.operationId, remote) }
             else throw new Error('未找到原操作现场') }
         break
+      }
+      case 'syncMainCheckout': {
+        const local = await this.store.read(), project = local.projects.find(p => p.id === command.projectId)
+        if (!project) throw new Error('项目未在本机登记')
+        const remote = await this.api.request<ProjectState>('GET', this.route(project.id))
+        if (!remote.project.recognizedHead) throw new Error('项目没有已接受版本')
+        this.lane.append(() => this.projects.syncMain(project.id, remote.project.recognizedHead!)); break
+      }
+      case 'retryTaskSettlement': {
+        const local = await this.store.read(), task = local.tasks.find(t => t.projectId === command.projectId && path.resolve(t.worktree) === path.resolve(command.worktree))
+        if (!task) throw new Error('任务记录不存在')
+        const remote = await this.api.request<ProjectState>('GET', this.route(task.projectId))
+        if (!remote.project.recognizedHead) throw new Error('项目没有已接受版本')
+        this.lane.append(() => this.maintenance.settle(task, remote.project.recognizedHead!)); break
       }
       case 'generateHandoff': await this.generateHandoff(command.baselineId); break
       case 'acknowledgeHandoff': {
@@ -687,6 +705,16 @@ ${draft.body}`
   private resumeOnLane(operation: PendingOperation): void {
     this.lane.schedule(`operation:${operation.id}`, () => this.resumeOperation(operation))
   }
+  /** Settle this machine once an integration is accepted; the reply never waits for it. */
+  private scheduleMaintenance(task: TaskView, commit: string): void {
+    this.lane.schedule(`maintenance:${task.worktree}`, () => this.maintenance.settle(task, commit))
+  }
+  /** Release one task's file observation, preview and Agent handles; other tasks stay live. */
+  private async releaseTask(task: TaskView): Promise<void> {
+    this.scenarios.stopWorktree(task.worktree)
+    if (task.purpose === 'prototype' && this.previewState?.entityId === task.entityId) { await this.ports.stopPreview(); this.previewState = undefined }
+    await this.ports.releaseTask?.(task.worktree)
+  }
   private async resumeOperation(operation: PendingOperation) {
     const local = await this.store.read(); const project = local.projects.find(p => p.id === operation.projectId)
     const task = local.tasks.find(t => t.projectId === operation.projectId && t.entityId === operation.entityId && t.worktree)
@@ -715,6 +743,7 @@ ${draft.body}`
       }
       operation.phase = 'accepted'; delete operation.message; await this.store.save()
       const remote = await this.api.request<ProjectState>('GET', this.route(project.id)); const entity = remote.entities.find(e => e.id === operation.entityId)
+      if (remote.project.recognizedHead) this.scheduleMaintenance(task, remote.project.recognizedHead)
       for (const adoptionId of operation.adoptionIds ?? []) {
         const adoption = local.adoptions.find(value => value.id === adoptionId)
         if (!adoption) throw new Error('采用恢复记录缺失，不能申报复用成功')
@@ -742,7 +771,10 @@ ${draft.body}`
     let task = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && t.purpose === 'split' && t.split?.integrationId === integrationId)
     if (!task) {
       const base = local.tasks.find(t => t.entityId === entity.id && t.projectId === remote.project.id && t.purpose === 'material')
-      const workspace = base ?? { projectId: remote.project.id, entityId: entity.id, worktree: local.projects.find(p => p.id === remote.project.id)!.directory }
+      const opened = local.projects.find(p => p.id === remote.project.id)!
+      // The material worktree is cleaned once accepted; splitting then reads the
+      // fixed bytes and runs in the main checkout that already contains them.
+      const workspace = base && await exists(base.worktree) ? base : { projectId: remote.project.id, entityId: entity.id, worktree: opened.directory }
       task = { projectId: workspace.projectId, entityId: workspace.entityId, worktree: workspace.worktree, sessionId: `studio-${key()}`, purpose: 'split', inputHash: input.fixed.sha256,
         split: { integrationId, confirmationId: input.confirmationId, version: input.version, fixed: { ...input.fixed }, status: 'pending' } }
       local.tasks.push(task); await this.store.save()

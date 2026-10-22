@@ -32,6 +32,8 @@ export class ScenarioWorkspaces {
   private observerDirectory: string | undefined
   constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {}
   stopObservation(task: ScenarioObservedTask): void { this.observer?.unobserve(task) }
+  /** Release every observation owned by one task worktree. */
+  stopWorktree(worktree: string): void { this.observer?.unobserveWorktree(worktree) }
   dispose(): void { this.observer?.dispose(); this.observer = undefined; this.observerDirectory = undefined; this.activeEntityId = undefined }
   private observe(task: TaskView, relative: string): void {
     const directory = this.store.directory

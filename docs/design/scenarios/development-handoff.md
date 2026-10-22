@@ -3,28 +3,30 @@
 日期：2026-10-22
 依据：[开发清单](development-plan.md)、[场景设计](01-scenarios.md)、[需求协同设计](../02-requirements.md)、[修正与验证记录](implementation.md)
 当前分支：`backend/scenario-context-path-scope`
-已推送提交：`5be1075 协同后端限制项目根文件写入范围`
+已推送提交：`fe197ba 完成场景协作 SC02—SC08 的实现`；SC09—SC11 改动在工作区，尚未提交
 
 本文只记录交接事实、剩余工作与已知风险，不替代开发清单和设计文档。
 
 ## 1. 本轮完成与未完成
 
-本轮按用户决定只实施**开发清单涉及协同后端**的部分，桌面端未动。
+本轮先完成协同后端，随后完成 SC09—SC11 的 Host 收整链；桌面界面（SC12/SC13）未动。
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
+| SC02 内置 grill 与技能快照 | 已完成 | 技能随包；场景与需求材料会话共用只读 preset、技能目录与归纳式上下文 |
+| SC03 项目上下文三方核对 | 已完成 | 写入提议可目标 `CONTEXT.md`；基线/工作区/认可头比较；冲突回对话，不 commit |
 | SC03 后端路径范围 | 已完成 | `stage:"template"` 允许项目根 `CONTEXT.md`；仅更新上下文时不要求重复声明模板目录 |
-| SC06 后端根目录白名单 | 已完成 | 材料/场景批次集成在项目根只放行 `CONTEXT.md`，其他根目录文件拒绝 |
-| SC03 桌面/Host 三方核对与受控保存 | 未开始 | 任务 worktree 内保存、基线/修改/最新接受版比较 |
 | SC04 写入提议契约与提问触发 | 已完成 | `eadp-write-proposal`、`ScenarioRecord.writeProposal`、按钮消费、过期/幂等/拒绝节流与最小卡片 |
 | SC05 整篇生成与整篇写入 | 已完成 | 整篇写入复用受控服务；写入后章节/依据/待答摘要与 hash 检查撤销；需求侧未接 |
 | SC06 确认文件包（Host） | 已完成 | `CONTEXT.md` 进入 `metadata.files`，与正文、正式依据同批冻结；逐文件 hash 与根目录白名单 |
+| SC06 后端根目录白名单 | 已完成 | 材料/场景批次集成在项目根只放行 `CONTEXT.md`，其他根目录文件拒绝 |
 | SC07 可选评审不 commit | 已完成 | `requestReview` 改走只读 `prepareContent`；评审绑定本地 HEAD 与逐文件 hash；确认时才提交一次候选 |
 | SC08 确认后台持久恢复流水线 | 已完成 | 候选推送并入 prepare 步骤；丢响应查询原操作；远端头变化在 CAS 前停止；提交/worktree 仍在命令队列 |
-| SC02 内置 grill 与技能快照 | 已完成 | 技能随包；场景与需求材料会话共用只读 preset、技能目录与归纳式上下文 |
-| SC03 项目上下文三方核对 | 已完成 | 写入提议可目标 `CONTEXT.md`；基线/工作区/认可头比较；冲突回对话，不 commit |
-| SC09—SC14 | 未开始 | 见开发清单与本文第 4 节 |
-| SC15 分层验证 | 未开始 | 仅完成后端单元与类型校验 |
+| SC09 主项目安全同步 | 已完成 | 接受后后台快进主 checkout；脏目录/异分支/失败记为“已确认待同步”并可重试 |
+| SC10 任务身份与逐任务释放 | 已完成 | 会话按 worktree 归属；只释放目标任务句柄、观察与预览 |
+| SC11 安全 worktree 清理 | 已完成 | 归档工作区改动与忽略文件（SHA-256）、保留归档引用、删临时分支；步骤持久化且幂等，覆盖评审 worktree |
+| SC12—SC14 | 未开始 | 见开发清单与本文第 4 节 |
+| SC15 分层验证 | 未开始 | 仅完成 Host 单元、真实临时 Git 与类型校验 |
 
 后端验证已执行：
 
@@ -35,6 +37,7 @@
 - SC07／SC08 桌面/Host 验证：装配树 `tsc -b` host 与 client 通过；评审、确认与恢复均未接真实模型/GitLab。
 - SC02 验证：`scenario-preset.test.mjs` 2 项、`scenario-dsh-adapter.test.ts` 6 项通过（含需求会话共用 preset 与技能目录）；真实桌面未验证技能目录挂载（dev-stage 不执行依赖安装）。`tests/scripts` 全量仍有 3 项与本轮无关的环境性失败（缺少 `.desktop-build` 目标、两处样式断言）。
 - SC03 验证：`scenario-write-proposals`／`scenario-orchestration` 共 29 项通过（新增上下文提议解析与失效、成功写入并同步文件包、并发接受冲突、提问后文件变化作废）；`tests/windows-desktop` 全量 175 项通过、1 项因未配置测试数据库跳过。未做桌面交互走查，未验证真实模板发布链路。
+- SC09—SC11 验证：装配树 `tsc -b` host/client 通过；新增 `task-settlement.test.ts` 3 项（真实临时 Git 仓库）覆盖主目录快进、脏目录待同步、未跟踪/忽略文件归档与幂等收整；`tests/windows-desktop` TS 用例 179 项中 178 通过、1 项因未配置测试数据库跳过。未在真实桌面、真实 GitLab 与 Windows 实机验证本机收整，未连接真实模型。
 
 ## 2. 后端新增约束（桌面端实现时必须遵守）
 
@@ -124,11 +127,11 @@
 - 核对材料 commit 与 worktree 创建的当前执行位置；若仍在命令队列，在文档写明边界。
 - 丢响应查询原操作；失败重试不重复接受、不阻塞 UI。
 
-### SC09—SC11 同步与清理
+### SC09—SC11 同步与清理（已完成）
 
-- SC09：主 checkout 同步到包含本次提交的认可头；脏改不 stash/reset/clean/覆盖；失败保留“已确认待同步”。
-- SC10：任务=worktree 归属单元，按任务释放会话、观察、预览、输出与继承绑定；不以全局 `dispose` 代替。入口 `host/adapters/dsh/sessions.ts:189-192`。
-- SC11：`host/adapters/workspace/git.ts:48` 的 `removeWorktree` 当前只被装配在用；需覆盖任务与评审 worktree。收尾步骤逐项持久化并幂等，状态落既有集合字段。
+- SC09：接受后在后台车道快进主 checkout 到认可头；脏目录、异分支与快进失败记为“已确认待同步”，可经 `syncMainCheckout`／`retryTaskSettlement` 重试，不 stash/reset/clean。
+- SC10：`sessions.ts` 新增 `releaseWorktree`，只释放目标任务句柄；观察器按 worktree 解除；预览仅随原型任务停止。
+- SC11：新增 `task-maintenance.ts`；归档全部工作区改动与忽略文件（SHA-256 清单），保留 `refs/eadp/archive/<project>/<task>`，删除临时分支；步骤逐项落盘且幂等，覆盖任务与评审 worktree。
 
 ### SC12—SC13 界面
 
@@ -155,7 +158,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 可复用测试入口：
 
-- `tests/windows-desktop/`：`scenario-documents.test.ts`、`scenario-orchestration.test.ts`、`scenario-file-observer.test.ts`、`scenario-dsh-adapter.test.ts`、`background-lane.test.ts`、`projection-lane.test.ts`、`task-recovery.test.ts`、`conversation-restoration.test.ts`、`asset-workflow.test.ts`。
+- `tests/windows-desktop/`：`scenario-documents.test.ts`、`scenario-orchestration.test.ts`、`scenario-file-observer.test.ts`、`scenario-dsh-adapter.test.ts`、`background-lane.test.ts`、`projection-lane.test.ts`、`task-recovery.test.ts`、`conversation-restoration.test.ts`、`asset-workflow.test.ts`、`task-settlement.test.ts`。
 - `tests/scenario-client/`：`draft-buffer.test.ts`、`document.test.mjs`、`material-editor.test.mjs`。
 - `tests/scripts/`：`scenario-preset.test.mjs`、`studio-conversation-restoration.test.mjs`、`studio-task-purpose.test.mjs`。
 - 后端：`apps/collaboration-api/src/gitlab-content.test.ts`、`modules/integration.test.ts`。
@@ -164,7 +167,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 ## 6. 已知风险与未验证边界
 
-- 评审绑定的是本地未提交快照；评审 worktree 与分支目前无人清理，须由 SC11 覆盖，不能把「登记在 tasks/reviews」当作已清理。
+- 评审绑定的是本地未提交快照；评审 worktree 现随同实体接受由 SC11 收整，但尚未在真实桌面验证。
 - 需求侧（REQ 编号、去分类、一致性对比端点/表）不在本轮范围；`docs/design/02-requirements.md` 的差距仍未实施。
 - 旧建议/采纳链路仍在代码中，且 `implementation.md` 早期章节把它记为已完成；以「后续修订（本轮）」和开发清单为准，早期段落是历史事实，不是现行契约。
 - 后端仅验证路径范围与单元行为；真实企业 GitLab、真实 PostgreSQL 运行库、双客户端、Windows 实机与真实模型均未验收。
@@ -172,7 +175,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 ## 7. 建议的下一个会话
 
-1. SC04—SC08 已完成：写入提议、整篇写入、摘要与撤销、确认文件包、可选评审、后台恢复流水线见 `implementation.md` 对应段落。
-2. SC02、SC03 已完成；下一步进入 SC09/SC10（主 checkout 安全同步、任务身份与逐任务资源释放）。
-3. 每完成一个 SC 更新 `implementation.md` 并设检查点；不要在单个会话内跨过 SC08 而未验证流水线恢复。
+1. SC04—SC11 已完成：写入提议、整篇写入、摘要与撤销、确认文件包、可选评审、后台恢复流水线、主目录同步、逐任务释放与安全清理分别见 `implementation.md` 对应段落。
+2. 下一步进入 SC12／SC13（附件入口、页面精简与四态展示）；四态所需的 `local.projects[].sync` 与 `TaskView.cleanup` 已落地，界面可直接投影。
+3. 每完成一个 SC 更新 `implementation.md` 并设检查点；不要在单个会话内跨过 SC13 而未验证入口仍唯一可达。
 4. 需求侧的写入提议、摘要与撤销留到阶段二需求协同设计，本轮不要为需求另建文件规则。
