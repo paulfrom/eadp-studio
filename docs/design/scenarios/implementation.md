@@ -127,3 +127,75 @@
 - SC06：材料与场景批次集成的写入范围在项目根只放行 `CONTEXT.md`；其他根目录文件即使被列为关联文件也不得进入 `allowedPaths`。关联文件仍须在材料 `metadata.files` 中声明并经内容 hash 校验。
 
 校验：`pnpm --filter @eadp/collaboration-api typecheck` 通过；`src/gitlab-content.test.ts` 44 项通过（新增材料与模板两侧的 `CONTEXT.md` 放行、任意根目录拒绝、无模板目录项目仅更新上下文四类用例）；`src/modules/integration.test.ts`、`src/project-initialization.test.ts`、`src/auth/gitlab.test.ts`、`src/desktop-update.test.ts` 共 43 项通过。已重建并启动 Docker 镜像，`GET /health` 返回 `{"status":"ok"}`，api／db／cache 容器均为 healthy。本轮未连接真实企业 GitLab，也未执行桌面端与完整产品验收。
+
+## SC04 写入提议契约与提问触发（2026-10-22）
+
+- 模型输出唯一 `eadp-write-proposal` 块，只允许 `entityId`、`conclusions`、`evidenceIds`、`body` 四个字段；出现提议 ID、hash、授权或确认字段即整体拒绝。Host 自行生成提议 ID、baseHash、模板固定引用、`CONTEXT.md` hash 与依据集合。
+- 提议存 `ScenarioRecord.writeProposal`（不新增顶层集合，旧本地记录不作废）；依据集合取当前已选择且已读/部分读取的资料 ID。新建提议替换旧的待处理提议。
+- 消费只由界面按钮产生：`resolveScenarioWriteProposal` 的 `write`/`reject`。聊天文本不解析肯定或否定。写入前重新核对正文 hash、模板固定引用、`CONTEXT.md` hash 与依据集合，任一变化即拒绝并要求重新提问；整篇写入复用 `ScenarioDocumentService.save`，以提议 ID 作为幂等 receipt，重复消费只生效一次。
+- 拒绝时按结论文本生成稳定键存入 `rejectedConclusions`（最多保留 200 条）；同一结论换 ID 再问也会被 Host 丢弃，出现新结论后才可再次提问。
+- 不可解析或引用未读资料的提议不会落盘，回答仅保留为聊天内容。
+- 最小界面：对话区新增写入提议卡，展示结论与已读依据数量，只有“写入整篇正文／不写入”两个动作；卡片上的旧建议链路按 SC14 计划留待删除。
+
+校验：`prepare-studio-plugin.mjs` 完整装配通过，装配树 `tsc -b` 的 host 与 client 两个工程均通过；`tsx --test tests/windows-desktop/scenario-write-proposals.test.ts tests/windows-desktop/scenario-documents.test.ts tests/windows-desktop/scenario-orchestration.test.ts` 共 31 项通过（新增 5 项覆盖伪造字段、未读依据、过期判定、拒绝键与重复消费）。未调用真实模型，未做桌面交互走查。
+
+## SC05 整篇生成与整篇写入的摘要与撤销（2026-10-22）
+
+- 整篇写入仍复用 `ScenarioDocumentService.save` 的 expectedHash、按文件串行与冲突双份；写入只在用户点击提议卡按钮时发生，流式未完成、取消或失败不产生正文。截断的协议块解析失败并按 fail-closed 丢弃。
+- 写入前把撤销快照与摘要记入 `ScenarioRecord.writeReceipt`：写入前正文、写入前后 hash、改动章节（新增/修改/删除）、所用已读资料名称与仍阻断的业务答案。快照与本地状态分开保存，不进入 Git。
+- 写入后返回摘要卡；撤销按钮只在当前正文 hash 仍等于该次写入结果时可用，撤销是一次新的受 hash 检查写入，恢复到写入前正文并关闭该次撤销。正文被手工修改后撤销失效并提示先处理当前编辑。
+- 写入提议、摘要与撤销共用同一个受控写入服务；需求侧当前只有手工编辑入口，写入提议与摘要撤销留到阶段二需求协同设计接入，本轮不建第二套文件规则。
+
+校验：装配树 host／client 类型检查通过；`scenario-write-proposals.test.ts` 7 项通过，新增用例覆盖章节摘要、首次成稿、hash 检查撤销与截断协议块；`scenario-documents.test.ts`、`scenario-orchestration.test.ts` 回归通过。未调用真实模型，未做桌面交互走查。
+
+## SC06 确认文件包（2026-10-22）
+
+- 场景新建、手工保存、整篇写入、撤销、正式依据选择、模板绑定与授权修复统一把项目根 `CONTEXT.md` 以 `{ path: "CONTEXT.md", sha256 }` 写入 `metadata.files`；文件不存在时移除旧声明，不保留失效引用。
+- 确认候选因此把正文、`CONTEXT.md` 与正式依据放进同一候选提交；`prepareCandidate` 对材料、依据与 `CONTEXT.md` 逐文件校验 hash，`allowedPaths` 只含本次材料、依据、关联文件与被标题重命名替换的路径，项目根只可能出现 `CONTEXT.md`。
+- 旧草稿未声明 `CONTEXT.md`，或保存后 `CONTEXT.md` 再变化时，确认前明确拒绝并要求保存/重新读取；Host 不在确认时静默改写正文以补声明。
+- 未新增契约字段、端点或审批表；正式依据仍走 `businessEvidence` 与 `.eadp/evidence/<sha256>`，`CONTEXT.md` 只走 `metadata.files`。
+- 设计取舍：开发清单早期“`CONTEXT.md` 独立接受、不进入场景批次”的表述，被本轮交接和后端已放行的同批路径取代；`CONTEXT.md` 可随场景候选一并冻结与接受。仅更新项目上下文时仍可走模板发布的项目级受控链路。旧表述已在该文档标记为待清理。
+
+校验：装配树 host／client 类型检查通过；`scenario-package.test.ts` 新增 2 项覆盖声明写入、hash 更新、文件移除与其他文件保留；`asset-workflow`、`scenario-orchestration`、`scenario-write-proposals`、`scenario-documents`、`scenario-package` 共 59 项通过。未连接真实 GitLab，未执行真实确认集成。
+
+## SC07 可选评审不 commit（2026-10-22）
+
+- `requestReview` 不再调用 `prepareCandidate`，改为 `prepareContent`：只解析任务、草稿、依据与确认输入，不提交、不跑工程检查、不调用远端。评审请求前后任务 worktree 的 HEAD 与历史不变。
+- 评审绑定改由内容指纹承担：`head` + 按路径排序的逐文件 `{ path, sha256 }`（删除路径记为 `null`）+ `inputHash`。`inputHash` 仍来自 `reviewInputText`，与最终确认时的准备载荷一致，因此后端 `REVIEW_INPUT_MISMATCH` 校验不需要新增契约字段。
+- 评审 worktree 以被评审 HEAD 创建，再把未提交的目标文件字节复制进去（`adapters/workspace/snapshot.ts`），不再从候选提交创建；报告接受前核对 HEAD 与每个文件字节，任一变化即失效。
+- AI 辅助确认时重新计算同一指纹，与已有报告比对后才提交 `candidateSha`、`inputHash`、`reportHash` 与处理说明 hash；候选提交只在确认时产生一次。
+- 评审任务、`reviews/<id>` worktree 与分支仍登记在 `local.tasks`／`local.reviews`，由 SC11 的任务与评审 worktree 清理统一释放；本轮未新增清理入口，也未删除旧链路。
+- 边界：评审仍要求作者当前客户端持有有效占用与本地任务 worktree，评审对象是本地版本，不是已接受版本；维修/修复路径的授权边界未改动。
+
+校验：`prepare-studio-plugin.mjs --dev-stage` 装配后，装配树 `tsc -b` 的 host 与 client 两个工程均通过；`tests/windows-desktop` 全量 167 项中 166 项通过、1 项因未配置测试数据库跳过，其中评审主用例新增“请求评审不产生提交、HEAD 不变”断言，并新增“评审快照字节变化后报告被拒绝”用例。未调用真实模型，未做桌面交互走查。
+
+## SC08 确认后台持久恢复流水线（2026-10-22）
+
+- 候选提交后的首次推送移入 `resumeOperation` 的 prepare 步骤：只有查询不到原操作（`OPERATION_NOT_FOUND`）时才推送候选到 `studio-fixed/<id>`，再创建集成。推送幂等，恢复路径不会跳过一次丢失的推送；查询到原操作时不再重复推送。
+- `integrate` 只落盘 `PendingOperation` 并排队 `resumeOperation`，不再单独排队一次推送。丢响应时 `retryOperation` 查询原操作、原集成与 `complete` 幂等键，不重复准备、不重复接受。
+- 远端稳定分支已前进时，恢复在 CAS 前停止并将操作置为 `unknown`，保留“已确认待核对”，不使用强制更新绕过重新确认。
+- 执行边界（文档化而非宣称）：材料候选提交仍发生在命令队列中的 `confirmMaterial`/`confirmPrototype`，任务与评审 worktree 创建仍在命令队列中的 `designTask`/`prototypeTask`；只有候选推送、集成 prepare、CAS、complete、接受后副作用在后台车道。未在本轮迁移这些 Git 写入。
+
+校验：`asset-workflow.test.ts` 新增 3 项覆盖推送响应丢失后的重推、集成响应丢失后查询原操作、远端头变化时拒绝 CAS，全文件 28 项通过；`tests/windows-desktop` 全量 170 项中 169 项通过、1 项因未配置测试数据库跳过。未连接真实 GitLab 与真实 PostgreSQL。
+
+## SC02 内置 grill 与技能快照接入（2026-10-22）
+
+- 固定快照 `.local/skills/mattpocock/` 中的 `grilling`、`grill-with-docs`、`domain-modeling` 原样复制到 `packages/studio-plugin/assets/skills/`，连同 `LICENSE`、`SOURCE.json` 一起随插件发行；装配脚本把它加入 staging 路径并复制进装配树，`package.json` 的 `files` 覆盖该目录。
+- `cordis.patch.yml` 的 `eadp-scenario` 增加 `@deepseek-ai/dsh-tool-skill`，persona 改为 grill/domain-modeling 编排：逐问推进、只归纳结论与提问、ADR 关闭、写入仅在作者通过写入提议卡同意后由 Host 执行。
+- 场景会话在 `sessions.ts` 中以运行时路径挂载 `@deepseek-ai/dsh-skill-filesystem`：`includeDefaultRoots:false`、唯一 `customSkillDirs` 为随包目录、`providerName:'eadp-bundled'`、`watch:false`，因此不读取项目根或用户机器的技能。
+- 会话提示词与 `studio.ts` 的场景规则不再要求 `eadp-suggestions`；旧建议解析与 UI 仍按 SC14 待删除，但新会话不会收到该协议。
+- 需求侧已接入同一编排：`sessions.ts` 同时识别场景与需求材料文件，需求材料任务也解析到 `eadp-scenario` preset、挂载同一技能目录，并以只读工具运行；`scenarioSessionContext` 为需求材料生成包含 baseHash、绝对路径、元数据与正文的运行时上下文，`readPaths` 为空（不授予 worktree 之外的读取范围）。
+- 需求材料的会话规则改为只归纳结论与提问、不写正文；需求侧写入提议与摘要撤销仍属阶段二，本轮不新建第二套文件规则。行为变化：需求材料会话从可写改为只读，正文修改走手工编辑，不再由会话直接落盘。
+
+校验：装配树 `tsc -b` host/client 通过；`scenario-preset.test.mjs` 2 项通过（含三份技能原文与 stub 调用两个技能）；`scenario-dsh-adapter.test.ts` 6 项通过（新增需求会话使用同一 preset 与技能目录）；`asset-workflow.test.ts` 新增需求运行时上下文用例；`tests/windows-desktop` 全量 175 通过、1 项跳过。未在真实桌面挂载技能目录（dev-stage 不执行 pnpm install，动态依赖链接路径未验证）。
+
+## SC03 项目上下文受控保存与三方核对（2026-10-22）
+
+- `eadp-write-proposal` 增加可选 `target:"context"`（只允许该值，缺省为场景正文）。目标为项目根 `CONTEXT.md` 时，`body` 是新上下文全文，`entityId` 仍是当前场景；Host 不新增集合，提议仍存 `ScenarioRecord.writeProposal`。
+- 提议的 `baseHash`/`contextHash` 取提问时的 `CONTEXT.md` 实际 hash（缺失记为 `absent`）；作废判定只绑定 `CONTEXT.md` 与依据集合，场景正文或模板变化不使上下文提议失效。上下文提议与正文相同会被拒绝。
+- 用户按钮消费时重新读取文件并核对 `baseHash`；随后做三方比较：任务基线 = 任务 worktree HEAD 的 `CONTEXT.md`，本次修改 = 工作区文件，最新接受版 = 认可头的 `CONTEXT.md`。接受版与基线相同或工作区已等于接受版才写入；否则拒绝并提示回对话核对，不做 rebase、不改 expectedHead 重试。
+- 写入使用原子替换，只在任务 worktree 落盘、不 commit；随后用 `syncProjectContext` 把新 hash 写入场景 `metadata.files`（经 `ScenarioDocumentService.save` 做 expectedHash 检查），否则 SC06 确认会拒绝。提议 ID 作为幂等凭据，重复决策直接返回。
+- 上下文写入不产生正文 `writeReceipt`，因此没有正文撤销入口；项目级接受仍走模板发布的受控配置链路。
+- 界面：写入提议卡按目标显示“写入项目根 CONTEXT.md”与对应提示，不暴露 hash 或正文。
+
+校验：装配树 `tsc -b` host/client 通过；`scenario-write-proposals.test.ts` 9 项、`scenario-orchestration.test.ts` 20 项通过（新增上下文提议解析/失效、成功写入并同步文件包、并发接受冲突返回对话、提问后文件变化作废四项）；`tests/windows-desktop` 全量 173 通过、1 项因未配置测试数据库跳过。未做桌面交互走查，未验证真实模板发布链路。

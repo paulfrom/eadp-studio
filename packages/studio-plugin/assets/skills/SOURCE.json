@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/mattpocock/skills",
+  "branch": "main",
+  "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+  "license": "MIT",
+  "sourceRoot": ".local/skills/mattpocock",
+  "note": "Verbatim snapshot of the three skills grill-with-docs composes. The SKILL.md stub calls the grilling and domain-modeling skills by name, so all three are pinned together; nothing here is edited locally.",
+  "files": [
+    "skills/engineering/grill-with-docs/SKILL.md",
+    "skills/engineering/grill-with-docs/agents/openai.yaml",
+    "skills/productivity/grilling/SKILL.md",
+    "skills/productivity/grilling/agents/openai.yaml",
+    "skills/engineering/domain-modeling/SKILL.md",
+    "skills/engineering/domain-modeling/GLOSSARY-FORMAT.md",
+    "skills/engineering/domain-modeling/ADR-FORMAT.md",
+    "skills/engineering/domain-modeling/agents/openai.yaml",
+    "LICENSE"
+  ],
+  "blobShas": {
+    "skills/engineering/grill-with-docs/SKILL.md": "62b9efb6f991d1b229adee7506962f13ced0c499",
+    "skills/engineering/grill-with-docs/agents/openai.yaml": "5dbe2780a51be3e9b118bd7758a73e54a9384e11",
+    "skills/productivity/grilling/SKILL.md": "df69d9936880cd3314c28858c6c52f48db23b856",
+    "skills/engineering/domain-modeling/SKILL.md": "a4438c6879c517d1a08e2b5fbca049b632688dfe",
+    "skills/engineering/domain-modeling/GLOSSARY-FORMAT.md": "9c0b4c7a2e8507c23cbb5e0baa66d81699321cc6",
+    "skills/engineering/domain-modeling/ADR-FORMAT.md": "d7e61f30a9fd8ca70d9ee68f019c2a9ebf2d13f7",
+    "LICENSE": "f1dd2c09108dde1a5f56097cee8461b3ea834499"
+  }
+}

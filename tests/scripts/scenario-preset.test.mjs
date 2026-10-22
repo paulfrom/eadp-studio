@@ -10,6 +10,16 @@ const root = path.resolve(import.meta.dirname, '../..'), build = path.join(root,
 const require = createRequire(path.join(build, 'packages/preset/agent-preset-registry/package.json'))
 const native = async name => import(pathToFileURL(require.resolve(name)).href)
 
+test('the shipped skill snapshot carries the grill stub and both skills it calls', async () => {
+  const skills = path.join(root, 'packages/studio-plugin/assets/skills')
+  const read = name => readFile(path.join(skills, name, 'SKILL.md'), 'utf8')
+  const [stub, grilling, domain] = await Promise.all([read('grill-with-docs'), read('grilling'), read('domain-modeling')])
+  assert.match(stub, /"grilling" and "domain-modeling"/, 'the stub must keep calling both skills')
+  assert.match(grilling, /^---\n[\s\S]*name: grilling/m)
+  assert.match(domain, /^---\n[\s\S]*name: domain-modeling/m)
+  assert.equal(JSON.parse(await readFile(path.join(skills, 'SOURCE.json'), 'utf8')).commit.length >= 7, true)
+})
+
 test('the shipped scenario preset mounts native read-only tools and compaction without command execution tools', async () => {
   const { load } = require('js-yaml')
   const patch = load(await readFile(path.join(root, 'packages/studio-plugin/cordis.patch.yml'), 'utf8'))
@@ -29,7 +39,7 @@ test('the shipped scenario preset mounts native read-only tools and compaction w
     await ctx.plugin(Projections); await ctx.plugin(Sessions)
     await ctx.plugin(SystemPrompt); await ctx.plugin(Tools)
     // Host service contracts are present; no filesystem/model operation is run.
-    for (const name of ['fs', 'workingDirectory', 'attachments', 'llm', 'tokenMeter', 'subprocess']) ctx.provide(name, {})
+    for (const name of ['fs', 'workingDirectory', 'attachments', 'llm', 'tokenMeter', 'subprocess', 'skills', 'agents']) ctx.provide(name, {})
     const commands = []
     ctx.provide('commands', { register: definition => { commands.push(definition.name); return () => {} } })
     await ctx.plugin(Presets, { default: 'eadp-scenario' })
@@ -38,7 +48,7 @@ test('the shipped scenario preset mounts native read-only tools and compaction w
     try {
       await ctx.agentPresets.mount(scope.ctx, 'eadp-scenario')
       const names = ctx.tools.schemas(key).map(tool => tool.name).sort()
-      assert.deepEqual(names, ['glob', 'grep', 'read', 'read_image'])
+      assert.deepEqual(names, ['glob', 'grep', 'read', 'read_image', 'skill'])
       for (const forbidden of ['write', 'edit', 'bash', 'pwsh', 'spawn_agent', 'subagent']) assert.equal(names.includes(forbidden), false)
       const compositions = ctx.agentPresets.inspectCompositions(scope.ctx)
       assert.equal(compositions.length, 1)

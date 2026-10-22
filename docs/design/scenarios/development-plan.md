@@ -58,7 +58,7 @@
 | `client/scenarios/ScenarioGates.tsx` | 模板结构检查开关（:29）与 Working Tree 单行（:30）同处门禁面板；`workspace.git` 仅在可编辑且存在任务时下发。 |
 | `client/scenarios/ScenarioWorkspace.tsx`、`host/application/scenario-documents.ts` | 已有 flush → 命令 → receive（`ScenarioWorkspace.tsx:43-48`）、按文件串行写入、expectedHash 比较、原子替换与冲突双份。 |
 | `host/application/scenario-workspaces.ts` | `eadp-suggestions` 解析与整批 `applied`（:130-147；:145 整批置位）；`setAutoWrite`（:133-136）；临时资料落在 `StudioStore.directory/scenario-sources/<project>/<entity>`（:177）；新会话新增一条 task 行并复用同一 worktree（:159-162）。 |
-| `host/application/studio.ts` | `requestReview` 复用 `prepareCandidate`（:139 → :541-572），因此评审需要一次候选提交；`integrate` 在车道内先 push 再 `resumeOperation`（:609），而 `retryOperation` 只重排 `resumeOperation`（:613），恢复不重推；接受后还会置 `splitOffered`、跑 `generateHandoff` 并启动原型会话（:651-656）；`releaseOccupation` 走后台 `/cancel`（:146-151）。 |
+| `host/application/studio.ts` | `requestReview` 走 `prepareContent`（只读本地快照，不提交），确认时 `prepareCandidate` 才提交候选；`integrate` 在车道内先 push 再 `resumeOperation`（:609），而 `retryOperation` 只重排 `resumeOperation`（:613），恢复不重推；接受后还会置 `splitOffered`、跑 `generateHandoff` 并启动原型会话（:651-656）；`releaseOccupation` 走后台 `/cancel`（:146-151）。 |
 | `host/application/state.ts` | 本地记录以「集合齐全 + 两个字段」判定当前版本（:48-56）；新增集合会使旧记录整体作废并重建。 |
 | `host/adapters/workspace/git.ts`、`host/adapters/dsh/sessions.ts` | `removeWorktree`（git.ts:48）仅发布装配在用（`composition.ts:105`），任务与评审 worktree 无人清理；会话只有 `cancel` 与全局 `dispose`（sessions.ts:189-192）。 |
 | `packages/contracts/src/index.ts`、`apps/collaboration-api/src/gitlab-content.ts` | `metadata.files` 已存在于契约（index.ts:32），并已被服务端纳入 `declaredPaths`／`allowedPaths`（:133、:146）、逐文件校验 hash（:83-98），并有专门用例（`gitlab-content.test.ts:233-240`）；完整 diff 校验只在服务端（:113-118），契约本身没有 diff schema。 |
@@ -82,6 +82,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 生成保存与正式确认分离；已有 AI 修复继续遵循独立授权边界（ADR-0001），普通对话不能继承其自动确认权，写入提议也不构成确认授权。
 
 `CONTEXT.md` 的归属与接受：本计划采用**项目级受控配置变更**，复用模板发布链路（独立候选、独立 worktree、独立接受），不进入场景确认批次，避免让一个任务的材料候选依赖另一个任务的接受状态。
+（2026-10-22 修订：按交接文档与已落地后端，`CONTEXT.md` 允许随场景候选同批冻结与接受；仅更新项目上下文时仍走上述项目级链路。此段旧表述待清理。）
 本地保存落在任务 worktree 派生出的 `CONTEXT.md`，不自动 commit；接受后主目录只读同步到认可头。
 共享 `CONTEXT.md` 须比较任务基线、本次修改与最新接受版，不能用旧整份文件覆盖新内容；文本或语义冲突回到对话解决。
 不得借此开放任意根目录文件：白名单只有项目根的 `CONTEXT.md` 一个路径。
@@ -123,7 +124,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC02 内置 grill 与技能快照接入
 
-- [ ] 待开发；依赖：SC01；负责模块：Host 对话编排、`eadp-scenario` preset、技能快照装配。
+- [x] 已完成（2026-10-22：技能快照随插件装配、`eadp-scenario` 挂载只读技能目录、提示词移除 `eadp-suggestions`；需求材料会话使用同一 preset、技能与只读上下文）；依赖：SC01；负责模块：Host 对话编排、`eadp-scenario` preset、技能快照装配。
 - 交付：逐问推进、事实自行查证、术语澄清、结论归纳的编排；从 `.local/skills/mattpocock/` 读取快照文本，随发行装配进 preset，不读取用户机器上的技能。
 - 交付：`domain-modeling` 的产出映射为业务项目 root `CONTEXT.md`，ADR 产出关闭；技能原文不改，差异写在 Host 侧编排中。
 - 验收：不要求用户安装技能或联网；需要环境事实时由 Host 或子代理查证，不向用户索要可自查的事实。
@@ -132,7 +133,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC03 项目上下文（`CONTEXT.md`）受控保存与三方核对
 
-- [ ] 待开发；依赖：SC01、SC04；负责模块：`host/application/`、文件适配器、`shared/`。
+- [x] 已完成（2026-10-22：写入提议增加 `CONTEXT.md` 目标，按钮消费并校验 baseHash；基线/工作区/认可头三方比较，冲突回对话；原子落盘不 commit，并同步场景文件包 hash）；依赖：SC01、SC04；负责模块：`host/application/`、文件适配器、`shared/`。
 - 交付：业务项目根 `CONTEXT.md` 的受控读取与明确结论本地保存（任务 worktree 内，不 commit）；项目级接受走复用模板发布的受控配置链路。
 - 交付：任务基线、本次修改、最新接受版的三方比较与冲突返回对话，冲突解决后形成新快照并重新确认。
 - 验收：路径白名单只有项目根 `CONTEXT.md`；保存不 commit，不混入聊天、日志或未确认假设；研发仓库的 `CONTEXT.md` 不受此流程影响。
@@ -140,7 +141,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC04 写入提议契约与提问触发
 
-- [ ] 待开发；依赖：SC01；负责模块：对话事件、Host 授权校验、`shared/`。
+- [x] 已完成（2026-10-22：Host 协议、存储、用户动作消费、过期与节流、最小界面卡片及单元测试；旧建议链路仍按 SC14 待删除）；依赖：SC01；负责模块：对话事件、Host 授权校验、`shared/`。
 - 交付：提议记录（ID、目标、baseHash、模板引用、`CONTEXT.md` hash、依据集合）、由用户动作消费、过期判定、幂等、fail-closed 的否定与歧义处理。
 - 交付：提问触发条件与节流规则（有新结论才问；同一结论被拒后不再问）。
 - 验收：AI 输出不能形成提议，也不能伪造提议 ID；未经用户动作的文件字节不变。
@@ -149,7 +150,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC05 整篇生成与整篇写入
 
-- [ ] 待开发；依赖：SC02、SC03、SC04；负责模块：`client/` 会话与状态、场景与需求文档应用服务。
+- [x] 已完成（2026-10-22：摘要、撤销与写入协议串联；撤销保留 hash 检查，需求侧接入留到阶段二）；依赖：SC02、SC03、SC04；负责模块：`client/` 会话与状态、场景与需求文档应用服务。
 - 交付：绑定正文、`CONTEXT.md`、模板与依据版本的整篇生成；写入复用 `buffer.flush`、receive 与 expectedHash；写入后变更摘要与撤销。
 - 验收：不覆盖生成期间的手工编辑；冲突提示明确并保留用户内容；流式中断、取消或失败不写半篇正文。
 - 验收：无批次、无条目、无第二次保存确认；撤销是从本地差异形成的一次受 hash 检查写入。
@@ -157,7 +158,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC06 确认文件包与后端校验
 
-- [ ] 待开发；依赖：SC03、SC05；负责模块：Host 确认编排、`packages/contracts/`、协同后端。
+- [x] 已完成（2026-10-22：`CONTEXT.md` 纳入 `metadata.files` 并随正文、正式依据进入同一候选；逐文件 hash 与路径白名单由 Host 和服务端共同校验）；依赖：SC03、SC05；负责模块：Host 确认编排、`packages/contracts/`、协同后端。
 - 交付：正文、`CONTEXT.md` 固定引用、选定正式依据在同一候选提交内冻结，并给出精确文件清单。
 - 交付：复用既有 `metadata.files` 与 `.eadp/evidence/<sha256>` 归档，不新增契约字段、不新增后端端点。
 - 验收：无任意根目录放行、无独立审批表、不冒用 `businessEvidence`；门禁依据可追溯。
@@ -165,14 +166,14 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC07 可选评审不 commit
 
-- [ ] 待开发；依赖：SC05；负责模块：本地评审编排与快照读取。
+- [x] 已完成（2026-10-22：`requestReview` 改走 `prepareContent`，不提交、不跑检查；评审绑定本地 HEAD 与逐文件 hash，worktree 由未提交字节复制；确认时重算指纹并只提交一次候选）；依赖：SC05；负责模块：本地评审编排与快照读取。
 - 交付：从本地版本快照发起可选 AI 评审，解除 `requestReview` 对 `prepareCandidate` 的依赖；评审产生的 worktree 与登记纳入清理范围。
 - 验收：评审前后 Git 历史不变，评审绑定快照版本，正文变化后结果明确失效。
 - 验收：独立评审与既有修复路径各保留自身授权边界。
 
 ### SC08 确认后台持久恢复流水线
 
-- [ ] 待开发；依赖：SC06、SC07；负责模块：BackgroundLane、确认操作持久状态与协同集成。
+- [x] 已完成（2026-10-22：候选推送并入 prepare 步骤，恢复查询原操作且不重复准备/接受；远端头变化在 CAS 前停止；材料提交与 worktree 创建仍在命令队列，边界已记录）；依赖：SC06、SC07；负责模块：BackgroundLane、确认操作持久状态与协同集成。
 - 交付：候选 commit、首次 push、prepare、CAS、complete、accepted 的统一可恢复流程；push 纳入持久步骤，恢复路径不再跳过它。
 - 交付：核对并记录材料 commit 与 worktree 创建的当前执行位置；若继续留在命令队列，须在文档写明边界，不把「所有 Git 操作在车道」当作既有事实。
 - 验收：丢响应查询原操作；失败重试不重复接受、不阻塞 UI；远端冲突不绕过重新确认。

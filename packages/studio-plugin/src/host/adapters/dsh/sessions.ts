@@ -24,7 +24,7 @@ export class DshTaskSessions {
   private readonly imageCalls = new Map<string, string>()
   private readonly releaseOutput: () => void
   private readonly releaseInheritance: () => void
-  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader) {
+  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader, private readonly skillsDirectory?: string) {
     this.releaseOutput = ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
     this.releaseInheritance = ctx.on('agent/created', ({ agent }) => {
       const parentId = agent.session.header.parentSession
@@ -37,11 +37,19 @@ export class DshTaskSessions {
     })
     ctx.effect(() => async () => { await this.dispose() }, 'studio: task sessions')
   }
+  /** Mount the shipped skill snapshot on this Agent only; default project and user roots stay disabled. */
+  private async mountBundledSkills(scope: Context): Promise<void> {
+    const specifier = '@deepseek-ai/dsh-skill-filesystem'
+    const { apply } = await import(specifier) as { apply: (ctx: Context, config: Record<string, unknown>) => void }
+    scope.plugin({ apply }, { providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [this.skillsDirectory!], watch: false })
+  }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
     if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
     // Materials are named after their titles, so the session resolves their current paths instead of deriving them.
     const scenarioFile = task.purpose === 'material' ? await findMaterialFile(task.worktree, 'scenario', task.entityId) : undefined
-    const scenarioTask = task.scenarioRepair === true || (task.purpose === 'material' && scenarioFile !== undefined)
+    const requirementFile = task.purpose === 'material' && !scenarioFile ? await findMaterialFile(task.worktree, 'requirement', task.entityId) : undefined
+    // Requirements and scenarios share the same read-only design orchestration and bundled skills.
+    const scenarioTask = task.scenarioRepair === true || scenarioFile !== undefined || requirementFile !== undefined
     if (scenarioTask && input) throw new Error('场景会话不能取得原型写入权限')
     const replay = task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
     if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
@@ -83,6 +91,7 @@ export class DshTaskSessions {
         assembled: undefined,
       })
       await this.ctx.agentPresets.mount(scope, agentPreset)
+      if (scenarioTask && this.skillsDirectory) await this.mountBundledSkills(scope)
       scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
       let readPaths: string[] = []
       if (scenarioTask && this.scenarioContext) {

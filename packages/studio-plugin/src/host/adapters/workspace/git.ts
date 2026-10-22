@@ -62,6 +62,13 @@ export class WorkspaceGit {
     if (result.stdoutBytes.length !== size) throw new Error('固定材料字节数不一致。')
     return result.stdoutBytes
   }
+  /** Reads a fixed blob when the commit contains that regular file; an absent path stays distinguishable. */
+  async readOptionalBlob(root: string, commit: string, relativePath: string): Promise<Buffer | undefined> {
+    const file = gitRelativePath(relativePath), sha = fixedSha(commit)
+    const entry = (await this.command(root, ['ls-tree', '-z', sha, '--', file])).stdout
+    if (!entry) return undefined
+    return this.readBlob(root, commit, relativePath)
+  }
   async fetchCommit(root: string, commit: string): Promise<void> { await this.command(root, ['fetch', '--no-tags', 'origin', fixedSha(commit)], true) }
   /** Whether the commit object already exists locally, so a read can avoid the network. */
   async hasCommit(root: string, commit: string): Promise<boolean> {

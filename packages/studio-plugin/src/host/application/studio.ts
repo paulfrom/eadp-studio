@@ -14,7 +14,8 @@ import { CollaborationClient, CollaborationError } from '../adapters/collaborati
 import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
 import { StudioStore, type PendingOperation, type AdoptionOperation, type MaterialReservation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
-import { AuthorReviews, type ReviewCandidate } from './reviews.ts'
+import { AuthorReviews, type ReviewCandidate, type ReviewFile } from './reviews.ts'
+import { syncProjectContext } from './scenario-package.ts'
 import { BackgroundLane } from './background-lane.ts'
 
 const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
@@ -136,7 +137,7 @@ export class StudioApplication {
         break
       }
       case 'restoreSession': sessionId = await this.restoreSession(command.sessionId); break
-      case 'requestReview': { const snapshot = await this.prepareCandidate(command.entityId, command.purpose); await this.reviews.request(snapshot.review); break }
+      case 'requestReview': { const content = await this.prepareContent(command.entityId, command.purpose); await this.reviews.request({ projectId: content.remote.project.id, entityId: content.entity.id, purpose: command.purpose, head: content.snapshot.head, inputHash: content.inputHash, files: content.snapshot.files, paths: content.paths, task: content.task }); break }
       case 'confirmMaterial': await this.confirmMaterial(command.entityId, command.expectedHash, command); break
       case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, prototypeRules); break }
       case 'checkPrototype': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const sha = (await this.ports.git.state(task.worktree)).head; await this.ports.checks(task, sha); break }
@@ -184,12 +185,35 @@ export class StudioApplication {
     const state = await this.state()
     return { ok: true, state, ...(sessionId ? { sessionId } : {}) }
   }
-  async scenarioSessionContext(task: TaskView, signal?: AbortSignal): Promise<{ text: string; readPaths: string[] }> { signal?.throwIfAborted(); if ((await this.ports.account())?.id !== this.store.accountId) throw new Error('会话登录身份已变化'); const text = await this.scenarios.context(task); const record = await this.scenarios.record(task.entityId, task.projectId); const local = await this.store.read(); const paths: string[] = [...record.sources.filter(source => source.selected).map(source => record.sourcePaths[source.id]!).filter(Boolean)]; for (const value of local.tasks.filter(item => item.projectId === task.projectId && item.entityId === task.entityId && item.purpose === 'material')) { const relative = await findMaterialFile(value.worktree, 'scenario', value.entityId); if (relative) paths.push(path.join(value.worktree, relative)) } return { text, readPaths: paths } }
+  async scenarioSessionContext(task: TaskView, signal?: AbortSignal): Promise<{ text: string; readPaths: string[] }> {
+    signal?.throwIfAborted()
+    if ((await this.ports.account())?.id !== this.store.accountId) throw new Error('会话登录身份已变化')
+    // Requirements use the same design orchestration but read a requirement material instead of a scenario package.
+    if (task.purpose === 'material' && !task.scenarioRepair && !await findMaterialFile(task.worktree, 'scenario', task.entityId)) return { text: await this.requirementSessionContext(task), readPaths: [] }
+    const text = await this.scenarios.context(task), record = await this.scenarios.record(task.entityId, task.projectId), local = await this.store.read()
+    const paths: string[] = [...record.sources.filter(source => source.selected).map(source => record.sourcePaths[source.id]!).filter(Boolean)]
+    for (const value of local.tasks.filter(item => item.projectId === task.projectId && item.entityId === task.entityId && item.purpose === 'material')) { const relative = await findMaterialFile(value.worktree, 'scenario', value.entityId); if (relative) paths.push(path.join(value.worktree, relative)) }
+    return { text, readPaths: paths }
+  }
+  /** Read-only context for a requirement material; accepted scene files stay readable in the same worktree. */
+  private async requirementSessionContext(task: TaskView): Promise<string> {
+    const relative = await findMaterialFile(task.worktree, 'requirement', task.entityId)
+    if (!relative) throw new Error('当前需求的本地材料不存在')
+    const draft = await readMaterial(task.worktree, 'requirement', task.entityId)
+    return `当前需求 ${task.entityId}，整文件 baseHash=${draft.sha256}。
+回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；不输出采纳建议或分段候选，不写正文。
+当前有效材料绝对路径：${path.join(task.worktree, draft.path)}
+当前元数据：${JSON.stringify(draft.metadata)}
+当前Markdown正文：
+${draft.body}`
+  }
   private async executeScenario(command: StudioCommand): Promise<string | undefined> {
     switch (command.action) {
       case 'openScenario': await this.scenarios.open(command.entityId); break
       case 'saveScenario': case 'resolveScenarioConflict': await this.repairs.checkConcurrent(command.entityId); await this.scenarios.save(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'adoptScenarioSuggestions': await this.scenarios.adopt(command); await this.repairs.checkConcurrent(command.entityId); break
+      case 'resolveScenarioWriteProposal': await this.scenarios.resolveWriteProposal(command); await this.repairs.checkConcurrent(command.entityId); break
+      case 'undoScenarioWrite': await this.scenarios.undoWrite(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'newScenarioSession': return this.scenarios.newSession(command.entityId)
       case 'selectScenarioSession': return this.scenarios.selectSession(command.entityId, command.sessionId)
       case 'setScenarioAutoWrite': await this.scenarios.setAutoWrite(command.entityId, command.enabled); break
@@ -404,7 +428,7 @@ export class StudioApplication {
     private async materializeReservation(operation: MaterialReservation, entity: EntityView, remote: ProjectState): Promise<EntityView> {
       if (operation.phase === 'materialized') return entity
       const task = await this.designTask(remote, entity)
-      const metadata = initialMetadata(entity, operation.scenarioIds, operation.sources)
+      const metadata = await syncProjectContext(task.worktree, initialMetadata(entity, operation.scenarioIds, operation.sources))
       try {
         await readMaterial(task.worktree, entity.kind, entity.id)
       } catch (error) {
@@ -423,7 +447,7 @@ export class StudioApplication {
     const token = await this.requireOwned(fresh.entity)
     await this.api.request<EntityView>('PUT', this.route(remote.project.id, `/entities/${entity.id}/template`), { idempotencyKey: key(), token, templateId, templateRef: template.fixed })
     const draft = await readMaterial(task.worktree, 'scenario', entity.id)
-    await saveMaterial(task.worktree, { ...draft.metadata, templateId, templateRef: template.fixed }, draft.body)
+    await saveMaterial(task.worktree, await syncProjectContext(task.worktree, { ...draft.metadata, templateId, templateRef: template.fixed }), draft.body)
   }
   private async designTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     const local = await this.store.read()
@@ -490,20 +514,26 @@ export class StudioApplication {
     local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === 'prototype')); local.tasks.push(task); await this.store.save(); return task
   }
   private materialRules(draft: MaterialDraft): string {
-    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。普通对话只输出结构化建议，禁止直接写入文件、修改Git或确认。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
+    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
+    if (draft.metadata.kind === 'requirement') return '你是需求设计助手。使用 grilling 逐问推进需求设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，不写正文、不直接修改文件或确认。以Host提供的当前需求、已接受场景依据和实际已读资料为准，缺业务答案时提问。'
     return `你正在整理 ${draft.metadata.kind} ${draft.entityId}。仅编辑 ${draft.path}；保留 eadp-metadata 身份。实际业务依据、核心业务规则、验收条件缺失时提出问题，不编造；核心待澄清项阻断确认，非阻断项明确限制和不适用范围。不得自行确认、释放占用、修改Git/模板规则或执行shell。作者通过工作台确认。当前材料哈希 ${draft.sha256}。`
   }
   private materialEvidence(candidateSha: string, draft: MaterialDraft): CheckEvidence {
     checkMaterial(draft)
     return { candidateSha, passed: true, checks: ['materials', 'relations'].map(name => ({ name, passed: true, evidenceHash: digest(`${name}:${draft.sha256}`) })) }
   }
-  private async candidateSha(task: TaskView, expectedHead: string, allowed: (file: string) => boolean, files: string[], message: string): Promise<{ sha: string; changed: string[] }> {
+  /** Working-tree paths this task changed, including both sides of a rename. */
+  private async dirtyPaths(task: TaskView): Promise<string[]> {
     const entries = (await this.ports.gitLocal(['status', '--porcelain=v1', '-z', '--untracked-files=all'], task.worktree)).split('\0').filter(Boolean)
     const dirty: string[] = []
     for (let index = 0; index < entries.length; index++) {
       const entry = entries[index]!, name = entry.slice(3); dirty.push(name)
       if (/[RC]/.test(entry.slice(0, 2))) { const source = entries[++index]; if (!source) throw new Error('Git 变更列表不完整'); dirty.push(source) }
     }
+    return dirty
+  }
+  private async candidateSha(task: TaskView, expectedHead: string, allowed: (file: string) => boolean, files: string[], message: string): Promise<{ sha: string; changed: string[] }> {
+    const dirty = await this.dirtyPaths(task)
     if (dirty.some(file => !allowed(file))) throw new Error('存在本任务允许范围外的变更，请先处理后再固定候选')
     const sha = dirty.length ? await this.ports.git.commitFiles(task.worktree, files.length ? files : dirty, message, await this.identity()) : (await this.ports.git.state(task.worktree)).head
     const changed = await this.ports.git.changedFiles(task.worktree, expectedHead, sha)
@@ -538,7 +568,12 @@ export class StudioApplication {
     }
     return owned
   }
-  private async prepareCandidate(entityId: string, purpose: 'material' | 'prototype', expectedHash?: string) {
+  /**
+   * Resolves the exact local content a review or confirmation covers. It reads
+   * the task worktree only: no commit, check run or remote write happens here,
+   * so an optional review can bind the snapshot a later confirmation commits.
+   */
+  private async prepareContent(entityId: string, purpose: 'material' | 'prototype', expectedHash?: string) {
     let context = await this.entity(entityId)
     if (context.entity.frozenBy.length) throw new Error('冻结需求须由当前场景批次统一确认')
     const task = purpose === 'prototype' ? await this.prototypeTask(context.remote, context.entity) : await this.designTask(context.remote, context.entity)
@@ -546,15 +581,21 @@ export class StudioApplication {
     const { remote, entity } = context, token = await this.requireOwned(entity)
     const draft = await this.currentMaterialDraft(task, entity)
     if (expectedHash && draft.sha256 !== expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
-    let candidateSha: string, paths: string[], allowedPaths: string[], checks: CheckEvidence
+    // The snapshot starts from the task HEAD; target files are bound by their own hashes.
+    const head = (await this.ports.git.state(task.worktree)).head
+    let paths: string[], allowedPaths: string[]
     const confirmations: Array<Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>> = []
     const prepareBase = { idempotencyKey: key(), entityId: entity.id, token, expectedHead: remote.project.recognizedHead! }
     let batch: { expectedAssociationRevision: number; batchRequirementIds: string[] } | undefined
+    let drafts: Array<{ entity: EntityView; draft: MaterialDraft }> = [{ entity, draft }]
     if (purpose === 'material') {
       checkMaterial(draft)
-      await this.scenarios.pruneEvidence(task)
+      if (entity.kind === 'scenario') {
+        // The package declares the project context; a legacy draft must be saved once to pick it up.
+        const context = await readFile(await containedFile(task.worktree, 'CONTEXT.md')).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
+        if (context && !draft.metadata.files?.some(file => file.path === 'CONTEXT.md' && file.sha256 === digest(context))) throw new Error('项目上下文尚未纳入场景文件包，请保存场景后重新确认')
+      }
       const frozen = entity.kind === 'scenario' && entity.materialVersion > 0 ? remote.entities.filter((value): value is EntityView => isEntityView(value) && value.frozenBy.includes(token.occupationId)) : []
-      const drafts = [{ entity, draft }]
       for (const requirement of frozen) {
         if (requirement.completedVersion === requirement.materialVersion && requirement.materialVersion > 0) continue
         const related = await this.currentMaterialDraft(task, requirement); checkMaterial(related); drafts.push({ entity: requirement, draft: related })
@@ -569,21 +610,55 @@ export class StudioApplication {
       // A title edit renames the material; the removed previous path belongs to this batch.
       const allowed = new Set([...paths, ...await this.replacedMaterialPaths(task, prepareBase.expectedHead, new Set(drafts.map(value => value.entity.id)))])
       allowedPaths = [...allowed]
-      candidateSha = (await this.candidateSha(task, prepareBase.expectedHead, file => allowed.has(file), allowedPaths, '固定材料 ' + entity.id)).sha
-      for (const path of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, path)
-      for (const value of drafts) confirmations.push({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: candidateSha, path: value.draft.path, sha256: value.draft.sha256 } })
-      checks = { candidateSha, passed: true, checks: drafts.flatMap(value => this.materialEvidence(candidateSha, value.draft).checks) }
+      // The commit hash is filled in after this snapshot; review input binds only the material hash.
+      for (const value of drafts) confirmations.push({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: '', path: value.draft.path, sha256: value.draft.sha256 } })
       if (entity.kind === 'scenario' && entity.materialVersion > 0) batch = { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: frozen.map(value => value.id) }
     } else {
       if (entity.kind !== 'requirement' || !entity.current || task.inputHash !== entity.current.fixed.sha256 || draft.sha256 !== entity.current.fixed.sha256) throw new Error('原型输入已失效，请重新确认需求')
-      const candidate = await this.candidateSha(task, prepareBase.expectedHead, file => file.startsWith('原型代码/'), [], '固定原型 ' + entity.id)
-      candidateSha = candidate.sha; paths = candidate.changed; allowedPaths = paths; checks = await this.ports.checks(task, candidateSha)
+      // Local commits since the recognized head are part of the same snapshot.
+      const committed = head === prepareBase.expectedHead ? [] : await this.ports.git.changedFiles(task.worktree, prepareBase.expectedHead, head)
+      paths = [...new Set([...committed, ...await this.dirtyPaths(task)])]
+      if (!paths.length || paths.some(file => !file.startsWith('原型代码/'))) throw new Error('候选相对当前项目基线没有有效变化或包含本任务范围外提交')
+      allowedPaths = paths
       confirmations.push({ entityId: entity.id, expectedRevision: entity.revision, fixed: entity.current.fixed })
     }
-    const prepare = { ...prepareBase, stage: purpose === 'prototype' ? 'prototype' as const : batch ? 'scenario-batch' as const : 'material' as const, sourceSha: candidateSha, candidateSha, allowedPaths, checks, ...batch }
-    const inputHash = digest(reviewInputText({ ...prepare, confirmations }, entity))
-    const review: ReviewCandidate = { projectId: remote.project.id, entityId: entity.id, purpose, candidateSha, inputHash, paths, checks, task }
-    return { task, draft, prepare, confirmations, review }
+    const stage = purpose === 'prototype' ? 'prototype' as const : batch ? 'scenario-batch' as const : 'material' as const
+    const input = { ...prepareBase, stage, ...batch, confirmations }
+    return { remote, entity, task, draft, drafts, paths, allowedPaths, confirmations, input,
+      inputHash: digest(reviewInputText(input, entity)),
+      snapshot: { head, files: await this.snapshotFiles(task.worktree, allowedPaths) } }
+  }
+  private async prepareCandidate(entityId: string, purpose: 'material' | 'prototype', expectedHash?: string) {
+    const content = await this.prepareContent(entityId, purpose, expectedHash)
+    const { task, draft, entity, remote } = content
+    let candidateSha: string, paths = content.paths, allowedPaths = content.allowedPaths, checks: CheckEvidence
+    if (purpose === 'material') {
+      await this.scenarios.pruneEvidence(task)
+      const allowed = new Set(allowedPaths)
+      candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), paths, '固定材料 ' + entity.id)).sha
+      for (const path of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, path)
+      checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialEvidence(candidateSha, value.draft).checks) }
+      for (const value of content.confirmations) value.fixed.commitSha = candidateSha
+    } else {
+      const candidate = await this.candidateSha(task, content.input.expectedHead, file => file.startsWith('原型代码/'), [], '固定原型 ' + entity.id)
+      candidateSha = candidate.sha; paths = candidate.changed; allowedPaths = paths
+      checks = await this.ports.checks(task, candidateSha)
+    }
+    const prepare = { ...content.input, sourceSha: candidateSha, candidateSha, allowedPaths, checks }
+    const review: ReviewCandidate = { projectId: remote.project.id, entityId: entity.id, purpose, head: content.snapshot.head, inputHash: content.inputHash, files: content.snapshot.files, paths, task, candidateSha }
+    return { task, draft, prepare, confirmations: content.confirmations, review }
+  }
+  /** Content identity of the worktree bytes a review and its confirmation must share. */
+  private async snapshotFiles(root: string, files: readonly string[]): Promise<ReviewFile[]> {
+    const result: ReviewFile[] = []
+    for (const relative of [...new Set(files)].sort()) {
+      const bytes = await readFile(await containedFile(root, relative)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      })
+      result.push({ path: relative, sha256: bytes ? digest(bytes) : null })
+    }
+    return result
   }
   private async confirmMaterial(entityId: string, expectedHash: string, choice: ConfirmationChoice) {
     await this.validateScenarioConfirmation(entityId, expectedHash)
@@ -606,7 +681,7 @@ export class StudioApplication {
     const local = await this.store.read()
     const operation: PendingOperation = { id: prepare.idempotencyKey, projectId: task.projectId, entityId: task.entityId, phase: 'fixed', candidateSha: prepare.candidateSha, expectedHead: prepare.expectedHead, fixedPath: draft.path, sha256: draft.sha256, prepare, token: prepare.token, adoptionIds: local.adoptions.filter(value => value.projectId === task.projectId && value.entityId === task.entityId && value.worktree === task.worktree && value.applied && draft.metadata.sources.some(source => sameSource(source, value.request.source))).map(value => value.id) }
     local.operations.push(operation); await this.store.save()
-    this.lane.schedule(`operation:${operation.id}`, async () => { await this.ports.git.push(task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`); await this.resumeOperation(operation) })
+    this.resumeOnLane(operation)
   }
   /** Queue a recorded operation's remaining Git and backend work. */
   private resumeOnLane(operation: PendingOperation): void {
@@ -620,7 +695,13 @@ export class StudioApplication {
       if (!operation.integrationId) {
         let result: IntegrationView
         try { result = (await this.api.request<{ result: IntegrationView }>('GET', this.route(project.id, `/operations/${operation.id}`))).result }
-        catch (error) { if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error; result = await this.api.request<IntegrationView>('POST', this.route(project.id, '/integrations'), operation.prepare) }
+        catch (error) {
+          if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error
+          // The candidate must exist on the remote before the backend prepares it.
+          // This push is idempotent, so a retry after any lost acknowledgement repeats it.
+          await this.ports.git.push(task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`)
+          result = await this.api.request<IntegrationView>('POST', this.route(project.id, '/integrations'), operation.prepare)
+        }
         operation.integrationId = result.id; operation.phase = 'prepared'; await this.store.save()
       }
       let integration = await this.api.request<IntegrationView>('GET', this.route(project.id, `/integrations/${operation.integrationId}`))

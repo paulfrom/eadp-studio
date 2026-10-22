@@ -6,6 +6,7 @@ import type { TaskView } from '../../shared/studio.ts'
 import { containedFile, digest, findMaterialFile, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError } from '../adapters/collaboration/client.ts'
 import { checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
+import { syncProjectContext } from './scenario-package.ts'
 import type { ScenarioRecord, ScenarioWorkspaces } from './scenario-workspaces.ts'
 
 export interface LocalScenarioRepair { projectId: string; entityId: string; view: RepairTaskView; task: TaskView; question?: string; message?: string; waiting: boolean; nextRound?: boolean; pending?: RepairEventRequest; recoverPending?: RepairEventRequest; pendingAnswer?: string; turnEnded?: boolean; abortRequested?: boolean; lastHandledSeq?: number }
@@ -180,8 +181,9 @@ export class ScenarioRepairs {
       if (typeof result.body !== 'string') throw new Error('修复候选缺少完整正文')
       // Identity, title, template and formal evidence come from the current file;
       // the Agent may only restate the business quality items and open questions.
-      const metadata = { ...draft.metadata, coreRulesPresent: result.coreRulesPresent, acceptanceCriteriaPresent: result.acceptanceCriteriaPresent, openQuestions: result.openQuestions }
-      if (!isMaterialMetadata(metadata)) throw new Error('修复候选的业务质量项或待澄清项无效')
+      const candidate = { ...draft.metadata, coreRulesPresent: result.coreRulesPresent, acceptanceCriteriaPresent: result.acceptanceCriteriaPresent, openQuestions: result.openQuestions }
+      if (!isMaterialMetadata(candidate)) throw new Error('修复候选的业务质量项或待澄清项无效')
+      const metadata = await syncProjectContext(task.worktree, candidate)
       const before = await this.check(task, draft)
       const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, expectedHash: draft.sha256, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
       const after = await this.check(task, next)

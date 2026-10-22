@@ -49,7 +49,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')
   const store = new StudioStore(stateDirectory)
   let app: StudioApplication
-  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal))
+  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'))
   const checkResults = new Map<string, PrototypeCheckResult>()
   let preview: PrototypePreview | undefined
   const prototypeInput = async (task: TaskView, sourceSha?: string): Promise<PrototypeTaskIdentity> => ({ prototypeRoot: path.join(task.worktree, '原型代码'), manifestPath, assetId: task.entityId, requirementId: task.entityId, sessionId: task.sessionId, sourceSha: sourceSha ?? (await git.state(task.worktree)).head })

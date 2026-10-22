@@ -47,7 +47,8 @@
     "lib/typert.remote-client.js",
     "lib/typert.remote-client.d.ts",
     "assets/prototype-template.tar.gz",
-    "assets/prototype-template.manifest.json"
+    "assets/prototype-template.manifest.json",
+    "assets/skills/**/*"
   ],
   "devDependencies": {
     "@eadp/asset-domain": "workspace:*",

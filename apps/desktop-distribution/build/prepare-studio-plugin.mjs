@@ -112,7 +112,7 @@ export const studioStagingPaths = [...new Set([
   ...UPSTREAM_EDITS.map(edit => edit.file),
   ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
   'tsconfig.host.json', 'tsconfig.client.json', 'tsconfig.base.json',
-  ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
+  ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'assets/skills', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/asset-domain/${file}`),
 ])]
@@ -138,6 +138,9 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-agent-preset-registry',
   '@deepseek-ai/dsh-agent-preset',
   '@deepseek-ai/dsh-persona',
+  '@deepseek-ai/dsh-skill',
+  '@deepseek-ai/dsh-skill-filesystem',
+  '@deepseek-ai/dsh-tool-skill',
   '@deepseek-ai/dsh-tool-fs',
   '@deepseek-ai/dsh-tool-fs-search',
   '@deepseek-ai/dsh-compaction-basic',
@@ -234,6 +237,8 @@ async function placePlugin(incremental = false) {
     await cp(source, path.join(assembledPlugin, entry))
   }
   const templateManifest = JSON.parse(await readFile(path.join(productPlugin, 'assets/prototype-template.manifest.json'), 'utf8'))
+  // Fixed bundled skills ship unchanged with the plugin; their directory is the only skill root.
+  await cp(path.join(productPlugin, 'assets/skills'), path.join(assembledPlugin, 'assets/skills'), { recursive: true })
   for (const entry of [...templateManifest.files, ...templateManifest.addedFiles]) {
     if (!entry.path || entry.path.includes('\\') || entry.path.split('/').some(part => !part || part === '..' || part === '.')) throw new Error('Invalid template bundle entry')
     const destination = path.join(assembledPlugin, 'assets/prototype-template', entry.path)

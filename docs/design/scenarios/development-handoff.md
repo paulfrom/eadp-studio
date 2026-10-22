@@ -16,7 +16,14 @@
 | SC03 后端路径范围 | 已完成 | `stage:"template"` 允许项目根 `CONTEXT.md`；仅更新上下文时不要求重复声明模板目录 |
 | SC06 后端根目录白名单 | 已完成 | 材料/场景批次集成在项目根只放行 `CONTEXT.md`，其他根目录文件拒绝 |
 | SC03 桌面/Host 三方核对与受控保存 | 未开始 | 任务 worktree 内保存、基线/修改/最新接受版比较 |
-| SC02、SC04、SC05、SC07—SC14 | 未开始 | 见开发清单与本文第 4 节 |
+| SC04 写入提议契约与提问触发 | 已完成 | `eadp-write-proposal`、`ScenarioRecord.writeProposal`、按钮消费、过期/幂等/拒绝节流与最小卡片 |
+| SC05 整篇生成与整篇写入 | 已完成 | 整篇写入复用受控服务；写入后章节/依据/待答摘要与 hash 检查撤销；需求侧未接 |
+| SC06 确认文件包（Host） | 已完成 | `CONTEXT.md` 进入 `metadata.files`，与正文、正式依据同批冻结；逐文件 hash 与根目录白名单 |
+| SC07 可选评审不 commit | 已完成 | `requestReview` 改走只读 `prepareContent`；评审绑定本地 HEAD 与逐文件 hash；确认时才提交一次候选 |
+| SC08 确认后台持久恢复流水线 | 已完成 | 候选推送并入 prepare 步骤；丢响应查询原操作；远端头变化在 CAS 前停止；提交/worktree 仍在命令队列 |
+| SC02 内置 grill 与技能快照 | 已完成 | 技能随包；场景与需求材料会话共用只读 preset、技能目录与归纳式上下文 |
+| SC03 项目上下文三方核对 | 已完成 | 写入提议可目标 `CONTEXT.md`；基线/工作区/认可头比较；冲突回对话，不 commit |
+| SC09—SC14 | 未开始 | 见开发清单与本文第 4 节 |
 | SC15 分层验证 | 未开始 | 仅完成后端单元与类型校验 |
 
 后端验证已执行：
@@ -25,6 +32,9 @@
 - `src/gitlab-content.test.ts` 44 项通过；`integration`、`project-initialization`、`auth/gitlab`、`desktop-update` 共 43 项通过。
 - Docker 镜像已重建并启动，`GET http://127.0.0.1:6972/health` 返回 `{"status":"ok"}`，api／db／cache 容器 healthy。
 - 未连接真实企业 GitLab；未执行桌面、真实模型、双客户端或 Windows 实机验收。
+- SC07／SC08 桌面/Host 验证：装配树 `tsc -b` host 与 client 通过；评审、确认与恢复均未接真实模型/GitLab。
+- SC02 验证：`scenario-preset.test.mjs` 2 项、`scenario-dsh-adapter.test.ts` 6 项通过（含需求会话共用 preset 与技能目录）；真实桌面未验证技能目录挂载（dev-stage 不执行依赖安装）。`tests/scripts` 全量仍有 3 项与本轮无关的环境性失败（缺少 `.desktop-build` 目标、两处样式断言）。
+- SC03 验证：`scenario-write-proposals`／`scenario-orchestration` 共 29 项通过（新增上下文提议解析与失效、成功写入并同步文件包、并发接受冲突、提问后文件变化作废）；`tests/windows-desktop` 全量 175 项通过、1 项因未配置测试数据库跳过。未做桌面交互走查，未验证真实模板发布链路。
 
 ## 2. 后端新增约束（桌面端实现时必须遵守）
 
@@ -60,7 +70,7 @@
 
 推荐顺序保持不变：SC04 → SC02/SC03 → SC05 → SC06/SC07 → SC08 → SC09/SC10 → SC11；SC12 在 SC05 后可并行；SC13 的入口归位可在 SC05 后并行，四态与清尾状态展示须在 SC08 后；最后 SC14、SC15。
 
-### SC04 写入提议契约与提问触发（必须先定协议）
+### SC04 写入提议契约与提问触发（已完成）
 
 开发清单要求：提议记录包含 ID、目标、baseHash、模板固定引用、`CONTEXT.md` hash、依据集合、创建时间；AI 输出不能形成提议或伪造 ID；否认、未答、歧义一律不写。
 
@@ -74,38 +84,39 @@
 
 相关入口：`host/application/scenario-workspaces.ts`（会话回调与记录）、`shared/scenarios.ts`（命令/视图类型）、`host/application/scenario-documents.ts`（受 hash 约束的写入）。
 
-### SC02 内置 grill 与技能快照接入
+### SC02 内置 grill 与技能快照接入（已完成）
 
-- 读取 `.local/skills/mattpocock/` 快照，随发行装配进 `eadp-scenario` preset；不读取用户机器技能。
-- `grill-with-docs` 只是调用桩，必须同时装配 `grilling` 与 `domain-modeling`。
-- `domain-modeling` 产出映射到业务项目根 `CONTEXT.md`；ADR 产出关闭；技能原文不改。
-- 普通会话只归纳结论与提问，不写正文；需求与场景共用同一套编排。
-- 现有会话提示词在 `scenario-workspaces.ts:162,169,260` 仍要求输出 `eadp-suggestions`，需同步替换。
+- 快照原文复制到 `assets/skills/`（grilling、grill-with-docs、domain-modeling 与 LICENSE/SOURCE.json），装配时随插件发行；`grill-with-docs` 桩仍调用另外两个技能。
+- 场景会话运行时挂载唯一技能目录（`includeDefaultRoots:false`），不读取项目根或用户机器技能；`domain-modeling` 维护业务项目根 `CONTEXT.md`，ADR 产出关闭。
+- 场景与需求材料会话共用 `eadp-scenario` preset、技能与归纳式规则：只归纳结论与提问，不写正文。需求会话由 Host 提供当前材料、baseHash、元数据与正文的只读上下文。
+- 新会话提示词已不再要求 `eadp-suggestions`；旧建议链路的解析与 UI 仍按 SC14 待删除。
 
-### SC03 项目上下文受控保存与三方核对（桌面部分）
+### SC03 项目上下文受控保存与三方核对（已完成）
 
-- 业务项目根 `CONTEXT.md` 的受控读取与本地保存落在任务 worktree，不 commit。
-- 项目级接受复用模板发布链路；后端已放行该路径。
-- 比较任务基线、本次修改、最新接受版，冲突回对话解决；不能用旧整份文件覆盖新内容。
-- 白名单只有项目根 `CONTEXT.md`；研发仓库自身的 `CONTEXT.md` 不受此流程影响。
+- 写入提议卡可目标项目根 `CONTEXT.md`（唯一路径），仍由用户按钮消费并校验提问时的 `CONTEXT.md` hash。
+- 三方比较：任务 worktree HEAD、工作区文件、认可头版本；冲突即拒绝并回对话，不 rebase、不改 expectedHead 重试。
+- 保存只在任务 worktree 原子落盘、不 commit，随后把新 hash 同步进场景 `metadata.files`，避免 SC06 确认拒绝。
+- 项目级接受仍走模板发布的受控配置链路；研发仓库自身的 `CONTEXT.md` 不受影响。
 
-### SC05 整篇生成与整篇写入
+### SC05 整篇生成与整篇写入（已完成）
 
 - 复用 `client/scenarios/ScenarioWorkspace.tsx:43-46` 的 flush → 命令 → receive 边界、`client/scenarios/DraftBuffer.ts:32,49` 的缓冲，以及 `host/application/scenario-documents.ts` 中带 `expectedHash`、按文件串行写入与冲突双份的保存能力。
 - 一次整篇写入，无条目、无分段、无第二次保存确认；写入后给变更摘要与基于本地差异的撤销。
 - 撤销是一次新的受 hash 检查写入；流式未完成/取消/失败不产生半篇正文。
 - 场景与需求共用同一写入服务。
 
-### SC06 确认文件包（Host 部分）
+### SC06 确认文件包（已完成）
 
 - 正文、`CONTEXT.md` 固定引用、选定正式依据在同一候选提交内冻结。
 - 复用 `metadata.files` 与 `.eadp/evidence/<sha256>`；后端已限制根目录只放行 `CONTEXT.md`。
 - 候选父为认可头，逐文件 hash 精确匹配；完整 diff 仍由服务端校验。
 
-### SC07 可选评审不 commit
+### SC07 可选评审不 commit（已完成）
 
-- `host/application/studio.ts:139` 的 `requestReview` 复用 `prepareCandidate`，需解除该依赖，改为从本地版本快照发起。
-- 评审 worktree 与登记纳入清理范围；评审前后 Git 历史不变。
+- `requestReview` 改走 `prepareContent`（`studio.ts`），只读本地任务快照，不提交、不跑工程检查、不写远端。
+- 评审绑定 `head` + 逐文件 `{ path, sha256 }` + `inputHash`；worktree 以 HEAD 创建后复制未提交字节（`adapters/workspace/snapshot.ts`）。
+- 报告接受前核对快照字节；AI 辅助确认时重算同一指纹，`candidateSha` 只在确认时产生。
+- 评审 worktree 与任务登记留给 SC11 统一清理；本轮未新增清理入口。
 
 ### SC08 确认后台持久恢复流水线
 
@@ -153,7 +164,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 ## 6. 已知风险与未验证边界
 
-- 写入提议的 AI 协议尚未定义；这是 SC04 的首要设计决定，不能用自由文本推断用户同意。
+- 评审绑定的是本地未提交快照；评审 worktree 与分支目前无人清理，须由 SC11 覆盖，不能把「登记在 tasks/reviews」当作已清理。
 - 需求侧（REQ 编号、去分类、一致性对比端点/表）不在本轮范围；`docs/design/02-requirements.md` 的差距仍未实施。
 - 旧建议/采纳链路仍在代码中，且 `implementation.md` 早期章节把它记为已完成；以「后续修订（本轮）」和开发清单为准，早期段落是历史事实，不是现行契约。
 - 后端仅验证路径范围与单元行为；真实企业 GitLab、真实 PostgreSQL 运行库、双客户端、Windows 实机与真实模型均未验收。
@@ -161,7 +172,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 ## 7. 建议的下一个会话
 
-1. 先做 SC04 协议与存储设计，落 `eadp-write-proposal` 与 `ScenarioRecord.writeProposal`，补单元测试（AI 不能伪造 ID/授权、否认/未答/歧义不写、重复消费幂等）。
-2. 再做 SC05 整篇写入与撤销，复用 `scenario-documents.ts`，补 hash 冲突与流式中断用例。
-3. 然后并行推进 SC02（grill 快照与提示词替换）和 SC03 桌面三方核对。
-4. 每完成一个 SC 更新 `implementation.md` 并设检查点；不要在单个会话内跨过 SC08 而未验证流水线恢复。
+1. SC04—SC08 已完成：写入提议、整篇写入、摘要与撤销、确认文件包、可选评审、后台恢复流水线见 `implementation.md` 对应段落。
+2. SC02、SC03 已完成；下一步进入 SC09/SC10（主 checkout 安全同步、任务身份与逐任务资源释放）。
+3. 每完成一个 SC 更新 `implementation.md` 并设检查点；不要在单个会话内跨过 SC08 而未验证流水线恢复。
+4. 需求侧的写入提议、摘要与撤销留到阶段二需求协同设计，本轮不要为需求另建文件规则。

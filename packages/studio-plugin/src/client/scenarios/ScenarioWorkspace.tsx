@@ -79,7 +79,15 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     retrySource: actions.retrySource,
     selectSource: actions.selectSource,
     adoptSuggestions: actions.adopt,
-  }), [execute, entity.id, faces, actions])
+    resolveWriteProposal: decision => {
+      const proposal = workspace.writeProposal
+      if (proposal) void execute(hash => ({ action: 'resolveScenarioWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, expectedHash: hash }))
+    },
+    undoWrite: () => {
+      const receipt = workspace.writeReceipt
+      if (receipt) void execute(hash => ({ action: 'undoScenarioWrite', entityId: entity.id, operationId: crypto.randomUUID(), expectedHash: hash }))
+    },
+  }), [execute, entity.id, faces, actions, workspace.writeProposal, workspace.writeReceipt])
   const revision: ScenarioRevisionFace = {
     shown: showImpact,
     ...(workspace.impact ? { impact: workspace.impact } : {}),

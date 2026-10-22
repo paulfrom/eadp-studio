@@ -6,7 +6,7 @@ export interface ScenarioTemplateCatalog { acceptedHead: string; defaultTemplate
 
 export type ConfirmationChoice = { method: 'direct' } | { method: 'ai-assisted'; reviewId: string; authorDisposition: string }
 export interface ReviewView {
-  id: string; entityId: string; purpose: 'material' | 'prototype'; candidateSha: string; inputHash: string;
+  id: string; entityId: string; purpose: 'material' | 'prototype'; inputHash: string;
   status: 'pending' | 'reported' | 'failed'; summary?: string;
   findings?: Array<{ severity: 'info' | 'warning' | 'blocking'; message: string }>; error?: string;
 }

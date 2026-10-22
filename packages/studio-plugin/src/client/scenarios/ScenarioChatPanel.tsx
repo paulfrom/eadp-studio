@@ -3,6 +3,8 @@ import type { Candidate, EntityView, TaskView } from '../../shared/studio.ts'
 import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import { ScenarioEvidence } from './ScenarioEvidence.tsx'
 import { ScenarioSuggestions } from './ScenarioSuggestions.tsx'
+import { ScenarioWriteProposalCard } from './ScenarioWriteProposalCard.tsx'
+import { ScenarioWriteReceiptCard } from './ScenarioWriteReceiptCard.tsx'
 import css from '../studio.module.css'
 
 /** Every command the chat pane raises, gathered so the pane takes data plus one action face. */
@@ -12,6 +14,8 @@ export interface ScenarioChatActions {
   importSource(name: string, base64: string): Promise<void>; retrySource(sourceId: string): void;
   selectSource(source: ScenarioSource, selected: boolean, formal: boolean): void;
   adoptSuggestions(batchId: string, itemIds: string[]): Promise<void>;
+  resolveWriteProposal(decision: 'write' | 'reject'): void;
+  undoWrite(): void;
 }
 /** Read-only material revision entry: inspect the affected requirements, then start the batch. */
 export interface ScenarioRevisionFace {
@@ -70,6 +74,8 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
     </section>}
     <div className={css.chatDock}>
       {task?.error && <div className={css.notice}>{task.error}</div>}
+      {workspace.writeProposal && <ScenarioWriteProposalCard proposal={workspace.writeProposal} disabled={locked || workspace.readOnly || material.dirty} onResolve={actions.resolveWriteProposal} />}
+      {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly || material.dirty} onUndo={actions.undoWrite} />}
       <details className={css.dockGroup} open>
         <summary className={css.cardHead}><strong>资料与 AI 建议</strong><small>{workspace.sources.length} 份资料 · {suggestionCount} 条建议</small></summary>
         {!workspace.readOnly && <label className={css.checkbox} title="开启后 AI 返回的合法建议会整批写入右侧正文并更新版本；手工编辑期间的文件变化会提示合并，写入失败保留建议卡。">

@@ -12,14 +12,14 @@ const mocks = {
   '@deepseek-ai/dsh-llm': 'export const createUserMessage = value => value; export const ReasoningEffortId = value => value',
   '@deepseek-ai/dsh-agent': 'export const installModelSelection = () => () => {}',
   '@deepseek-ai/dsh-office-to-pdf': 'export const OfficeSourceKey = value => value',
+  '@deepseek-ai/dsh-skill-filesystem': 'export const apply = () => {}',
 }
-const hook = registerHooks({ resolve(specifier, context, next) {
+registerHooks({ resolve(specifier, context, next) {
   const source = mocks[specifier as keyof typeof mocks]
   return source ? { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true } : next(specifier, context)
 } })
 const { DshTaskSessions } = await import('../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts')
 const { readScenarioSource } = await import('../../packages/studio-plugin/src/host/adapters/dsh/scenario-sources.ts')
-hook.deregister()
 
 function pdf(text: string): Uint8Array {
   const stream = text ? `BT /F1 12 Tf 72 720 Td (${text}) Tj ET` : ''
@@ -38,6 +38,27 @@ function pdf(text: string): Uint8Array {
   content += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
   return new TextEncoder().encode(content)
 }
+
+test('a requirement session uses the same read-only design preset and bundled skills', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-requirement-native-'))
+  try {
+    const presets: string[] = [], skillMounts: unknown[] = []
+    const scope = { systemPrompt: { section: () => {}, context: () => {} }, on: () => () => {}, plugin: (_plugin: unknown, config: unknown) => { skillMounts.push(config); return {} }, effect: (register: () => () => void) => register() }
+    const agent = { session: { header: { cwd: root } }, ctx: scope, followup: () => {} }
+    const ctx = {
+      on: () => () => {}, effect: () => {},
+      agentDefaultModel: { currentSelection: () => ({ provider: 'native', model: 'native' }) },
+      agentPresets: { resolve: async (id: string) => { presets.push(id); return { id } }, mount: async () => {} },
+      sessionProjections: { restore: () => undefined }, sessionController: { inspect: async () => { throw new Error('new') } },
+      agents: { get: () => undefined, create: async ({ setup }: any) => { await setup(scope, agent); return { agent, dispose: async () => {} } } },
+    }
+    const sessions = new DshTaskSessions(ctx as never, '', async () => {}, undefined, path.join(root, 'skills'))
+    await saveMaterial(root, initialMetadata({ id: 'requirement', kind: 'requirement', title: '需求', categoryId: 'cat' }), '# 需求正文')
+    await sessions.open({ projectId: 'p', entityId: 'requirement', purpose: 'material', sessionId: 'requirement-session', inputHash: '', worktree: root }, 'read only', undefined)
+    assert.deepEqual(presets, ['eadp-scenario'], 'requirements share the scenario preset')
+    assert.deepEqual(skillMounts, [{ providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [path.join(root, 'skills')], watch: false }])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
 
 test('source reading uses real PDF text coverage, handles scanned pages and Office service honestly', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-source-reader-'))
@@ -73,12 +94,13 @@ test('source reading uses real PDF text coverage, handles scanned pages and Offi
 
 for (const scenarioRepair of [false, true]) for (const restored of [false, true]) test(`${restored ? 'restored' : 'new'} scenario ${scenarioRepair ? 'repair' : 'material'} uses its own native preset and retains the selected model`, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-scenario-native-'))
-  const releases: Array<() => void> = [], emitted: unknown[] = []
+  const releases: Array<() => void> = [], emitted: unknown[] = [], skillMounts: unknown[] = []
   const handlers = new Map<string, (...args: any[]) => any>()
   let contextText: () => string = () => '', latest = 'first MD and template'
   let eventListener: (session: any, event: any) => void = () => {}
   const scope = { systemPrompt: { section: () => {}, context: (value: any) => { assert.equal(value.required, true); contextText = value.text } },
     on: (name: string, listener: any) => { handlers.set(name, listener); return () => {} },
+    plugin: (_plugin: unknown, config: unknown) => { skillMounts.push(config); return { dispose: async () => {} } },
     effect: (register: () => () => void) => { releases.push(register()) } }
   const agent = { session: { header: { cwd: root } }, ctx: scope, followup: () => {} }
   const ctx = {
@@ -93,11 +115,12 @@ for (const scenarioRepair of [false, true]) for (const restored of [false, true]
     },
   }
   const external = path.join(path.dirname(root), `${path.basename(root)}-image.png`)
-  const sessions = new DshTaskSessions(ctx as never, '', async (_id, output) => { emitted.push(output) }, async (_task, signal) => { signal.throwIfAborted(); return { text: latest, readPaths: [external] } })
+  const sessions = new DshTaskSessions(ctx as never, '', async (_id, output) => { emitted.push(output) }, async (_task, signal) => { signal.throwIfAborted(); return { text: latest, readPaths: [external] } }, path.join(root, 'skills'))
   try {
     await mkdir(path.join(root, '场景'))
     const material = await saveMaterial(root, initialMetadata({ id: 'scenario', kind: 'scenario', title: '原生场景', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } }), '# draft')
     await sessions.open({ projectId: 'p', entityId: 'scenario', purpose: scenarioRepair ? 'review' : 'material', scenarioRepair, sessionId: 's', inputHash: '', worktree: root }, 'read only', undefined)
+    assert.deepEqual(skillMounts, [{ providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [path.join(root, 'skills')], watch: false }], 'only the shipped skill snapshot is mounted')
     for (const name of ['write', 'edit', 'bash']) assert.ok(studioToolGuard({ name, arguments: { file_path: material.path }, agent }))
     assert.equal(studioToolGuard({ name: 'read_image', arguments: { file_path: material.path }, agent }), undefined)
     assert.ok(studioToolGuard({ name: 'read_image', arguments: { file_path: '../outside.png' }, agent }))

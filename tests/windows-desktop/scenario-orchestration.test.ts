@@ -30,7 +30,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   local.tasks.push(task)
   const entity = { id: 'scene', kind: 'scenario', generation: 1, revision: 1, title: '审批', templateId: 'default', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1 }, frozenBy: [] } as unknown as EntityView
   const remote = { project: { id: 'project', revision: 1, recognizedHead: 'c'.repeat(40), stableBranch: 'main' }, entities: [entity] } as unknown as ProjectState
-  const prompts: string[] = [], events: RepairEventRequest[] = [], calls: string[] = []
+  const prompts: string[] = [], events: RepairEventRequest[] = [], calls: string[] = [], contexts = new Map<string, Buffer>()
   let repairView: RepairTaskView | undefined
   let repairNumber = 0
   let loseResponse: 'start' | RepairEventRequest['type'] | undefined
@@ -67,7 +67,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
     if (route.endsWith(`/repairs/${repairView?.id}`) && method === 'GET') return { ...repairView }
     throw new Error(`Unexpected request: ${method} ${route}`)
   } } as unknown as CollaborationClient
-  const ports = { async account() { return { id: 1 } }, async session(value: TaskView) { return value.sessionId }, async prompt(_sessionId: string, value: string) { prompts.push(value) }, git: { async state() { return { dirty: false, head: 'c'.repeat(40), branch: 'main' } } } } as unknown as HostPorts
+  const ports = { async account() { return { id: 1 } }, async session(value: TaskView) { return value.sessionId }, async prompt(_sessionId: string, value: string) { prompts.push(value) }, git: { async state() { return { dirty: false, head: 'c'.repeat(40), branch: 'main' } }, async readOptionalBlob(_root: string, commit: string, relative: string) { return contexts.get(`${commit}:${relative}`) } } } as unknown as HostPorts
   const read = async (_projectId: string, _commit: string, relative: string) => { assert.equal(relative, templateRef.path); return Buffer.from(templateBody) }
   const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   const workspaces = new ScenarioWorkspaces(store, api, ports, projects, { async entity() { return { remote, entity } }, async task() { return task }, async owned() { return token }, async deliver(work) { await work() } })
@@ -77,7 +77,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   await store.save()
   const confirmations: string[] = []
   const repairs = new ScenarioRepairs(workspaces, async (_entityId, hash) => { confirmations.push(hash); assert.ok(repairView); repairView.status = 'completed' })
-  return { root, localRoot, store, local, loseNext(kind: typeof loseResponse) { loseResponse = kind }, loseStartRequest() { failBeforeStart = true }, task, entity, remote, token, workspaces, record, draft, repairs, events, calls, prompts, confirmations, api, ports, projects, getRepair: () => repairView }
+  return { root, localRoot, store, local, loseNext(kind: typeof loseResponse) { loseResponse = kind }, loseStartRequest() { failBeforeStart = true }, task, entity, remote, token, workspaces, record, draft, repairs, events, calls, prompts, confirmations, api, ports, projects, contexts, getRepair: () => repairView }
 }
 const reply = (value: unknown) => ({ kind: 'assistant', content: '```eadp-repair\n' + JSON.stringify(value) + '\n```' })
 /** Business declarations a repair candidate restates; identity stays with the current file. */
@@ -167,10 +167,52 @@ test('a suggestion reply stores the Host-derived original and rejects an anchor 
   assert.equal(stored.groups[0]!.items[0]!.original, f.draft.body)
   assert.equal(await f.workspaces.accept(f.task.sessionId, block({ ...whole, anchor: '不相符的原文' })), true)
   assert.equal(f.record.suggestions.at(-1)!.status, 'invalid')
-  // The protocol asks for a readable answer first and forbids echoing the replaced text.
+  // The prompt asks for conclusions first; any write is a separate explicit proposal, not a suggestion block.
   const context = await f.workspaces.context(f.task)
-  assert.match(context, /回答规则：先用可读中文说明/)
-  assert.ok(context.includes('"anchor"') && !context.includes('"original"'))
+  assert.match(context, /回答规则：先用可读中文归纳本轮明确结论/)
+  assert.ok(context.includes('eadp-write-proposal') && !context.includes('eadp-suggestions'))
+})
+
+test('an accepted context proposal writes only the project root snapshot and binds the new hash to the scenario package', async t => {
+  const f = await fixture(t), head = 'c'.repeat(40), body = '新上下文：统一审批术语与边界'
+  await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
+  f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
+  const content = '已整理。\n```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body }) + '\n```'
+  assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
+  const proposal = f.record.writeProposal!
+  assert.equal(proposal.target, 'context')
+  assert.equal(proposal.baseHash, digest('旧上下文'))
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: 'ignored-for-context' })
+  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), body)
+  assert.equal(f.record.writeProposal!.status, 'consumed')
+  const draft = await readMaterial(f.root, 'scenario', 'scene')
+  assert.equal(draft.metadata.files?.find(file => file.path === 'CONTEXT.md')?.sha256, digest(body), 'the confirmation package carries the new context hash')
+})
+
+test('a concurrently accepted context returns to the conversation instead of overwriting it', async t => {
+  const f = await fixture(t), head = 'c'.repeat(40), acceptedHead = 'd'.repeat(40)
+  await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
+  f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
+  f.remote.project.recognizedHead = acceptedHead
+  f.contexts.set(`${acceptedHead}:CONTEXT.md`, Buffer.from('外部已接受的新上下文'))
+  const content = '```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body: '本地新上下文' }) + '\n```'
+  assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
+  const proposal = f.record.writeProposal!
+  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /其他已确认版本/)
+  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), '旧上下文')
+  assert.equal(f.record.writeProposal!.status, 'pending')
+})
+
+test('a context proposal expires when the worktree file changes after the question', async t => {
+  const f = await fixture(t), head = 'c'.repeat(40)
+  await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
+  f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
+  const content = '```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body: '提议正文' }) + '\n```'
+  assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
+  const proposal = f.record.writeProposal!
+  await writeFile(path.join(f.root, 'CONTEXT.md'), '作者刚刚修改的上下文')
+  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /CONTEXT\.md 已变化/)
+  assert.equal(f.record.writeProposal!.status, 'pending')
 })
 
 test('the authorized auto write applies a valid batch and keeps an unwritable one as a card', async t => {

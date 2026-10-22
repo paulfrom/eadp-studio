@@ -459,8 +459,9 @@ for (const action of ['claimPrototype', 'startSession'] as const) test(action + 
     entity.occupation.purpose = 'design'
     const local = await store.read(); local.tasks.push({ ...task, purpose: 'material', sessionId: 'design-session' }); await store.save()
     assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'material' })).ok, true)
-    assert.ok(rules[2]!.includes(`仅编辑 ${draft.path}`), rules[2])
-    assert.match(rules[2]!, /不得自行确认、释放占用、修改Git\/模板规则或执行shell/)
+    assert.match(rules[2]!, /需求设计助手/)
+    assert.match(rules[2]!, /不写正文/)
+    assert.doesNotMatch(rules[2]!, /仅编辑/)
   } finally { await f.dispose() }
 })
 
