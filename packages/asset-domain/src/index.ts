@@ -1,4 +1,4 @@
-import { isConfirmedMaterialMetadata, isProjectManifest, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
+import { isBuiltinScenarioMetadata, isConfirmedMaterialMetadata, isProjectManifest, type BuiltinScenarioMetadata, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
 
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 409, public readonly details?: unknown) { super(message); }
@@ -78,7 +78,7 @@ export function validateMaterialMetadata(metadata: MaterialMetadata): void {
       requireCondition(range.startLine <= range.endLine && evidence.files.some(file => file.path === range.path), 'EVIDENCE_RANGE_INVALID', 'Evidence ranges must belong to the archived files and be ordered', 422);
     }
   }
-  if (metadata.kind === 'scenario') {
+  if (metadata.kind === 'scenario' || metadata.kind === 'requirement') {
     repositoryPath(metadata.templateRef.path);
     requireCondition(metadata.templateRef.path === `.template/${metadata.templateId}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'The template path must match its stable template ID', 422);
   }
@@ -88,16 +88,17 @@ export function parseProjectManifest(text: string): ProjectManifest {
   let manifest: unknown;
   try { manifest = JSON.parse(text); } catch { throw new DomainError('INVALID_PROJECT_MANIFEST', 'Project manifest must be valid JSON', 422); }
   requireCondition(isProjectManifest(manifest), 'INVALID_PROJECT_MANIFEST', 'Project manifest does not match the project contract', 422);
-  const catalog = manifest.scenarioTemplates;
-  // A project accepted before the catalog existed declares none; its templates
-  // are published later through the normal template integration.
-  if (!catalog) return manifest;
-  requireCondition(new Set(catalog.templates.map(t => t.id)).size === catalog.templates.length && new Set(catalog.templates.map(t => t.path)).size === catalog.templates.length, 'DUPLICATE_TEMPLATE', 'Project template identities and paths must be unique', 422);
-  requireCondition(catalog.templates.some(t => t.id === catalog.defaultTemplateId), 'DEFAULT_TEMPLATE_REQUIRED', 'The default scenario template must exist in the catalog', 422);
-  for (const template of catalog.templates) {
-    repositoryPath(template.path);
-    requireCondition(template.path === `.template/${template.id}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'Template paths must match their stable template IDs', 422);
+  for (const catalog of [manifest.scenarioTemplates, manifest.requirementTemplates]) {
+    if (!catalog) continue;
+    requireCondition(new Set(catalog.templates.map(t => t.id)).size === catalog.templates.length && new Set(catalog.templates.map(t => t.path)).size === catalog.templates.length, 'DUPLICATE_TEMPLATE', 'Project template identities and paths must be unique', 422);
+    requireCondition(catalog.templates.some(t => t.id === catalog.defaultTemplateId), 'DEFAULT_TEMPLATE_REQUIRED', 'The default template must exist in its catalog', 422);
+    for (const template of catalog.templates) {
+      repositoryPath(template.path);
+      requireCondition(template.path === `.template/${template.id}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'Template paths must match their stable template IDs', 422);
+    }
   }
+  const all = [...(manifest.scenarioTemplates?.templates ?? []), ...(manifest.requirementTemplates?.templates ?? [])];
+  requireCondition(new Set(all.map(t => t.id)).size === all.length, 'DUPLICATE_TEMPLATE', 'Template identities must be unique across scenario and requirement catalogs', 422);
   return manifest;
 }
 export function validatePrerequisites(entityId: string, prerequisites: Prerequisite[], entities: EntityView[]): void {
@@ -116,11 +117,43 @@ export function validatePrerequisites(entityId: string, prerequisites: Prerequis
 }
 export function prototypeBindings(entity: EntityView, entities: EntityView[]) {
   requireCondition(entity.kind === 'requirement' && entity.current && entity.confirmationStatus === 'confirmed', 'MATERIAL_REQUIRED', 'A confirmed requirement is required before prototype production');
-  requireCondition(!entity.current.metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'The current requirement version is explicitly not applicable');
+  const metadata = entity.current.metadata;
+  requireCondition(isBuiltinScenarioMetadata(metadata) || !metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'The current requirement version is explicitly not applicable');
   return entity.prerequisites.map(p => {
     const prerequisite = entities.find(e => e.id === p.requirementId);
     const completion = prerequisite?.completions?.find(c => c.version === p.version);
     requireCondition(completion, 'PREREQUISITE_INCOMPLETE', 'Required prerequisite version has not been accepted as completed', 409, p);
     return { requirementId: p.requirementId, version: p.version, confirmationId: completion.confirmationId, integrationSha: completion.integrationSha };
   });
+}
+export const GENERAL_SCENARIO_TITLE = '通用场景';
+export const GENERAL_SCENARIO_SUMMARY = '项目内置通用场景，用于关联暂不归属具体业务场景的需求。';
+const GENERAL_SCENARIO_BODY = `# 通用场景
+
+本场景由项目固定内置，用于关联暂不归属其他具体业务场景的需求，无须用户先新增、编辑或确认场景。
+
+## 适用范围
+
+用户可以直接选择本场景创建需求。需求的目标、范围、角色、流程、字段、规则、异常和验收条件，由该需求自身材料描述。
+
+## 业务依据
+
+本说明只提供需求的场景归属，不提供具体业务规则，也不代替需求自身的正式依据和确认。
+
+## 需求管理
+
+关联需求独立整理、修订和确认。新建需求无须先补充本场景的内容；需求中应直接说明自身的业务目标、规则和验收条件。
+`;
+/** Controlled metadata for the system-provisioned general scenario. */
+export function generalScenarioMetadata(entityId: string): BuiltinScenarioMetadata {
+  return { entityId, kind: 'scenario', title: GENERAL_SCENARIO_TITLE, summary: GENERAL_SCENARIO_SUMMARY, scenarioIds: [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false };
+}
+/** The exact document bytes the Host writes into the initialization commit; the backend rebuilds and byte-compares it. */
+export function generalScenarioDocument(entityId: string): string {
+  return `${GENERAL_SCENARIO_BODY}\n\`\`\`eadp-metadata\n${JSON.stringify(generalScenarioMetadata(entityId), null, 2)}\n\`\`\`\n`;
+}
+/** Strict fixed read for system-provisioned acceptance; never a fallback after ordinary parsing fails. */
+export function parseBuiltinScenario(markdown: string, entityId: string): BuiltinScenarioMetadata {
+  requireCondition(markdown === generalScenarioDocument(entityId), 'INVALID_BUILTIN_SCENARIO', 'Built-in general scenario content does not match the provisioned document', 422);
+  return generalScenarioMetadata(entityId);
 }
