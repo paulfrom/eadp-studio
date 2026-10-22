@@ -2,10 +2,11 @@ import { randomUUID, createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
-import type { StudioCommand, LocalProject, ProjectSync } from '../../shared/studio.ts'
+import type { StudioCommand, LocalProject, ProjectSync, ProjectProgressPhase } from '../../shared/studio.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import type { BackgroundLane } from './background-lane.ts'
+import { clonePercent, pushPercent, type ProjectProgressTracker } from './progress.ts'
 import { StudioStore, type ProjectInitialization } from './state.ts'
 
 const exists = async (target: string) => stat(target).then(() => true, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false })
@@ -21,38 +22,53 @@ async function writeInitialFile(target: string, value: string): Promise<void> {
 export class ProjectWorkspaces {
   private readonly caches = new Map<string, string>()
   private readonly fixedBytes = new Map<string, Uint8Array>()
-  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly lane: BackgroundLane) {}
+  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly lane: BackgroundLane, private readonly progress: ProjectProgressTracker) {}
   async create(command: Extract<StudioCommand, { action: 'createProject' }>): Promise<void> {
     if (!command.name.trim() || command.name.length > 200 || !Number.isSafeInteger(command.namespaceId) || command.namespaceId <= 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(command.path) || command.path.length > 100) throw new Error('请填写项目名称、群组和有效的仓库路径。')
     const local = await this.store.read()
-    const previous = local.projectInitializations.find(op => op.namespaceId === command.namespaceId && op.path === command.path)
-    if (previous) { if (previous.name !== command.name.trim()) throw new Error('此仓库路径已有创建记录，请从待处理记录恢复。'); this.start(previous.id); return }
+    // A ready record already produced a project, so a new request for the same path
+    // is a new creation the backend must judge, never a replay of the finished one.
+    const previous = local.projectInitializations.find(op => op.namespaceId === command.namespaceId && op.path === command.path && op.phase !== 'ready')
+    if (previous) { if (previous.name !== command.name.trim()) throw new Error('此仓库路径已有创建记录，请从待处理记录恢复。'); this.start(previous); return }
     const operation: ProjectInitialization = { id: randomUUID(), name: command.name.trim(), namespaceId: command.namespaceId, path: command.path, phase: 'creating' }
     local.projectInitializations.push(operation); await this.store.save()
-    this.start(operation.id)
+    this.start(operation)
   }
+  /**
+   * Open one project the backend registered. A project this machine already
+   * holds is opened from the local checkout; anything else is acquired on the
+   * background lane, which reports its progress until the record reaches `ready`.
+   */
   async open(projectId: string): Promise<void> {
     const project = await this.project(projectId), local = await this.store.read()
-    if (project.initializationStatus === 'pending') {
-      let operation = local.projectInitializations.find(op => op.projectId === project.id)
-      if (!operation) { operation = { id: randomUUID(), name: project.name, namespaceId: project.namespaceId, path: project.repositoryUrl.split('/').at(-1)!.replace(/\.git$/, ''), projectId: project.id, phase: 'initializing' }; local.projectInitializations.push(operation); await this.store.save() }
-      this.start(operation.id); return
-    }
     const existing = local.projects.find(p => p.id === project.id)
-    if (existing) { await this.verify(existing.directory, project); local.selectedProjectId = project.id; await this.store.save(); return }
-    let operation = local.projectInitializations.find(op => op.projectId === project.id)
-    if (!operation) { operation = { id: randomUUID(), name: project.name, namespaceId: project.namespaceId, path: '', projectId: project.id, phase: 'initializing' }; local.projectInitializations.push(operation); await this.store.save() }
-    this.start(operation.id)
+    // A pending project has no accepted version yet, so only the local checkout of an
+    // accepted one can be opened as it is.
+    if (project.initializationStatus === 'ready' && existing && await this.holdsCheckout(existing, project)) {
+      await this.verify(existing.directory, project); local.selectedProjectId = project.id; await this.store.save(); return
+    }
+    // A finished record cannot be replayed: the lane remembers it as completed, so a
+    // checkout that has to be acquired again gets its own operation and key.
+    let operation = local.projectInitializations.find(op => op.projectId === project.id && op.phase !== 'ready')
+    if (!operation) {
+      // `path` only matters to the creation request that started a pending record.
+      const pending = project.initializationStatus === 'pending'
+      operation = { id: randomUUID(), name: project.name, namespaceId: project.namespaceId, path: pending ? project.repositoryUrl.split('/').at(-1)!.replace(/\.git$/, '') : '', projectId: project.id, phase: 'initializing' }
+      local.projectInitializations.push(operation); await this.store.save()
+    }
+    this.start(operation)
   }
   /** Retry a recorded initialization on the Git lane; the reply reports the record, not the download. */
   async retry(operationId: string): Promise<void> {
     const local = await this.store.read()
-    if (!local.projectInitializations.some(op => op.id === operationId)) throw new Error('未找到当前用户的项目创建记录。')
-    this.start(operationId)
+    const operation = local.projectInitializations.find(op => op.id === operationId)
+    if (!operation) throw new Error('未找到当前用户的项目创建记录。')
+    this.start(operation)
   }
-  /** Queue one initialization. Every clone, fetch and push it performs runs on that lane, never in a reply. */
-  private start(operationId: string): void {
-    this.lane.schedule(`project-init:${operationId}`, () => this.resume(operationId))
+  /** Queue one initialization and publish its progress. Every clone, fetch and push it performs runs on that lane, never in a reply. */
+  private start(operation: ProjectInitialization): void {
+    this.progress.begin(operation.id, operation.name)
+    this.lane.schedule(`project-init:${operation.id}`, () => this.resume(operation.id))
   }
   /**
    * Require a commit to exist locally before a worktree starts from it. A
@@ -73,32 +89,39 @@ export class ProjectWorkspaces {
   /**
    * Drive one recorded initialization to a verdict. Runs on the Git lane: the
    * Git calls below stay direct so the lane is not asked to wait for itself.
+   * Every step reports to the progress record, so the surfaces show where the
+   * operation is without the reply waiting for the transfer.
    */
   private async resume(operationId: string): Promise<void> {
     const local = await this.store.read(), operation = local.projectInitializations.find(op => op.id === operationId)
     if (!operation) throw new Error('未找到当前用户的项目创建记录。')
+    const report = (phase: ProjectProgressPhase, percent: number, label: string): void => this.progress.report(operationId, phase, percent, label)
     try {
       let project: ProjectView
       if (!operation.projectId) {
+        report('matching', 2, '后台正在登记项目仓库')
         // Exactly the original body and key survive a lost response or desktop restart.
         project = await this.api.request<ProjectView>('POST', '/v1/projects', { idempotencyKey: operation.id, name: operation.name, namespaceId: operation.namespaceId, path: operation.path }, 180_000)
         operation.projectId = project.id; operation.phase = 'initializing'; await this.store.save()
       } else project = await this.project(operation.projectId)
-      if (project.initializationStatus === 'ready') { await this.openReady(project, operation); return }
+      if (project.initializationStatus === 'ready') { await this.openReady(project, operation, report); return }
       const directory = await this.ownedDirectory(project, operation)
+      report('initializing', 5, '探测远端首次提交')
       // A prior push can have succeeded with a lost reply, on this or another machine.
       const remoteHead = await this.ports.git.probeRemoteHead(project.repositoryUrl, project.stableBranch, path.dirname(directory))
       const hasGit = await exists(path.join(directory, '.git'))
       if (remoteHead) {
         if (!hasGit) {
           if ((await readdir(directory)).length) throw new Error('远端已有提交，本地保留了未完成文件；请核对原现场后恢复。')
-          await this.ports.git.clone(project.repositoryUrl, directory)
+          report('cloning', 10, '从 GitLab 获取项目仓库')
+          await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), '从 GitLab 获取项目仓库'))
         } else {
           await this.ports.git.fetchCommit(directory, remoteHead)
           const localHead = await this.ports.git.head(directory)
           if (localHead !== remoteHead) throw new Error('远端已有首次提交，本地提交尚不一致；原文件已保留，请核对现场。')
         }
         if (operation.commitSha && operation.commitSha !== remoteHead) throw new Error('远端已存在其他提交，未覆盖原初始化现场。')
+        report('verifying', 85, '校验项目清单')
         await this.verifyFixedManifest(directory, project, remoteHead)
         operation.commitSha = remoteHead
       } else {
@@ -110,19 +133,29 @@ export class ProjectWorkspaces {
           operation.commitSha = stateHead
         }
         if (!operation.commitSha) {
+          report('initializing', 30, '写入项目目录与默认模板')
           await this.initializeFiles(directory, project)
           const files = (await this.ports.gitLocal(['ls-files', '--others', '--exclude-standard', '-z'], directory)).split('\0').filter(Boolean)
+          report('initializing', 40, '提交初始化文件')
           operation.commitSha = await this.ports.git.commitFiles(directory, files, '初始化项目资产与指定原型模板', await this.identity(directory))
         }
         operation.phase = 'pushing'; await this.store.save()
+        report('pushing', 45, '推送首次提交')
         // Regular push never bypasses GitLab repository or protected-branch permissions.
-        await this.ports.git.push(directory, operation.commitSha, project.stableBranch)
+        await this.ports.git.push(directory, operation.commitSha, project.stableBranch, progress => report('pushing', pushPercent(progress), '推送首次提交'))
       }
       operation.phase = 'verifying'; await this.store.save()
+      report('verifying', 90, '等待后台接受初始化')
       project = await this.api.request<ProjectView>('POST', `/v1/projects/${encodeURIComponent(project.id)}/initialize`, { idempotencyKey: `${operation.id}-initialize`, commitSha: operation.commitSha }, 180_000)
       if (project.initializationStatus !== 'ready' || project.recognizedHead !== operation.commitSha) throw new Error('后台尚未接受首次提交，请保留现场并重新核对。')
+      report('binding', 96, '登记本地项目')
       await this.bind(project, operation)
-    } catch (error) { operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '项目初始化结果未知'; await this.store.save(); throw error }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '项目初始化结果未知'
+      operation.phase = 'unknown'; operation.message = message; await this.store.save()
+      this.progress.fail(operationId, message)
+      throw error
+    }
   }
   /** Read an accepted fixed material that is already local; the sync lane brings missing objects. */
   async readFixed(projectId: string, commitSha: string, relativePath: string, expectedHash?: string): Promise<Uint8Array> {
@@ -243,20 +276,42 @@ export class ProjectWorkspaces {
     const actual = value as Record<string, unknown>
     for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
   }
-  private async openReady(project: ProjectView, operation: ProjectInitialization): Promise<void> {
+  /**
+   * Whether the local record still holds the checkout the backend project names.
+   * A missing directory, a missing checkout or another project's ownership marker
+   * is not a match: the caller acquires the repository again instead of failing.
+   */
+  private async holdsCheckout(local: LocalProject, project: ProjectView): Promise<boolean> {
+    if (local.repositoryUrl !== project.repositoryUrl) throw new Error('本地项目与后台仓库身份不一致。')
+    if (!await exists(path.join(local.directory, '.git'))) return false
+    const owner = await readFile(`${local.directory}.studio-owner.json`, 'utf8').then(value => JSON.parse(value) as { projectId?: string }).catch(() => undefined)
+    return owner?.projectId === project.id
+  }
+  /** Open a project the backend already accepted: reuse the local checkout or clone it, reporting progress. */
+  private async openReady(project: ProjectView, operation: ProjectInitialization, report: (phase: ProjectProgressPhase, percent: number, label: string) => void): Promise<void> {
     const local = await this.store.read(), existing = local.projects.find(p => p.id === project.id)
-    if (existing) { await this.verify(existing.directory, project); local.selectedProjectId = project.id; operation.phase = 'ready'; delete operation.message; await this.store.save(); return }
+    if (existing && await this.holdsCheckout(existing, project)) {
+      await this.verify(existing.directory, project); local.selectedProjectId = project.id; operation.phase = 'ready'; delete operation.message; await this.store.save()
+      this.progress.end(operation.id); return
+    }
+    report('matching', 2, '正在核对本地项目与后台登记')
     const directory = await this.ownedDirectory(project, operation)
     if (!await exists(path.join(directory, '.git'))) {
       if ((await readdir(directory)).length) throw new Error('本地目录有未核对内容，已保留现场。')
-      await this.ports.git.clone(project.repositoryUrl, directory)
+      report('cloning', 10, '从 GitLab 获取项目仓库')
+      await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), '从 GitLab 获取项目仓库'))
     }
+    report('verifying', 85, '校验项目清单')
     await this.verify(directory, project); await this.bind(project, operation)
   }
   private async bind(project: ProjectView, operation: ProjectInitialization): Promise<void> {
     const local = await this.store.read()
     if (!operation.directory) throw new Error('项目本地目录缺失。')
-    if (!local.projects.some(p => p.id === project.id)) local.projects.push({ id: project.id, name: project.name, directory: operation.directory, repositoryUrl: project.repositoryUrl })
+    const record = local.projects.find(p => p.id === project.id)
+    // Reacquiring a checkout replaces the path and the sync verdict the stale record held.
+    if (record) { record.name = project.name; record.directory = operation.directory; record.repositoryUrl = project.repositoryUrl; delete record.sync }
+    else local.projects.push({ id: project.id, name: project.name, directory: operation.directory, repositoryUrl: project.repositoryUrl })
     local.selectedProjectId = project.id; operation.phase = 'ready'; delete operation.message; await this.store.save()
+    this.progress.end(operation.id)
   }
 }

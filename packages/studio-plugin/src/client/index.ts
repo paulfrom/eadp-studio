@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { studioCall } from './command.ts'
+import { studioCall, studioProgressCall } from './command.ts'
 import { StudioPanel } from './StudioPanel.tsx'
 import { StudioPanelIcon } from './panelIcon.tsx'
 import { MaterialAttachmentButton } from './components/MaterialAttachments.tsx'
@@ -20,13 +20,13 @@ import type {} from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { StudioCommand, StudioReply } from '../shared/studio.ts'
+import type { ProjectProgressReply, StudioCommand, StudioReply } from '../shared/studio.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import studioRemote from '@eadp-studio/studio-plugin/remote'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface SlotMap { 'studio.session': { kind: 'single'; scope: 'session' } } }
 declare module '@deepseek-ai/dsh-api-session-controller/client' { interface SessionReferenceSourceMap { studio: unknown } }
-declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>> } } }
+declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>>; progress(): Promise<RemoteResult<ProjectProgressReply>> } } }
 
 /** The layout service, the slot registry, the native session navigator and the theme are the services this slice needs. */
 export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation', 'theme', 'uiWorkspace']
@@ -82,7 +82,7 @@ function registerStudio(ctx: ClientContext, session: StudioSession, theme: Theme
   const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
     store: session.store,
     children: { 'studio.session': { kind: 'single', scope: 'session' } },
-    inject: () => ({ run: session.run, sync: session.sync, retainSession, openSettings, startSession, theme }),
+    inject: () => ({ run: session.run, sync: session.sync, progress: session.progress, retainSession, openSettings, startSession, theme }),
   }, StudioPanel)
   ctx.layout.selectPanel(PANEL_ID)
   return dispose
@@ -98,7 +98,7 @@ export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   // `remote.studio` is only addressable inside a fiber that declares it, so the
   // command channel and the one projection session both belong to that fiber.
   const ui = ctx.inject(['remote.studio'], (injected: ClientContext) => {
-    const session = createStudioSession(studioCall(injected))
+    const session = createStudioSession(studioCall(injected), studioProgressCall(injected))
     const theme = themeFace(injected)
     registerSettingsSections(injected, session, theme)
     return registerStudio(injected, session, theme)

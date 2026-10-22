@@ -4,6 +4,37 @@ import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/run
 
 export interface GitIdentity { name: string; email: string }
 export interface GitState { root: string; head: string; branch: string; dirty: boolean; repositoryUrl: string }
+export type GitProgressStage = 'enumerating' | 'counting' | 'compressing' | 'writing' | 'receiving' | 'resolving' | 'checking' | 'updating'
+/** One progress print Git made during a transfer; `percent` is that stage's own count. */
+export interface GitProgress { stage: GitProgressStage; percent: number }
+const PROGRESS = /(?:^|[\r\n])(?:remote:\s*)?(Enumerating objects|Counting objects|Compressing objects|Writing objects|Receiving objects|Resolving deltas|Checking out files|Updating files):\s+(\d{1,3})%/g
+const progressStages: Record<string, GitProgressStage> = { 'Enumerating objects': 'enumerating', 'Counting objects': 'counting', 'Compressing objects': 'compressing', 'Writing objects': 'writing', 'Receiving objects': 'receiving', 'Resolving deltas': 'resolving', 'Checking out files': 'checking', 'Updating files': 'updating' }
+/** Longest tail of the progress stream kept to repair one line split across chunks. */
+const PROGRESS_TAIL = 4096
+/**
+ * Read the progress lines Git writes to stderr. Git separates them with carriage
+ * returns and may split one line across chunks, so only the part that already
+ * ended is read and the rest is kept for the next chunk.
+ */
+export class GitProgressReader {
+  /** The unfinished line so far: its percentage may still be split across chunks. */
+  private pending = ''
+  /**
+   * Consume one stderr chunk.
+   * @param text - decoded chunk.
+   * @returns the newest completed stage and percentage in this chunk, or undefined while none is complete.
+   */
+  push(text: string): GitProgress | undefined {
+    const complete = this.pending + text
+    const end = Math.max(complete.lastIndexOf('\r'), complete.lastIndexOf('\n'))
+    this.pending = complete.slice(end + 1).slice(-PROGRESS_TAIL)
+    let found: GitProgress | undefined
+    for (const match of complete.slice(0, end + 1).matchAll(PROGRESS)) found = { stage: progressStages[match[1]!]!, percent: Number(match[2]) }
+    return found
+  }
+}
+/** A clone or a push streams progress for as long as the transfer takes; a reply budget would cut it short. */
+const TRANSFER_TIMEOUT_MS = 1_800_000
 const SHA = /^[a-f0-9]{40}$/
 const branchName = (value: string) => { if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) || value.includes('..') || value.endsWith('/') || value.endsWith('.lock') || value.includes('//')) throw new Error('Git 分支名无效。'); return value }
 const fixedSha = (value: string) => { if (!SHA.test(value)) throw new Error('必须指定完整固定 Git SHA。'); return value }
@@ -19,9 +50,15 @@ export function repositoryAddress(value: string): string {
 /** Fixed binary and argv only. No public arbitrary git command, shell, or credential in argv. */
 export class WorkspaceGit {
   constructor(private readonly runtime: PlatformRuntime, private readonly trustedOrigin?: () => Promise<string>) {}
-  async clone(repositoryUrl: string, destination: string, signal?: AbortSignal): Promise<void> {
+  /**
+   * Clone a project repository.
+   * @param onProgress - receives Git's own transfer progress so the surfaces can show the bar.
+   */
+  async clone(repositoryUrl: string, destination: string, signal?: AbortSignal, onProgress?: (progress: GitProgress) => void): Promise<void> {
     await mkdir(path.dirname(destination), { recursive: true })
-    await this.command(path.dirname(destination), ['clone', '--no-local', '--', repositoryAddress(repositoryUrl), destination], true, signal, repositoryUrl)
+    const args = ['clone', '--progress', '--no-local', '--', repositoryAddress(repositoryUrl), destination]
+    if (onProgress) await this.streamed(path.dirname(destination), args, true, signal, repositoryUrl, onProgress)
+    else await this.command(path.dirname(destination), args, true, signal, repositoryUrl)
   }
   async init(root: string, repositoryUrl: string, branch = 'main'): Promise<void> {
     await mkdir(root, { recursive: true })
@@ -130,7 +167,15 @@ export class WorkspaceGit {
     await this.command(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit', '--only', '-m', message, '--', ...paths])
     return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
   }
-  async push(root: string, commit: string, branch: string): Promise<void> { await this.command(root, ['push', '--porcelain', 'origin', `${fixedSha(commit)}:refs/heads/${branchName(branch)}`], true) }
+  /**
+   * Push one fixed commit to the stable branch.
+   * @param onProgress - receives Git's own transfer progress so the surfaces can show the bar.
+   */
+  async push(root: string, commit: string, branch: string, onProgress?: (progress: GitProgress) => void): Promise<void> {
+    const args = ['push', '--progress', '--porcelain', 'origin', `${fixedSha(commit)}:refs/heads/${branchName(branch)}`]
+    if (onProgress) await this.streamed(root, args, true, undefined, undefined, onProgress)
+    else await this.command(root, args, true)
+  }
   async conditionalUpdate(root: string, branch: string, expectedSha: string, candidateSha: string): Promise<void> {
     const ref = `refs/heads/${branchName(branch)}`
     fixedSha(expectedSha); fixedSha(candidateSha)
@@ -142,6 +187,34 @@ export class WorkspaceGit {
     if (!expected.equals(await this.readBlob(root, commit, relativePath))) throw new Error('固定 Git 材料字节与当前确认快照不一致。')
   }
   private async command(cwd: string, args: readonly string[], network = false, signal?: AbortSignal, explicitUrl?: string): Promise<ProcessResult> {
+    const argv = await this.prepared(cwd, args, network, explicitUrl)
+    return this.runtime.run('git', argv, this.options(cwd, signal))
+  }
+  /**
+   * Run one transfer while forwarding the progress Git prints. The command keeps
+   * its own long budget: a slow clone reports progress instead of being cut short.
+   */
+  private async streamed(cwd: string, args: readonly string[], network: boolean, signal: AbortSignal | undefined, explicitUrl: string | undefined, onProgress: (progress: GitProgress) => void): Promise<ProcessResult> {
+    const argv = await this.prepared(cwd, args, network, explicitUrl)
+    const process = await this.runtime.start('git', argv, this.options(cwd, signal, TRANSFER_TIMEOUT_MS))
+    const reader = new GitProgressReader()
+    const stop = process.onOutput((channel, text) => {
+      if (channel !== 'stderr') return
+      const progress = reader.push(text)
+      if (progress) onProgress(progress)
+    })
+    try {
+      const result = await process.done
+      if (result.exitCode !== 0) throw new Error(`git 执行失败（退出码 ${result.exitCode}）。`)
+      return result
+    } finally { stop() }
+  }
+  /**
+   * Verify the repository and address a network command may touch, then return
+   * the guarded argv. Both the single-shot and the streaming path run the same
+   * checks, so neither can reach an unregistered remote or a rewritten address.
+   */
+  private async prepared(cwd: string, args: readonly string[], network: boolean, explicitUrl: string | undefined): Promise<string[]> {
     await this.guardLocal(cwd)
     if (network) {
       const url = explicitUrl ?? (await this.result(cwd, ['config', '--local', '--get', 'remote.origin.url'])).stdout.trim()
@@ -157,14 +230,14 @@ export class WorkspaceGit {
         if (effective.exitCode !== 0 || effective.stdout.trim() !== url) throw new Error('机器 Git 地址重写不能替代后台登记的仓库地址。')
       }
     }
-    return this.runtime.run('git', this.safe(args), this.options(cwd, signal))
+    return this.safe(args)
   }
   private async checkAddress(value: string): Promise<void> {
     const address = new URL(repositoryAddress(value))
     if (!this.trustedOrigin || address.origin !== await this.trustedOrigin()) throw new Error('仓库地址与后台指定的 GitLab 实例不一致。')
   }
   private safe(args: readonly string[]): string[] { return ['-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', ...args] }
-  private options(cwd: string, signal?: AbortSignal): RunOptions { return { cwd, gitUserCredentials: true, timeoutMs: 120_000, ...(signal ? { signal } : {}) } }
+  private options(cwd: string, signal?: AbortSignal, timeoutMs = 120_000): RunOptions { return { cwd, gitUserCredentials: true, timeoutMs, ...(signal ? { signal } : {}) } }
   private async result(cwd: string, args: readonly string[]): Promise<ProcessResult> { return (await this.runtime.start('git', this.safe(args), this.options(cwd))).done }
   private async guardLocal(cwd: string): Promise<void> {
     // Reading config does not execute helpers or hooks. Never include repository-specified files.

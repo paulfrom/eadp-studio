@@ -11,6 +11,7 @@ import { LegacyMaterial } from '../components/LegacyMaterial.tsx'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
+import { ProjectProgressNotice } from '../components/ProjectProgressNotice.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
 import type { ThemeFace } from '../theme.ts'
 import type { StudioProjectionStore } from '../store.ts'
@@ -23,6 +24,8 @@ export interface StudioFace {
   run(command: StudioCommand): Promise<StudioReply>
   /** Refresh the shared projection; a read already in flight keeps its slot. */
   sync(): void
+  /** Read the progress of the project operations the Host is running. */
+  progress(): void
   retainSession(id: string): SessionReference
   openSettings(section?: string): void
   startSession(): void
@@ -36,13 +39,12 @@ const stages: Array<{ id: Stage; name: string; mark: string; description: string
   { id: 'baselines', name: '基线确认', mark: '04', description: '查看已接受的原型版本与确认依据', icon: ['M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'] },
   { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发', icon: ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'] },
 ]
-/** Phases a recorded initialization passes through while the background lane works; only `unknown` needs a decision. */
-const initializing: Record<string, string> = { creating: '后台正在创建仓库', initializing: '正在写入项目资产', pushing: '正在推送首次提交', verifying: '正在核对后台接受' }
 
 export function StudioPanel(props: StudioProps) {
   // The workbench and the settings sections render one projection: the store is
   // the only owner, so signing in or out anywhere shows up everywhere at once.
   const projection = props.useStore(snapshot => snapshot.projection)
+  const progress = props.useStore(snapshot => snapshot.progress)
   const loading = props.useStore(snapshot => snapshot.loading)
   const storeError = props.useStore(snapshot => snapshot.error)
   const state = projection ?? emptyStudioState()
@@ -83,6 +85,16 @@ export function StudioPanel(props: StudioProps) {
     const timer = setInterval(() => sync(), 10_000)
     return () => clearInterval(timer)
   }, [sync])
+  // A recorded initialization is the project operation in flight: the bar follows
+  // it, and the record leaving the projection is what stops this poll.
+  const initializing = state.projectInitializations.length > 0
+  const readProgress = props.progress
+  useEffect(() => {
+    if (!initializing) return
+    readProgress()
+    const timer = setInterval(readProgress, 500)
+    return () => clearInterval(timer)
+  }, [initializing, readProgress])
   const loadError = storeError || (state.connected ? '' : '请登录后读取项目目录')
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const openProjectDialog = async () => { if (!await flushBeforeLeave()) return; setProjectDialog(true); await call({ action: 'namespaces' }) }
@@ -163,9 +175,7 @@ export function StudioPanel(props: StudioProps) {
         <header className={`${css.pageHeader} ${stage === 'scenarios' && selected ? css.compactHeader : ''}`}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}{!(stage === 'scenarios' && selected) && <><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></>}</div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
-        {state.projectInitializations.map(operation => initializing[operation.phase]
-          ? <div className={css.notice} key={operation.id}>项目「{operation.name}」正在初始化：{initializing[operation.phase]}，完成后会自动出现在项目列表中。</div>
-          : <div className={css.notice} key={operation.id}>项目「{operation.name}」待处理：{operation.message ?? operation.phase}<button disabled={busy} onClick={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })}>继续初始化</button></div>)}
+        {state.projectInitializations.map(operation => <ProjectProgressNotice key={operation.id} operation={operation} progress={progress.find(item => item.operationId === operation.id)} busy={busy} onRetry={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })} />)}
         {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
         {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : props.openSettings('studio-collab')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>

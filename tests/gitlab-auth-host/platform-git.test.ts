@@ -6,7 +6,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { PlatformRuntime, type RuntimeManifest, type SubprocessProvider } from '../../packages/studio-plugin/src/host/adapters/platform/runtime.ts'
-import { WorkspaceGit, repositoryAddress } from '../../packages/studio-plugin/src/host/adapters/workspace/git.ts'
+import { GitProgressReader, WorkspaceGit, repositoryAddress } from '../../packages/studio-plugin/src/host/adapters/workspace/git.ts'
 
 // Windows exercises the prepared, locked delivery tools. A worktree can point at
 // the same read-only bundle; Unix fixtures bind their explicitly hashed native tools.
@@ -95,6 +95,16 @@ test('Git accepts backend HTTP/HTTPS URLs and refuses credential or SSH rewritin
   assert.equal(repositoryAddress('http://gitlab.example.test/team/project.git'), 'http://gitlab.example.test/team/project.git')
   assert.equal(repositoryAddress('https://gitlab.example.test/team/project.git'), 'https://gitlab.example.test/team/project.git')
   for (const value of ['https://token@gitlab.example.test/team/project.git', 'git@gitlab.example.test:team/project.git', 'file:///tmp/a.git', 'https://gitlab.example.test/team/project.git?token=x', 'https://gitlab.example.test/a/../project.git']) assert.throws(() => repositoryAddress(value))
+})
+
+test('Git transfer progress survives carriage returns and lines split across chunks', () => {
+  const reader = new GitProgressReader()
+  assert.equal(reader.push("Cloning into 'project'...\nremote: Enumerating objects: 12, done.\n"), undefined, 'counting alone is not a percentage')
+  assert.deepEqual(reader.push('remote: Counting objects: 45% (9/20)\r'), { stage: 'counting', percent: 45 })
+  assert.equal(reader.push('remote: Compressing objects: 10'), undefined, 'a split percentage is not read early')
+  assert.deepEqual(reader.push('0% (1/10)\rReceiving objects: 37% (74/200)\r'), { stage: 'receiving', percent: 37 })
+  assert.deepEqual(reader.push('Receiving objects: 100% (200/200), 1.2 MiB | 3.4 MiB/s, done.\nResolving deltas: 12% (6/50)\r'), { stage: 'resolving', percent: 12 })
+  assert.deepEqual(reader.push('Updating files: 100% (30/30), done.\n'), { stage: 'updating', percent: 100 })
 })
 
 test('linked worktrees support normal Git configuration and reject effective worktree injection', async () => {

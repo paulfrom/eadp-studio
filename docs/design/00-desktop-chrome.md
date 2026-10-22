@@ -55,6 +55,8 @@
 
 - **恢复记录按版本重建**：`studio-state.json` 只按当前版本解析（`clientId`、`scenarioStructureCheck` 与 11 个集合齐全）；不通过时把原文件改名为 `studio-state.json.invalid-<时间戳>` 保留现场、写入当前版本空记录，工作台顶部提示保留路径并建议重新打开项目。仍能读出的 `clientId` 沿用，本人既有占用因此仍可取消或继续。本地项目凭目录旁的归属标记重新认领：标记记录项目身份，打开已初始化项目时核对仓库地址与项目清单后直接绑定，不重新初始化、不重新克隆；无标记的目录仍然拒绝认领并保留现场。详见 [ADR-0005](../adr/0005-local-record-rebuild-and-background-git.md)。
 - **Git 同步全部后台化**：`BackgroundLane` 是一条串行车道（按键去重），克隆镜像、取固定提交、推送候选、条件推进、集成恢复、模板发布、项目初始化都排在它上面；投影读取只读本地已有对象，命中不到就返回空缺并在下一次读取带上，需要基线提交的动作答复「项目仓库正在后台同步，请稍后重试当前操作」。界面复用既有待办展示（`projectInitializations`、`pending`）与 `retryOperation` / `retryProjectInitialization`。
+- **项目选择只来自协同后台，并与本机工作副本匹配**：可用项目由 `GET /v1/projects` 返回（后台登记且当前账号在 GitLab 有读权限），工作台不提供其他来源；`openProject` 先用目录旁归属标记与本机登记核对是否已有该项目的工作副本，命中就校验仓库地址与清单后直接打开，未命中才在后台车道获取：后台已接受的项目克隆仓库，`pending` 项目写入目录、默认模板与清单后推送首次提交并等待后台接受。目录缺归属标记或留有未核对内容时保留现场并报告原因，不会覆盖。见 [projects.ts](../../packages/studio-plugin/src/host/application/projects.ts)。
+- **获取与初始化带进度条**：车道把每一步和 Git 自身 `--progress` 的传输百分比写进内存进度记录（[progress.ts](../../packages/studio-plugin/src/host/application/progress.ts)），`studio.progress` 远程方法按需读取，不排队、不联网、不等传输；工作台在存在进行中记录时每 500 毫秒读取一次并渲染百分比，记录变为 `ready` 后进度条消失，操作停下时保留原因与「继续初始化」。
 - **登录一致**：工作台主面板与设置各节声明同一个投影 store（`client/store.ts`，由 `client/session.ts` 读写），任一侧登录/登出立即同时生效，不再有跨界面刷新事件。
 
 ## 协同后台职责

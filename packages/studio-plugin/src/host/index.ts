@@ -3,7 +3,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { composeStudio, type Config } from './composition.ts'
 import type { StudioApplication } from './application/studio.ts'
 import { within } from '../shared/deadline.ts'
-import type { StudioCommand, StudioReply } from '../shared/studio.ts'
+import type { ProjectProgressReply, StudioCommand, StudioReply } from '../shared/studio.ts'
 
 export type { Config }
 export const inject = ['tools', 'agents', 'systemPrompt', 'sessionPersistence', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections', 'agentDefaultModel']
@@ -29,6 +29,12 @@ export class StudioService extends TypertRemoteService {
   async command(command: StudioCommand): Promise<StudioReply> {
     try { return await (await within(this.application, COMPOSE_DEADLINE_MS, '工作台服务尚未就绪，请稍后重试。')).command(command) }
     catch (error) { return { ok: false, code: 'STUDIO_UNAVAILABLE', message: error instanceof Error ? error.message : '工作台服务尚未就绪' } }
+  }
+  /** Progress is advisory: an uncomposed or failed workbench reports nothing running. */
+  @Remote
+  async progress(): Promise<ProjectProgressReply> {
+    try { return (await within(this.application, COMPOSE_DEADLINE_MS, '工作台服务尚未就绪，请稍后重试。')).projectProgress() }
+    catch { return { operations: [] } }
   }
 }
 export function apply(ctx: Context, config: Config = {}): void { ctx.plugin(StudioService, config) }

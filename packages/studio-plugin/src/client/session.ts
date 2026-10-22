@@ -1,6 +1,6 @@
 /** One plugin-lifetime Studio session: the shared projection store plus every command that writes it. */
 
-import type { StudioCommand, StudioReply } from '../shared/studio.ts'
+import type { ProjectProgress, StudioCommand, StudioReply } from '../shared/studio.ts'
 import { emptyStudioState } from './state.ts'
 import { createStudioProjectionStore, type StudioProjectionStore } from './store.ts'
 
@@ -20,6 +20,11 @@ export interface StudioSessionActions {
   logout(): Promise<string>
   /** Refresh the shared projection; a read already in flight keeps its slot. */
   sync(): void
+  /**
+   * Read the progress of the project operations the Host is running. The bar
+   * polls this while an initialization is recorded; a failure keeps the last bar.
+   */
+  progress(): void
   /**
    * Run one workbench command whose successful reply is the newer projection.
    * @param command - the command a surface issues.
@@ -44,9 +49,10 @@ function failureText(error: unknown): string {
  * in one place, so the workbench and the settings sections cannot disagree about
  * the account, the selected project or the pending work.
  * @param call - the shared bounded command channel.
+ * @param readProgress - the bounded channel that reads running project progress.
  * @returns the pinned store plus login, logout, sync and command execution.
  */
-export function createStudioSession(call: (command: StudioCommand) => Promise<StudioReply>): StudioSession {
+export function createStudioSession(call: (command: StudioCommand) => Promise<StudioReply>, readProgress: () => Promise<ProjectProgress[]>): StudioSession {
   const handle = createStudioProjectionStore()
   const instance = handle.create()
   const actions = instance.actions
@@ -88,6 +94,15 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
     }
   }
 
+  // The bar of a running initialization. Reads are advisory: a failed one leaves
+  // the last bar and the recorded outcome, which is the authority, unchanged. An
+  // older read that arrives late is dropped, so the bar never moves backwards.
+  let progressRead = 0
+  const progress = (): void => {
+    const token = ++progressRead
+    void readProgress().then(list => { if (token === progressRead) actions.report(list) }, () => undefined)
+  }
+
   const login = async (username: string, password: string): Promise<string> => {
     // Login's reply only carries the authenticated account, so it cannot settle
     // the projection; the read that follows delivers the signed-in surfaces.
@@ -107,6 +122,7 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   return {
     store,
     sync,
+    progress,
     run: command => execute(command, true),
     login,
     logout,

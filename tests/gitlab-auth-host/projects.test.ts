@@ -9,6 +9,7 @@ import { ProjectWorkspaces } from '../../packages/studio-plugin/src/host/applica
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
 import { BackgroundLane } from '../../packages/studio-plugin/src/host/application/background-lane.ts'
+import { ProjectProgressTracker } from '../../packages/studio-plugin/src/host/application/progress.ts'
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { copyTemplate, verifyTemplate } from '../../packages/studio-plugin/src/host/prototype/template.ts'
@@ -74,7 +75,7 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
   } as unknown as HostPorts
   const store = new StudioStore(storeRoot); store.useUser(user.id)
   const lane = new BackgroundLane()
-  const service = new ProjectWorkspaces(store, api, ports, lane)
+  const service = new ProjectWorkspaces(store, api, ports, lane, new ProjectProgressTracker())
   return { settlement: () => lane.settle(), root, storeRoot, workspaceRoot, store, service, ports, api, calls, setUser: (next?: StudioUser) => { currentUser = next },
     counts: () => ({ creates, uniqueCreations: creationKeys.size, commits, pushes, initializes, clones }),
     dispose: async () => { await lane.settle(); await service.dispose(); await rm(root, { recursive: true, force: true }) } }
@@ -93,7 +94,7 @@ async function queued(f: Awaited<ReturnType<typeof fixture>>) {
 function restarted(f: Awaited<ReturnType<typeof fixture>>) {
   const store = new StudioStore(f.storeRoot); store.useUser(1)
   const lane = new BackgroundLane()
-  return { store, lane, service: new ProjectWorkspaces(store, f.api, f.ports, lane) }
+  return { store, lane, service: new ProjectWorkspaces(store, f.api, f.ports, lane, new ProjectProgressTracker()) }
 }
 
 test('project creation persists its key before POST and initializes the backend-created private repository', async () => {

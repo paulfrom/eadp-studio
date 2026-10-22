@@ -8,7 +8,7 @@ import { reviewInputText } from '@eadp/contracts'
 import { canonical, prototypeBindings } from '@eadp/asset-domain'
 import path from 'node:path'
 import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityOccupancyView, EntityView, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, MaterialMetadata } from '@eadp/contracts'
-import type { Candidate, ConfirmationChoice, MaterialDraft, ScenarioTemplateCatalog, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
+import type { Candidate, ConfirmationChoice, MaterialDraft, ProjectProgressReply, ScenarioTemplateCatalog, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
 import { checkMaterial, containedFile, digest, findMaterialFile, normalizeMaterialPath, parseMaterial, readMaterial, saveMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
 import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
@@ -18,6 +18,7 @@ import { TaskMaintenance } from './task-maintenance.ts'
 import { AuthorReviews, type ReviewCandidate, type ReviewFile } from './reviews.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import { BackgroundLane } from './background-lane.ts'
+import { ProjectProgressTracker } from './progress.ts'
 
 const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
 const key = (): string => randomUUID()
@@ -34,6 +35,8 @@ export class StudioApplication {
   private queue: Promise<unknown> = Promise.resolve()
   /** Work no reply waits for: Git synchronization and the preparation that depends on it. */
   private readonly lane = new BackgroundLane()
+  /** Progress of that work, read by the surfaces without waiting for it. */
+  private readonly progress = new ProjectProgressTracker()
   private projection: Promise<StudioState> | undefined
   private previewState: StudioState['preview']
   private namespaces: NamespaceView[] = []
@@ -43,7 +46,7 @@ export class StudioApplication {
   private readonly scenarios: ScenarioWorkspaces
   private readonly templates: ScenarioTemplates
   private readonly repairs: ScenarioRepairs
-  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane); this.reviews = new AuthorReviews(store, ports)
+  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress); this.reviews = new AuthorReviews(store, ports)
     this.maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => this.projects.syncMain(projectId, commit), release: task => this.releaseTask(task) })
     this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
     this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
@@ -51,6 +54,12 @@ export class StudioApplication {
   }
   /** Await every queued command and every background Git task this workbench started. */
   async settle(): Promise<void> { await this.queue; await this.lane.settle() }
+  /**
+   * Read the progress of the project operations the background lane is running.
+   * This is a local read: no network, no Git, and no wait for the work it reports.
+   * @returns the operations currently running or stopped with a reason.
+   */
+  projectProgress(): ProjectProgressReply { return { operations: this.progress.views() } }
   async dispose(): Promise<void> { this.scenarios.dispose(); await this.settle(); await this.projects.dispose() }
   /**
    * Run one command. Projection reads keep their own lane so a long local write
@@ -102,13 +111,6 @@ export class StudioApplication {
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
       case 'retryProjectInitialization': await this.projects.retry(command.operationId); break
-      case 'selectProject': {
-        this.scenarios.activeEntityId = undefined
-        const local = await this.store.read()
-        if (!local.projects.some(p => p.id === command.projectId)) throw new Error('项目未在此工作空间登记')
-        await this.ports.stopPreview(); this.previewState = undefined
-        local.selectedProjectId = command.projectId; await this.store.save(); break
-      }
       case 'addCategory': {
         const { remote } = await this.selected()
         await this.api.request('POST', this.route(remote.project.id, '/categories'), { idempotencyKey: key(), categoryId: key(), name: command.name.trim(), expectedRevision: remote.project.revision }); break

@@ -10,6 +10,15 @@ export interface ReviewView {
   status: 'pending' | 'reported' | 'failed'; summary?: string;
   findings?: Array<{ severity: 'info' | 'warning' | 'blocking'; message: string }>; error?: string;
 }
+/** Steps a project match or initialization passes through while the Host works on the local checkout. */
+export type ProjectProgressPhase = 'matching' | 'cloning' | 'initializing' | 'pushing' | 'verifying' | 'binding' | 'failed'
+/** One in-flight project operation, rendered as a progress bar; `failed` keeps the bar and the reason. */
+export interface ProjectProgress {
+  operationId: string; projectName: string; phase: ProjectProgressPhase;
+  /** 0–100 of the whole operation; it never moves backwards. */
+  percent: number; label: string;
+}
+export interface ProjectProgressReply { operations: ProjectProgress[] }
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 /** Main checkout synchronization after an accepted integration; `blocked` keeps the accepted business state. */
 export interface ProjectSync { status: 'pending' | 'blocked' | 'synced'; commit: string; message?: string }
@@ -47,7 +56,6 @@ export type StudioCommand = ScenarioCommand
   | { action: 'createProject'; name: string; namespaceId: number; path: string }
   | { action: 'openProject'; projectId: string }
   | { action: 'retryProjectInitialization'; operationId: string }
-  | { action: 'selectProject'; projectId: string }
   | { action: 'addCategory'; name: string }
   | { action: 'bindScenarioTemplate'; entityId: string; templateId: string }
   | { action: 'createMaterial'; operationId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId?: string; scenarioIds?: string[] }

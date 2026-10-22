@@ -11,8 +11,8 @@ import studioCss from '../studio.module.css'
 import css from './sections.module.css'
 import { ScenarioTemplateSettings } from './ScenarioTemplateSettings.tsx'
 
-/** Faces the Studio settings sections act through (wired from the client context). */
-export interface StudioSettingsFaces extends StudioSessionActions {
+/** Faces the Studio settings sections act through (wired from the client context); project progress is the workbench panel's. */
+export interface StudioSettingsFaces extends Omit<StudioSessionActions, 'progress'> {
   theme: ThemeFace
 }
 
