@@ -114,3 +114,7 @@
 校验：`node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.client.json` 通过；`node --test tests/scenario-client/document.test.mjs tests/scenario-client/material-editor.test.mjs tests/scenario-client/draft-buffer.test.ts tests/scripts/studio-task-purpose.test.mjs` 全部通过（新增 `document.test.mjs` 覆盖章节拆分、围栏排除与条目计数）；`pnpm dev:desktop` 打开实际桌面后以 SC-0001 走查预览／源码切换、收起与展开、门禁与建议呈现，并确认输入框贴底（座位底边与面板底边相差 1px）与两处折叠互不影响。
 
 走查发现（与本轮页面改造无关的数据问题）：既有草稿 SC-0001 的文件模板引用与后台实体的 `templateId`／`templateRef` 不一致，保存被 Host 以“场景身份与模板绑定不能通过编辑改变”拒绝；页面已将错误显示在同步状态并提供重试，草稿正文未被写入。
+
+## 后续修订（本轮）
+
+按条／按组／按批建议采纳与「自动写入 AI 建议」开关被取消，场景与需求统一为写入提议＋整篇写入：AI 只讨论并归纳结论，主动提问是否把本轮结论写入目标文件，用户明确回答（按钮或回答“是”）后由 Host 校验正文 hash、模板固定引用、项目上下文 hash 与所选依据集合并整篇写入，写入返回变更摘要且可按本地差异撤销；任一条件变化即提议作废并重新提问，同一提议重复回答只生效一次。上文 2026-10-21 记录保持原样，属于当时的实现与校验事实；后续代码调整与验证随本文追加。
