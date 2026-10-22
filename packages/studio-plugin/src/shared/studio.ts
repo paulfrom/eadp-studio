@@ -1,4 +1,4 @@
-import type { ScenarioCommand, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
+import type { ScenarioCommand, ScenarioSource, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
 
 /** A project template catalog; `defaultTemplateId` is absent while a project has published no template. */
@@ -32,6 +32,8 @@ export interface StudioState {
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
   availableProjects: ProjectView[]; namespaces: NamespaceView[];
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;
+  /** Attachment projections for requirement materials; extracted text remains in the Host. */
+  materialSources?: Array<{ entityId: string; readOnly: boolean; sources: ScenarioSource[] }>;
   scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; scenarioTemplates?: ScenarioTemplateCatalog; reviews: ReviewView[]; drafts: MaterialDraft[];
   /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
   legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];

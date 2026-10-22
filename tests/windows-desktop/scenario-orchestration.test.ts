@@ -28,7 +28,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const token: OccupationToken = { occupationId: 'occupation', generation: 1, taskId: path.basename(root), clientId: local.clientId, expectedRevision: 1 }
   const task: TaskView = { entityId: 'scene', projectId: 'project', sessionId: 'original-session', purpose: 'material', inputHash: '', worktree: root }
   local.tasks.push(task)
-  const entity = { id: 'scene', kind: 'scenario', generation: 1, revision: 1, title: '审批', templateId: 'default', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1 }, frozenBy: [] } as unknown as EntityView
+  const entity = { id: 'scene', kind: 'scenario', generation: 1, revision: 1, title: '审批', templateId: 'default', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1, purpose: 'design' }, frozenBy: [] } as unknown as EntityView
   const remote = { project: { id: 'project', revision: 1, recognizedHead: 'c'.repeat(40), stableBranch: 'main' }, entities: [entity] } as unknown as ProjectState
   const prompts: string[] = [], events: RepairEventRequest[] = [], calls: string[] = [], contexts = new Map<string, Buffer>()
   let repairView: RepairTaskView | undefined
@@ -287,7 +287,7 @@ test('source extraction returns before the reader finishes and delivers into its
   const queued = new Promise<void>(resolve => { queueReady = resolve })
   f.ports.readScenarioSource = () => new Promise(resolve => { resolveReader = resolve })
   f.workspaces.deps.deliver = work => { deliveries.push(work); queueReady() }
-  await f.workspaces.importSource({ action: 'importScenarioSource', entityId: 'scene', operationId: 'asynchronous-source', name: '审批.txt', base64: Buffer.from('实际依据').toString('base64') })
+  await f.workspaces.sources.importSource({ action: 'importScenarioSource', entityId: 'scene', operationId: 'asynchronous-source', name: '审批.txt', base64: Buffer.from('实际依据').toString('base64') })
   const source = f.record.sources.find(item => item.id === 'asynchronous-source')!
   assert.equal(source.status, 'reading'); assert.equal(deliveries.length, 0)
   f.local.selectedProjectId = 'other-project'
@@ -304,7 +304,7 @@ test('deselecting formal evidence removes only its untracked archives and preser
   await writeFile(originalPath, '业务依据'); f.record.sourcePaths.evidence = originalPath
   let trackedPath: string | undefined
   f.ports.gitLocal = async (args, cwd) => { assert.deepEqual(args.slice(0, 3), ['ls-files', '-z', '--']); assert.equal(cwd, f.root); return trackedPath ? `${trackedPath}\0` : '' }
-  await f.workspaces.selectSource({ action: 'selectScenarioSource', entityId: 'scene', sourceId: 'evidence', selected: true, formal: true })
+  await f.workspaces.sources.selectSource({ action: 'selectScenarioSource', entityId: 'scene', sourceId: 'evidence', selected: true, formal: true })
   const archived = (await readMaterial(f.root, 'scenario', 'scene')).metadata.businessEvidence[0]!.files
   assert.equal(archived.length, 3)
   const sharedFile = archived.find(file => file.path.endsWith('.txt') && file.path.includes('extracted-'))!
@@ -316,7 +316,7 @@ test('deselecting formal evidence removes only its untracked archives and preser
   f.workspaces.deps.entity = async id => ({ remote: f.remote, entity: f.remote.entities.find(entity => entity.id === id) as EntityView })
   const unrelated = path.join(path.dirname(path.join(f.root, trackedPath)), 'user-owned.txt')
   await writeFile(unrelated, '不是Host创建的文件')
-  await f.workspaces.selectSource({ action: 'selectScenarioSource', entityId: 'scene', sourceId: 'evidence', selected: false, formal: false })
+  await f.workspaces.sources.selectSource({ action: 'selectScenarioSource', entityId: 'scene', sourceId: 'evidence', selected: false, formal: false })
   assert.deepEqual((await readMaterial(f.root, 'scenario', 'scene')).metadata.businessEvidence, [])
   assert.equal(await readFile(path.join(f.root, trackedPath), 'utf8'), '业务依据')
   assert.equal(await readFile(path.join(f.root, sharedFile.path), 'utf8'), '业务依据')
@@ -325,7 +325,7 @@ test('deselecting formal evidence removes only its untracked archives and preser
   await assert.rejects(readFile(path.join(f.root, removed.path)), { code: 'ENOENT' })
   assert.deepEqual(new Set(f.record.localEvidencePaths), new Set([trackedPath, sharedFile.path]))
   await saveMaterial(f.root, { ...metadata(), entityId: otherEntity.id }, '另一场景已不再引用')
-  await f.workspaces.pruneEvidence(f.task)
+  await f.workspaces.sources.pruneEvidence(f.task)
   await assert.rejects(readFile(path.join(f.root, sharedFile.path)), { code: 'ENOENT' })
   assert.deepEqual(f.record.localEvidencePaths, [trackedPath])
 })

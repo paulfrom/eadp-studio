@@ -207,9 +207,9 @@ export class StudioApplication {
     signal?.throwIfAborted()
     if ((await this.ports.account())?.id !== this.store.accountId) throw new Error('会话登录身份已变化')
     // Requirements use the same design orchestration but read a requirement material instead of a scenario package.
-    if (task.purpose === 'material' && !task.scenarioRepair && !await findMaterialFile(task.worktree, 'scenario', task.entityId)) return { text: await this.requirementSessionContext(task), readPaths: [] }
-    const text = await this.scenarios.context(task), record = await this.scenarios.record(task.entityId, task.projectId), local = await this.store.read()
-    const paths: string[] = [...record.sources.filter(source => source.selected).map(source => record.sourcePaths[source.id]!).filter(Boolean)]
+    if (task.purpose === 'material' && !task.scenarioRepair && !await findMaterialFile(task.worktree, 'scenario', task.entityId)) return { text: await this.requirementSessionContext(task), readPaths: await this.scenarios.sources.readPaths(task) }
+    const text = await this.scenarios.context(task), local = await this.store.read()
+    const paths = await this.scenarios.sources.readPaths(task)
     for (const value of local.tasks.filter(item => item.projectId === task.projectId && item.entityId === task.entityId && item.purpose === 'material')) { const relative = await findMaterialFile(value.worktree, 'scenario', value.entityId); if (relative) paths.push(path.join(value.worktree, relative)) }
     return { text, readPaths: paths }
   }
@@ -223,7 +223,8 @@ export class StudioApplication {
 当前有效材料绝对路径：${path.join(task.worktree, draft.path)}
 当前元数据：${JSON.stringify(draft.metadata)}
 当前Markdown正文：
-${draft.body}`
+${draft.body}
+${await this.scenarios.sources.context(task)}`
   }
   private async executeScenario(command: StudioCommand): Promise<string | undefined> {
     switch (command.action) {
@@ -236,12 +237,13 @@ ${draft.body}`
       case 'selectScenarioSession': return this.scenarios.selectSession(command.entityId, command.sessionId)
       case 'setScenarioAutoWrite': await this.scenarios.setAutoWrite(command.entityId, command.enabled); break
       case 'setScenarioStructureCheck': { const local = await this.store.read(); local.scenarioStructureCheck = command.enabled; await this.store.save(); break }
-      case 'importScenarioSource': await this.scenarios.importSource(command); break
-      case 'retryScenarioSource': await this.scenarios.retrySource(command.entityId, command.sourceId); break
-      case 'selectScenarioSource': await this.scenarios.selectSource(command); await this.repairs.checkConcurrent(command.entityId); break
-      case 'scenarioRevisionImpact': { const { remote, entity } = await this.entity(command.entityId); await this.api.request('GET', this.route(remote.project.id, `/entities/${entity.id}/revision-impact`)); const record = await this.scenarios.record(entity.id, remote.project.id); record.impact = remote.entities.filter(e => e.kind === 'requirement' && 'scenarioIds' in e && e.scenarioIds.includes(entity.id)); await this.store.save(); this.scenarios.activeEntityId = entity.id; break }
+      case 'importScenarioSource': await this.scenarios.sources.importSource(command); break
+      case 'retryScenarioSource': await this.scenarios.sources.retrySource(command.entityId, command.sourceId); break
+      case 'selectScenarioSource': await this.scenarios.sources.selectSource(command); await this.repairs.checkConcurrent(command.entityId); break
+      case 'scenarioRevisionImpact': { const { remote, entity } = await this.entity(command.entityId); if (entity.kind !== 'scenario') throw new Error('此操作只适用于项目场景'); await this.api.request('GET', this.route(remote.project.id, `/entities/${entity.id}/revision-impact`)); const record = await this.scenarios.record(entity.id, remote.project.id); record.impact = remote.entities.filter(e => e.kind === 'requirement' && 'scenarioIds' in e && e.scenarioIds.includes(entity.id)); await this.store.save(); this.scenarios.activeEntityId = entity.id; break }
       case 'startScenarioRevision': {
         const { remote, entity } = await this.entity(command.entityId)
+        if (entity.kind !== 'scenario') throw new Error('此操作只适用于项目场景')
         if (!entity.current || entity.revision !== command.expectedRevision || entity.associationRevision !== command.expectedAssociationRevision) throw new Error('场景及影响范围已变化，请重新查看影响清单')
         const task = await this.designTask(remote, entity)
         try { await readMaterial(task.worktree, 'scenario', entity.id) } catch (error) {
@@ -279,10 +281,7 @@ ${draft.body}`
   private async acceptSourceRead(sessionId: string, output: Extract<SessionOutput, { kind: 'source-read' }>): Promise<void> {
     const local = await this.store.read(), task = local.tasks.find(t => t.sessionId === sessionId)
     if (!task) return
-    const record = await this.scenarios.record(task.entityId, task.projectId)
-    const source = record.sources.find(s => path.resolve(record.sourcePaths[s.id] ?? '') === path.resolve(task.worktree, output.path))
-    if (!source) return
-    source.status = 'read'; source.ranges = output.ranges; source.text = `原生 read_image 已读取图像，attachmentId=${output.attachmentId}；范围=${output.ranges.join('；')}`; delete source.error; await this.store.save()
+    await this.scenarios.sources.acceptRead(task, output)
   }
   /**
    * Build the projection the surfaces render. This read never synchronizes Git:
@@ -336,9 +335,10 @@ ${draft.body}`
     }
     const scenario = remote ? await this.scenarios.snapshot(remote) : undefined
     if (scenario) { await this.repairs.checkConcurrent(scenario.entityId); const repair = await this.repairs.view(scenario.entityId); if (repair) scenario.repair = repair }
+    const materialSources = remote ? await this.scenarios.sources.views(remote, drafts) : []
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
     const recovery = this.store.preservedRecord
-    return { ...(scenario ? { scenario } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
+    return { ...(scenario ? { scenario } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(scenarioTemplates ? { scenarioTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
@@ -651,7 +651,7 @@ ${draft.body}`
     const { task, draft, entity, remote } = content
     let candidateSha: string, paths = content.paths, allowedPaths = content.allowedPaths, checks: CheckEvidence
     if (purpose === 'material') {
-      await this.scenarios.pruneEvidence(task)
+      await this.scenarios.sources.pruneEvidence(task)
       const allowed = new Set(allowedPaths)
       candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), paths, '固定材料 ' + entity.id)).sha
       for (const path of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, path)

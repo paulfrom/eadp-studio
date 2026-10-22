@@ -27,7 +27,7 @@ async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
 }
 function operationId(value: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value)) throw new Error('本地保存操作 ID 无效') }
 
-/** Owns all controlled scenario writes and persistent receipts, serializing each material independently. */
+/** Owns controlled material writes and persistent receipts, serializing each material independently. */
 export class ScenarioDocumentService {
   constructor(private readonly localRoot: string) {}
 
@@ -66,7 +66,7 @@ export class ScenarioDocumentService {
     if (saved.fingerprint !== fingerprint) throw new Error('同一操作 ID 不能用于不同的场景写入')
     if (saved.committed) return saved.result
     // A process may stop after rename and before persisting the completed receipt.
-    const actual = await readMaterial(root, 'scenario', entityId)
+    const actual = await readMaterial(root, saved.result.metadata.kind, entityId)
     if (actual.sha256 === saved.result.sha256) {
       await atomicWriteFile(file, JSON.stringify({ ...saved, committed: true }))
       return saved.result
@@ -86,17 +86,17 @@ export class ScenarioDocumentService {
   }
 
   private async write(input: SaveInput, suppliedFingerprint?: string): Promise<MaterialDraft> {
-    if (input.metadata.kind !== 'scenario' || !isMaterialMetadata(input.metadata) || !/^[a-f0-9]{64}$/.test(input.expectedHash)) throw new Error('场景保存身份或预期版本无效')
+    if (input.metadata.kind !== 'scenario' && input.metadata.kind !== 'requirement' || !isMaterialMetadata(input.metadata) || !/^[a-f0-9]{64}$/.test(input.expectedHash)) throw new Error('场景保存身份或预期版本无效')
     operationId(input.operationId)
     const fingerprint = suppliedFingerprint ?? digest(canonical({ metadata: input.metadata, body: input.body, expectedHash: input.expectedHash }))
     const repeated = await this.receipt(input.root, input.metadata.entityId, input.operationId, fingerprint)
     if (repeated) return repeated
-    const current = await this.currentScenarioFile(input)
+    const current = await this.currentMaterialFile(input)
     if (digest(current.bytes) !== input.expectedHash) return this.preserveConflict(input, current.bytes, current.relative)
     const currentFile = await containedFile(input.root, current.relative)
     const parsed = parseMaterial(current.bytes, current.relative)
-    if (parsed.metadata.kind !== 'scenario' || input.metadata.templateId !== parsed.metadata.templateId || !sameTemplate(input.metadata.templateRef, parsed.metadata.templateRef)) throw new Error('保存不能隐式更换场景模板绑定')
-    const relative = await materialTargetPath(input.root, 'scenario', input.metadata.entityId, input.metadata.title)
+    if (parsed.metadata.kind !== input.metadata.kind || input.metadata.kind === 'scenario' && (parsed.metadata.kind !== 'scenario' || input.metadata.templateId !== parsed.metadata.templateId || !sameTemplate(input.metadata.templateRef, parsed.metadata.templateRef))) throw new Error('保存不能隐式更换场景模板绑定')
+    const relative = await materialTargetPath(input.root, input.metadata.kind, input.metadata.entityId, input.metadata.title)
     const target = await containedFile(input.root, relative, true)
     const text = materialText(input.metadata, input.body)
     const result = parseMaterial(Buffer.from(text), relative)
@@ -122,10 +122,11 @@ export class ScenarioDocumentService {
    * Resolves the file this save edits: the material of this identity, else an
    * unidentified file at the title's name, which is preserved rather than replaced.
    */
-  private async currentScenarioFile(input: SaveInput): Promise<{ relative: string; bytes: Buffer }> {
-    const relative = await findMaterialFile(input.root, 'scenario', input.metadata.entityId)
+  private async currentMaterialFile(input: SaveInput): Promise<{ relative: string; bytes: Buffer }> {
+    if (input.metadata.kind !== 'scenario' && input.metadata.kind !== 'requirement') throw new Error('材料保存身份无效')
+    const relative = await findMaterialFile(input.root, input.metadata.kind, input.metadata.entityId)
     if (relative) return { relative, bytes: await readFile(await containedFile(input.root, relative)) }
-    const unidentified = await unidentifiedMaterialFile(input.root, 'scenario', input.metadata.title)
+    const unidentified = await unidentifiedMaterialFile(input.root, input.metadata.kind, input.metadata.title)
     if (unidentified) return { relative: unidentified, bytes: await readFile(await containedFile(input.root, unidentified)) }
     throw Object.assign(new Error('场景文件不存在，请重新打开场景'), { code: 'ENOENT' })
   }

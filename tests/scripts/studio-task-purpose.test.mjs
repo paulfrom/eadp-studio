@@ -15,7 +15,7 @@ const createElement = (type, props, ...children) => ({ type, props: props ?? {},
 // The module's own dependencies, as with `css` below: the panel takes its empty
 // projection from `client/state.ts`, which this harness does not transpile.
 const emptyStudioState = () => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
-const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'emptyStudioState', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', `${compiled}; return StudioPanel`)
+const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'emptyStudioState', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', 'MaterialConversation', `${compiled}; return StudioPanel`)
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(nodes)]
 const text = tree => !tree || typeof tree !== 'object' ? tree ?? '' : tree.children.map(text).join('')
 
@@ -27,7 +27,7 @@ function render(stage, tasks) {
   // the panel's own stage and selection.
   const values = [stage, entity.id], calls = [], updates = []
   let index = 0
-  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), emptyStudioState, new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace')
+  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), emptyStudioState, new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace', function MaterialConversation() {})
   // The panel reads one shared projection and runs commands through the session;
   // the harness supplies both faces the slot registration injects.
   const props = { useStore: selector => selector({ projection: state, loading: false, error: '' }), run: async command => { calls.push(command); return { ok: true, state } }, sync: () => {}, theme: {} }
@@ -41,7 +41,7 @@ for (const [stage, purpose] of [['requirements', 'material'], ['prototype', 'pro
     const other = { entityId: 'other', purpose, sessionId: 'wrong-entity' }
     const wrong = { entityId: 'asset', purpose: 'review', sessionId: 'wrong-purpose' }
     const { tree, calls } = render(stage, [wrong, other, task])
-    const conversation = nodes(tree).find(node => node.type?.name === 'NativeConversation')
+    const conversation = nodes(tree).find(node => node.type?.name === (stage === 'requirements' ? 'MaterialConversation' : 'NativeConversation'))
     assert.equal(conversation?.props.sessionId, task.sessionId)
     assert.ok(text(tree).includes(task.error), 'task failures must be visible for recovery')
     const resume = nodes(tree).find(node => node.type === 'button' && text(node) === '恢复对话')
@@ -83,5 +83,17 @@ test('failed scenario flush blocks stage, project and return navigation without 
   project.props.onClick()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(updates.some(update => update.slot === 1 || update.slot === 2), false)
+  assert.deepEqual(calls, [])
+})
+
+test('failed requirement flush blocks all attachment mutations before a Host command', async () => {
+  const { tree, calls } = render('requirements', [{ entityId: 'asset', purpose: 'material', sessionId: 'requirement-session' }])
+  const editor = nodes(tree).find(node => node.type === 'MaterialEditor')
+  editor.props.registerFlush(async () => false)
+  const { attachments } = nodes(tree).find(node => node.type?.name === 'MaterialConversation').props
+  await assert.rejects(attachments.onImport('手工资料.md', 'eA=='), /保存/)
+  attachments.onRetry('source')
+  attachments.onSelect({ id: 'source' }, true, true)
+  await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(calls, [])
 })

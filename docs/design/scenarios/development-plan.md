@@ -2,10 +2,10 @@
 
 ## 文档边界
 
-本清单记录待开发工作，所有开发项均为待开发；已具备的能力在「已核对的静态现状」中单列，不重复计入。
+本清单记录开发项及其进度，完成与待开发以各 SC 条目标记为准；清单制定时已具备的能力在「已核对的静态现状」中单列，不重复计入。
 本文件不表示产品已实现、工程整体已验收，也不构成本轮编码授权。
-本轮只回写设计与清单，相关代码、SQL、依赖改动列入后续任务；测试与真实验收均未执行。
-当前结论来自源码核对与设计文档交叉审计，不能代替真实桌面、协同和模型验收。
+清单制定时仅回写设计与清单；后续代码实现与已执行验证见各 SC 条目及 `implementation.md`，真实验收边界单独记录。
+源码核对、设计文档审计与局部自动化验证不能代替真实桌面、协同和模型验收。
 
 **本轮修订**：按用户决定，取消按条／按组／按批建议采纳，场景与需求统一为「写入提议＋整篇写入」；不另建 ADR，修订直接回写设计文档与词表。修订范围见「本轮决定与回写」。
 
@@ -47,7 +47,7 @@
 
 ## 已核对的静态现状
 
-相对路径均以 `packages/studio-plugin/src/` 为基准；结论来自源码核对，不代表运行验收通过。
+下表保留清单制定时的源码快照，后续实现进度以各 SC 条目和 `implementation.md` 为准。相对路径均以 `packages/studio-plugin/src/` 为基准；静态核对不代表运行验收通过。
 
 | 位置 | 当前事实 |
 | --- | --- |
@@ -202,7 +202,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 ### SC12 附件入口与资料状态
 
-- [ ] 待开发；依赖：SC01、SC05；负责模块：`client/scenarios/`、资料适配器。
+- [x] 已完成（2026-10-22：原生输入区附件按钮打开共用资料面板；场景与需求共用资料服务、实际读取范围与正式依据归档；无会话/恢复失败/只读状态仍可查看，资料操作前 flush 手工编辑；组件与 Host 验证见 `implementation.md`）；依赖：SC01、SC05；负责模块：`client/scenarios/`、资料适配器。
 - 交付：会话输入区的附件入口，承载导入、已读状态、读取范围、失败重试与「选为正式依据」；资料面板能力不删减。
 - 交付：明确入口形态（复用现有资料面板，由输入区按钮打开），以及图片经原生 `read_image`、Office/PDF 经既有服务读取的证据记录。
 - 验收：删除 chatDock 折叠组后，资料导入与正式依据选择仍有唯一、可达入口。
@@ -266,7 +266,7 @@ Host 把每次提问记录成一条写入提议，提问本身不构成授权：
 
 - `tests/windows-desktop/`：`scenario-documents.test.ts`、`scenario-orchestration.test.ts`、`scenario-file-observer.test.ts`、`scenario-dsh-adapter.test.ts`。
 - `tests/windows-desktop/`：`background-lane.test.ts`、`projection-lane.test.ts`、`task-recovery.test.ts`、`conversation-restoration.test.ts`、`asset-workflow.test.ts`。
-- `tests/scenario-client/`：`draft-buffer.test.ts`、`document.test.mjs`、`material-editor.test.mjs`。
+- `tests/scenario-client/`：`draft-buffer.test.ts`、`document.test.mjs`、`material-editor.test.mjs`、`material-attachments.test.mjs`。
 - `apps/collaboration-api/src/`：`gitlab-content.test.ts`（diff/hash 严格性）、`modules/integration.test.ts`（域校验；不覆盖 diff 严格性）。
 
 后续文档同步位置：[场景设计](01-scenarios.md)、[需求协同](../02-requirements.md)、[实现说明](implementation.md)、[研发上下文](../../../CONTEXT.md)、[里程碑](../../milestones.md)。

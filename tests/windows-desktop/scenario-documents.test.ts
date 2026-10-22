@@ -153,3 +153,15 @@ test('business checks do not infer completeness from titles or text length; opti
   for (const changed of [{ expectedHash: 'e'.repeat(64) }, { hasPermission: false }, { hasOccupation: false }, { conflict: true }]) assert.equal(checkScenarioDocument({ ...input, ...changed }).passed, false)
   assert.equal(checkScenarioDocument({ ...input, draft: { ...ready, metadata: { ...ready.metadata, coreRulesPresent: false } } }).passed, false)
 })
+
+test('requirement evidence metadata uses the same serialized expected-hash writer and preserves the losing version', async t => {
+  const f = await fixture(t), requirement: MaterialMetadata = { entityId: 'requirement-one', kind: 'requirement', title: '审批需求', categoryId: 'category', scenarioIds: ['scene'], sources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, referencedAssets: [] }
+  const draft = await saveMaterial(f.root, requirement, '需求正文')
+  const outcomes = await Promise.allSettled(['甲', '乙'].map((title, index) => f.service.save({ root: f.root, metadata: { ...requirement, title }, body: draft.body, expectedHash: draft.sha256, operationId: `requirement-${index}` })))
+  assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1)
+  const failed = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult
+  assert.ok(failed.reason instanceof ScenarioDocumentConflictError)
+  assert.deepEqual(new Set([failed.reason.conflict.actual.metadata.title, failed.reason.conflict.localMetadata.title]), new Set(['甲', '乙']))
+  assert.equal((await readMaterial(f.root, 'requirement', requirement.entityId)).body, draft.body)
+  assert.equal((await readdir(path.join(f.root, '需求'))).length, 1)
+})

@@ -3,13 +3,13 @@
 日期：2026-10-22
 依据：[开发清单](development-plan.md)、[场景设计](01-scenarios.md)、[需求协同设计](../02-requirements.md)、[修正与验证记录](implementation.md)
 当前分支：`backend/scenario-context-path-scope`
-已推送提交：`fe197ba 完成场景协作 SC02—SC08 的实现`；SC09—SC11 改动在工作区，尚未提交
+已提交：`fe197ba 完成场景协作 SC02—SC08 的实现`、`1c480b8 完成场景协作 SC09—SC11 本机收整链`；SC12 改动在工作区，尚未提交
 
 本文只记录交接事实、剩余工作与已知风险，不替代开发清单和设计文档。
 
 ## 1. 本轮完成与未完成
 
-本轮先完成协同后端，随后完成 SC09—SC11 的 Host 收整链；桌面界面（SC12/SC13）未动。
+本轮已完成协同后端、SC09—SC11 的 Host 收整链与 SC12 附件入口；SC13 页面精简与状态展示未开始。
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
@@ -25,19 +25,21 @@
 | SC09 主项目安全同步 | 已完成 | 接受后后台快进主 checkout；脏目录/异分支/失败记为“已确认待同步”并可重试 |
 | SC10 任务身份与逐任务释放 | 已完成 | 会话按 worktree 归属；只释放目标任务句柄、观察与预览 |
 | SC11 安全 worktree 清理 | 已完成 | 归档工作区改动与忽略文件（SHA-256）、保留归档引用、删临时分支；步骤持久化且幂等，覆盖评审 worktree |
-| SC12—SC14 | 未开始 | 见开发清单与本文第 4 节 |
-| SC15 分层验证 | 未开始 | 仅完成 Host 单元、真实临时 Git 与类型校验 |
+| SC12 附件入口与资料状态 | 已完成 | 原生输入区附件按钮打开共用资料面板；场景与需求共用资料服务，固定依据保留真实读取状态与范围 |
+| SC13—SC14 | 未开始 | 见开发清单与本文第 4 节 |
+| SC15 分层验证 | 未开始 | 已有客户端组件、Host 单元、真实临时 Git 与类型校验；真实协同与实机尚未验收 |
 
 后端验证已执行：
 
 - `pnpm --filter @eadp/collaboration-api typecheck` 通过。
 - `src/gitlab-content.test.ts` 44 项通过；`integration`、`project-initialization`、`auth/gitlab`、`desktop-update` 共 43 项通过。
-- Docker 镜像已重建并启动，`GET http://127.0.0.1:6972/health` 返回 `{"status":"ok"}`，api／db／cache 容器 healthy。
+- Docker 镜像已重建并启动，`GET http://127.0.0.1:6972/health` 返回 `{"status":"ok"}`；api 容器 healthy，数据库与缓存使用本机共用的 PostgreSQL 与 Redis 实例，编排不再自建这两个容器。
 - 未连接真实企业 GitLab；未执行桌面、真实模型、双客户端或 Windows 实机验收。
 - SC07／SC08 桌面/Host 验证：装配树 `tsc -b` host 与 client 通过；评审、确认与恢复均未接真实模型/GitLab。
 - SC02 验证：`scenario-preset.test.mjs` 2 项、`scenario-dsh-adapter.test.ts` 6 项通过（含需求会话共用 preset 与技能目录）；真实桌面未验证技能目录挂载（dev-stage 不执行依赖安装）。`tests/scripts` 全量仍有 3 项与本轮无关的环境性失败（缺少 `.desktop-build` 目标、两处样式断言）。
 - SC03 验证：`scenario-write-proposals`／`scenario-orchestration` 共 29 项通过（新增上下文提议解析与失效、成功写入并同步文件包、并发接受冲突、提问后文件变化作废）；`tests/windows-desktop` 全量 175 项通过、1 项因未配置测试数据库跳过。未做桌面交互走查，未验证真实模板发布链路。
 - SC09—SC11 验证：装配树 `tsc -b` host/client 通过；新增 `task-settlement.test.ts` 3 项（真实临时 Git 仓库）覆盖主目录快进、脏目录待同步、未跟踪/忽略文件归档与幂等收整；`tests/windows-desktop` TS 用例 179 项中 178 通过、1 项因未配置测试数据库跳过。未在真实桌面、真实 GitLab 与 Windows 实机验证本机收整，未连接真实模型。
+- SC12 验证：装配树 `tsc -b` host/client 通过；客户端与相关脚本用例 36 项通过，含新增附件组件行为验证；`tests/windows-desktop` TS 用例 183 项中 182 通过、1 项因未配置测试数据库跳过。组件测试的 dialog 行为使用 jsdom shim；未做视觉审查、打包校验或真实桌面/模型验收。
 
 ## 2. 后端新增约束（桌面端实现时必须遵守）
 
@@ -121,11 +123,11 @@
 - 报告接受前核对快照字节；AI 辅助确认时重算同一指纹，`candidateSha` 只在确认时产生。
 - 评审 worktree 与任务登记留给 SC11 统一清理；本轮未新增清理入口。
 
-### SC08 确认后台持久恢复流水线
+### SC08 确认后台持久恢复流水线（已完成）
 
-- `studio.ts:609` 的 `integrate` 在车道内先 push 再 `resumeOperation`；`retryOperation`（:613）只重排 `resumeOperation`，恢复时不重推，需把 push 纳入持久步骤。
-- 核对材料 commit 与 worktree 创建的当前执行位置；若仍在命令队列，在文档写明边界。
-- 丢响应查询原操作；失败重试不重复接受、不阻塞 UI。
+- 候选 push 已并入 prepare 持久步骤，恢复不再跳过首次推送；丢响应查询原操作，远端头变化在 CAS 前停止。
+- 材料 commit 与 worktree 创建仍在命令队列；此边界已记录，不声称所有 Git 操作都在后台车道。
+- 失败重试不重复接受、不阻塞 UI，具体实现与验证见 `implementation.md`。
 
 ### SC09—SC11 同步与清理（已完成）
 
@@ -133,9 +135,15 @@
 - SC10：`sessions.ts` 新增 `releaseWorktree`，只释放目标任务句柄；观察器按 worktree 解除；预览仅随原型任务停止。
 - SC11：新增 `task-maintenance.ts`；归档全部工作区改动与忽略文件（SHA-256 清单），保留 `refs/eadp/archive/<project>/<task>`，删除临时分支；步骤逐项落盘且幂等，覆盖任务与评审 worktree。
 
-### SC12—SC13 界面
+### SC12 附件入口与资料状态（已完成）
 
-- SC12：删除 `ScenarioChatPanel` 的「资料与 AI 建议」折叠组后，资料导入与正式依据选择必须仍有唯一可达入口；建议复用现有资料面板，由输入区按钮打开。每份资料显示已读/部分读取/失败与实际范围。
+- `conversation.input.left` 注册附件按钮，点击打开复用的资料面板；无会话、恢复中或恢复失败时也保留同一入口，其他会话不展示此按钮。旧折叠组的资料入口已删除，旧 AI 建议功能仍待 SC14 整体删除。
+- 场景与需求使用同一 `MaterialConversation`、资料面板与 `MaterialSources` 服务，保留导入、已读/部分读取/失败、实际范围、重试和正式依据选择；需求资料操作前先 flush 手工编辑，保存失败不继续。
+- 图片的已读状态仍以原生 `read_image` 成功结果为依据，校验任务归属、占用与原始 hash；PDF/Office 保留实际读取范围和限制。已确认依据从固定 `reading-*.json` 恢复真实状态，缺失或校验失败明确显示无法验证。
+- 沿用现有本地集合、资料目录和受 hash 约束的文档写入服务；未新增需求侧写入提议或撤销。
+
+### SC13 页面精简与状态展示（未开始）
+
 - SC13：左原生对话、右场景文件；确认检查分组承载业务完整性、待澄清项与模板结构检查开关；Git 技术信息只在按需诊断展开；删除 Frontmatter 常驻卡、独立资料区、建议区、采纳按钮与 worktree 信息；保留当前色系。
 - 用户本轮明确：桌面改动后**不做视觉审查与打包校验**；下一验证者若要验收界面，需单独安排。
 
@@ -159,7 +167,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 可复用测试入口：
 
 - `tests/windows-desktop/`：`scenario-documents.test.ts`、`scenario-orchestration.test.ts`、`scenario-file-observer.test.ts`、`scenario-dsh-adapter.test.ts`、`background-lane.test.ts`、`projection-lane.test.ts`、`task-recovery.test.ts`、`conversation-restoration.test.ts`、`asset-workflow.test.ts`、`task-settlement.test.ts`。
-- `tests/scenario-client/`：`draft-buffer.test.ts`、`document.test.mjs`、`material-editor.test.mjs`。
+- `tests/scenario-client/`：`draft-buffer.test.ts`、`document.test.mjs`、`material-editor.test.mjs`、`material-attachments.test.mjs`。
 - `tests/scripts/`：`scenario-preset.test.mjs`、`studio-conversation-restoration.test.mjs`、`studio-task-purpose.test.mjs`。
 - 后端：`apps/collaboration-api/src/gitlab-content.test.ts`、`modules/integration.test.ts`。
 
@@ -171,11 +179,11 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 - 需求侧（REQ 编号、去分类、一致性对比端点/表）不在本轮范围；`docs/design/02-requirements.md` 的差距仍未实施。
 - 旧建议/采纳链路仍在代码中，且 `implementation.md` 早期章节把它记为已完成；以「后续修订（本轮）」和开发清单为准，早期段落是历史事实，不是现行契约。
 - 后端仅验证路径范围与单元行为；真实企业 GitLab、真实 PostgreSQL 运行库、双客户端、Windows 实机与真实模型均未验收。
-- 桌面端未做视觉审查、打包校验；本轮不声称桌面可用。
+- SC12 的入口可达性已有组件级验证；桌面端未做视觉审查、打包校验与实机交互验收，本轮不声称桌面可用。
 
 ## 7. 建议的下一个会话
 
-1. SC04—SC11 已完成：写入提议、整篇写入、摘要与撤销、确认文件包、可选评审、后台恢复流水线、主目录同步、逐任务释放与安全清理分别见 `implementation.md` 对应段落。
-2. 下一步进入 SC12／SC13（附件入口、页面精简与四态展示）；四态所需的 `local.projects[].sync` 与 `TaskView.cleanup` 已落地，界面可直接投影。
+1. SC02—SC12 已完成：各项实现与验证边界见 `implementation.md` 对应段落；SC12 已完成场景与需求共用附件入口，代码尚未提交。
+2. 下一步进入 SC13（页面精简与四态展示）；四态所需的 `local.projects[].sync` 与 `TaskView.cleanup` 已落地，界面可直接投影。附件入口已迁移，精简页面时须保留其唯一可达性。
 3. 每完成一个 SC 更新 `implementation.md` 并设检查点；不要在单个会话内跨过 SC13 而未验证入口仍唯一可达。
 4. 需求侧的写入提议、摘要与撤销留到阶段二需求协同设计，本轮不要为需求另建文件规则。

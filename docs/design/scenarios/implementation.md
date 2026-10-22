@@ -221,3 +221,16 @@
 - 边界：临时资料目录 `scenario-sources/` 不随任务删除（属于历史附件读取）；主目录同步失败不阻塞清理，任务状态为 `blocked` 并写明“主目录同步待重试”。
 
 校验：装配树 `tsc -b` host/client 通过；新增 `tests/windows-desktop/task-settlement.test.ts` 3 项（真实临时 Git 仓库）覆盖：接受后主目录快进、未跟踪与忽略文件按 SHA-256 归档、worktree/临时分支/归档引用处理、重复收整不重复执行；脏主目录记为待同步且用户文件原样保留；目录缺失且无归档记录时拒绝宣告完成。`tests/windows-desktop` 全量 TS 用例 179 项中 178 通过、1 项因未配置测试数据库跳过。未在真实桌面、真实 GitLab 与 Windows 实机验证本机收整。
+
+## SC12 附件入口与资料状态（2026-10-22）
+
+- 复用原生 `conversation.input.left` 工具栏插槽，附件按钮打开共用的资料面板；使用原生 dialog 管理焦点、关闭与 Escape。`MaterialConversation` 使场景与需求共用入口：会话未创建、恢复中或恢复失败时仍能打开资料，恢复完成后由输入区按钮承载，同一时刻只有一个入口；无关会话不展示。
+- `ScenarioChatPanel` 删除原「资料与 AI 建议」折叠组中的资料入口，导入、状态、范围、重试与正式依据勾选全部迁入附件面板。旧建议 UI、开关和协议暂按 SC14 保留；SC13 的页面与四态展示未实施，当前色系未改。
+- 抽取 `MaterialSources` 复用场景与需求的导入、读取、选择、归档和清理；沿用既有 `scenarios` 集合与 `scenario-sources/<project>/<entity>`，未新建本地集合。需求通过 `StudioState.materialSources` 获取去除提取正文的资料投影，会话使用同一来源内容与受控 `readPaths`。需求依据元数据写入复用原串行、expectedHash、冲突双份与持久 receipt 服务。
+- 资料面板区分「正在导入」与 reader 返回的「正在读取／已读取／部分读取／读取失败」，展示实际范围与限制；PDF/Office 仍使用现有服务，图片只在原生 `read_image` 成功后更新状态，并校验当前设计占用、任务目录、已选资料与原始 hash。
+- 已确认正式依据校验固定 `reading-*.json` 的 hash、来源身份和原始文件关联，恢复原格式、实际读取状态、范围与限制；缺失或损坏的记录明确显示无法验证，不再把固定 PDF 的部分提取标成完整已读。历史旧契约材料继续走原只读展示，不进入新投影。
+- 需求编辑器接入现有 flush 边界：资料操作前先保存手工正文和元数据，格式校验或 Host 保存失败就停止资料操作并保留输入。本轮没有接入需求侧写入提议、整篇生成、摘要或撤销。
+
+校验：`node apps/desktop-distribution/build/prepare-studio-plugin.mjs --dev-stage` 仅更新装配树后，Host/Client `tsc -b` 均通过。`node --test tests/scenario-client/*.test.mjs tests/scenario-client/draft-buffer.test.ts tests/scripts/studio-conversation-restoration.test.mjs tests/scripts/studio-task-purpose.test.mjs` 共 36 项全部通过；其中新增 `material-attachments.test.mjs` 12 项，覆盖入口会话隔离、弹窗关闭/取消、会话恢复全程唯一入口、读取状态与范围、导入失败、只读及手工编辑 flush，`studio-task-purpose.test.mjs` 补充保存失败阻止全部资料命令的验证。`apps/collaboration-api/node_modules/.bin/tsx --test tests/windows-desktop/*.test.ts` 共 183 项中 182 通过、1 项因未配置测试数据库跳过；新增需求资料生命周期、图片读取归属/hash 校验、固定读取记录和需求文档 CAS 测试，并修正恢复测试中缺少必填字段的材料元数据 fixture。`git diff --check` 通过。
+
+验证边界：组件测试使用真实 React 与 jsdom，dialog 的浏览器原生聚焦/取消行为使用测试内 shim，不替代实机交互验收。未执行视觉审查、打包校验、真实企业 GitLab、双客户端、Windows 实机或真实模型验证。当前检查点为 SC12，下一项为 SC13。

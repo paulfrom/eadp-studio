@@ -1,5 +1,5 @@
 import { ScenarioFileObserver, type ScenarioObservedTask } from './scenario-file-observer.ts'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { EntityView, OccupationToken, ProjectState, RepairStartRequest } from '@eadp/contracts'
@@ -13,7 +13,7 @@ import type { ProjectWorkspaces } from './projects.ts'
 import { ScenarioDocumentService, checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
 import { parseSuggestionBatch } from './scenario-suggestions.ts'
 import { conclusionKey, parseWriteProposal, proposalInvalidReason, summarizeWrite } from './scenario-write-proposals.ts'
-import { archiveSelectedEvidence } from './scenario-evidence.ts'
+import { MaterialSources } from './material-sources.ts'
 import { syncProjectContext } from './scenario-package.ts'
 
 export interface ScenarioRecord { projectId: string; entityId: string; suggestions: ScenarioSuggestionBatch[]; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; autoWrite?: boolean; writeProposal?: ScenarioWriteProposal; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string } }
@@ -26,11 +26,12 @@ export interface ScenarioDependencies {
 }
 /** Owns local scene editing state; fixed Git bytes remain the accepted document authority. */
 export class ScenarioWorkspaces {
+  readonly sources: MaterialSources
   get documents(): ScenarioDocumentService { return new ScenarioDocumentService(this.store.directory) }
   activeEntityId: string | undefined
   private observer: ScenarioFileObserver | undefined
   private observerDirectory: string | undefined
-  constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {}
+  constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) { this.sources = new MaterialSources(store, ports, projects, deps, (entityId, projectId) => this.record(entityId, projectId)) }
   stopObservation(task: ScenarioObservedTask): void { this.observer?.unobserve(task) }
   /** Release every observation owned by one task worktree. */
   stopWorktree(worktree: string): void { this.observer?.unobserveWorktree(worktree) }
@@ -67,15 +68,11 @@ export class ScenarioWorkspaces {
     return value
   }
   async editable(entityId: string, projectId?: string) {
-    const context = await this.deps.entity(entityId, projectId)
-    if (context.entity.kind !== 'scenario') throw new Error('此操作只适用于项目场景')
-    if (context.entity.current && !context.entity.occupation) throw new Error('已确认场景只读，请先查看影响清单并开始修订')
-    const task = await this.deps.task(context.remote, context.entity)
-    const fresh = await this.deps.entity(entityId, projectId)
-    await this.deps.owned(fresh.entity)
+    const context = await this.sources.editable(entityId, projectId, 'scenario')
+    const { task } = context
     const relative = await findMaterialFile(task.worktree, 'scenario', task.entityId)
     if (relative) this.observe(task, relative)
-    return { ...fresh, task }
+    return context
   }
   async snapshot(remote: ProjectState): Promise<ScenarioWorkspace | undefined> {
     const local = await this.store.read(), entity = remote.entities.find((e): e is EntityView => e.id === this.activeEntityId && 'generation' in e && e.kind === 'scenario')
@@ -105,19 +102,11 @@ export class ScenarioWorkspaces {
     const gates = check.groups
     if (!readOnly && task) this.observe(task, draft.path)
     if (record.observationError) { const versionGate = gates.find(gate => gate.id === 'version')!; versionGate.status = 'blocked'; versionGate.messages.push(record.observationError) }
-    return { entityId: entity.id, draft, readOnly, autoWrite: record.autoWrite === true, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, suggestions: readOnly ? [] : record.suggestions, sources: readOnly ? await this.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources.map(source => ({ ...source, text: '' })),
+    return { entityId: entity.id, draft, readOnly, autoWrite: record.autoWrite === true, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, suggestions: readOnly ? [] : record.suggestions, sources: (readOnly ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
       ...(!readOnly && record.writeProposal?.status === 'pending' ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status } } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
-  }
-  private async fixedSources(projectId: string, commitSha: string, draft: MaterialDraft): Promise<ScenarioSource[]> {
-    return Promise.all(draft.metadata.businessEvidence.map(async (evidence, index) => {
-      const textFile = evidence.files.find(file => file.path.endsWith('.txt'))
-      let text = ''
-      if (textFile) { const bytes = await this.projects.readFixed(projectId, commitSha, textFile.path, textFile.sha256); if (digest(bytes) !== textFile.sha256) throw new Error('固定依据 hash 不符'); text = Buffer.from(bytes).toString('utf8') }
-      return { id: `fixed-${index}`, name: evidence.label, format: 'text', sha256: textFile?.sha256 ?? evidence.files[0]!.sha256, status: 'read' as const, ranges: evidence.ranges.map(range => `${range.path}:${range.startLine}-${range.endLine}`), text, selected: true, formal: true }
-    }))
   }
   async open(entityId: string): Promise<void> {
     const { entity, remote } = await this.deps.entity(entityId)
@@ -274,98 +263,22 @@ export class ScenarioWorkspaces {
     const record = await this.record(entityId); record.activeSessionId = sessionId; await this.store.save()
     return this.ports.session(found, '场景设计会话：先用可读中文归纳明确结论、已读资料与仍缺的业务答案；不输出采纳建议，不直接写入文件。')
   }
-  async importSource(command: Extract<ScenarioCommand, { action: 'importScenarioSource' }>): Promise<void> {
-    await this.editable(command.entityId)
-    if (!command.name || command.name.length > 250 || command.base64.length > 32_000_000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(command.base64)) throw new Error('资料名称或大小无效（最大 24MB）')
-    const bytes = Buffer.from(command.base64, 'base64'), record = await this.record(command.entityId)
-    if (record.sources.some(s => s.id === command.operationId)) return
-    const source: ScenarioSource = { id: command.operationId, name: path.basename(command.name), format: path.extname(command.name).slice(1).toLowerCase(), sha256: digest(bytes), status: 'failed', ranges: [], text: '', selected: true, formal: false }
-    const directory = path.join(this.store.directory, 'scenario-sources', record.projectId, command.entityId)
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(source.id)) throw new Error('资料操作标识无效')
-    await mkdir(directory, { recursive: true }); const filename = path.join(directory, `${source.id}.${source.format.replace(/[^a-z0-9]/g, '') || 'bin'}`)
-    await writeFile(filename, bytes, { flag: 'wx', mode: 0o600 }); record.sources.push(source); record.sourcePaths[source.id] = filename; await this.store.save()
-    await this.retrySource(command.entityId, source.id)
-  }
-  async retrySource(entityId: string, sourceId: string): Promise<void> {
-    await this.editable(entityId)
-    const record = await this.record(entityId), source = record.sources.find(s => s.id === sourceId), filename = record.sourcePaths[sourceId]
-    if (!source || !filename) throw new Error('资料不存在')
-    const bytes = await readFile(filename); if (digest(bytes) !== source.sha256) throw new Error('原始资料已变化，请重新导入')
-    const reader = this.ports.readScenarioSource
-    if (!reader) throw new Error('宿主资料读取服务不可用')
-    source.status = 'reading'; source.text = ''; source.ranges = []; delete source.error
-    const userDirectory = this.store.directory, expectedHash = source.sha256
-    await this.store.save()
-    // Office conversion and PDF extraction must never hold the UI command queue.
-    void reader({ path: filename, name: source.name }).catch(error => ({ status: 'failed' as const, text: '', ranges: [] as string[], error: error instanceof Error ? error.message : '资料读取失败' })).then(result => {
-      this.deps.deliver(async () => {
-        if (!this.store.scoped || this.store.directory !== userDirectory) return
-        const current = await this.record(entityId, record.projectId), target = current.sources.find(value => value.id === sourceId)
-        if (!target || target.sha256 !== expectedHash || digest(await readFile(filename)) !== expectedHash) return
-        Object.assign(target, result); await this.store.save()
-      })
-    })
-  }
-  async selectSource(command: Extract<ScenarioCommand, { action: 'selectScenarioSource' }>): Promise<void> {
-    const { task } = await this.editable(command.entityId), record = await this.record(command.entityId), source = record.sources.find(s => s.id === command.sourceId)
-    if (!source) throw new Error('资料不存在')
-    if (command.formal && (!['read', 'partial'].includes(source.status) || !source.text)) throw new Error('请先实际读取资料，才能选择正式依据')
-    source.selected = command.selected; source.formal = command.formal
-    const records = await Promise.all(record.sources.filter(s => s.formal).map(async s => ({ source: s, original: await readFile(record.sourcePaths[s.id]!) })))
-    const businessEvidence = await archiveSelectedEvidence(task.worktree, records, records.map(r => r.source.id))
-    record.localEvidencePaths = [...new Set([...(record.localEvidencePaths ?? []), ...businessEvidence.flatMap(evidence => evidence.files.map(file => file.path))])]
-    await this.store.save()
-    const draft = await readMaterial(task.worktree, 'scenario', command.entityId)
-    await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, { ...draft.metadata, businessEvidence }), body: draft.body, expectedHash: draft.sha256, operationId: randomUUID() })
-    await this.pruneEvidence(task)
-    await this.store.save()
-  }
-  /** Removes only Host-created, untracked archives no material in this worktree still references. */
-  async pruneEvidence(task: TaskView): Promise<void> {
-    const local = await this.store.read()
-    const tasks = local.tasks.filter(value => value.projectId === task.projectId && path.resolve(value.worktree) === path.resolve(task.worktree) && (value.purpose === 'material' || value.purpose === 'handoff'))
-    const byEntity = new Map(tasks.map(value => [value.entityId, value]))
-    const records = local.scenarios.filter(value => value.projectId === task.projectId && byEntity.has(value.entityId))
-    const registered = [...new Set(records.flatMap(value => value.localEvidencePaths ?? []))]
-    if (!registered.length) return
-    if (registered.some(relative => !relative.startsWith('.eadp/evidence/'))) throw new Error('本地依据清理记录包含越界路径')
-    const referenced = new Set<string>()
-    for (const current of byEntity.values()) {
-      const { entity } = await this.deps.entity(current.entityId, current.projectId)
-      const draft = await readMaterial(current.worktree, entity.kind, entity.id)
-      for (const file of [...draft.metadata.businessEvidence.flatMap(value => value.files), ...(draft.metadata.files ?? [])]) referenced.add(file.path)
-    }
-    const candidates = registered.filter(relative => !referenced.has(relative))
-    if (!candidates.length) return
-    const tracked = new Set((await this.ports.gitLocal(['ls-files', '-z', '--', ...candidates], task.worktree)).split('\0').filter(Boolean))
-    const removed = new Set<string>()
-    for (const relative of candidates) {
-      if (tracked.has(relative)) continue
-      try { await rm(await containedFile(task.worktree, relative), { force: true }) }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-      removed.add(relative)
-    }
-    for (const value of records) if (value.localEvidencePaths) value.localEvidencePaths = value.localEvidencePaths.filter(relative => !removed.has(relative))
-    await this.store.save()
-  }
   async context(task: TaskView): Promise<string> {
     const local = await this.store.read(); if (!local.tasks.some(t => t.sessionId === task.sessionId && t.projectId === task.projectId) && !local.scenarioRepairs.some(r => r.task.sessionId === task.sessionId && r.projectId === task.projectId)) throw new Error('会话不属于当前登录用户')
     const { entity } = await this.deps.entity(task.entityId, task.projectId)
     const token = await this.deps.owned(entity)
     const currentTask = local.tasks.findLast(value => value.projectId === task.projectId && value.entityId === task.entityId && value.purpose === 'material' && path.basename(value.worktree) === token.taskId)
     if (!currentTask) throw new Error('当前修订的本地材料现场不存在，请先恢复修订任务')
-    const draft = await readMaterial(currentTask.worktree, 'scenario', task.entityId), record = await this.record(task.entityId, task.projectId)
+    const draft = await readMaterial(currentTask.worktree, 'scenario', task.entityId)
     if (draft.metadata.kind !== 'scenario') throw new Error('场景上下文无效')
     const ref = draft.metadata.templateRef, bytes = await this.projects.readFixed(task.projectId, ref.commitSha, ref.path, ref.sha256)
     if (digest(bytes) !== ref.sha256) throw new Error('模板 hash 不符')
-    const sources = record.sources.filter(s => s.selected && (s.status === 'read' || s.status === 'partial'))
-    const pendingImages = record.sources.filter(s => s.selected && ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(s.format)).map(s => ({ id: s.id, path: record.sourcePaths[s.id], status: s.status }))
     const protocol = task.scenarioRepair
       ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
       : `当前场景 ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认，禁止引用未读取资料。
 回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；不输出采纳建议或分段候选，不写正文。
 当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后追加唯一 eadp-write-proposal 代码块：{"entityId":"${task.entityId}","conclusions":[{"id":"结论ID","text":"本轮结论"}],"evidenceIds":["实际已读资料ID"],"body":"整篇新正文"}。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
-    return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n可用原生read_image读取的图片（未读取前禁止引用）：${JSON.stringify(pendingImages)}\n实际已读资料：\n${JSON.stringify(sources.map(s => ({ id: s.id, name: s.name, sha256: s.sha256, ranges: s.ranges, text: s.text })))}`
+    return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n${await this.sources.context(task)}`
   }
   async accept(sessionId: string, content: string): Promise<boolean> {
     const local = await this.store.read(), task = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'material')

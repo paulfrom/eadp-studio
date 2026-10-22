@@ -32,8 +32,12 @@ async function fixture(failure?: 'session' | 'prompt') {
   const storeRoot = path.join(root, 'state')
   const store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
-  const scenario = (version: number): EntityView => ({ id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash }, revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0,
-    current: { version, confirmationId: `confirmation-${version}`, fixed: { commitSha: String(version).repeat(40), path: '场景/scenario.md', sha256: hash(version) }, metadata: {} as never, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } } })
+  const scenario = (version: number): EntityView => {
+    const entity: EntityView = { id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash }, revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 }
+    entity.current = { version, confirmationId: `confirmation-${version}`, fixed: { commitSha: String(version).repeat(40), path: '场景/scenario.md', sha256: hash(version) }, metadata: initialMetadata(entity), confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+    return entity
+  }
+
   const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1, categories: [] }, entities: [scenario(1)], baselines: [], integrations: [] }
   const integrations = new Map<string, IntegrationView>()
   const addOperation = (version: number): PendingOperation => {
@@ -288,6 +292,7 @@ for (const action of ['checkPrototype', 'startPreview'] as const) test('failed '
   try {
     const entity = f.remote.entities[0]!
     entity.kind = 'requirement'; entity.categoryId = 'cat'
+    entity.current!.metadata = initialMetadata(entity)
     entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
     f.local.tasks.push({ projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype', inputHash: entity.current!.fixed.sha256, worktree: path.join(f.root, 'prototype-task') })
     await f.store.save()
@@ -442,6 +447,7 @@ for (const action of ['claimPrototype', 'startSession'] as const) test(action + 
     await mkdir(worktree)
     const draft = await saveMaterial(worktree, initialMetadata(entity), '# 已确认需求\n')
     entity.current!.fixed = { ...entity.current!.fixed, path: draft.path, sha256: draft.sha256 }
+    entity.current!.metadata = draft.metadata
     entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
     const task = { projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype' as const, inputHash: draft.sha256, worktree }
     f.local.tasks.push(task)

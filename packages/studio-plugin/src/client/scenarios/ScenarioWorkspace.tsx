@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EntityView, MaterialMetadata, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
 import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { StudioProps } from '../studio/StudioPanel.tsx'
-import { NativeConversation } from '../components/NativeConversation.tsx'
+import { MaterialConversation } from '../components/MaterialConversation.tsx'
 import { ScenarioChatPanel, type ScenarioCandidateFace, type ScenarioChatActions, type ScenarioRevisionFace, type ScenarioSplitFace } from './ScenarioChatPanel.tsx'
 import { ScenarioGates } from './ScenarioGates.tsx'
 import { ScenarioSpecPanel } from './ScenarioSpecPanel.tsx'
@@ -75,9 +75,6 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     selectSession: sessionId => { void execute({ action: 'selectScenarioSession', entityId: entity.id, sessionId }) },
     openTemplates: () => faces.openSettings('studio-scenario-templates'),
     setAutoWrite: (enabled: boolean) => { void execute({ action: 'setScenarioAutoWrite', entityId: entity.id, enabled }) },
-    importSource: actions.importSource,
-    retrySource: actions.retrySource,
-    selectSource: actions.selectSource,
     adoptSuggestions: actions.adopt,
     resolveWriteProposal: decision => {
       const proposal = workspace.writeProposal
@@ -110,7 +107,9 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   }
   return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
     <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
-      {activeSessionId ? <NativeConversation key={activeSessionId} run={faces.run} retainSession={faces.retainSession} SessionProvider={faces.SessionProvider} renderFactorySlot={faces.renderFactorySlot} sessionId={activeSessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。普通建议只在采纳后写入。'}</p></div>}
+      <MaterialConversation sessionId={activeSessionId} faces={faces} attachments={{ sources: workspace.sources, disabled: locked, readOnly: workspace.readOnly, onImport: actions.importSource, onRetry: actions.retrySource, onSelect: actions.selectSource }}>
+        <span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。明确同意写入后，才会更新正文。'}</p>
+      </MaterialConversation>
     </ScenarioChatPanel>
     <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.scenarioTemplates} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
       <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />

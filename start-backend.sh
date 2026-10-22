@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# One-click local startup of the collaboration backend (PostgreSQL + API) via Docker Compose.
+# One-click local startup of the collaboration backend API via Docker Compose.
+# PostgreSQL and Redis are the instances this machine already shares; no database or
+# cache container is started and no postgres or redis image is pulled here.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,13 +18,23 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-API_PORT="${EADP_API_PORT:-6972}"
+: "${DATABASE_URL:?DATABASE_URL is required. Point it at the shared PostgreSQL instance in apps/collaboration-api/.env.}"
+: "${GITLAB_URL:?GITLAB_URL is required. Copy apps/collaboration-api/.env.example to apps/collaboration-api/.env and fill it in.}"
 
-# Free the API port if a non-Docker process (e.g. a leftover host dev server) holds it.
+# The API port is published by Docker on the host, so the container listens on 3001
+# and the host serves EADP_API_PORT.
+API_PORT="${EADP_API_PORT:-${PORT:-6972}}"
+export EADP_API_PORT="$API_PORT"
+
+# Free the API port if a host process (e.g. a leftover host dev server) holds it.
+# Container processes are left to compose, which recreates this project's containers.
 occupants=$(ss -tlnHp "sport = :${API_PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u || true)
 for pid in $occupants; do
   comm=$(ps -o comm= -p "$pid" 2>/dev/null || true)
   if [[ "$comm" == "docker-proxy" || -z "$comm" ]]; then
+    continue
+  fi
+  if grep -qsE 'docker|containerd' "/proc/$pid/cgroup" 2>/dev/null; then
     continue
   fi
   echo "Port ${API_PORT} is held by PID ${pid} (${comm}); killing it."
@@ -34,18 +46,12 @@ if [[ -n "$occupants" ]]; then
     sleep 1
   done
 fi
-if ss -tlnH "sport = :${API_PORT}" 2>/dev/null | grep -q . && ! docker ps --format '{{.Ports}}' | grep -q ":${API_PORT}->"; then
-  echo "error: port ${API_PORT} is still in use and not owned by a Docker container." >&2
-  exit 1
-fi
-
-: "${GITLAB_URL:?GITLAB_URL is required. Copy apps/collaboration-api/.env.example to apps/collaboration-api/.env and fill it in.}"
-export GITLAB_URL
 
 echo "Starting collaboration backend on port ${API_PORT} ..."
-docker compose -f "$COMPOSE_FILE" up -d --build
+# --remove-orphans drops the retired database and cache containers of this project.
+docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
 
-API_CONTAINER=eadp-collaboration-api-1
+API_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q api)"
 deadline=$((SECONDS + 120))
 while (( SECONDS < deadline )); do
   state=$(docker inspect -f '{{.State.Status}}' "$API_CONTAINER" 2>/dev/null || echo missing)

@@ -1,55 +1,41 @@
 name: eadp-collaboration
+
+# The collaboration API uses the PostgreSQL and Redis instances that this machine already
+# shares. This stack starts no database and no cache container, so it pulls no postgres
+# or redis image.
+#
+# The API port is published by Docker, so external machines reach it through the same
+# Docker path as before: the host firewall only inspects locally bound sockets, while
+# published ports are forwarded by Docker itself. The container therefore addresses the
+# shared services through the host address of the Docker bridge (172.17.0.1), which is
+# valid for the container and for host-run processes alike.
 services:
-  db:
-    image: postgres:17
-    environment:
-      POSTGRES_DB: eadp_studio
-      POSTGRES_USER: eadp
-      POSTGRES_PASSWORD: ${EADP_DB_PASSWORD:-eadp-dev-password}
-    volumes:
-      - eadp-pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U eadp -d eadp_studio']
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  cache:
-    image: redis:7-alpine
-    command: ['redis-server', '--save', '', '--appendonly', 'no']
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
   api:
     build:
       context: ../..
       dockerfile: apps/collaboration-api/Dockerfile
+    network_mode: bridge
+    ports:
+      - '${EADP_API_PORT:-6972}:3001'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
-      DATABASE_URL: postgresql://eadp:${EADP_DB_PASSWORD:-eadp-dev-password}@db:5432/eadp_studio
-      PG_SSL: disable
-      REDIS_URL: ${REDIS_URL:-redis://cache:6379}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in apps/collaboration-api/.env to the shared PostgreSQL instance}
+      PG_SSL: ${PG_SSL:?Set PG_SSL to require or disable in apps/collaboration-api/.env}
+      REDIS_URL: ${REDIS_URL:-redis://172.17.0.1:6379}
       GITLAB_URL: ${GITLAB_URL:?Set GITLAB_URL in apps/collaboration-api/.env or the environment}
       GITLAB_ALLOW_HTTP: ${GITLAB_ALLOW_HTTP:-}
       SEI_GITLAB_TOKEN: ${SEI_GITLAB_TOKEN:-}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-},db,cache
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
       HOST: 0.0.0.0
       PORT: 3001
+      STUDIO_SESSION_TTL_DAYS: ${STUDIO_SESSION_TTL_DAYS:-90}
+      STUDIO_PUBLISHER_USER_IDS: ${STUDIO_PUBLISHER_USER_IDS:-}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-}
+      PUBLICATION_TOKEN_SECRET: ${PUBLICATION_TOKEN_SECRET:-}
       DESKTOP_UPDATE_MIN_VERSION: ${DESKTOP_UPDATE_MIN_VERSION:-}
       DESKTOP_UPDATE_BLOCK_TITLE: ${DESKTOP_UPDATE_BLOCK_TITLE:-}
       DESKTOP_UPDATE_BLOCK_DETAIL: ${DESKTOP_UPDATE_BLOCK_DETAIL:-}
       DESKTOP_UPDATE_APP_LINK: ${DESKTOP_UPDATE_APP_LINK:-}
-    ports:
-      - '${EADP_API_PORT:-6972}:3001'
-    depends_on:
-      db:
-        condition: service_healthy
-      cache:
-        condition: service_healthy
-
-volumes:
-  eadp-pgdata:

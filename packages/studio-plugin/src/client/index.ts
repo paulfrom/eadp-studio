@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { studioCall } from './command.ts'
 import { StudioPanel } from './StudioPanel.tsx'
 import { StudioPanelIcon } from './panelIcon.tsx'
+import { MaterialAttachmentButton } from './components/MaterialAttachments.tsx'
 import { settingsSections, type StudioSettingsFaces } from './settings/sections.tsx'
 import { createStudioSession, type StudioSession } from './session.ts'
 import type { ThemeFace } from './theme.ts'
@@ -91,6 +92,9 @@ function registerStudio(ctx: ClientContext, session: StudioSession, theme: Theme
 export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(studioRemote)
   registerPanelRow(ctx)
+  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
+    name: 'conversation.input.left', id: 'studio-material-attachments', order: 0,
+  }, MaterialAttachmentButton))
   // `remote.studio` is only addressable inside a fiber that declares it, so the
   // command channel and the one projection session both belong to that fiber.
   const ui = ctx.inject(['remote.studio'], (injected: ClientContext) => {

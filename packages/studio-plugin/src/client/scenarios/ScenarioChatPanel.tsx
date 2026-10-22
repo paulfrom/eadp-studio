@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import type { Candidate, EntityView, TaskView } from '../../shared/studio.ts'
-import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
-import { ScenarioEvidence } from './ScenarioEvidence.tsx'
+import type { ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import { ScenarioSuggestions } from './ScenarioSuggestions.tsx'
 import { ScenarioWriteProposalCard } from './ScenarioWriteProposalCard.tsx'
 import { ScenarioWriteReceiptCard } from './ScenarioWriteReceiptCard.tsx'
@@ -11,8 +10,6 @@ import css from '../studio.module.css'
 export interface ScenarioChatActions {
   refresh(): void; newSession(): void; selectSession(sessionId: string): void; openTemplates(): void;
   setAutoWrite(enabled: boolean): void;
-  importSource(name: string, base64: string): Promise<void>; retrySource(sourceId: string): void;
-  selectSource(source: ScenarioSource, selected: boolean, formal: boolean): void;
   adoptSuggestions(batchId: string, itemIds: string[]): Promise<void>;
   resolveWriteProposal(decision: 'write' | 'reject'): void;
   undoWrite(): void;
@@ -30,7 +27,7 @@ export interface ScenarioCandidateFace {
 }
 /**
  * Chat pane of the scenario page: session controls, the native conversation the
- * caller passes as children, and the docked evidence, suggestion and split cards.
+ * caller passes as children, and the docked write, suggestion and split cards.
  */
 export function ScenarioChatPanel({ entity, workspace, busy, locked, material, sessions, activeSessionId, actions, revision, split, candidates, expandSpec, children }: {
   entity: EntityView; workspace: Workspace; busy: boolean; locked: boolean; material: { hash: string; dirty: boolean };
@@ -76,15 +73,14 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
       {task?.error && <div className={css.notice}>{task.error}</div>}
       {workspace.writeProposal && <ScenarioWriteProposalCard proposal={workspace.writeProposal} disabled={locked || workspace.readOnly || material.dirty} onResolve={actions.resolveWriteProposal} />}
       {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly || material.dirty} onUndo={actions.undoWrite} />}
-      <details className={css.dockGroup} open>
-        <summary className={css.cardHead}><strong>资料与 AI 建议</strong><small>{workspace.sources.length} 份资料 · {suggestionCount} 条建议</small></summary>
+      <section className={css.dockCard} aria-label="AI 建议">
+        <header className={css.cardHead}><strong>AI 建议</strong><small>{suggestionCount} 条建议</small></header>
         {!workspace.readOnly && <label className={css.checkbox} title="开启后 AI 返回的合法建议会整批写入右侧正文并更新版本；手工编辑期间的文件变化会提示合并，写入失败保留建议卡。">
           <input type="checkbox" disabled={busy || locked} checked={workspace.autoWrite} onChange={event => actions.setAutoWrite(event.target.checked)} />自动写入 AI 建议
           <small className={css.muted}>{workspace.autoWrite ? '建议生成后直接写入正文' : '建议需手动采纳后才写入'}</small>
         </label>}
-        <ScenarioEvidence sources={workspace.sources} disabled={locked} readOnly={workspace.readOnly} onImport={actions.importSource} onRetry={actions.retrySource} onSelect={actions.selectSource} />
         <ScenarioSuggestions batches={workspace.suggestions} hash={material.hash} disabled={locked || workspace.readOnly || material.dirty} onAdopt={actions.adoptSuggestions} />
-      </details>
+      </section>
       {workspace.readOnly && <section className={css.dockCard} aria-label="需求拆分">
         <header className={css.cardHead}><strong>{split.offered && !split.deferred ? '场景已被后台接受，是否立即拆分需求？' : '从当前确认版拆分需求'}</strong></header>
         <p className={css.muted}>仅生成候选，选用后才创建需求草稿。</p>

@@ -1,13 +1,14 @@
-import { useState } from 'react'
-import type { EntityView, MaterialDraft, MaterialMetadata } from '../../shared/studio.ts'
+import { useEffect, useState } from 'react'
+import type { EntityView, MaterialDraft, MaterialMetadata, StudioReply } from '../../shared/studio.ts'
 import type { ScenarioTemplateCatalog } from '../../shared/studio.ts'
 import css from '../studio.module.css'
 
-export function MaterialEditor({ draft, categories, entities, projectId, scenarioTemplates, busy, onSave, onBindTemplate }: {
+export function MaterialEditor({ draft, categories, entities, projectId, scenarioTemplates, busy, onSave, onBindTemplate, registerFlush }: {
   draft: MaterialDraft; categories: Array<{ id: string; name: string }>; entities: EntityView[]; projectId: string; busy: boolean;
   scenarioTemplates?: ScenarioTemplateCatalog | undefined;
-  onSave(body: string, metadata: MaterialMetadata): Promise<unknown>
+  onSave(body: string, metadata: MaterialMetadata): Promise<StudioReply | undefined>
   onBindTemplate(templateId: string): Promise<unknown>
+  registerFlush?: ((flush?: () => Promise<boolean>) => void) | undefined;
 }) {
   const relationsFrozen = !!entities.find(entity => entity.id === draft.entityId)?.frozenBy.length
   const [body, setBody] = useState(draft.body)
@@ -16,7 +17,7 @@ export function MaterialEditor({ draft, categories, entities, projectId, scenari
   const [evidence, setEvidence] = useState(JSON.stringify(draft.metadata.businessEvidence, null, 2))
   const [questions, setQuestions] = useState(draft.metadata.openQuestions.map(q => `${q.blocking ? '阻断' : '限制'} | ${q.limitation} | ${q.excludedScope}`).join('\n'))
   const [error, setError] = useState('')
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
     try {
       const businessEvidence: MaterialMetadata['businessEvidence'] = evidence.trim() ? JSON.parse(evidence) : []
       if (!Array.isArray(businessEvidence)) throw new Error('正式依据必须是 JSON 数组')
@@ -25,9 +26,18 @@ export function MaterialEditor({ draft, categories, entities, projectId, scenari
         openQuestions: questions.split('\n').filter(x => x.trim()).map(line => { const [kind, limitation, ...scope] = line.split('|'); return { blocking: kind?.trim() === '阻断', limitation: limitation?.trim() ?? '', excludedScope: scope.join('|').trim() } }),
       }
       const result = await onSave(body, next)
-      setError(result && typeof result === 'object' && 'ok' in result && !result.ok && 'message' in result ? String(result.message) : '')
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '正式依据格式无效') }
+      if (!result?.ok) { setError(result && !result.ok ? result.message : '保存失败，当前输入已保留。'); return false }
+      setError(''); return true
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '正式依据格式无效'); return false }
   }
+  const dirty = body !== draft.body || JSON.stringify(metadata) !== JSON.stringify(draft.metadata)
+    || evidence !== JSON.stringify(draft.metadata.businessEvidence, null, 2)
+    || questions !== draft.metadata.openQuestions.map(q => `${q.blocking ? '阻断' : '限制'} | ${q.limitation} | ${q.excludedScope}`).join('\n')
+  // Source selection can update metadata, so hand edits must reach the Host first.
+  useEffect(() => {
+    registerFlush?.(async () => !dirty || await save())
+    return () => registerFlush?.()
+  }, [registerFlush, dirty, save])
   return <div className={css.editor}>
     <div className={css.editorHeading}><span className={css.assetIcon}>MD</span><div><strong>当前材料</strong><small>{draft.path}</small></div><span className={css.muted}>草稿编辑</span></div>
     <label>标题<input value={metadata.title} onChange={e => setMetadata({ ...metadata, title: e.target.value })} /></label>

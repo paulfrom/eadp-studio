@@ -1,9 +1,9 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { StudioProps } from '../studio/StudioPanel.tsx'
 import css from '../studio.module.css'
 
-type ConversationProps = Pick<StudioProps, 'run' | 'retainSession' | 'SessionProvider' | 'renderFactorySlot'> & { sessionId: string }
+type ConversationProps = Pick<StudioProps, 'run' | 'retainSession' | 'SessionProvider' | 'renderFactorySlot'> & { sessionId: string; accessory?: ReactNode }
 
 /** Retains a native DSH conversation for its session identity, independently of workspace polling. */
 export const NativeConversation = memo(function NativeConversation(props: ConversationProps) {
@@ -29,8 +29,8 @@ export const NativeConversation = memo(function NativeConversation(props: Conver
     })
     return () => { cancelled = true; retained?.release(); retained = undefined }
   }, [props.sessionId, attempt])
-  if (error) return <div role="alert" className={css.error}>{error}<button onClick={() => setAttempt(value => value + 1)}>重试恢复对话</button></div>
-  if (!reference) return <div className={css.empty}>正在恢复原生会话…</div>
+  if (error) return <div role="alert" className={css.error}>{error}<button onClick={() => setAttempt(value => value + 1)}>重试恢复对话</button>{props.accessory}</div>
+  if (!reference) return <div className={css.empty}>正在恢复原生会话…{props.accessory}</div>
   const Provider = props.SessionProvider
   return <div className={css.nativeConversation}><Provider session={reference}>{props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })}</Provider></div>
 })

@@ -55,6 +55,7 @@ export type ScenarioCommand =
   | { action: 'setScenarioAutoWrite'; entityId: string; enabled: boolean }
   | { action: 'splitScenario'; entityId: string }
   | { action: 'setScenarioStructureCheck'; enabled: boolean }
+  /** Attachment actions serve scenario and requirement materials through one Host service. */
   | { action: 'importScenarioSource'; entityId: string; name: string; base64: string; operationId: string }
   | { action: 'retryScenarioSource'; entityId: string; sourceId: string }
   | { action: 'selectScenarioSource'; entityId: string; sourceId: string; selected: boolean; formal: boolean }

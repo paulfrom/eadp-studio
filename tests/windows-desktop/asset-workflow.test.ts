@@ -13,6 +13,7 @@ import { CollaborationError, CollaborationClient } from '../../packages/studio-p
 import { registerRoutes } from '../../apps/collaboration-api/src/routes.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { digest, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
+import { archiveSelectedEvidence } from '../../packages/studio-plugin/src/host/application/scenario-evidence.ts'
 import { validateIntegration } from '../../apps/collaboration-api/src/modules/integration.ts'
 
 const head = 'a'.repeat(40), candidate = 'b'.repeat(40)
@@ -549,3 +550,92 @@ test('explicit scenario revision binds unfinished requirements to the next scene
   assert.equal(f.value.current!.fixed.sha256, current.sha256, 'the accepted scene stays fixed while its revision is edited')
 })
 
+
+test('requirement attachments share source extraction, retry, context, formal archives and pruning', async t => {
+  const f = await fixture(t), app = f.app()
+  let reads = 0
+  f.ports.readScenarioSource = async () => ++reads === 1
+    ? { status: 'failed', text: '', ranges: [], error: '转换服务暂不可用' }
+    : { status: 'partial', text: '实际读取的需求规则', ranges: ['page:1'], error: '第 2 页未读取' }
+  const imported = await app.command({ action: 'importScenarioSource', entityId: f.value.id, operationId: 'requirement-source', name: '规则.pdf', base64: Buffer.from('原始资料').toString('base64') })
+  assert.equal(imported.ok, true, JSON.stringify(imported)); await app.settle()
+  const record = f.local.scenarios.find(value => value.entityId === f.value.id)!, source = record.sources[0]!
+  assert.equal(source.status, 'failed'); assert.match(source.error!, /转换服务/)
+  assert.ok(record.sourcePaths[source.id]!.includes(`${path.sep}scenario-sources${path.sep}project${path.sep}target${path.sep}`))
+  let reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: true, formal: true })
+  assert.equal(reply.ok, false, 'unread requirement sources cannot become formal evidence')
+  reply = await app.command({ action: 'retryScenarioSource', entityId: f.value.id, sourceId: source.id })
+  assert.equal(reply.ok, true, JSON.stringify(reply)); await app.settle()
+  assert.equal(source.status, 'partial'); assert.deepEqual(source.ranges, ['page:1'])
+  const projection = await app.state(), projected = projection.materialSources!.find(value => value.entityId === f.value.id)!
+  assert.equal(projected.readOnly, false); assert.equal(projected.sources[0]!.text, '')
+  const context = await app.scenarioSessionContext(f.local.tasks[0]!)
+  assert.deepEqual(context.readPaths, [record.sourcePaths[source.id]])
+  assert.match(context.text, /实际读取的需求规则/); assert.match(context.text, /page:1/)
+  assert.doesNotMatch(context.text, /eadp-write-proposal|eadp-suggestions/)
+  const original = await readMaterial(f.worktree, 'requirement', f.value.id)
+  reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: true, formal: true })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  const archived = await readMaterial(f.worktree, 'requirement', f.value.id), evidence = archived.metadata.businessEvidence[0]!
+  assert.equal(archived.body, original.body); assert.notEqual(archived.sha256, original.sha256)
+  assert.equal(evidence.label, '规则.pdf'); assert.equal(evidence.files.length, 3)
+  assert.equal(await readFile(path.join(f.worktree, evidence.files.find(file => file.path.includes('extracted-'))!.path), 'utf8'), source.text)
+  reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: false, formal: false })
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  assert.deepEqual((await readMaterial(f.worktree, 'requirement', f.value.id)).metadata.businessEvidence, [])
+  for (const file of evidence.files) await assert.rejects(readFile(path.join(f.worktree, file.path)), { code: 'ENOENT' })
+  assert.deepEqual((await app.scenarioSessionContext(f.local.tasks[0]!)).readPaths, [])
+  assert.doesNotMatch((await app.scenarioSessionContext(f.local.tasks[0]!)).text, /实际读取的需求规则/)
+  assert.equal(await readFile(record.sourcePaths[source.id]!, 'utf8'), '原始资料')
+})
+
+test('native image reads for requirement attachments require the current design owner and original source hash', async t => {
+  const f = await fixture(t), app = f.app()
+  f.ports.readScenarioSource = async () => ({ status: 'failed', text: '', ranges: [], error: '请使用 read_image' })
+  assert.equal((await app.command({ action: 'importScenarioSource', entityId: f.value.id, operationId: 'image-source', name: '流程.png', base64: Buffer.from('image-bytes').toString('base64') })).ok, true)
+  await app.settle()
+  const record = f.local.scenarios.find(value => value.entityId === f.value.id)!, source = record.sources[0]!, filename = record.sourcePaths[source.id]!
+  const output = { kind: 'source-read' as const, path: filename, attachmentId: 'native-image', ranges: ['image:1 (20×10)'] }
+  await writeFile(filename, 'changed-bytes')
+  await app.acceptSessionOutput('material-session', output)
+  assert.equal(source.status, 'failed', 'changed original bytes cannot become actual-read evidence')
+  await writeFile(filename, 'image-bytes')
+  const ownerId = f.value.occupation!.ownerId; f.value.occupation!.ownerId = 2
+  await app.acceptSessionOutput('material-session', output)
+  assert.equal(source.status, 'failed', 'a former session cannot mark evidence after ownership changes')
+  f.value.occupation!.ownerId = ownerId
+  await app.acceptSessionOutput('material-session', { ...output, path: path.join(f.root, 'outside.png') })
+  assert.equal(source.status, 'failed')
+  await app.acceptSessionOutput('material-session', output)
+  assert.equal(source.status, 'read'); assert.match(source.text, /attachmentId=native-image/)
+  assert.deepEqual(source.ranges, output.ranges)
+  assert.match((await app.scenarioSessionContext(f.local.tasks[0]!)).text, /attachmentId=native-image/)
+})
+
+test('confirmed requirement attachment projections use fixed evidence and reject mutation or prototype ownership', async t => {
+  const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  const archived = await archiveSelectedEvidence(f.worktree, [{ source: { id: 'fixed-pdf', name: '已确认部分读取.pdf', format: 'pdf', sha256: digest('原始PDF'), status: 'partial', ranges: ['page:1'], text: '仅读取第一页', error: '第 2 页提取失败', selected: true, formal: true }, original: Buffer.from('原始PDF') }], ['fixed-pdf'])
+  f.value.current = { version: 1, fixed: { commitSha: head, path: draft.path, sha256: draft.sha256 }, metadata: { ...draft.metadata, businessEvidence: archived }, confirmationId: 'accepted', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
+  const record = { projectId: 'project', entityId: f.value.id, suggestions: [], sources: [{ id: 'local', name: '未确认本地资料', format: 'txt', sha256: digest('local'), status: 'read' as const, ranges: ['line:1'], text: '本地未确认文本', selected: true, formal: false }], sourcePaths: {} }
+  f.local.scenarios.push(record); await f.store.save()
+  delete f.value.occupation
+  let projection = (await app.state()).materialSources!.find(value => value.entityId === f.value.id)!
+  assert.equal(projection.readOnly, true); assert.equal(projection.sources[0]!.name, '已确认部分读取.pdf')
+  assert.equal(projection.sources[0]!.formal, true); assert.equal(projection.sources[0]!.text, '')
+  assert.equal(projection.sources[0]!.status, 'partial'); assert.equal(projection.sources[0]!.format, 'pdf')
+  assert.deepEqual(projection.sources[0]!.ranges, ['page:1']); assert.match(projection.sources[0]!.error!, /第 2 页提取失败/)
+  const command = { action: 'importScenarioSource' as const, entityId: f.value.id, operationId: 'blocked-source', name: '禁止.txt', base64: Buffer.from('blocked').toString('base64') }
+  assert.equal((await app.command(command)).ok, false)
+  f.value.occupation = { occupationId: 'prototype', generation: 1, taskId: 'task', clientId: f.local.clientId, expectedRevision: 1, entityId: f.value.id, ownerId: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
+  projection = (await app.state()).materialSources!.find(value => value.entityId === f.value.id)!
+  assert.equal(projection.readOnly, true); assert.equal((await app.command(command)).ok, false)
+  assert.equal(record.sources.length, 1)
+  f.value.current!.metadata.businessEvidence = [evidence]
+  projection = (await app.state()).materialSources!.find(value => value.entityId === f.value.id)!
+  assert.equal(projection.sources[0]!.status, 'failed'); assert.match(projection.sources[0]!.error!, /读取记录/)
+  f.value.current!.metadata.businessEvidence = archived
+  const manifest = archived[0]!.files.find(file => file.path.endsWith('.json'))!
+  await writeFile(path.join(f.worktree, manifest.path), '{}')
+  projection = (await f.app().state()).materialSources!.find(value => value.entityId === f.value.id)!
+  assert.equal(projection.sources[0]!.status, 'failed'); assert.match(projection.sources[0]!.error!, /hash|哈希/)
+})

@@ -8,7 +8,7 @@ Fastify + PostgreSQL 模块化单体。工作台只登录本协同后端，使�
 
 ## 本机运行
 
-先在仓库根安装锁定依赖，然后复制 `.env.example` 为 `.env` 并配置数据库。凭证只保存在忽略的本机文件。`PG_SSL` 必须明确选择 `require` 或 `disable`，不会自动降级；`require` 校验证书，企业 CA 通过标准 `NODE_EXTRA_CA_CERTS` 配置。此前指定端点的匿名 SSL 协商未被接受，不因此自动禁用 TLS；既有事务检查只按当时范围计入，不能代替新身份/初始化流程验证。
+先在仓库根安装锁定依赖，然后复制 `.env.example` 为 `.env` 并配置数据库。数据库与缓存都用本机已共用的 PostgreSQL、Redis 实例，编排不再自建这两个服务。凭证只保存在忽略的本机文件。`PG_SSL` 必须明确选择 `require` 或 `disable`，不会自动降级；`require` 校验证书，企业 CA 通过标准 `NODE_EXTRA_CA_CERTS` 配置。此前指定端点的匿名 SSL 协商未被接受，不因此自动禁用 TLS；既有事务检查只按当时范围计入，不能代替新身份/初始化流程验证。
 
 ```sh
 pnpm --filter @eadp/collaboration-api db:init
@@ -191,7 +191,15 @@ pnpm --filter @eadp/collaboration-api typecheck
 pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
 ```
 
-`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。
+`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
+
+```sh
+# 在共用实例中重建空的临时库；实例名与账号按本机实际情况替换。
+docker exec pg17 psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS eadp_auth_check_backend"
+docker exec pg17 psql -U postgres -d postgres -c "CREATE DATABASE eadp_auth_check_backend OWNER scenario_test"
+STUDIO_TEST_DATABASE_URL=postgresql://scenario_test:scenario_test@127.0.0.1:5433/eadp_auth_check_backend \
+  pnpm --filter @eadp/collaboration-api exec tsx --test ../../tests/collaboration/backend-lifecycle.test.ts
+```
 
 `pnpm --filter @eadp/collaboration-api check:transactions` 仅在显式配置 `SCENARIO_TRANSACTION_TEST_DATABASE_URL`、库名符合 `eadp_scenario_transaction_check_<字母数字或下划线>` 且 public 为空时运行。它初始化独立 Schema，检查编号预留/并发/失败重试、幂等、占用与释放；保留不可变记录供检查，由调用方删除整个临时数据库，不在已初始化业务库创建或清理测试数据。
 
@@ -203,13 +211,15 @@ pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.t
 
 ## Docker 运行与一键启动
 
-多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）；`compose.yml`（postgres:17 + redis:7 + api，默认端口 `6972:3001`）仅用于本机一键拉起，企业形态仍是独立 PostgreSQL + 本镜像。
+多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）。`compose.yml` 只构建并运行 api 一个服务，数据库与缓存使用本机已共用的 PostgreSQL 与 Redis 实例，编排内不再启动 postgres/redis 容器，也不重复拉取这两个镜像。api 服务不使用宿主机网络，而是由 Docker 把端口发布到宿主机（默认 `6972` → 容器 `3001`），因此外部机器按宿主机地址访问；宿主机防火墙只拦截本机绑定的套接字，Docker 发布的端口走转发路径，不受该规则影响。容器通过宿主机在 Docker 网桥上的地址（`172.17.0.1`）访问共用的数据库与缓存；该地址对容器和宿主机进程同时有效，`.env` 因此只需一个地址。企业形态仍是独立 PostgreSQL + 本镜像。
 
-可选 `REDIS_URL` 启用本机 Redis 缓存 GitLab 读：用户身份（60s）、仓库成员（30s）、项目元数据（30s）、群组建仓选项（60s）；每次建仓仍实时复核用户与群组，写操作（`edit=true`）不读缓存。缓存不可用时自动退回远端读取，不影响协同正确性。
+可选 `REDIS_URL` 启用共用 Redis 缓存 GitLab 读：用户身份（60s）、仓库成员（30s）、项目元数据（30s）、群组建仓选项（60s）；每次建仓仍实时复核用户与群组，写操作（`edit=true`）不读缓存。缓存不可用时自动退回远端读取，不影响协同正确性。
 
 ```sh
 ./start-backend.sh            # 需要 docker 与 compose 插件；读取 apps/collaboration-api/.env
 EADP_API_PORT=6973 ./start-backend.sh   # 端口被占时覆盖
 ```
+
+`start-backend.sh` 只构建 api 镜像并等待其健康，`--remove-orphans` 会清除本项目此前遗留的数据库与缓存容器。数据库与缓存的地址、凭证和 TLS 决定都在 `.env` 里，脚本不再代替它们选择实例。宿主机防火墙若只放行 ssh 等少数端口，发布端口不受影响；若改用宿主机网络模式监听本机套接字，则必须先在防火墙上放行该端口。
 
 手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，运行时显式传 `-e DATABASE_URL=... -e PG_SSL=disable -e GITLAB_URL=...` 等配置；镜像默认 `HOST=0.0.0.0`、容器内默认监听 3001，可用 `-e HOST=...` 覆盖。

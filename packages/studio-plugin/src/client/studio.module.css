@@ -505,11 +505,6 @@
 .chatDock > .notice { margin: 0; }
 .dockCard, .revisionImpact { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .dockCard > p { font-size: 11px; line-height: 1.8; color: var(--text-2); }
-.dockGroup { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.dockGroup > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
-.dockGroup[open] > summary { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.dockGroup > summary::after { content: '展开'; margin-left: auto; color: var(--text-3); font-size: 10px; }
-.dockGroup[open] > summary::after { content: '收起'; }
 .groupLabel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-2); }
 .groupLabel small { color: var(--text-3); font-size: 10.5px; }
 .cardHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
@@ -601,6 +596,12 @@
 .evidencePanel { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; }
 .evidencePanel > p { color: var(--text-2); line-height: 1.8; }
 .evidencePanel label { margin-top: 8px; }
+.studio .attachmentButton { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; font-size: 11px; color: var(--text-2); background: transparent; }
+.attachmentDialog { width: min(38rem, 90vw); max-height: 80dvh; overflow-y: auto; padding: 20px; }
+.attachmentDialog[open] { display: flex; flex-direction: column; gap: 16px; }
+.attachmentDialog header { gap: 16px; }
+.attachmentDialog .checkbox { flex-direction: row; align-items: flex-start; }
+.attachmentDialog input[type='checkbox'] { width: auto; margin-top: 3px; }
 .sourceCard { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 11px; overflow-wrap: anywhere; }
 .sourceCard > strong { font-size: 11.5px; }
 .sourceCard > small { color: var(--text-3); font: 10px var(--mono); }
