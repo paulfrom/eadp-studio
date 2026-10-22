@@ -44,8 +44,9 @@ SC02—SC14 已实现。SC15 的 Linux 自动化、类型检查及本地 Git 验
 - SC12 验证：装配树 `tsc -b` host/client 通过；客户端与相关脚本用例 36 项通过，含新增附件组件行为验证；`tests/windows-desktop` TS 用例 183 项中 182 通过、1 项因未配置测试数据库跳过。组件测试的 dialog 行为使用 jsdom shim；未做视觉审查、打包校验或真实桌面/模型验收。
 - 本轮 Linux 验证：contracts、asset-domain、collaboration-api 类型检查通过；后端源码单元测试 92 项通过；装配树 Host/Client 类型检查通过；`tests/windows-desktop` 180 项中 179 通过、1 项因该 Host 套件未配置数据库跳过；客户端与脚本 41 项通过，含 3 项场景状态组件验证。Host 用例覆盖真实临时 Git 仓库的主目录快进、脏目录保护、worktree 归档与重试幂等。
 - Host 测试使用临时普通 Git 仓库；本轮未执行开发清单要求的临时 bare 仓库集成（首次 push、远端 CAS 与 complete 丢响应恢复），该项仍未验收。
-- 数据库/API 集成失败：`backend-lifecycle.test.ts` 在新建项目返回阶段失败，诊断为 `repository.projectView` 查询 schema 已明确删除的 `studio_categories` 表；项目状态被保存为创建中，API 返回 503。该遗留分类路径同时涉及需求分类，按当前范围未在本轮扩展修改。
-- `scenario-schema.test.mjs` 在 PostgreSQL 上 9 个子用例通过、1 个失败：`result='cancelled'` 且 `failure_code=NULL` 的 CHECK 表达式产生 SQL UNKNOWN，PostgreSQL 将其视为通过；测试预期拒绝该记录。该一致性比较属阶段二范围，未在本轮调整。
+- 初次数据库/API 验证发现 `repository.projectView` 读取 schema 已删除的 `studio_categories`，以及实体读取/保存引用已删除的 `studio_batch_freezes`；本轮已删除这些旧表访问和项目分类写入路由。
+- PostgreSQL 17.10 复验：`scenario-schema.test.mjs` 11 项全部通过；取消结果 CHECK 增加显式非空条件，拒绝 NULL `failure_code`。
+- PostgreSQL 17.10 上 `backend-lifecycle.test.ts` 的登录、建仓与成员分配等前 6 个子用例通过；初始化接受时 schema 触发器要求项目已有不可变的系统预置通用场景版本，而 `Projects.initialize` 当前只接受项目头，返回 503。后续项目列表及业务操作子用例因此连带失败。`backend-scenarios.test.ts` 也在初始化阶段以同一约束失败。实现系统预置通用场景属于尚未验收的阶段二能力，本轮不据此放宽数据库完整性约束。
 - Linux 未验证临时 bare Git 集成、真实企业 GitLab、真实双客户端、Windows 宿主、真实模型或视觉/打包效果；这些项目仍为未验收。
 
 ## 2. 后端新增约束（桌面端实现时必须遵守）
@@ -74,7 +75,7 @@ SC02—SC14 已实现。SC15 的 Linux 自动化、类型检查及本地 Git 验
 
 ## 4. 剩余实施顺序与入口
 
-SC13 页面精简和 SC14 旧链路清理已完成。剩余工作是处理已记录的数据库/API schema 不一致，并继续执行 SC15 的真实双客户端、Windows 实机与真实模型验收；真实环境验收不能由本地类型检查或自动化用例替代。
+SC13 页面精简和 SC14 旧链路清理已完成。剩余工作包括实现 schema 要求的系统预置通用场景初始化，并继续执行 SC15 的真实双客户端、Windows 实机与真实模型验收；真实环境验收不能由本地类型检查或自动化用例替代。
 
 ### SC04 写入提议契约与提问触发（已完成）
 
@@ -185,7 +186,7 @@ node node_modules/typescript/bin/tsc -b packages/eadp/studio-plugin/tsconfig.hos
 
 - 评审绑定的是本地未提交快照；评审 worktree 现随同实体接受由 SC11 收整，但尚未在真实桌面验证。
 - 需求侧（REQ 编号、去分类、一致性对比端点/表）不在本轮范围；`docs/design/02-requirements.md` 的差距仍未实施。
-- SC15 尚未完成真实协同双客户端、Windows 实机与真实模型验收；数据库/API schema 不一致和 CHECK NULL 行为见本轮 Linux 验证记录。
+- SC15 尚未完成通用场景初始化与真实协同双客户端、Windows 实机和真实模型验收；PG17.10 复验见本轮记录。
 - 后端仅验证路径范围与单元行为；真实企业 GitLab、真实 PostgreSQL 运行库、双客户端、Windows 实机与真实模型均未验收。
 - SC12 的入口可达性已有组件级验证；桌面端未做视觉审查、打包校验与实机交互验收，本轮不声称桌面可用。
 

@@ -249,6 +249,14 @@
 
 - SC13 已将场景编号/名称、模板固定版本、本地草稿或固定版本状态与审计时间放在正文上方；业务完整性、待澄清项和模板结构检查归入确认检查；Git 技术信息折叠在按需诊断中。Host 投影写入提议待回答、失败重试、已写入/已拒绝，以及草稿、待同步、待清理和本机收整完成四态。
 - 装配树 Typert 生成 31 个包；Host/Client `tsc -b` 通过。contracts、asset-domain、collaboration-api 类型检查通过；collaboration-api 源码测试 92 项通过；客户端与脚本测试 41 项通过（含 3 项场景状态组件验证）；Host 测试 180 项中 179 项通过、1 项因未配置该套件数据库而跳过。Host 用例包含真实临时 Git 仓库上的快进、脏目录保护、归档和幂等收整验证。
-- 独立 PostgreSQL 数据库验证 `scenario-schema.test.mjs` 有 9 项通过、1 项失败：`cancelled` 记录的 CHECK 约束接受 NULL `failure_code`（SQL UNKNOWN）。数据库/API `backend-lifecycle.test.ts` 在项目查询时失败：`repository.projectView` 查询当前 schema 不存在的 `studio_categories` 表，并返回 503。
+- 首次数据库运行记录：`scenario-schema.test.mjs` 曾发现取消结果 CHECK 接受 NULL `failure_code`；`backend-lifecycle.test.ts` 曾因 `projectView` 查询已删除的 `studio_categories` 返回 503。问题处理及 PG17.10 复验见后文。
 - 执行 `./start-backend.sh` 重建并重启协同 API；宿主机 `GET http://127.0.0.1:6972/health` 返回 `{"status":"ok"}`，容器状态 healthy。
 - 未执行真实 GitLab、真实协同双客户端、Windows 实机、桌面视觉/打包或真实模型验收；SC15 整体未完成。分类路径与需求分类、一致性比较约束属于阶段二范围，本轮不扩展修改。
+
+
+## PostgreSQL 17 数据库复验（2026-10-22）
+
+- 使用本机共享 `pg17` 实例 PostgreSQL 17.10，在新建隔离空库运行 `scenario-schema.test.mjs`：11 项全部通过。取消对比记录的 CHECK 明确要求 `failure_code IS NOT NULL`，避免 NULL 产生 SQL UNKNOWN 而绕过校验。
+- 清理项目投影、实体状态读取/保存中指向已删除 `studio_categories` 与 `studio_batch_freezes` 的 SQL；移除未由当前数据库结构支持的项目分类写入路由。
+- 后端生命周期集成在项目初始化接受时失败：schema 要求 `studio_project_initializations` 与系统预置通用场景的第一条固定确认共同存在，当前 `Projects.initialize` 尚未写入该预置。`backend-lifecycle.test.ts` 前 6 个子用例通过，初始化及后续依赖其成功的检查失败；`backend-scenarios.test.ts` 同样在初始化失败。按阶段二范围记录，不通过删除约束来迁就未完成实现。
+- contracts、asset-domain 与 collaboration-api 类型检查通过。

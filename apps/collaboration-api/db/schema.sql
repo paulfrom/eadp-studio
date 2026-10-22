@@ -1076,7 +1076,7 @@ CREATE TABLE studio_consistency_comparisons (
   CHECK ((trigger='manual' AND confirmation_id IS NULL) OR (trigger='confirmation' AND confirmation_id IS NOT NULL)),
   CHECK ((result='completed' AND failure_code IS NULL) OR
     (result='failed' AND failure_code IS NOT NULL AND failure_code<>'cancelled' AND btrim(summary)<>'') OR
-    (result='cancelled' AND failure_code='cancelled'))
+    (result='cancelled' AND failure_code IS NOT NULL AND failure_code='cancelled'))
 );
 COMMENT ON TABLE studio_consistency_comparisons IS '一致性对比';
 COMMENT ON COLUMN studio_consistency_comparisons.id IS '对比记录ID';

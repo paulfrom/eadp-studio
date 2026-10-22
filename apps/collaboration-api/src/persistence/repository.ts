@@ -35,8 +35,7 @@ function snapshot(row: Row, prefix: 'creator' | 'last_editor') {
   return { id: Number(row[`${prefix}_id`]), account: String(row[`${prefix}_account`]), name: String(row[`${prefix}_name`]), at: date(row[prefix === 'creator' ? 'created_date' : 'last_edited_date']) };
 }
 async function projectView(c: Transaction, row: Row): Promise<ProjectView> {
-  const categories = (await c.query<{ id: string; name: string }>('SELECT id,name FROM studio_categories WHERE project_id=$1 ORDER BY id', [row.id])).rows;
-  return { id: String(row.id), gitlabProjectId: Number(row.gitlab_project_id), repositoryUrl: String(row.repository_url), stableBranch: String(row.stable_branch), name: String(row.name), namespaceId: Number(row.namespace_id), namespacePath: String(row.namespace_path), initializationStatus: row.state === 'ready' ? 'ready' : 'pending', recognizedHead: row.recognized_head as string | null, revision: Number(row.revision), categories,
+  return { id: String(row.id), gitlabProjectId: Number(row.gitlab_project_id), repositoryUrl: String(row.repository_url), stableBranch: String(row.stable_branch), name: String(row.name), namespaceId: Number(row.namespace_id), namespacePath: String(row.namespace_path), initializationStatus: row.state === 'ready' ? 'ready' : 'pending', recognizedHead: row.recognized_head as string | null, revision: Number(row.revision), categories: [],
     ...(row.current_baseline_id ? { currentBaselineId: String(row.current_baseline_id) } : {}),
     ...(row.deployment_url ? { deployment: { baselineId: String(row.deployment_baseline_id), url: String(row.deployment_url), artifactSha256: String(row.deployment_artifact_sha256), deployedAt: date(row.deployed_at) } } : {}),
   };
@@ -52,7 +51,6 @@ export async function listProjects(c: Transaction): Promise<ProjectView[]> {
 }
 export async function saveProject(c: Transaction, value: ProjectView) {
   await c.query(`UPDATE studio_projects SET name=$2,stable_branch=$3,revision=$4,recognized_head=$5,state=CASE WHEN $6 THEN 'ready'::studio_project_state ELSE state END,current_baseline_id=$7,deployment_baseline_id=$8,deployment_url=$9,deployment_artifact_sha256=$10,deployed_at=$11,last_editor_id=$12,last_editor_account=$13,last_editor_name=$14,last_edited_date=clock_timestamp() WHERE id=$1`, [value.id, value.name, value.stableBranch, value.revision, value.recognizedHead, value.initializationStatus === 'ready', value.currentBaselineId ?? null, value.deployment?.baselineId ?? null, value.deployment?.url ?? null, value.deployment?.artifactSha256 ?? null, value.deployment?.deployedAt ?? null, ...actorFields()]);
-  for (const category of value.categories) await c.query(`INSERT INTO studio_categories(project_id,id,name,${auditColumns}) VALUES($1,$2,$3,$4,$5,$6,$4,$5,$6) ON CONFLICT(project_id,id) DO UPDATE SET name=excluded.name,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [value.id, category.id, category.name, ...actorFields()]);
 }
 export interface ScenarioNumber { id: string; sequence: number; code: string }
 /** Commit a stable allocation before business writes so rollback never recycles a number. */
@@ -81,13 +79,12 @@ export async function entities(c: Transaction, projectId: string): Promise<Entit
   const prerequisites = (await c.query<Row>('SELECT * FROM studio_prerequisites WHERE project_id=$1', [projectId])).rows;
   const files = (await c.query<{ entity_id: string; path: string }>('SELECT entity_id,path FROM studio_entity_files WHERE project_id=$1 ORDER BY path', [projectId])).rows;
   const sources = (await c.query<Row>('SELECT s.entity_id,f.entity_id AS scenario_id,f.version FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id WHERE s.project_id=$1', [projectId])).rows;
-  const freezes = (await c.query<Row>('SELECT * FROM studio_batch_freezes WHERE project_id=$1', [projectId])).rows;
   const occupations = (await c.query<Row>('SELECT * FROM studio_occupations WHERE project_id=$1 AND active', [projectId])).rows;
   const baselines = await listBaselines(c, projectId);
   const result: EntityView[] = [];
   for (const row of rows) {
     const id = String(row.id), occupation = occupations.find(o => o.entity_id === id);
-    const value: EntityView = { id, kind: row.kind as EntityView['kind'], title: String(row.title), summary: String(row.summary), ...(row.category_id !== null ? { categoryId: String(row.category_id) } : {}), ...(row.sequence !== null ? { sequence: Number(row.sequence), code: String(row.code) } : {}), ...(row.template_ref ? { templateRef: row.template_ref as FixedReference, templateId: String(row.template_id) } : {}), revision: Number(row.revision), generation: Number(row.generation), materialVersion: Number(row.material_version), confirmationStatus: row.confirmation_status as EntityView['confirmationStatus'], taskStatus: row.task_status as EntityView['taskStatus'], scenarioIds: relationships.filter(r => r.requirement_id === id).map(r => String(r.scenario_id)), prerequisites: prerequisites.filter(r => r.entity_id === id).map(r => ({ requirementId: String(r.requirement_id), version: Number(r.version) })), authorId: Number(row.creator_id), creator: snapshot(row, 'creator'), lastEditor: snapshot(row, 'last_editor'), frozenBy: freezes.filter(r => r.entity_id === id).map(r => String(r.occupation_id)), associationRevision: Number(row.association_revision) };
+    const value: EntityView = { id, kind: row.kind as EntityView['kind'], title: String(row.title), summary: String(row.summary), ...(row.category_id !== null ? { categoryId: String(row.category_id) } : {}), ...(row.sequence !== null ? { sequence: Number(row.sequence), code: String(row.code) } : {}), ...(row.template_ref ? { templateRef: row.template_ref as FixedReference, templateId: String(row.template_id) } : {}), revision: Number(row.revision), generation: Number(row.generation), materialVersion: Number(row.material_version), confirmationStatus: row.confirmation_status as EntityView['confirmationStatus'], taskStatus: row.task_status as EntityView['taskStatus'], scenarioIds: relationships.filter(r => r.requirement_id === id).map(r => String(r.scenario_id)), prerequisites: prerequisites.filter(r => r.entity_id === id).map(r => ({ requirementId: String(r.requirement_id), version: Number(r.version) })), authorId: Number(row.creator_id), creator: snapshot(row, 'creator'), lastEditor: snapshot(row, 'last_editor'), frozenBy: [], associationRevision: Number(row.association_revision) };
     value.files = files.filter(file => file.entity_id === id).map(file => file.path);
     if (value.kind === 'requirement') value.scenarioSources = sources.filter(r => r.entity_id === id).map(r => ({ projectId, entityId: String(r.scenario_id), version: Number(r.version) }));
     if (occupation) value.occupation = await occupationView(c, occupation);
@@ -122,8 +119,6 @@ export async function saveEntity(c: Transaction, projectId: string, value: Entit
     await c.query('DELETE FROM studio_prerequisites WHERE project_id=$1 AND entity_id=$2', [projectId, value.id]);
     for (const prerequisite of value.prerequisites) await c.query(`INSERT INTO studio_prerequisites(project_id,entity_id,requirement_id,version,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7)`, [projectId, value.id, prerequisite.requirementId, prerequisite.version, ...actorFields()]);
   }
-  await c.query('DELETE FROM studio_batch_freezes WHERE project_id=$1 AND entity_id=$2 AND NOT(occupation_id=ANY($3::text[]))', [projectId, value.id, value.frozenBy]);
-  for (const occupationId of value.frozenBy) await c.query(`INSERT INTO studio_batch_freezes(project_id,occupation_id,entity_id,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, [projectId, occupationId, value.id, ...actorFields()]);
   if (value.occupation) await saveOccupation(c, projectId, value.occupation);
 }
 async function occupationView(c: Transaction, row: Row): Promise<OccupationView> {

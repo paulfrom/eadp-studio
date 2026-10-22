@@ -30,7 +30,6 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   const base = '/v1/projects/:projectId';
   read(base, (a, p) => service.state(a, p.projectId!));
   write('POST', `${base}/initialize`, contract.InitializeProjectSchema, (a, p, b) => service.initializeProject(a, p.projectId!, b));
-  write('POST', `${base}/categories`, contract.CategorySchema, (a, p, b) => service.category(a, p.projectId!, b));
   write('POST', `${base}/entities`, contract.ReserveEntitySchema, (a, p, b) => service.reserve(a, p.projectId!, b));
   write('PUT', `${base}/entities/:entityId`, contract.UpdateEntitySchema, (a, p, b) => service.updateEntity(a, p.projectId!, p.entityId!, b));
   read(`${base}/entities/:entityId/revision-impact`, (a, p) => service.revisionImpact(a, p.projectId!, p.entityId!));

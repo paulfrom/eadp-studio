@@ -1,5 +1,5 @@
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, CategoryRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
+import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import { SessionAuth, type Actor } from './auth/session.js';
 import { Projects } from './projects.js';
@@ -76,16 +76,6 @@ export class CollaborationService {
       const integrations = await repository.listIntegrations(c, projectId);
       const baselines = await repository.listBaselines(c, projectId);
       return { project, entities: entities.map(entity => visibleEntity(entity, actor)), integrations, baselines };
-    });
-  }
-  async category(actor: Actor, projectId: string, input: CategoryRequest) {
-    await this.authorize(actor, projectId, true);
-    return this.mutate(actor, projectId, 'category.write', input, async (c, project) => {
-      requireCondition(project.revision === input.expectedRevision, 'REVISION_CONFLICT', 'Project revision changed');
-      const category = project.categories.find(x => x.id === input.categoryId);
-      if (category) category.name = input.name; else project.categories.push({ id: input.categoryId, name: input.name });
-      project.revision++; await repository.saveProject(c, project);
-      await repository.audit(c, projectId, actor, 'category.write', { categoryId: input.categoryId, name: input.name }); return project;
     });
   }
   async reserve(actor: Actor, projectId: string, input: ReserveEntityRequest) {

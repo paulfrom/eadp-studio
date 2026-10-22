@@ -78,7 +78,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const changed = await app.inject({ method: 'POST', url: '/v1/projects', headers: auth(), payload: { ...payload, name: 'Different request' } })
     assert.equal(changed.statusCode, 409)
     const categories = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers: auth(), payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '业务分类', expectedRevision: 0 } })
-    assert.equal(categories.statusCode, 409, categories.body)
+    assert.equal(categories.statusCode, 404, categories.body)
     assert.equal((await database.query('SELECT state,recognized_head FROM studio_projects WHERE id=$1', [created.id])).rows[0].recognized_head, null)
   })
 
@@ -148,7 +148,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     assert.equal(replay.statusCode, 200, replay.body)
     assert.deepEqual(replay.json(), accepted.json())
     const category = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers: auth(), payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '业务分类', expectedRevision: accepted.json<ProjectView>().revision } })
-    assert.equal(category.statusCode, 200, category.body)
+    assert.equal(category.statusCode, 404, category.body)
   })
 
   await t.test('logout revokes the backend session while retaining project state and the stable binding', async () => {
@@ -179,7 +179,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const current = await app.inject({ method: 'GET', url: `/v1/projects/${created.id}`, headers })
     assert.equal(current.statusCode, 200, current.body)
     const category = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers, payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '头门禁分类', expectedRevision: current.json<ProjectState>().project.revision } })
-    assert.equal(category.statusCode, 200, category.body)
+    assert.equal(category.statusCode, 404, category.body)
     const reserved = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/entities`, headers, payload: { idempotencyKey: randomUUID(), kind: 'scenario', title: '头门禁场景' } })
     assert.equal(reserved.statusCode, 200, reserved.body)
     const entity = reserved.json<EntityView>()
