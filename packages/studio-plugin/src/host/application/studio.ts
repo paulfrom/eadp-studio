@@ -1,5 +1,5 @@
 import { ScenarioWorkspaces } from './scenario-workspaces.ts'
-import { ScenarioTemplates } from './scenario-templates.ts'
+import { ScenarioTemplates, type TemplateCatalogResponse } from './scenario-templates.ts'
 import { ScenarioRepairs } from './scenario-repairs.ts'
 import { scenarioFileErrors } from './scenario-documents.ts'
 import { randomUUID } from 'node:crypto'
@@ -7,8 +7,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { reviewInputText } from '@eadp/contracts'
 import { canonical, prototypeBindings } from '@eadp/asset-domain'
 import path from 'node:path'
-import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityOccupancyView, EntityView, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, MaterialMetadata } from '@eadp/contracts'
-import type { Candidate, ConfirmationChoice, MaterialDraft, ProjectProgressReply, ScenarioTemplateCatalog, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
+import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityOccupancyView, EntityView, FixedReference, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, MaterialMetadata } from '@eadp/contracts'
+import type { Candidate, ConfirmationChoice, MaterialDraft, ProjectProgressReply, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
 import { checkMaterial, containedFile, digest, findMaterialFile, normalizeMaterialPath, parseMaterial, readMaterial, saveMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
 import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
@@ -111,18 +111,14 @@ export class StudioApplication {
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
       case 'retryProjectInitialization': await this.projects.retry(command.operationId); break
-      case 'addCategory': {
-        const { remote } = await this.selected()
-        await this.api.request('POST', this.route(remote.project.id, '/categories'), { idempotencyKey: key(), categoryId: key(), name: command.name.trim(), expectedRevision: remote.project.revision }); break
-      }
       case 'bindScenarioTemplate': await this.bindScenarioTemplate(command.entityId, command.templateId); break
-      case 'createMaterial': { const entity = await this.createMaterial(command.kind, command.title, command.categoryId, command.scenarioIds, command.operationId); if (entity.kind === 'scenario') this.scenarios.activeEntityId = entity.id; break }
+      case 'createMaterial': { const entity = await this.createMaterial(command.kind, command.title, command.scenarioIds, command.operationId); if (entity.kind === 'scenario') this.scenarios.activeEntityId = entity.id; break }
       case 'saveMaterial': {
         const context = await this.entity(command.entityId)
         if (context.entity.kind === 'scenario') throw new Error('场景编辑必须使用带版本检查的保存命令')
         const task = await this.designTask(context.remote, context.entity)
         if (command.metadata.entityId !== command.entityId || command.metadata.kind !== context.entity.kind) throw new Error('材料身份不能修改')
-          if (context.entity.kind === 'requirement' && !context.entity.frozenBy.length && (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.sources) !== JSON.stringify(context.entity.scenarioSources ?? []) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites))) {
+          if (context.entity.kind === 'requirement' && (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.sources) !== JSON.stringify(context.entity.scenarioSources ?? []) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites))) {
           const fresh = await this.entity(command.entityId)
             if (fresh.entity.kind !== 'requirement') throw new Error('只有需求材料可以修改场景来源关系')
             await this.api.request('PUT', this.route(context.remote.project.id, `/entities/${context.entity.id}/relations`), { idempotencyKey: key(), token: await this.requireOwned(fresh.entity), scenarioIds: command.metadata.scenarioIds, sources: command.metadata.sources, prerequisites: command.metadata.prerequisites })
@@ -161,7 +157,7 @@ export class StudioApplication {
         const { remote } = await this.entity(command.entityId)
         await this.api.request('POST', this.route(remote.project.id, `/entities/${command.entityId}/eligibility`), { idempotencyKey: key(), version: command.version, enabled: command.enabled, reason: command.reason }); break
       }
-      case 'selectCandidate': await this.selectCandidate(command.candidateId, command.categoryId); break
+      case 'selectCandidate': await this.selectCandidate(command.candidateId); break
       case 'adopt': await this.adopt(command); break
       case 'retryOperation': {
         const local = await this.store.read(); const operation = local.operations.find(op => op.id === command.operationId)
@@ -244,7 +240,7 @@ ${await this.scenarios.sources.context(task)}`
       case 'startScenarioRevision': {
         const { remote, entity } = await this.entity(command.entityId)
         if (entity.kind !== 'scenario') throw new Error('此操作只适用于项目场景')
-        if (!entity.current || entity.revision !== command.expectedRevision || entity.associationRevision !== command.expectedAssociationRevision) throw new Error('场景及影响范围已变化，请重新查看影响清单')
+        if (!entity.current || entity.revision !== command.expectedRevision) throw new Error('场景及影响范围已变化，请重新查看影响清单')
         const task = await this.designTask(remote, entity)
         try { await readMaterial(task.worktree, 'scenario', entity.id) } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -303,15 +299,7 @@ ${await this.scenarios.sources.context(task)}`
     const projects = local.projects.filter(project => allowed.has(project.id))
     const selected = projects.find(project => project.id === local.selectedProjectId)
     const remote = selected ? await this.api.request<ProjectState>('GET', this.route(selected.id)) : undefined
-    const scenarioTemplates = remote?.project.initializationStatus === 'ready' ? await this.templates.catalog(remote.project) : undefined
-    if (remote) for (const value of remote.entities) {
-      if (!isEntityView(value) || !value.frozenBy.length || (value.completedVersion === value.materialVersion && value.materialVersion > 0)) continue
-      const batch = remote.entities.find(batch => isEntityView(batch) && batch.occupation?.ownerId === account.id && batch.occupation.clientId === local.clientId && value.frozenBy.includes(batch.occupation.occupationId))
-      if (!batch?.occupation) continue
-      // Preparing a frozen requirement claims its batch occupation and creates a
-      // worktree, so it runs on the lane and the projection keeps answering.
-      this.lane.schedule(`draft:${value.id}:${batch.occupation.occupationId}`, async () => { await this.designTask(remote, value) })
-    }
+    const projectTemplates = remote?.project.initializationStatus === 'ready' ? await this.templates.catalog(remote.project) : undefined
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
     const drafts: MaterialDraft[] = []
     if (remote) for (const entity of remote.entities.filter(isEntityView).filter(entity => entity.kind !== 'scenario')) {
@@ -340,7 +328,7 @@ ${await this.scenarios.sources.context(task)}`
     const recovery = this.store.preservedRecord
     return { ...(scenario ? { scenario } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
-      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(scenarioTemplates ? { scenarioTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
+      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(projectTemplates ? { projectTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
       pending: [
         ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
@@ -383,17 +371,10 @@ ${await this.scenarios.sources.context(task)}`
     if (entity.kind === 'scenario' && task.purpose === 'material') return this.scenarios.selectSession(entity.id, sessionId)
     const expectedPurpose = task.purpose === 'prototype' ? 'prototype' : entity.kind === 'handoff' ? 'handoff' : 'material'
     if (task.purpose !== expectedPurpose || task.purpose === 'prototype' && entity.kind !== 'requirement') throw new Error('会话任务类型与当前资产不一致')
-    let owner = entity
-    if (entity.frozenBy.length) {
-      if (task.purpose !== 'material' || entity.kind !== 'requirement' || entity.completedVersion === entity.materialVersion && entity.materialVersion > 0) throw new Error('冻结需求不能恢复此任务')
-      const batch = remote.entities.find((value): value is EntityView => isEntityView(value) && value.kind === 'scenario' && value.occupation?.purpose === 'scenario-batch' && entity.frozenBy.includes(value.occupation.occupationId))
-      if (!batch) throw new Error('关联场景修订批次已失效')
-      owner = batch
-    }
-    const token = await this.requireOwned(owner)
-    const occupation = owner.occupation!
-    const expectedOccupation = task.purpose === 'prototype' ? 'prototype' : owner.kind === 'scenario' && owner.materialVersion ? 'scenario-batch' : 'design'
-    if (occupation.purpose !== expectedOccupation || occupation.inputVersion !== owner.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
+    const token = await this.requireOwned(entity)
+    const occupation = entity.occupation!
+    const expectedOccupation = task.purpose === 'prototype' ? 'prototype' : 'design'
+    if (occupation.purpose !== expectedOccupation || occupation.inputVersion !== entity.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
     if (path.resolve(task.worktree) !== path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)) throw new Error('会话现场与当前任务占用不一致')
     if (task.inputHash !== (entity.current?.fixed.sha256 ?? '') || task.purpose === 'prototype' && !entity.current) throw new Error('需求或材料已修订，旧会话输入已失效')
       if (task.purpose === 'prototype' && canonical(prototypeBindings(entity, remote.entities.filter(isEntityView))) !== canonical(occupation.prerequisiteBindings)) throw new Error('前置需求固定完成依据已变化，旧原型会话输入已失效')
@@ -406,22 +387,31 @@ ${await this.scenarios.sources.context(task)}`
     if (account.gitlabEmail) return { name: account.name || account.gitlabUsername, email: account.gitlabEmail }
     const { project } = await this.selected(); return this.ports.git.identity(project.directory)
   }
-    private async createMaterial(kind: 'scenario' | 'requirement' | 'handoff', title: string, categoryId?: string, scenarioIds: string[] = [], operationId = key()): Promise<EntityView> {
+    private async createMaterial(kind: 'scenario' | 'requirement' | 'handoff', title: string, scenarioIds: string[] = [], operationId = key()): Promise<EntityView> {
       const { remote } = await this.selected()
       const currentSources = scenarioIds.map(id => remote.entities.find((value): value is EntityView => isEntityView(value) && value.id === id && value.kind === 'scenario' && value.materialVersion > 0))
       if (currentSources.some(source => !source) || new Set(scenarioIds).size !== scenarioIds.length) throw new Error('需求来源必须是本项目已确认的场景版本')
-      if (kind === 'scenario' && categoryId) throw new Error('场景不使用业务分类')
-      if (kind === 'scenario' && !(await this.templates.catalog(remote.project))?.templates.length) throw new Error('本项目尚未发布场景模板，请先在设置里上传并发布默认场景模板，再新建场景。')
-      if (kind !== 'scenario' && !categoryId) throw new Error('请选择业务分类')
+      let template: { templateId: string; templateRef: FixedReference } | undefined
+      if (kind !== 'handoff') {
+        const catalogs = await this.templates.catalog(remote.project)
+        if (kind === 'scenario' && !catalogs?.scenarios.templates.length) throw new Error('本项目尚未发布场景模板，请先在设置里上传并发布默认场景模板，再新建场景。')
+        if (kind === 'requirement') {
+          if (!catalogs) throw new Error('需求模板固定内容正在后台同步，请稍后重试。')
+          // A new requirement binds the project's default requirement template.
+          const selected = catalogs.requirements.templates.find(value => value.id === catalogs.requirements.defaultTemplateId)
+          if (!selected) throw new Error('本项目尚未发布默认需求模板，请先在设置里发布需求模板。')
+          template = { templateId: selected.id, templateRef: selected.fixed }
+        }
+      }
       if (kind === 'requirement' && !currentSources.length) throw new Error('新需求必须绑定至少一个已确认场景版本')
       const local = await this.store.read()
       let reservation = local.materialReservations.find(value => value.id === operationId)
-      const exact = (value: MaterialReservation) => value.projectId === remote.project.id && value.kind === kind && value.title === title && value.categoryId === categoryId && JSON.stringify(value.scenarioIds) === JSON.stringify(scenarioIds)
+      const exact = (value: MaterialReservation) => value.projectId === remote.project.id && value.kind === kind && value.title === title && value.templateId === template?.templateId && JSON.stringify(value.scenarioIds) === JSON.stringify(scenarioIds)
       if (reservation && !exact(reservation)) throw new Error('新建操作编号已绑定其他场景请求')
       if (reservation?.phase === 'materialized') { const entityId = reservation.entityId; const value = remote.entities.find((e): e is EntityView => e.id === entityId && isEntityView(e)); if (!value) throw new Error('原场景不可访问'); return value }
       if (!reservation) {
         const sources = currentSources.filter((source): source is EntityView => !!source).map(source => ({ projectId: remote.project.id, entityId: source.id, version: source.materialVersion }))
-        reservation = { id: operationId, projectId: remote.project.id, kind, title, ...(categoryId ? { categoryId } : {}), scenarioIds, sources, phase: 'reserving' }
+        reservation = { id: operationId, projectId: remote.project.id, kind, title, ...(template ?? {}), scenarioIds, sources, phase: 'reserving' }
         local.materialReservations.push(reservation); await this.store.save()
       }
       const entity = await this.reserveMaterial(reservation)
@@ -431,8 +421,7 @@ ${await this.scenarios.sources.context(task)}`
       try {
         const entity = await this.api.request<EntityView>('POST', this.route(operation.projectId, '/entities'), {
           idempotencyKey: operation.id, kind: operation.kind, title: operation.title,
-          ...(operation.kind === 'scenario' ? {} : { categoryId: operation.categoryId }),
-          ...(operation.kind === 'requirement' ? { sources: operation.sources } : {}),
+          ...(operation.kind === 'requirement' ? { templateId: operation.templateId!, templateRef: operation.templateRef!, sources: operation.sources } : {}),
         })
         if (operation.entityId && operation.entityId !== entity.id) throw new Error('同一新建操作返回了不同资产编号')
         operation.entityId = entity.id; operation.phase = 'reserved'; delete operation.message; await this.store.save(); return entity
@@ -458,8 +447,8 @@ ${await this.scenarios.sources.context(task)}`
   private async bindScenarioTemplate(entityId: string, templateId: string): Promise<void> {
     const { remote, entity, task } = await this.scenarios.editable(entityId)
     if (entity.kind !== 'scenario') throw new Error('只有场景可以绑定场景模板')
-    const catalog = await this.api.request<ScenarioTemplateCatalog>('GET', this.route(remote.project.id, '/templates'))
-    const template = catalog.templates.find(value => value.id === templateId)
+    const catalog = await this.api.request<TemplateCatalogResponse>('GET', this.route(remote.project.id, '/templates'))
+    const template = catalog.scenarios.templates.find(value => value.id === templateId)
     if (!template || catalog.acceptedHead !== remote.project.recognizedHead) throw new Error('模板目录已变化，请刷新项目后重试')
     const fresh = await this.entity(entityId)
     const token = await this.requireOwned(fresh.entity)
@@ -469,35 +458,8 @@ ${await this.scenarios.sources.context(task)}`
   }
   private async designTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     const local = await this.store.read()
-    if (entity.frozenBy.length) {
-      const batch = remote.entities.find((value): value is EntityView => isEntityView(value) && value.kind === 'scenario' && !!value.occupation && entity.frozenBy.includes(value.occupation.occupationId))
-      if (!batch) throw new Error('关联场景正在修订，请从当前场景批次编辑需求')
-      await this.requireOwned(batch)
-      if (entity.completedVersion === entity.materialVersion && entity.materialVersion > 0) throw new Error('已完成需求必须保留，请派生新需求')
-      const base = await this.designTask(remote, batch)
-      let task = local.tasks.find(value => value.projectId === base.projectId && value.entityId === entity.id && value.purpose === 'material' && value.worktree === base.worktree)
-      const openingBatchDocument = !task
-      if (!task) { task = { ...base, entityId: entity.id, sessionId: 'studio-' + key(), inputHash: entity.current?.fixed.sha256 ?? '', purpose: 'material' }; local.tasks.push(task); await this.store.save() }
-      try { await readMaterial(task.worktree, entity.kind, entity.id) }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        if (entity.current) {
-          const bytes = await this.projects.readFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path, entity.current.fixed.sha256)
-          if (digest(bytes) !== entity.current.fixed.sha256) throw new Error('批次需求固定材料哈希不一致')
-          const draft = parseMaterial(Buffer.from(bytes), entity.current.fixed.path)
-          await saveMaterial(task.worktree, draft.metadata, draft.body)
-        } else await saveMaterial(task.worktree, { ...initialMetadata(entity, entity.scenarioIds, entity.scenarioSources ?? []), prerequisites: entity.prerequisites }, starter(entity.title))
-      }
-      if (openingBatchDocument) {
-        const draft = await readMaterial(task.worktree, 'requirement', entity.id)
-        // A frozen, unstarted requirement is confirmed atomically with the next scenario version.
-        const sources = [...draft.metadata.sources.filter(source => source.projectId !== remote.project.id || source.entityId !== batch.id), { projectId: remote.project.id, entityId: batch.id, version: batch.materialVersion + 1 }]
-        await saveMaterial(task.worktree, { ...draft.metadata, scenarioIds: entity.scenarioIds, sources }, draft.body)
-      }
-      return task
-    }
     let current = entity
-    if (!current.occupation) current = await this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: entity.kind === 'scenario' && entity.materialVersion ? 'scenario-batch' : 'design' })
+    if (!current.occupation) current = await this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: 'design' })
     const token = await this.requireOwned(current)
     const existing = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && (t.purpose === 'material' || t.purpose === 'handoff') && path.basename(t.worktree) === token.taskId)
     if (existing) return existing
@@ -593,7 +555,6 @@ ${await this.scenarios.sources.context(task)}`
    */
   private async prepareContent(entityId: string, purpose: 'material' | 'prototype', expectedHash?: string) {
     let context = await this.entity(entityId)
-    if (context.entity.frozenBy.length) throw new Error('冻结需求须由当前场景批次统一确认')
     const task = purpose === 'prototype' ? await this.prototypeTask(context.remote, context.entity) : await this.designTask(context.remote, context.entity)
     context = await this.entity(entityId)
     const { remote, entity } = context, token = await this.requireOwned(entity)
@@ -604,19 +565,13 @@ ${await this.scenarios.sources.context(task)}`
     let paths: string[], allowedPaths: string[]
     const confirmations: Array<Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>> = []
     const prepareBase = { idempotencyKey: key(), entityId: entity.id, token, expectedHead: remote.project.recognizedHead! }
-    let batch: { expectedAssociationRevision: number; batchRequirementIds: string[] } | undefined
-    let drafts: Array<{ entity: EntityView; draft: MaterialDraft }> = [{ entity, draft }]
+    const drafts: Array<{ entity: EntityView; draft: MaterialDraft }> = [{ entity, draft }]
     if (purpose === 'material') {
       checkMaterial(draft)
       if (entity.kind === 'scenario') {
         // The package declares the project context; a legacy draft must be saved once to pick it up.
         const context = await readFile(await containedFile(task.worktree, 'CONTEXT.md')).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
         if (context && !draft.metadata.files?.some(file => file.path === 'CONTEXT.md' && file.sha256 === digest(context))) throw new Error('项目上下文尚未纳入场景文件包，请保存场景后重新确认')
-      }
-      const frozen = entity.kind === 'scenario' && entity.materialVersion > 0 ? remote.entities.filter((value): value is EntityView => isEntityView(value) && value.frozenBy.includes(token.occupationId)) : []
-      for (const requirement of frozen) {
-        if (requirement.completedVersion === requirement.materialVersion && requirement.materialVersion > 0) continue
-        const related = await this.currentMaterialDraft(task, requirement); checkMaterial(related); drafts.push({ entity: requirement, draft: related })
       }
       const materialPaths = drafts.map(value => value.draft.path)
       const evidenceFiles = new Map(drafts.flatMap(value => [...value.draft.metadata.businessEvidence.flatMap(evidence => evidence.files), ...(value.draft.metadata.files ?? [])]).map(file => [file.path, file]))
@@ -630,7 +585,6 @@ ${await this.scenarios.sources.context(task)}`
       allowedPaths = [...allowed]
       // The commit hash is filled in after this snapshot; review input binds only the material hash.
       for (const value of drafts) confirmations.push({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: '', path: value.draft.path, sha256: value.draft.sha256 } })
-      if (entity.kind === 'scenario' && entity.materialVersion > 0) batch = { expectedAssociationRevision: entity.associationRevision, batchRequirementIds: frozen.map(value => value.id) }
     } else {
       if (entity.kind !== 'requirement' || !entity.current || task.inputHash !== entity.current.fixed.sha256 || draft.sha256 !== entity.current.fixed.sha256) throw new Error('原型输入已失效，请重新确认需求')
       // Local commits since the recognized head are part of the same snapshot.
@@ -640,8 +594,8 @@ ${await this.scenarios.sources.context(task)}`
       allowedPaths = paths
       confirmations.push({ entityId: entity.id, expectedRevision: entity.revision, fixed: entity.current.fixed })
     }
-    const stage = purpose === 'prototype' ? 'prototype' as const : batch ? 'scenario-batch' as const : 'material' as const
-    const input = { ...prepareBase, stage, ...batch, confirmations }
+    const stage = purpose === 'prototype' ? 'prototype' as const : 'material' as const
+    const input = { ...prepareBase, stage, confirmations }
     return { remote, entity, task, draft, drafts, paths, allowedPaths, confirmations, input,
       inputHash: digest(reviewInputText(input, entity)),
       snapshot: { head, files: await this.snapshotFiles(task.worktree, allowedPaths) } }
@@ -824,12 +778,12 @@ ${await this.scenarios.sources.context(task)}`
     const current = found && 'current' in found ? found.current : undefined
     return candidate.projectId === remote.project.id && current?.confirmationId === candidate.confirmationId && current.version === candidate.version && current.fixed.sha256 === candidate.inputHash
   }
-  private async selectCandidate(id: string, categoryId: string) {
+  private async selectCandidate(id: string) {
     const local = await this.store.read(); const candidate = local.candidates.find(c => c.id === id)
     if (!candidate || candidate.selectedEntityId) throw new Error('候选不存在或已采用')
     const { remote } = await this.selected()
     if (!this.currentCandidate(candidate, remote)) throw new Error('候选来源场景已修订，请采用当前确认版本的候选')
-    const entity = await this.createMaterial('requirement', candidate.title, categoryId, [candidate.scenarioId])
+    const entity = await this.createMaterial('requirement', candidate.title, [candidate.scenarioId])
     candidate.selectedEntityId = entity.id; await this.store.save()
   }
   private async adopt(command: Extract<StudioCommand, { action: 'adopt' }>) {
@@ -863,7 +817,7 @@ ${await this.scenarios.sources.context(task)}`
           if (digest(bytes) !== operation.sourceFixed.sha256) throw new Error('来源固定材料校验失败')
           const draft = parseMaterial(Buffer.from(bytes), operation.sourceFixed.path)
           const metadata = { ...initialMetadata(entity), entityId: entity.id, kind: entity.kind, title: entity.title,
-            ...(entity.categoryId ? { categoryId: entity.categoryId } : {}), scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites,
+            scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites,
             sources: [...(entity.scenarioSources ?? []), operation.request.source],
             businessEvidence: draft.metadata.businessEvidence, files: draft.metadata.files, referencedAssets: draft.metadata.referencedAssets,
             coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: draft.metadata.openQuestions,
@@ -888,7 +842,7 @@ ${await this.scenarios.sources.context(task)}`
     // The handoff is a named material too: its title carries the requirement and baseline version, never an ID.
     const title = `交接 ${source.title} v${baseline.version}`
     const existing = remote.entities.find((e): e is EntityView => isEntityView(e) && e.kind === 'handoff' && e.title === title)
-    const entity = existing ?? await this.api.request<EntityView>('POST', this.route(remote.project.id, '/entities'), { idempotencyKey: key(), kind: 'handoff', title, categoryId: source.categoryId })
+    const entity = existing ?? await this.api.request<EntityView>('POST', this.route(remote.project.id, '/entities'), { idempotencyKey: key(), kind: 'handoff', title })
     const fresh = await this.entity(entity.id); const task = await this.designTask(fresh.remote, fresh.entity)
     if (!task.handoff) { task.handoff = { baselineId: baseline.id, entityId: baseline.entityId, version: baseline.version, commitSha: baseline.commitSha, status: 'pending' }; await this.store.save() }
     const handoff = task.handoff

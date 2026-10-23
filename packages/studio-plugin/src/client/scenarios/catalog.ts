@@ -1,11 +1,10 @@
 import type { EntityView } from '../../shared/studio.ts'
 
 export type CatalogSort = 'updated' | 'created' | 'sequence'
-export const isRevising = (entity: EntityView) => entity.materialVersion > 0 && (entity.confirmationStatus === 'draft' || entity.occupation?.purpose === 'scenario-batch')
-export function selectCatalog(entities: EntityView[], options: { search: string; status: string; revision: string; sort: CatalogSort; category: string }): EntityView[] {
+export const isRevising = (entity: EntityView) => entity.materialVersion > 0 && entity.confirmationStatus === 'draft'
+export function selectCatalog(entities: EntityView[], options: { search: string; status: string; revision: string; sort: CatalogSort }): EntityView[] {
   const search = options.search.trim().toLocaleLowerCase()
-  return entities.filter(entity => (!options.category || entity.categoryId === options.category)
-    && (options.status === 'all' || entity.confirmationStatus === options.status)
+  return entities.filter(entity => (options.status === 'all' || entity.confirmationStatus === options.status)
     && (options.revision === 'all' || isRevising(entity) === (options.revision === 'revising'))
     && `${entity.title} ${entity.code ?? entity.id}`.toLocaleLowerCase().includes(search))
     .sort((a, b) => {

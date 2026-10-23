@@ -28,7 +28,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const token: OccupationToken = { occupationId: 'occupation', generation: 1, taskId: path.basename(root), clientId: local.clientId, expectedRevision: 1 }
   const task: TaskView = { entityId: 'scene', projectId: 'project', sessionId: 'original-session', purpose: 'material', inputHash: '', worktree: root }
   local.tasks.push(task)
-  const entity = { id: 'scene', kind: 'scenario', generation: 1, revision: 1, title: '审批', templateId: 'default', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1, purpose: 'design' }, frozenBy: [] } as unknown as EntityView
+  const entity = { id: 'scene', kind: 'scenario', generation: 1, revision: 1, title: '审批', templateId: 'default', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1, purpose: 'design' } } as unknown as EntityView
   const remote = { project: { id: 'project', revision: 1, recognizedHead: 'c'.repeat(40), stableBranch: 'main' }, entities: [entity] } as unknown as ProjectState
   const prompts: string[] = [], events: RepairEventRequest[] = [], calls: string[] = [], contexts = new Map<string, Buffer>()
   let repairView: RepairTaskView | undefined
@@ -39,7 +39,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const fail = (kind: typeof loseResponse) => { if (loseResponse === kind) { loseResponse = undefined; throw new Error('response lost') } }
   const api = { async request(method: string, route: string, body?: object) {
     calls.push(`${method} ${route}`)
-    if (route.endsWith('/templates')) return { acceptedHead: remote.project.recognizedHead, defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: templateRef }] }
+    if (route.endsWith('/templates')) { const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: templateRef }] }; return { acceptedHead: remote.project.recognizedHead, scenarios: catalog, requirements: catalog } }
     if (route.includes('/operations/') && method === 'GET') {
       const result = receipts.get(route.split('/').at(-1)!)
       if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'operation missing', 404)

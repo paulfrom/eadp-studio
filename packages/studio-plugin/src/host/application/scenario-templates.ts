@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isProjectManifest, type IntegrationView, type ProjectState, type ProjectView, type TemplateIntegrationRequest } from '@eadp/contracts'
+import { isProjectManifest, type FixedReference, type IntegrationView, type ProjectState, type ProjectView, type TemplateIntegrationRequest } from '@eadp/contracts'
 import type { ScenarioTemplatePreview } from '../../shared/scenarios.ts'
-import type { ScenarioTemplateCatalog } from '../../shared/studio.ts'
+import type { ProjectTemplateCatalogs, TemplateCatalogView } from '../../shared/studio.ts'
 import { containedFile, digest } from '../adapters/assets/materials.ts'
 import { CollaborationError, type CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { StudioStore } from './state.ts'
@@ -12,24 +12,30 @@ import type { ProjectWorkspaces } from './projects.ts'
 import type { BackgroundLane } from './background-lane.ts'
 
 export interface TemplateOperation { preview: ScenarioTemplatePreview; projectId: string; directory?: string; request?: TemplateIntegrationRequest; integrationId?: string; phase: 'preview' | 'fixed' | 'prepared' | 'accepted' | 'unknown'; message?: string }
+/** Template catalog entries as the collaboration API reports them; bodies are read locally. */
+export type TemplateCatalogResponse = { acceptedHead: string; scenarios: { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> }; requirements: { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> } }
 /** Publishes project configuration in a separate worktree, preserving all material drafts. */
 export class ScenarioTemplates {
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly projects: ProjectWorkspaces, private readonly lane: BackgroundLane) {}
-  private readonly catalogs = new Map<string, ScenarioTemplateCatalog>()
+  private readonly catalogs = new Map<string, ProjectTemplateCatalogs>()
   /**
-   * Read the project's template catalogue from bodies already present locally.
+   * Read the project's template catalogues from bodies already present locally.
    * @param project - selected project and its accepted head.
-   * @returns the catalogue, or undefined while the background lane fetches a template commit.
+   * @returns the catalogues, or undefined while the background lane fetches a template commit.
    */
-  async catalog(project: ProjectView): Promise<ScenarioTemplateCatalog | undefined> {
+  async catalog(project: ProjectView): Promise<ProjectTemplateCatalogs | undefined> {
     const cacheKey = `${this.store.directory}:${project.id}:${project.recognizedHead}`
     const cached = this.catalogs.get(cacheKey)
     if (cached) return cached
-    const catalog = await this.api.request<ScenarioTemplateCatalog>('GET', `/v1/projects/${project.id}/templates`)
-    const bodies = await Promise.all(catalog.templates.map(template => this.projects.localFixed(project.id, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)))
-    if (bodies.some(bytes => bytes === undefined)) return undefined
-    const templates = catalog.templates.map((template, index) => ({ ...template, body: Buffer.from(bodies[index]!).toString('utf8') }))
-    const result = { ...catalog, templates }
+    const catalog = await this.api.request<TemplateCatalogResponse>('GET', `/v1/projects/${project.id}/templates`)
+    const withBodies = async (entry: TemplateCatalogResponse['scenarios']): Promise<TemplateCatalogView | undefined> => {
+      const bodies = await Promise.all(entry.templates.map(template => this.projects.localFixed(project.id, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)))
+      if (bodies.some(bytes => bytes === undefined)) return undefined
+      return { ...entry, templates: entry.templates.map((template, index) => ({ ...template, body: Buffer.from(bodies[index]!).toString('utf8') })) }
+    }
+    const scenarios = await withBodies(catalog.scenarios), requirements = await withBodies(catalog.requirements)
+    if (!scenarios || !requirements) return undefined
+    const result = { acceptedHead: catalog.acceptedHead, scenarios, requirements }
     if (this.catalogs.size >= 32) this.catalogs.delete(this.catalogs.keys().next().value!)
     this.catalogs.set(cacheKey, result)
     return result
@@ -39,8 +45,8 @@ export class ScenarioTemplates {
     for (const t of templates) if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(t.id) || !t.name.trim() || t.name.length > 500 || !t.body.trim() || Buffer.byteLength(t.body) > 1_000_000 || t.body.includes('\r')) throw new Error('模板须使用有效名称、标识与 UTF-8 LF Markdown')
     const catalog = await this.catalog(remote.project)
     if (!catalog) throw new Error('场景模板固定内容正在后台同步，请稍后重试。')
-    if (catalog.templates.some(t => !templates.some(next => next.id === t.id))) throw new Error('本阶段不支持删除历史模板')
-    if (catalog.defaultTemplateId === defaultTemplateId && catalog.templates.length === templates.length && catalog.templates.every(value => templates.some(next => next.id === value.id && next.name === value.name && next.body === value.body))) throw new Error('当前模板没有需要发布的变更')
+    if (catalog.scenarios.templates.some(t => !templates.some(next => next.id === t.id))) throw new Error('本阶段不支持删除历史模板')
+    if (catalog.scenarios.defaultTemplateId === defaultTemplateId && catalog.scenarios.templates.length === templates.length && catalog.scenarios.templates.every(value => templates.some(next => next.id === value.id && next.name === value.name && next.body === value.body))) throw new Error('当前模板没有需要发布的变更')
     const local = await this.store.read()
     local.templateOperations = local.templateOperations.filter(op => op.projectId !== remote.project.id || op.phase !== 'preview')
     local.templateOperations.push({ projectId: remote.project.id, preview: { operationId: randomUUID(), expectedHead: remote.project.recognizedHead!, expectedRevision: remote.project.revision, templates, defaultTemplateId }, phase: 'preview' })

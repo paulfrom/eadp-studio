@@ -20,9 +20,10 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
   await mkdir(path.join(root, '.template')); await writeFile(path.join(root, template.fixed.path), templateBody)
   const storeRoot = path.join(root, 'state'), store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
-  const entity: EntityView = { id: 'asset', kind: purpose === 'handoff' ? 'handoff' : 'requirement', title: '恢复材料', categoryId: 'cat', revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0,
+  const entity: EntityView = { id: 'asset', kind: purpose === 'handoff' ? 'handoff' : 'requirement', title: '恢复材料', revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1,
+    ...(purpose === 'handoff' ? {} : { templateId: template.id, templateRef: template.fixed }),
     occupation: { entityId: 'asset', occupationId: 'owned', generation: 1, taskId: 'task', clientId: local.clientId, ownerId: 1, expectedRevision: 1, purpose: purpose === 'prototype' ? 'prototype' : 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' } }
-  const project = { id: 'project', name: '恢复项目', gitlabProjectId: 1, repositoryUrl: 'https://example.invalid/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: 'a'.repeat(40), revision: 1, categories: [] }
+  const project = { id: 'project', name: '恢复项目', gitlabProjectId: 1, repositoryUrl: 'https://example.invalid/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: 'a'.repeat(40), revision: 1 }
   const remote: ProjectState = { project, entities: [entity], integrations: [], baselines: [] }
   const worktree = path.join(store.directory, 'worktrees', project.id, 'task'); await mkdir(worktree, { recursive: true })
   const draft = await saveMaterial(worktree, initialMetadata(entity), '# 恢复材料\n\n正文。')
@@ -33,7 +34,7 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
   const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: 'studio-existing', purpose, inputHash: entity.current?.fixed.sha256 ?? '', worktree }
   local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id; local.tasks.push(task); await store.save()
   const sessions: TaskView[] = [], requests: string[] = [], active = new Set<string>()
-  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') return { defaultTemplateId: template.id, templates: [template] }; throw new Error(route) } } as unknown as CollaborationClient
+  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: template.id, templates: [template] }; return { acceptedHead: project.recognizedHead, scenarios: catalog, requirements: catalog } } throw new Error(route) } } as unknown as CollaborationClient
   const ports = { account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (value: TaskView) => { sessions.push(value); active.add(value.sessionId); return value.sessionId }, git: { hasCommit: async () => true, fetchCommit: async () => {}, readBlob: async (_root: string, _sha: string, file: string) => readFile(path.join(file.startsWith('.template/') ? root : worktree, file)) } } as unknown as HostPorts
   const reboot = () => { const next = new StudioStore(storeRoot); next.useUser(1); return new StudioApplication(next, api, ports) }
   return { store, local, task, entity, remote, sessions, requests, active, reboot, template }
@@ -79,16 +80,18 @@ test('unknown and fixed read-only task sessions cannot use the writable conversa
   assert.equal(f.sessions.length, 0)
 })
 
-test('frozen requirement resumes only through its current owned scenario batch worktree', async t => {
-  const f = await fixture(t), batch: EntityView = { ...f.entity, id: 'scenario', kind: 'scenario', templateId: f.template.id, templateRef: f.template.fixed, code: 'SC-001', sequence: 1, materialVersion: 1, frozenBy: [], occupation: { ...f.entity.occupation!, entityId: 'scenario', purpose: 'scenario-batch', inputVersion: 1 } }
-  delete batch.categoryId
-  f.entity.frozenBy = ['owned']; delete f.entity.occupation; f.remote.entities.push(batch)
-  f.local.tasks.push({ ...f.task, entityId: batch.id, sessionId: 'studio-scenario' })
-  await saveMaterial(f.task.worktree, initialMetadata(batch), '# 场景批次\n\n正文。')
+test('a requirement session restores only through its own design occupation, never another entity occupation', async t => {
+  const f = await fixture(t)
+  const scenario: EntityView = { ...f.entity, id: 'scenario', kind: 'scenario', code: 'SC-001', sequence: 1, materialVersion: 1, occupation: { ...f.entity.occupation!, entityId: 'scenario', purpose: 'design', inputVersion: 1 } }
+  delete f.entity.occupation
+  f.remote.entities.push(scenario)
   await f.store.save()
+  assert.equal((await restore(f.reboot())).ok, false, 'another entity occupation cannot authorize this requirement session')
+  assert.equal(f.sessions.length, 0)
+  f.entity.occupation = { ...scenario.occupation!, entityId: f.entity.id, inputVersion: 0 }
   assert.equal((await restore(f.reboot())).ok, true)
   assert.equal(f.sessions.length, 1)
-  batch.occupation!.taskId = 'replaced'
+  f.entity.occupation!.taskId = 'replaced'
   assert.equal((await restore(f.reboot())).ok, false)
   assert.equal(f.sessions.length, 1)
 })

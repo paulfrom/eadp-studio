@@ -16,7 +16,7 @@ import { copyTemplate, verifyTemplate } from '../../packages/studio-plugin/src/h
 
 const user: StudioUser = { id: 1, username: 'tester', name: '测试管理员', email: 'tester@example.test', admin: true, gitlabUserId: 17, gitlabUsername: 'liu', gitlabEmail: 'liu@example.test' }
 const sha = 'a'.repeat(40)
-const initial = (): ProjectView => ({ id: 'project-1', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'pending', name: '项目', recognizedHead: null, revision: 0, categories: [] })
+const initial = (): ProjectView => ({ id: 'project-1', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'pending', name: '项目', recognizedHead: null, revision: 0 })
 const command = { action: 'createProject' as const, name: '项目', namespaceId: 7, path: 'project' }
 async function fixture(failure?: 'create-response' | 'push-response' | 'initialize-response') {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-project-recovery-')), storeRoot = path.join(root, 'state'), workspaceRoot = path.join(root, 'workspace')
@@ -43,7 +43,8 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
     if (method === 'GET' && route === '/v1/projects/project-1/templates') {
       const file = '.template/default.md'
       const bytes = await readFile(path.join(workspaceRoot, 'users/1/project-project-1', file))
-      return { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: { commitSha: sha, path: file, sha256: createHash('sha256').update(bytes).digest('hex') } }] }
+      const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: { commitSha: sha, path: file, sha256: createHash('sha256').update(bytes).digest('hex') } }] }
+      return { acceptedHead: sha, scenarios: catalog, requirements: catalog }
     }
     return { project, entities: [], baselines: [], integrations: [] }
   } } as unknown as CollaborationClient

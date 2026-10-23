@@ -53,7 +53,7 @@ test('a requirement session uses the same read-only design preset and bundled sk
       agents: { get: () => undefined, create: async ({ setup }: any) => { await setup(scope, agent); return { agent, dispose: async () => {} } } },
     }
     const sessions = new DshTaskSessions(ctx as never, '', async () => {}, undefined, path.join(root, 'skills'))
-    await saveMaterial(root, initialMetadata({ id: 'requirement', kind: 'requirement', title: '需求', categoryId: 'cat' }), '# 需求正文')
+    await saveMaterial(root, initialMetadata({ id: 'requirement', kind: 'requirement', title: '需求', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } }), '# 需求正文')
     await sessions.open({ projectId: 'p', entityId: 'requirement', purpose: 'material', sessionId: 'requirement-session', inputHash: '', worktree: root }, 'read only', undefined)
     assert.deepEqual(presets, ['eadp-scenario'], 'requirements share the scenario preset')
     assert.deepEqual(skillMounts, [{ providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [path.join(root, 'skills')], watch: false }])

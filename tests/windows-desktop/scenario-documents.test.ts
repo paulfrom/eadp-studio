@@ -102,7 +102,7 @@ test('business checks do not infer completeness from titles or text length; opti
 })
 
 test('requirement evidence metadata uses the same serialized expected-hash writer and preserves the losing version', async t => {
-  const f = await fixture(t), requirement: MaterialMetadata = { entityId: 'requirement-one', kind: 'requirement', title: '审批需求', categoryId: 'category', scenarioIds: ['scene'], sources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, referencedAssets: [] }
+  const f = await fixture(t), requirement: MaterialMetadata = { entityId: 'requirement-one', kind: 'requirement', title: '审批需求', templateId: 'default', templateRef, scenarioIds: ['scene'], sources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, referencedAssets: [] }
   const draft = await saveMaterial(f.root, requirement, '需求正文')
   const outcomes = await Promise.allSettled(['甲', '乙'].map((title, index) => f.service.save({ root: f.root, metadata: { ...requirement, title }, body: draft.body, expectedHash: draft.sha256, operationId: `requirement-${index}` })))
   assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1)

@@ -1,8 +1,10 @@
 import type { ScenarioCommand, ScenarioSource, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
 
-/** A project template catalog; `defaultTemplateId` is absent while a project has published no template. */
-export interface ScenarioTemplateCatalog { acceptedHead: string; defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
+/** One project template catalog; `defaultTemplateId` is absent while a project has published no template. */
+export interface TemplateCatalogView { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
+/** Both project template catalogs, read together from one accepted head. */
+export interface ProjectTemplateCatalogs { acceptedHead: string; scenarios: TemplateCatalogView; requirements: TemplateCatalogView }
 
 export type ConfirmationChoice = { method: 'direct' } | { method: 'ai-assisted'; reviewId: string; authorDisposition: string }
 export interface ReviewView {
@@ -43,7 +45,7 @@ export interface StudioState {
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;
   /** Attachment projections for requirement materials; extracted text remains in the Host. */
   materialSources?: Array<{ entityId: string; readOnly: boolean; sources: ScenarioSource[] }>;
-  scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; scenarioTemplates?: ScenarioTemplateCatalog; reviews: ReviewView[]; drafts: MaterialDraft[];
+  scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; projectTemplates?: ProjectTemplateCatalogs; reviews: ReviewView[]; drafts: MaterialDraft[];
   /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
   legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
@@ -56,16 +58,15 @@ export type StudioCommand = ScenarioCommand
   | { action: 'createProject'; name: string; namespaceId: number; path: string }
   | { action: 'openProject'; projectId: string }
   | { action: 'retryProjectInitialization'; operationId: string }
-  | { action: 'addCategory'; name: string }
   | { action: 'bindScenarioTemplate'; entityId: string; templateId: string }
-  | { action: 'createMaterial'; operationId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId?: string; scenarioIds?: string[] }
+  | { action: 'createMaterial'; operationId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; scenarioIds?: string[] }
   | { action: 'saveMaterial'; entityId: string; body: string; metadata: MaterialMetadata }
   | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
   | { action: 'restoreSession'; sessionId: string }
   | ({ action: 'confirmMaterial'; entityId: string; expectedHash: string } & ConfirmationChoice)
   | { action: 'requestReview'; entityId: string; purpose: 'material' | 'prototype' }
   | ({ action: 'confirmPrototype'; entityId: string } & ConfirmationChoice)
-  | { action: 'selectCandidate'; candidateId: string; categoryId: string }
+  | { action: 'selectCandidate'; candidateId: string }
   | { action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation'; entityId: string }
   | { action: 'setEligibility'; entityId: string; version: number; enabled: boolean; reason: string }
   | { action: 'adopt'; sourceProjectId: string; sourceEntityId: string; version: number; targetEntityId: string; reason: string }

@@ -17,9 +17,9 @@ import type { EntityView, ProjectState } from '@eadp/contracts'
  */
 const legacyBody = '```eadp-metadata\n{"entityId":"legacy-scenario","kind":"scenario","categoryId":"legacy","templateId":"default"}\n```\n\n# 旧场景\n\n## 核心业务规则\n\n旧契约规则。\n'
 const legacyHash = createHash('sha256').update(legacyBody).digest('hex')
-const legacy: EntityView = { id: 'legacy-scenario', kind: 'scenario', title: '旧场景', code: 'SC-0001', revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0,
+const legacy: EntityView = { id: 'legacy-scenario', kind: 'scenario', title: '旧场景', code: 'SC-0001', revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1,
   legacyCurrent: { version: 1, confirmationId: 'confirmation-legacy', fixed: { commitSha: 'c'.repeat(40), path: '场景/legacy-scenario.md', sha256: legacyHash }, confirmedBy: 1, confirmedAt: '', title: '旧场景', reason: 'INVALID_MATERIAL: Material metadata does not match the confirmation contract' } }
-const remote: ProjectState = { project: { id: 'project', name: '旧项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1, categories: [] }, entities: [legacy], baselines: [], integrations: [] }
+const remote: ProjectState = { project: { id: 'project', name: '旧项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1 }, entities: [legacy], baselines: [], integrations: [] }
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-legacy-material-'))
@@ -33,7 +33,7 @@ async function fixture() {
     calls.push(`${method} ${route}`)
     if (method !== 'GET') throw new Error(`unexpected write ${method} ${route}`)
     if (route === '/v1/projects') return [remote.project]
-    if (route === '/v1/projects/project/templates') return { acceptedHead: remote.project.recognizedHead, templates: [] }
+    if (route === '/v1/projects/project/templates') return { acceptedHead: remote.project.recognizedHead, scenarios: { templates: [] }, requirements: { templates: [] } }
     if (route === '/v1/projects/project') return remote
     if (route === '/v1/namespaces') return []
     throw new Error(`unexpected read ${route}`)
@@ -51,7 +51,7 @@ test('an accepted document from an earlier contract stays readable and is never 
     const state = await f.app.state()
     assert.deepEqual(state.legacyMaterials, [{ entityId: 'legacy-scenario', body: legacyBody }])
     assert.equal(state.drafts.length, 0, 'a legacy document never becomes an editable draft')
-    assert.deepEqual(state.scenarioTemplates?.templates, [], 'a project without a published catalog reads an empty one')
+    assert.deepEqual(state.projectTemplates?.scenarios.templates, [], 'a project without a published catalog reads an empty one')
   } finally { await f.dispose() }
 })
 

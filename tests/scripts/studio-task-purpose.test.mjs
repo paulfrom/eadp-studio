@@ -20,9 +20,9 @@ const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.ch
 const text = tree => !tree || typeof tree !== 'object' ? tree ?? '' : tree.children.map(text).join('')
 
 function render(stage, tasks) {
-  const entity = { id: 'asset', title: '固定交接材料', kind: stage === 'handoffs' ? 'handoff' : stage === 'scenarios' ? 'scenario' : 'requirement', materialVersion: 1, frozenBy: [] }
+  const entity = { id: 'asset', title: '固定交接材料', kind: stage === 'handoffs' ? 'handoff' : stage === 'scenarios' ? 'scenario' : 'requirement', materialVersion: 1 }
   const scenario = stage === 'scenarios' ? { entityId: entity.id, sessions: tasks, draft: { entityId: entity.id, sha256: 'hash' } } : undefined
-  const state = { scenario, connected: true, project: { id: 'project', categories: [] }, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], collaboration: { entities: [entity], baselines: [] }, tasks, drafts: [{ entityId: entity.id, sha256: 'hash' }], reviews: [{ id: 'material-review', entityId: entity.id, purpose: 'material' }], candidates: [], pending: [] }
+  const state = { scenario, connected: true, project: { id: 'project' }, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], collaboration: { entities: [entity], baselines: [] }, tasks, drafts: [{ entityId: entity.id, sha256: 'hash' }], reviews: [{ id: 'material-review', entityId: entity.id, purpose: 'material' }], candidates: [], pending: [] }
   // The projection now arrives from the shared store, so the first hook slots are
   // the panel's own stage and selection.
   const values = [stage, entity.id], calls = [], updates = []

@@ -1,7 +1,7 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { EntityView, MaterialDraft, MaterialMetadata, ScenarioTemplateCatalog } from '../../shared/studio.ts'
+import type { EntityView, MaterialDraft, MaterialMetadata, TemplateCatalogView } from '../../shared/studio.ts'
 import type { ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { DraftBuffer, DraftSnapshot } from './DraftBuffer.ts'
 import { exportMarkdown, listItemCount, markdownLabels, splitSections } from './document.ts'
@@ -16,7 +16,7 @@ import css from '../studio.module.css'
  */
 export function ScenarioSpecPanel({ entity, draft, buffer, snapshot, workspace, templates, busy, onCollapse, onBindTemplate, onResolve, children }: {
   entity: EntityView; draft: MaterialDraft; buffer: DraftBuffer; snapshot: DraftSnapshot; workspace: Workspace;
-  templates?: ScenarioTemplateCatalog | undefined; busy: boolean; onCollapse(): void;
+  templates?: TemplateCatalogView | undefined; busy: boolean; onCollapse(): void;
   onBindTemplate(templateId: string): void; onResolve(body: string, metadata: MaterialMetadata, actualHash: string): void;
   children?: ReactNode;
 }) {

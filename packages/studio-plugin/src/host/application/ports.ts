@@ -25,14 +25,13 @@ export interface HostPorts {
   stopPreview(): Promise<void>
   publication(action: 'publish' | 'revokePublication', baseline?: { id: string; commitSha: string }): Promise<void>
 }
-export function initialMetadata(entity: { id: string; kind: MaterialMetadata['kind']; title: string; categoryId?: string; templateId?: string; templateRef?: FixedReference }, scenarioIds: string[] = [], sources: Array<{ projectId: string; entityId: string; version: number }> = []): MaterialMetadata {
+export function initialMetadata(entity: { id: string; kind: MaterialMetadata['kind']; title: string; templateId?: string; templateRef?: FixedReference }, scenarioIds: string[] = [], sources: Array<{ projectId: string; entityId: string; version: number }> = []): MaterialMetadata {
   const shared = { entityId: entity.id, kind: entity.kind, title: entity.title,
     scenarioIds: entity.kind === 'requirement' ? scenarioIds : [], prerequisites: [], sources: [], businessEvidence: [],
     coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [] }
-  if (entity.kind === 'scenario') {
-    if (!entity.templateId || !entity.templateRef) throw new Error('场景缺少后台分配的固定模板')
-    return { ...shared, kind: 'scenario', templateId: entity.templateId, templateRef: entity.templateRef }
+  if (entity.kind === 'scenario' || entity.kind === 'requirement') {
+    if (!entity.templateId || !entity.templateRef) throw new Error(entity.kind === 'scenario' ? '场景缺少后台分配的固定模板' : '需求缺少后台分配的固定模板')
+    return { ...shared, kind: entity.kind, templateId: entity.templateId, templateRef: entity.templateRef, ...(entity.kind === 'requirement' ? { sources } : {}) }
   }
-  if (!entity.categoryId) throw new Error('需求或交接材料缺少项目分类')
-  return { ...shared, kind: entity.kind, categoryId: entity.categoryId, sources }
+  return { ...shared, kind: entity.kind, sources }
 }

@@ -90,15 +90,17 @@ test('a successful in-flight response cannot discard a separately observed exter
   assert.equal(buffer.getSnapshot().conflict?.body, '并发外部修改')
 })
 
-test('catalog sequence ordering is numeric and revision status is independent of confirmation', () => {
+test('catalog sequence ordering is numeric and revision status follows the draft state of a confirmed material', () => {
   const entities = [
-    { id: 'a', kind: 'scenario', sequence: 10000, code: 'SC-10000', title: '退款', materialVersion: 1, confirmationStatus: 'confirmed', occupation: { purpose: 'scenario-batch' } },
+    { id: 'a', kind: 'scenario', sequence: 10000, code: 'SC-10000', title: '退款', materialVersion: 1, confirmationStatus: 'confirmed' },
     { id: 'b', kind: 'scenario', sequence: 9999, code: 'SC-9999', title: '退款', materialVersion: 0, confirmationStatus: 'draft' },
+    { id: 'c', kind: 'scenario', sequence: 10001, code: 'SC-10001', title: '退款', materialVersion: 1, confirmationStatus: 'draft' },
   ] as EntityView[]
-  const options = { search: '退款', status: 'all', revision: 'all', sort: 'sequence' as const, category: '' }
-  assert.deepEqual(selectCatalog(entities, options).map(entity => entity.id), ['b', 'a'])
-  assert.equal(isRevising(entities[0]!), true)
-  assert.deepEqual(selectCatalog(entities, { ...options, revision: 'revising', status: 'confirmed' }).map(entity => entity.id), ['a'])
+  const options = { search: '退款', status: 'all', revision: 'all', sort: 'sequence' as const }
+  assert.deepEqual(selectCatalog(entities, options).map(entity => entity.id), ['b', 'a', 'c'])
+  assert.equal(isRevising(entities[0]!), false)
+  assert.equal(isRevising(entities[2]!), true)
+  assert.deepEqual(selectCatalog(entities, { ...options, revision: 'revising', status: 'all' }).map(entity => entity.id), ['c'])
 })
 
 test('acknowledges Host newline normalization without resaving the same input forever', async t => {

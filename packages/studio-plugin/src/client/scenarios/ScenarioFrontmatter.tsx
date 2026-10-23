@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { EntityView, MaterialMetadata, ScenarioTemplateCatalog } from '../../shared/studio.ts'
+import type { EntityView, MaterialMetadata, TemplateCatalogView } from '../../shared/studio.ts'
 import type { DraftBuffer, DraftSnapshot } from './DraftBuffer.ts'
 import css from '../studio.module.css'
 
@@ -11,7 +11,7 @@ const auditTime = (value: string | undefined) => value ? value.replace('T', ' ')
  */
 export function ScenarioFrontmatter({ entity, buffer, snapshot, readOnly, editingDisabled, templates, busy, onBindTemplate }: {
   entity: EntityView; buffer: DraftBuffer; snapshot: DraftSnapshot; readOnly: boolean; editingDisabled: boolean;
-  templates?: ScenarioTemplateCatalog | undefined; busy: boolean; onBindTemplate(templateId: string): void;
+  templates?: TemplateCatalogView | undefined; busy: boolean; onBindTemplate(templateId: string): void;
 }) {
   const [templateId, setTemplateId] = useState('')
   const metadata = snapshot.metadata

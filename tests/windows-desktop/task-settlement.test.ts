@@ -61,7 +61,7 @@ async function fixture() {
   local.tasks.push(task)
   await store.save()
   let recognizedHead = base
-  const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: origin, stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: base, revision: 1, categories: [] }, entities: [], baselines: [], integrations: [] }
+  const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: origin, stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: base, revision: 1 }, entities: [], baselines: [], integrations: [] }
   const api = { request: async (method: string, route: string) => route === '/v1/projects/project' ? { ...remote, project: { ...remote.project, recognizedHead } } : remote } as unknown as CollaborationClient
   const ports = { git, gitLocal: (args: string[], cwd: string) => git.local(cwd, args), stopPreview: async () => {} } as unknown as HostPorts
   const projects = new ProjectWorkspaces(store, api, ports, new BackgroundLane())

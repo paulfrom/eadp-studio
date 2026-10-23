@@ -19,8 +19,7 @@ export interface ScenarioRevisionFace {
 export interface ScenarioSplitFace { offered: boolean; deferred: boolean; split(): void; defer(): void }
 /** Requirement candidates produced from the confirmed scenario version. */
 export interface ScenarioCandidateFace {
-  items: Candidate[]; categories: Array<{ id: string; name: string }>; categoryId: string;
-  selectCategory(categoryId: string): void; create(candidateId: string): void;
+  items: Candidate[]; create(candidateId: string): void;
 }
 /**
  * Chat pane of the scenario page: session controls, the native conversation the
@@ -57,8 +56,8 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
       <button disabled={busy} onClick={revision.inspect}>开始修订：查看影响</button>
     </div>}
     {revision.shown && <section className={css.revisionImpact} aria-label="修订影响清单">
-      <header className={css.cardHead}><strong>修订影响清单</strong><small>关联需求将进入场景批次冻结</small></header>
-      <p>启动后会领取设计占用，关联需求进入场景批次冻结，并按同批规则处理及确认。</p>
+      <header className={css.cardHead}><strong>修订影响清单</strong></header>
+      <p>启动后会领取设计占用，之后可修订场景正文并重新确认。</p>
       {revision.impact?.length ? <ul>{revision.impact.map(item => <li key={item.id}>{item.code ?? item.id} · {item.title}</li>)}</ul> : <p>没有关联需求。</p>}
       <div className={css.dockActions}>
         <button className={css.primary} disabled={busy || revision.impact === undefined} onClick={revision.start}>确认影响并启动修订</button>
@@ -79,10 +78,9 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
       </section>}
       {candidates.items.length > 0 && <section className={css.dockCard} aria-label="需求拆分候选">
         <header className={css.cardHead}><strong>需求拆分候选</strong><small>{candidates.items.length} 条</small></header>
-        <label className={css.inlineField}>需求业务分类<select value={candidates.categoryId} onChange={event => candidates.selectCategory(event.target.value)}>{candidates.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
         {candidates.items.map(candidate => <article className={css.candidateRow} key={candidate.id}>
           <div><strong>{candidate.title}</strong><p>{candidate.summary}</p></div>
-          <button disabled={busy || !candidates.categoryId || !!candidate.selectedEntityId} onClick={() => candidates.create(candidate.id)}>{candidate.selectedEntityId ? '已创建草稿' : '选用并创建需求草稿'}</button>
+          <button disabled={busy || !!candidate.selectedEntityId} onClick={() => candidates.create(candidate.id)}>{candidate.selectedEntityId ? '已创建草稿' : '选用并创建需求草稿'}</button>
         </article>)}
       </section>}
     </div>

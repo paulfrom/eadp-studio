@@ -25,11 +25,11 @@ const evidencePath = '.eadp/evidence/fixture/approved.txt'
 const evidenceBody = '合成业务访谈：用户按固定业务范围检查记录并保留审计依据。\n'
 const evidence = { label: '合成测试业务依据', reference: 'synthetic:fixture', files: [{ path: evidencePath, sha256: digest(evidenceBody) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }
 const entity = (id: string, kind: EntityView['kind'] = 'requirement'): EntityView => ({ id, kind, title: id,
-  ...(kind === 'scenario' ? { templateId: 'default', templateRef } : { categoryId: 'cat' }),
+  ...(kind === 'handoff' ? {} : { templateId: 'default', templateRef }),
   revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active',
   scenarioIds: kind === 'requirement' ? ['origin'] : [],
   ...(kind === 'requirement' ? { scenarioSources: [{ projectId: 'project', entityId: 'origin', version: 1 }] } : {}),
-  prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 })
+  prerequisites: [], authorId: 1 })
 const metadata = (value: EntityView): MaterialMetadata => ({ ...initialMetadata(value, value.scenarioIds,
   value.scenarioIds.map(entityId => ({ projectId: 'project', entityId, version: 1 }))),
   businessEvidence: [evidence], coreRulesPresent: true, acceptanceCriteriaPresent: true })
@@ -49,7 +49,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   await mkdir(worktree)
   await fixedFiles(worktree)
   value.occupation = { occupationId: 'occupation', generation: 1, taskId: 'task', clientId: local.clientId, expectedRevision: 1, entityId: value.id, ownerId: 1, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' }
-  const project = { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: head, revision: 1, categories: [{ id: 'cat', name: '测试' }] }
+  const project = { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: head, revision: 1 }
   const origin = entity('origin', 'scenario'); origin.materialVersion = 1; origin.confirmationStatus = 'confirmed'; origin.taskStatus = 'idle'
   const originDraft = await saveMaterial(worktree, metadata(origin), body)
   origin.current = { version: 1, fixed: { commitSha: head, path: originDraft.path, sha256: originDraft.sha256 }, metadata: originDraft.metadata, confirmationId: 'origin-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
@@ -70,7 +70,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
     if (input && 'token' in input) assert.equal(Value.Check(OccupationTokenSchema, input.token), true, 'Host writes must send the exact occupation token contract')
     if (method === 'GET' && route === '/v1/projects') return [project]
-    if (method === 'GET' && route.endsWith('/templates')) return { acceptedHead: project.recognizedHead, defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: templateRef }] }
+    if (method === 'GET' && route.endsWith('/templates')) return { acceptedHead: project.recognizedHead, scenarios: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: templateRef }] }, requirements: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认需求模板', fixed: templateRef }] } }
     if (method === 'GET' && route.endsWith('/versions')) return [source]
     if (method === 'GET' && route.includes('/operations/')) { const result = records.get(route.split('/').at(-1)!); if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404); return { result } }
     if (method === 'GET' && route.includes('/integrations/')) return remote.integrations.find(integration => integration.id === route.split('/').at(-1))
@@ -237,22 +237,20 @@ test('accepted handoff generation is durable per fixed baseline and never overwr
   assert.equal(f.calls.prompts.length, 1)
 })
 
-test('scenario revision confirms every unstarted frozen requirement atomically and preserves completed requirements', async t => {
+test('scenario confirmation fixes only the scenario material and leaves related requirements untouched', async t => {
   const f = await fixture(t, 'scenario')
-  f.value.materialVersion = 1; f.value.occupation!.purpose = 'scenario-batch'; f.value.occupation!.inputVersion = 1
+  f.value.materialVersion = 1; f.value.occupation!.inputVersion = 1
   const unstarted = entity('unstarted'), completed = entity('completed'), unrelated = entity('unrelated')
-  for (const requirement of [unstarted, completed]) { requirement.scenarioIds = [f.value.id]; requirement.frozenBy = ['occupation'] }
+  for (const requirement of [unstarted, completed, unrelated]) requirement.scenarioIds = [f.value.id]
   completed.materialVersion = 2; completed.completedVersion = 2
-  unrelated.scenarioIds = [f.value.id]
   f.remote.entities.push(unstarted, completed, unrelated)
-  await saveMaterial(f.worktree, { ...metadata(unstarted), sources: [{ projectId: 'project', entityId: f.value.id, version: 2 }] }, body)
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
   const reply = await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })
   assert.equal(reply.ok, true, JSON.stringify(reply))
   const request = f.calls.prepared[0]!
-  assert.deepEqual(request.batchRequirementIds?.sort(), ['completed', 'unstarted'])
-  assert.deepEqual(request.confirmations.map(item => item.entityId).sort(), ['target', 'unstarted'])
-  assert.deepEqual([...f.calls.commits[0]!].sort(), [evidencePath, '场景/target.md', '需求/unstarted.md'].sort())
+  assert.equal(request.stage, 'material')
+  assert.deepEqual(request.confirmations.map(item => item.entityId), ['target'])
+  assert.deepEqual([...f.calls.commits[0]!].sort(), [evidencePath, '场景/target.md'].sort())
   assert.ok(request.confirmations.every(item => item.fixed.commitSha === candidate))
 })
 
@@ -304,31 +302,28 @@ for (const failure of ['session', 'prompt'] as const) test('failed handoff ' + f
   assert.ok(f.calls.sessions.every(id => id === 'material-session'))
 })
 
-test('an incomplete frozen batch fails before creating any candidate commit', async t => {
+test('a related requirement without local material does not block scenario confirmation', async t => {
   const f = await fixture(t, 'scenario')
-  f.value.materialVersion = 1; f.value.occupation!.purpose = 'scenario-batch'; f.value.occupation!.inputVersion = 1
-  const missing = entity('missing'); missing.scenarioIds = [f.value.id]; missing.frozenBy = ['occupation']
+  f.value.materialVersion = 1; f.value.occupation!.inputVersion = 1
+  const missing = entity('missing'); missing.scenarioIds = [f.value.id]
   f.remote.entities.push(missing)
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
-  assert.equal((await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, false)
-  assert.equal(f.calls.commits.length, 0)
+  assert.equal((await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, true)
+  assert.deepEqual(f.calls.prepared[0]!.confirmations.map(item => item.entityId), ['target'])
 })
 
-test('frozen unstarted requirements remain editable only through the owned scenario worktree', async t => {
+test("a requirement under another owner's design occupation is read-only and refuses edits", async t => {
   const f = await fixture(t, 'scenario')
-  f.value.materialVersion = 1; f.value.occupation!.purpose = 'scenario-batch'; f.value.occupation!.inputVersion = 1
-  const related = entity('related'); related.scenarioIds = [f.value.id]; related.frozenBy = ['occupation']
+  const related = entity('related'); related.scenarioIds = [f.value.id]
+  related.occupation = { occupationId: 'foreign', generation: 1, taskId: 'foreign-task', clientId: f.local.clientId, expectedRevision: 1, entityId: related.id, ownerId: 2, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' }
   f.remote.entities.push(related)
   const app = f.app()
-  // The first read queues preparation of the frozen requirement on the lane; the
-  // draft is visible to the read that follows it.
-  await app.state(); await app.settle()
   const state = await app.state()
-  const draft = state.drafts.find(value => value.entityId === related.id)!
-  assert.ok(draft)
-  assert.equal(state.tasks.find(value => value.entityId === related.id)!.worktree, f.worktree)
-  assert.equal((await f.app().command({ action: 'saveMaterial', entityId: related.id, metadata: draft.metadata, body })).ok, true)
-  assert.equal(related.occupation, undefined)
+  assert.equal(state.materialSources!.find(value => value.entityId === related.id)!.readOnly, true)
+  const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
+  assert.equal((await app.command({ action: 'saveMaterial', entityId: related.id, metadata: { ...metadata(related), entityId: related.id }, body })).ok, false)
+  assert.equal(related.occupation!.ownerId, 2)
+  assert.equal((await readMaterial(f.worktree, 'scenario', f.value.id)).sha256, draft.sha256)
 })
 
 
@@ -494,7 +489,7 @@ for (const reason of ['error', 'aborted']) test('a valid-looking report followed
   assert.equal(f.calls.prepared.length, 0)
 })
 
-test('explicit scenario revision binds unfinished requirements to the next scene version and preserves other sources and completed materials', async t => {
+test('explicit scenario revision claims a design occupation and leaves requirement materials untouched', async t => {
   const f = await fixture(t, 'scenario'), app = f.app()
   const current = await readMaterial(f.worktree, 'scenario', f.value.id)
   f.value.materialVersion = 1; f.value.confirmationStatus = 'confirmed'; f.value.taskStatus = 'idle'
@@ -505,8 +500,7 @@ test('explicit scenario revision binds unfinished requirements to the next scene
     requirement.scenarioIds = [f.value.id, 'origin']
     requirement.scenarioSources = [{ projectId: 'project', entityId: f.value.id, version: 1 }, { projectId: 'project', entityId: 'origin', version: 1 }]
   }
-  const provenance = { projectId: 'source-project', entityId: 'source', version: 2 }
-  const previous = await saveMaterial(f.worktree, { ...metadata(related), sources: [...related.scenarioSources!, provenance] }, body + '\n作者保留的业务细节。')
+  const previous = await saveMaterial(f.worktree, metadata(related), body + '\n作者保留的业务细节。')
   const finished = await saveMaterial(f.worktree, metadata(completed), body + '\n已完成需求保持固定。')
   completed.materialVersion = 2; completed.completedVersion = 2; completed.confirmationStatus = 'confirmed'
   completed.current = { version: 2, fixed: { commitSha: head, path: finished.path, sha256: finished.sha256 }, metadata: finished.metadata, confirmationId: 'completed-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
@@ -516,11 +510,10 @@ test('explicit scenario revision binds unfinished requirements to the next scene
     if (method === 'GET' && route.endsWith('/revision-impact')) return { requirements: [related, completed] }
     if (method === 'POST' && route.endsWith(`/entities/${f.value.id}/claim`)) {
       claims.push(input!)
-      assert.equal(input!.purpose, 'scenario-batch')
+      assert.equal(input!.purpose, 'design')
       assert.equal(input!.expectedRevision, f.value.revision)
       f.value.revision++; f.value.generation++
-      f.value.occupation = { occupationId: 'revision-occupation', generation: f.value.generation, taskId: String(input!.taskId), clientId: String(input!.clientId), expectedRevision: f.value.revision, entityId: f.value.id, ownerId: 1, purpose: 'scenario-batch', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
-      for (const requirement of [related, completed]) requirement.frozenBy = ['revision-occupation']
+      f.value.occupation = { occupationId: 'revision-occupation', generation: f.value.generation, taskId: String(input!.taskId), clientId: String(input!.clientId), expectedRevision: f.value.revision, entityId: f.value.id, ownerId: 1, purpose: 'design', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
       return f.value
     }
     return original(method, route, input)
@@ -530,23 +523,15 @@ test('explicit scenario revision binds unfinished requirements to the next scene
   f.ports.git.state = async directory => directory.includes(`${path.sep}worktrees${path.sep}`) ? { head, dirty: true, branch: 'studio/revision' } : state(directory)
   const impact = await app.command({ action: 'scenarioRevisionImpact', entityId: f.value.id })
   assert.equal(impact.ok, true, JSON.stringify(impact))
-  assert.equal(claims.length, 0, 'viewing the impact cannot claim or freeze anything')
+  assert.equal(claims.length, 0, 'viewing the impact cannot claim anything')
   assert.equal(f.value.occupation, undefined)
-  const reply = await app.command({ action: 'startScenarioRevision', entityId: f.value.id, expectedRevision: f.value.revision, expectedAssociationRevision: f.value.associationRevision })
+  const reply = await app.command({ action: 'startScenarioRevision', entityId: f.value.id, expectedRevision: f.value.revision })
   assert.equal(reply.ok, true, JSON.stringify(reply))
   assert.equal(claims.length, 1)
-  // Rebinding the frozen requirements is preparation on the lane: it is readable
-  // once that work settles, and the reply already reported the new task.
-  await app.settle()
   const task = (await f.store.read()).tasks.findLast(task => task.entityId === f.value.id && task.purpose === 'material')!
   assert.notEqual(task.worktree, f.worktree)
-  const rebound = await readMaterial(task.worktree, 'requirement', related.id)
-  assert.deepEqual(rebound.metadata.sources.filter(source => source.projectId === 'project' && source.entityId === f.value.id), [{ projectId: 'project', entityId: f.value.id, version: 2 }])
-  assert.deepEqual(rebound.metadata.sources.filter(source => source.entityId !== f.value.id), previous.metadata.sources.filter(source => source.entityId !== f.value.id))
-  assert.deepEqual(rebound.metadata.scenarioIds, [f.value.id, 'origin'])
-  assert.equal(rebound.body, previous.body)
-  assert.equal((await readMaterial(task.worktree, 'requirement', completed.id)).sha256, finished.sha256)
-  assert.equal((await readMaterial(f.worktree, 'requirement', related.id)).sha256, previous.sha256, 'the old task material remains intact')
+  assert.equal((await readMaterial(task.worktree, 'scenario', f.value.id)).sha256, current.sha256)
+  assert.equal((await readMaterial(task.worktree, 'requirement', related.id)).sha256, previous.sha256, 'requirement materials are not rebound by a scenario revision')
   assert.equal(f.value.current!.fixed.sha256, current.sha256, 'the accepted scene stays fixed while its revision is edited')
 })
 

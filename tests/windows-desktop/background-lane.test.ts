@@ -53,7 +53,7 @@ test('appended work runs after a failed piece and is awaited when queued during 
   assert.deepEqual(ran, ['after-failure', 'outer', 'inner'])
 })
 
-const project: ProjectView = { id: 'project', gitlabProjectId: 1, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'ready', name: '项目', recognizedHead: 'b'.repeat(40), revision: 1, categories: [] }
+const project: ProjectView = { id: 'project', gitlabProjectId: 1, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'ready', name: '项目', recognizedHead: 'b'.repeat(40), revision: 1 }
 const commit = 'a'.repeat(40)
 const body = '固定场景内容'
 const hash = createHash('sha256').update(body).digest('hex')

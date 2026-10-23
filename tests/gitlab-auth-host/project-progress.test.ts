@@ -14,7 +14,7 @@ import type { GitProgress } from '../../packages/studio-plugin/src/host/adapters
 
 const user: StudioUser = { id: 1, username: 'tester', name: '测试管理员', email: 'tester@example.test', admin: true, gitlabUserId: 17, gitlabUsername: 'liu', gitlabEmail: 'liu@example.test' }
 const sha = 'a'.repeat(40)
-const accepted = (): ProjectView => ({ id: 'project-1', name: '项目', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: sha, revision: 2, categories: [] })
+const accepted = (): ProjectView => ({ id: 'project-1', name: '项目', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: sha, revision: 2 })
 const directories = ['场景', '需求', '交接', '原型代码']
 /** Write the checkout a clone and an initialization both have to leave behind. */
 async function checkout(directory: string, project: ProjectView): Promise<void> {

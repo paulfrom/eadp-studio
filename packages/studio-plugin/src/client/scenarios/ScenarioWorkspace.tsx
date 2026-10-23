@@ -22,7 +22,6 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   const [collapsed, setCollapsed] = useState(false)
   const [showImpact, setShowImpact] = useState(false)
   const [splitLater, setSplitLater] = useState(false)
-  const [categoryId, setCategoryId] = useState('')
   const operations = useRef(new Map<string, { fingerprint: string; id: string }>())
   const operationId = useCallback((action: string, input: unknown) => {
     const fingerprint = JSON.stringify(input)
@@ -64,8 +63,6 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   const sessions = workspace.sessions.filter(session => session.entityId === entity.id && session.purpose === 'material')
   const activeTask = sessions.find(session => session.sessionId === workspace.activeSessionId)
   const activeSessionId = workspace.repair?.status === 'active' ? workspace.repair.sessionId : activeTask?.sessionId
-  const categories = state.project?.categories ?? []
-  const selectedCategory = categoryId || categories[0]?.id || ''
   const candidates = state.candidates.filter(candidate => candidate.scenarioId === entity.id)
   const locked = busy || !!snapshot.conflict || workspace.repair?.status === 'active'
   const chat = useMemo<ScenarioChatActions>(() => ({
@@ -86,7 +83,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     shown: showImpact,
     ...(workspace.impact ? { impact: workspace.impact } : {}),
     inspect: () => { void execute({ action: 'scenarioRevisionImpact', entityId: entity.id }).then(result => { if (result?.ok) setShowImpact(true) }) },
-    start: () => { void execute({ action: 'startScenarioRevision', entityId: entity.id, expectedRevision: entity.revision, expectedAssociationRevision: entity.associationRevision }).then(result => { if (result?.ok) setShowImpact(false) }) },
+    start: () => { void execute({ action: 'startScenarioRevision', entityId: entity.id, expectedRevision: entity.revision }).then(result => { if (result?.ok) setShowImpact(false) }) },
     dismiss: () => setShowImpact(false),
   }
   const split: ScenarioSplitFace = {
@@ -97,10 +94,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   }
   const candidateFace: ScenarioCandidateFace = {
     items: candidates,
-    categories,
-    categoryId: selectedCategory,
-    selectCategory: setCategoryId,
-    create: candidateId => { void execute({ action: 'selectCandidate', candidateId, categoryId: selectedCategory }) },
+    create: candidateId => { void execute({ action: 'selectCandidate', candidateId }) },
   }
   return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
     <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
@@ -108,7 +102,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
         <span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。明确同意写入后，才会更新正文。'}</p>
       </MaterialConversation>
     </ScenarioChatPanel>
-    <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.scenarioTemplates} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
+    <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.scenarios} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
       <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
     </ScenarioSpecPanel>
   </div>

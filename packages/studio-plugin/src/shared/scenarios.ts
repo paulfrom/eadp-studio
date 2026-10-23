@@ -45,7 +45,7 @@ export interface ScenarioWorkspace {
 export type ScenarioCommand =
   | { action: 'openScenario'; entityId: string }
   | { action: 'scenarioRevisionImpact'; entityId: string }
-  | { action: 'startScenarioRevision'; entityId: string; expectedRevision: number; expectedAssociationRevision: number }
+  | { action: 'startScenarioRevision'; entityId: string; expectedRevision: number }
   | { action: 'saveScenario'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'resolveScenarioWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string }
   | { action: 'undoScenarioWrite'; entityId: string; operationId: string; expectedHash: string }

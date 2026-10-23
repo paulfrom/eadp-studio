@@ -24,7 +24,7 @@ export interface AdoptionOperation {
   success?: { idempotencyKey: string; targetConfirmationId: string };
 }
 export interface MaterialReservation {
-  id: string; projectId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; categoryId?: string; scenarioIds: string[]; sources: AssetSource[];
+  id: string; projectId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; templateId?: string; templateRef?: FixedReference; scenarioIds: string[]; sources: AssetSource[];
   phase: 'reserving' | 'unknown' | 'reserved' | 'materialized'; entityId?: string; message?: string;
 }
 export interface ProjectInitialization {

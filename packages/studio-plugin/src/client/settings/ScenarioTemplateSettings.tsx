@@ -18,7 +18,7 @@ export function ScenarioTemplateSettings({ state, run: send }: { state: StudioSt
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [previewSignature, setPreviewSignature] = useState('')
-  const catalog = state.scenarioTemplates
+  const catalog = state.projectTemplates?.scenarios
   const loaded = useRef<{ projectId: string; signature: string }>()
   useEffect(() => {
     if (!catalog) return
@@ -33,7 +33,7 @@ export function ScenarioTemplateSettings({ state, run: send }: { state: StudioSt
     loaded.current = { projectId, signature }
     setTemplates(incoming)
     setDefaultId(catalog.defaultTemplateId ?? ''); setSelectedId(catalog.defaultTemplateId ?? ''); setPreviewSignature('')
-  }, [catalog?.acceptedHead, state.project?.id])
+  }, [state.projectTemplates?.acceptedHead, state.project?.id])
   const selected = templates.find(template => template.id === selectedId)
   const signature = JSON.stringify({ templates, defaultId })
   const submit = async (command: StudioCommand) => {

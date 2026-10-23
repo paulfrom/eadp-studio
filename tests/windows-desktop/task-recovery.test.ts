@@ -33,12 +33,12 @@ async function fixture(failure?: 'session' | 'prompt') {
   const store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
   const scenario = (version: number): EntityView => {
-    const entity: EntityView = { id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash }, revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1, frozenBy: [], associationRevision: 0 }
+    const entity: EntityView = { id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash }, revision: version, generation: 1, materialVersion: version, confirmationStatus: 'confirmed', taskStatus: 'idle', scenarioIds: [], prerequisites: [], authorId: 1 }
     entity.current = { version, confirmationId: `confirmation-${version}`, fixed: { commitSha: String(version).repeat(40), path: '场景/scenario.md', sha256: hash(version) }, metadata: initialMetadata(entity), confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
     return entity
   }
 
-  const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1, categories: [] }, entities: [scenario(1)], baselines: [], integrations: [] }
+  const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1 }, entities: [scenario(1)], baselines: [], integrations: [] }
   const integrations = new Map<string, IntegrationView>()
   const addOperation = (version: number): PendingOperation => {
     const integration: IntegrationView = { id: `integration-${version}`, entityId: 'scenario', ownerId: 1, status: 'accepted', sourceSha: 'a'.repeat(40), expectedHead: 'a'.repeat(40), candidateSha: 'a'.repeat(40), stage: 'material', confirmationIds: [`confirmation-${version}`], createdAt: '' }
@@ -55,7 +55,7 @@ async function fixture(failure?: 'session' | 'prompt') {
     if (method === 'POST') { calls.creates++; throw new Error('unexpected write') }
     if (route === '/v1/projects') return [remote.project]
     if (route === '/v1/namespaces') return []
-    if (route === '/v1/projects/project/templates') return { acceptedHead: remote.project.recognizedHead, defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }] }
+    if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }] }; return { acceptedHead: remote.project.recognizedHead, scenarios: catalog, requirements: catalog } }
     if (route.includes('/integrations/')) return integrations.get(route.split('/').at(-1)!)
     return remote
   } } as unknown as CollaborationClient
@@ -149,7 +149,7 @@ test('unadopted old candidates are hidden and rejected before any requirement cr
     await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: output('失效候选') }); const id = f.local.candidates[0]!.id
     f.nextVersion(2)
     assert.equal((await app.state()).candidates.length, 0)
-    assert.equal((await app.command({ action: 'selectCandidate', candidateId: id, categoryId: 'cat' })).ok, false)
+    assert.equal((await app.command({ action: 'selectCandidate', candidateId: id })).ok, false)
     assert.equal(f.calls.creates, 0)
   } finally { await f.dispose() }
 })
@@ -291,7 +291,7 @@ for (const action of ['checkPrototype', 'startPreview'] as const) test('failed '
   const f = await fixture()
   try {
     const entity = f.remote.entities[0]!
-    entity.kind = 'requirement'; entity.categoryId = 'cat'
+    entity.kind = 'requirement'
     entity.current!.metadata = initialMetadata(entity)
     entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
     f.local.tasks.push({ projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype', inputHash: entity.current!.fixed.sha256, worktree: path.join(f.root, 'prototype-task') })
@@ -442,7 +442,7 @@ for (const action of ['claimPrototype', 'startSession'] as const) test(action + 
   const f = await fixture()
   try {
     const entity = f.remote.entities[0]!
-    entity.kind = 'requirement'; entity.categoryId = 'cat'
+    entity.kind = 'requirement'
     const worktree = path.join(f.root, 'prototype-task')
     await mkdir(worktree)
     const draft = await saveMaterial(worktree, initialMetadata(entity), '# 已确认需求\n')
@@ -523,7 +523,7 @@ test('a broken official preset prevents publication and cannot fall through to a
 
 test('an already live conversation Agent is reused and receives the Studio task scope', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-live-reuse-'))
-  const material = await saveMaterial(root, initialMetadata({ id: 'entity', kind: 'requirement', title: '合成需求', categoryId: 'cat' }), '# entity\n')
+  const material = await saveMaterial(root, initialMetadata({ id: 'entity', kind: 'requirement', title: '合成需求', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }), '# entity\n')
   const live = {
     session: { header: { id: 'live-session', cwd: root }, requestHeader: () => undefined },
     ctx: { systemPrompt: { section: () => {} }, effect: (register: () => () => void) => { register() } },

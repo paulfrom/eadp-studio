@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { EntityView, ProjectState } from '@eadp/contracts'
+import type { EntityView, MaterialMetadata, ProjectState } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
 import type { ScenarioCommand, ScenarioSource } from '../../shared/scenarios.ts'
 import { containedFile, digest, readMaterial } from '../adapters/assets/materials.ts'
@@ -17,29 +17,20 @@ import { syncProjectContext } from './scenario-package.ts'
 export class MaterialSources {
   constructor(private readonly store: StudioStore, private readonly ports: HostPorts, private readonly projects: ProjectWorkspaces, private readonly deps: ScenarioDependencies, private readonly record: (entityId: string, projectId?: string) => Promise<ScenarioRecord>) {}
 
-  /** Resolves the effective design owner, including an unstarted requirement inside a scene revision batch. */
-  private owner(remote: ProjectState, entity: EntityView): EntityView | undefined {
-    if (!entity.frozenBy.length) return entity
-    if (entity.kind !== 'requirement' || entity.completedVersion === entity.materialVersion && entity.materialVersion > 0) return undefined
-    return remote.entities.find((value): value is EntityView => 'generation' in value && value.kind === 'scenario' && value.occupation?.purpose === 'scenario-batch' && entity.frozenBy.includes(value.occupation.occupationId))
-  }
-
   async editable(entityId: string, projectId?: string, kind?: 'scenario') {
     const context = await this.deps.entity(entityId, projectId)
     if (kind && context.entity.kind !== kind) throw new Error('此操作只适用于项目场景')
     if (!['scenario', 'requirement'].includes(context.entity.kind)) throw new Error('资料只适用于场景与需求材料')
-    const owner = this.owner(context.remote, context.entity)
-    if (!owner || context.entity.current && !owner.occupation) throw new Error('已确认材料只读，请先开始修订')
-    if (owner.occupation && !['design', 'scenario-batch'].includes(owner.occupation.purpose)) throw new Error('当前占用不是材料设计任务')
+    if (context.entity.current && !context.entity.occupation) throw new Error('已确认材料只读，请先开始修订')
+    if (context.entity.occupation && context.entity.occupation.purpose !== 'design') throw new Error('当前占用不是材料设计任务')
     const task = await this.deps.task(context.remote, context.entity)
-    const fresh = await this.deps.entity(entityId, projectId), freshOwner = this.owner(fresh.remote, fresh.entity)
-    if (!freshOwner) throw new Error('材料设计授权已失效')
-    await this.deps.owned(freshOwner)
+    const fresh = await this.deps.entity(entityId, projectId)
+    await this.deps.owned(fresh.entity)
     return { ...fresh, task }
   }
 
   /** Rebuilds the original read status from hash-verified archived reading records, never from the extracted-text range alone. */
-  async fixedSources(projectId: string, commitSha: string, draft: Pick<MaterialDraft, 'metadata'>): Promise<ScenarioSource[]> {
+  async fixedSources(projectId: string, commitSha: string, draft: { metadata: Pick<MaterialMetadata, 'businessEvidence'> }): Promise<ScenarioSource[]> {
     return Promise.all(draft.metadata.businessEvidence.map(async (evidence, index): Promise<ScenarioSource> => {
       const source: ScenarioSource = { id: `fixed-${index}`, name: evidence.label, format: 'unknown', sha256: evidence.files[0]!.sha256, status: 'failed', ranges: [], text: '', selected: true, formal: true }
       try {
@@ -62,9 +53,9 @@ export class MaterialSources {
   async views(remote: ProjectState, drafts: MaterialDraft[]): Promise<Array<{ entityId: string; readOnly: boolean; sources: ScenarioSource[] }>> {
     const local = await this.store.read(), account = await this.ports.account()
     return Promise.all(remote.entities.filter((entity): entity is EntityView => 'generation' in entity && entity.kind === 'requirement' && !entity.legacyCurrent).map(async entity => {
-      const owner = this.owner(remote, entity), occupation = owner?.occupation
-      const owned = !!occupation && occupation.ownerId === account?.id && occupation.clientId === local.clientId && ['design', 'scenario-batch'].includes(occupation.purpose)
-      const readOnly = !!entity.current && !owned || !!entity.occupation && !owned || !!entity.frozenBy.length && !owned
+      const occupation = entity.occupation
+      const owned = !!occupation && occupation.ownerId === account?.id && occupation.clientId === local.clientId && occupation.purpose === 'design'
+      const readOnly = !!entity.current && !owned || !!entity.occupation && !owned
       const draft = drafts.find(value => value.entityId === entity.id)
       const record = local.scenarios.find(value => value.projectId === remote.project.id && value.entityId === entity.id)
       const sources = readOnly && entity.current
@@ -90,9 +81,9 @@ export class MaterialSources {
   /** Accept native image evidence only for the current design task and unchanged, selected imported bytes. */
   async acceptRead(task: TaskView, output: Extract<SessionOutput, { kind: 'source-read' }>): Promise<void> {
     if (task.purpose !== 'material' || !output.attachmentId || !output.ranges.length) return
-    const { remote, entity } = await this.deps.entity(task.entityId, task.projectId), owner = this.owner(remote, entity)
-    if (!owner?.occupation || !['design', 'scenario-batch'].includes(owner.occupation.purpose) || path.basename(task.worktree) !== owner.occupation.taskId) return
-    try { await this.deps.owned(owner) } catch { return }
+    const { entity } = await this.deps.entity(task.entityId, task.projectId)
+    if (!entity.occupation || entity.occupation.purpose !== 'design' || path.basename(task.worktree) !== entity.occupation.taskId) return
+    try { await this.deps.owned(entity) } catch { return }
     const record = await this.record(task.entityId, task.projectId)
     const source = record.sources.find(value => value.selected && ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(value.format) && record.sourcePaths[value.id] && path.resolve(record.sourcePaths[value.id]!) === path.resolve(task.worktree, output.path))
     if (!source) return

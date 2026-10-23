@@ -216,10 +216,10 @@ test('read-only materials retain source records while import, retry, and selecti
 })
 
 function editableRequirement(onSave, registerFlush) {
-  const metadata = { kind: 'requirement', entityId: 'requirement', title: '业务要求', categoryId: 'business', scenarioIds: [],
+  const metadata = { kind: 'requirement', entityId: 'requirement', title: '业务要求', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }, scenarioIds: [],
     sources: [], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: true, acceptanceCriteriaPresent: true }
   return h(MaterialEditor, { draft: { entityId: metadata.entityId, metadata, body: '原始业务正文', path: '需求/requirement.md' },
-    categories: [{ id: 'business', name: '业务' }], entities: [], projectId: 'project', busy: false,
+    entities: [], projectId: 'project', busy: false,
     onSave, onBindTemplate: async () => {}, registerFlush,
   })
 }
