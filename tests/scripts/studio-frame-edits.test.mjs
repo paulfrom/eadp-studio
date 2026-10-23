@@ -50,7 +50,7 @@ test('studio panel closes the shell sidebar column entirely', () => {
   assert.equal(result.sidebarCollapsed, true)
   assert.equal(result.collapsedWidth, 0)
   assert.equal(computeColumns(1600, result.sidebarPreference, 0, result.collapsedWidth).sidebar, 0)
-  assert.ok(edited.includes("{activePanelId !== 'studio' && sidebar}"))
+  assert.ok(edited.includes('{sidebar}'), 'shared settings stay mounted in the collapsed shell sidebar')
 })
 
 test('other panels keep upstream sidebar behavior', () => {
@@ -88,7 +88,7 @@ test('Studio preserves the three auto-placed grid items so its center occupies t
   )
   const studio = nodes('studio')
   assert.deepEqual(studio.map(node => node.props.className), ['sidebarCol', 'centerCol', 'rightbarCol'])
-  assert.deepEqual(studio[0].children, [], 'only sidebar content is hidden')
+  assert.deepEqual(studio[0].children, ['shell-sidebar'], 'shared settings stay mounted in the zero-width column')
   assert.deepEqual(studio[1].children, ['studio-main'])
   const solved = geometry(source, { panelId: 'studio' })
   const columns = computeColumns(1600, solved.sidebarPreference, 0, solved.collapsedWidth)

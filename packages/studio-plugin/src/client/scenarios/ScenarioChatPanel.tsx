@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import type { Candidate, EntityView, TaskView } from '../../shared/studio.ts'
+import type { Candidate, EntityView, StudioReply, TaskView } from '../../shared/studio.ts'
 import type { ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import { ScenarioWriteProposalCard } from './ScenarioWriteProposalCard.tsx'
 import { ScenarioWriteReceiptCard } from './ScenarioWriteReceiptCard.tsx'
+import { RequirementCandidatePanel } from '../requirements/RequirementCandidatePanel.tsx'
 import css from '../studio.module.css'
 
 /** Every command the chat pane raises, gathered so the pane takes data plus one action face. */
@@ -19,16 +20,18 @@ export interface ScenarioRevisionFace {
 export interface ScenarioSplitFace { offered: boolean; deferred: boolean; split(): void; defer(): void }
 /** Requirement candidates produced from the confirmed scenario version. */
 export interface ScenarioCandidateFace {
-  items: Candidate[]; create(candidateId: string): void;
+  items: Candidate[]; create(candidateId: string): Promise<StudioReply | undefined>;
 }
 /**
  * Chat pane of the scenario page: session controls, the native conversation the
- * caller passes as children, and the docked write and split cards.
+ * caller passes as children, and the docked write and split cards. The related
+ * requirement rows look back from the scenario to its formal requirements.
  */
-export function ScenarioChatPanel({ entity, workspace, busy, locked, material, sessions, activeSessionId, actions, revision, split, candidates, expandSpec, children }: {
+export function ScenarioChatPanel({ entity, workspace, busy, locked, material, sessions, activeSessionId, actions, revision, split, candidates, relatedRequirements, onOpenRequirement, expandSpec, children }: {
   entity: EntityView; workspace: Workspace; busy: boolean; locked: boolean; material: { hash: string; dirty: boolean };
   sessions: TaskView[]; activeSessionId: string | undefined;
   actions: ScenarioChatActions; revision: ScenarioRevisionFace; split: ScenarioSplitFace; candidates: ScenarioCandidateFace;
+  relatedRequirements: EntityView[]; onOpenRequirement(entityId: string): void;
   expandSpec: (() => void) | undefined; children: ReactNode;
 }) {
   const task = sessions.find(session => session.sessionId === activeSessionId)
@@ -76,13 +79,15 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
           {split.offered && !split.deferred && <button onClick={split.defer}>稍后拆分</button>}
         </div>
       </section>}
-      {candidates.items.length > 0 && <section className={css.dockCard} aria-label="需求拆分候选">
-        <header className={css.cardHead}><strong>需求拆分候选</strong><small>{candidates.items.length} 条</small></header>
-        {candidates.items.map(candidate => <article className={css.candidateRow} key={candidate.id}>
-          <div><strong>{candidate.title}</strong><p>{candidate.summary}</p></div>
-          <button disabled={busy || !!candidate.selectedEntityId} onClick={() => candidates.create(candidate.id)}>{candidate.selectedEntityId ? '已创建草稿' : '选用并创建需求草稿'}</button>
-        </article>)}
-      </section>}
+      <RequirementCandidatePanel candidates={candidates.items} entities={[entity]} busy={busy} adopt={candidate => candidates.create(candidate.id)} onOpen={onOpenRequirement} />
+      <section className={css.dockCard} aria-label="关联需求">
+        <header className={css.cardHead}><strong>关联需求</strong><small>{relatedRequirements.length} 项</small></header>
+        {relatedRequirements.length === 0 && <p className={css.muted}>尚无正式关联的需求。</p>}
+        {relatedRequirements.map(requirement => <button key={requirement.id} className={css.candidateRow} disabled={busy} onClick={() => onOpenRequirement(requirement.id)} title="跳转到需求阶段查看">
+          <span>{requirement.code ?? requirement.id} · {requirement.title}</span>
+          <span className={requirement.confirmationStatus === 'confirmed' ? css.success : css.muted}>{requirement.confirmationStatus === 'confirmed' ? '已确认' : '草稿'}</span>
+        </button>)}
+      </section>
     </div>
     {children}
   </section>

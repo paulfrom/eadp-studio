@@ -73,7 +73,7 @@ export class DshTaskSessions {
     const restored = inspection ? this.ctx.sessionProjections.restore({}, inspection.events, 0 as SessionLogOffset, inspection.meta, inspection.inheritedEventCount).snapshot.values : undefined
     const selectedPreset = restored?.agentPreset ?? undefined
     const restoredSelection = restored?.modelSelection?.next ?? restored?.modelSelection?.lastUsed ?? undefined
-    const agentPreset = (await this.ctx.agentPresets.resolve(scenarioTask ? 'eadp-scenario' : selectedPreset)).id
+    const agentPreset = (await this.ctx.agentPresets.resolve(requirementFile !== undefined || task.purpose === 'split' ? 'eadp-requirement' : scenarioTask ? 'eadp-scenario' : selectedPreset)).id
     const agentOptions = restoredSelection ? { provider: restoredSelection.provider, model: restoredSelection.model } : this.ctx.agentDefaultModel.currentSelection()
     const configure = async (scope: Context, agent: AgentHandle['agent'], installModel: boolean): Promise<void> => {
       if (configuredAgents.has(agent)) return
@@ -127,7 +127,7 @@ export class DshTaskSessions {
         scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: [] }, agent), 'studio: readonly fixed review boundary')
       } else {
         const kind = task.purpose === 'handoff' ? 'handoff' : scenarioFile !== undefined ? 'scenario' : 'requirement'
-        const writable = task.purpose === 'split' || kind === 'scenario' ? undefined : await findMaterialFile(task.worktree, kind, task.entityId)
+        const writable = task.purpose === 'split' || scenarioTask ? undefined : await findMaterialFile(task.worktree, kind, task.entityId)
         scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: writable ? [writable] : [] }, agent), 'studio: material file boundary')
       }
       configuredAgents.add(agent)

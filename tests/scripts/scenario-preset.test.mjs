@@ -20,11 +20,15 @@ test('the shipped skill snapshot carries the grill stub and both skills it calls
   assert.equal(JSON.parse(await readFile(path.join(skills, 'SOURCE.json'), 'utf8')).commit.length >= 7, true)
 })
 
-test('the shipped scenario preset mounts native read-only tools and compaction without command execution tools', async () => {
+for (const kind of ['scenario', 'requirement']) test(`the shipped ${kind} preset mounts native read-only tools and compaction without command execution tools`, async () => {
   const { load } = require('js-yaml')
   const patch = load(await readFile(path.join(root, 'packages/studio-plugin/cordis.patch.yml'), 'utf8'))
-  const definition = patch.flatMap(entry => entry.insert ?? []).find(entry => entry.id === 'preset-eadp-scenario')?.config
-  assert.equal(definition.id, 'eadp-scenario')
+  const definition = patch.flatMap(entry => entry.insert ?? []).find(entry => entry.id === `preset-eadp-${kind}`)?.config
+  assert.equal(definition.id, `eadp-${kind}`)
+  if (kind === 'requirement') {
+    const persona = definition.plugins.find(plugin => plugin.id === 'persona').config.prefix
+    for (const rule of [/独立描述、验证和交付/, /真实场景固定确认版本/, /需求模板/, /GWT.*不是确认门禁/, /用户真实动作/, /可信 Host/, /整篇写入/]) assert.match(persona, rule)
+  }
   const [{ Context }, { default: Loader }, { default: Group }, { default: Projections }, { default: Sessions },
     { default: SystemPrompt }, { default: Tools }, { default: Presets }, { createScope }] = await Promise.all([
     native('@deepseek-ai/cordis'), native('@deepseek-ai/cordis-plugin-loader'), native('@deepseek-ai/cordis-plugin-group'),
@@ -42,11 +46,11 @@ test('the shipped scenario preset mounts native read-only tools and compaction w
     for (const name of ['fs', 'workingDirectory', 'attachments', 'llm', 'tokenMeter', 'subprocess', 'skills', 'agents']) ctx.provide(name, {})
     const commands = []
     ctx.provide('commands', { register: definition => { commands.push(definition.name); return () => {} } })
-    await ctx.plugin(Presets, { default: 'eadp-scenario' })
+    await ctx.plugin(Presets, { default: definition.id })
     const unregister = await ctx.agentPresets.register(definition)
     const key = {}, scope = createScope(ctx, key)
     try {
-      await ctx.agentPresets.mount(scope.ctx, 'eadp-scenario')
+      await ctx.agentPresets.mount(scope.ctx, definition.id)
       const names = ctx.tools.schemas(key).map(tool => tool.name).sort()
       assert.deepEqual(names, ['glob', 'grep', 'read', 'read_image', 'skill'])
       for (const forbidden of ['write', 'edit', 'bash', 'pwsh', 'spawn_agent', 'subagent']) assert.equal(names.includes(forbidden), false)

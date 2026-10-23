@@ -27,12 +27,13 @@ export async function archiveSelectedEvidence(root: string, records: readonly Sc
   const result: MaterialMetadata['businessEvidence'] = []
   for (const { source, original } of selected) {
     const prefix = `.eadp/evidence/${source.sha256}`
-    const extracted = new TextEncoder().encode(source.text.replace(/\r\n?/g, '\n'))
+    const text = source.text.replace(/\r\n?/g, '\n'), extracted = new TextEncoder().encode(text)
     const originalFile = await archiveBytes(root, `${prefix}/original.${extensions[source.format.toLowerCase()]}`, original)
     const textFile = await archiveBytes(root, `${prefix}/extracted-${digest(extracted)}.txt`, extracted)
     const scope = new TextEncoder().encode(JSON.stringify({ sourceId: source.id, name: source.name, format: source.format, originalHash: source.sha256, status: source.status, ranges: source.ranges, error: source.error }, null, 2))
     const scopeFile = await archiveBytes(root, `${prefix}/reading-${digest(scope)}.json`, scope)
-    result.push({ label: source.name, reference: `source:${source.id}`, files: [originalFile, textFile, scopeFile], ranges: [{ path: textFile.path, startLine: 1, endLine: new TextDecoder().decode(extracted).split('\n').length }] })
+    // A terminal separator ends the last line; the archived bytes themselves stay intact.
+    result.push({ label: source.name, reference: `source:${source.id}`, files: [originalFile, textFile, scopeFile], ranges: [{ path: textFile.path, startLine: 1, endLine: text.replace(/\n$/, '').split('\n').length }] })
   }
   return result
 }

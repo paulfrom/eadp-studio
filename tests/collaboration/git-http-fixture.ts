@@ -80,8 +80,10 @@ export async function gitHttpFixture(gitExecutable: string, serverGitExecutable:
     }
     if (action === 'repository/tree') {
       const ref = url.searchParams.get('ref')!; assert.match(ref, /^[a-f0-9]{40}$/)
-      const tree = (await git(project.directory, ['ls-tree', '-z', ref])).toString('utf8').split('\0').filter(Boolean).map(entry => {
-        const match = /^(\d+) (\w+) ([a-f0-9]{40})\t(.+)$/.exec(entry)!; return { mode: match[1], type: match[2], id: match[3], name: match[4], path: match[4] }
+      const directory = url.searchParams.get('path') ?? ''
+      assert.ok(!directory.startsWith('/') && !directory.split('/').includes('..'))
+      const tree = (await git(project.directory, ['ls-tree', '-z', directory ? `${ref}:${directory}` : ref])).toString('utf8').split('\0').filter(Boolean).map(entry => {
+        const match = /^(\d+) (\w+) ([a-f0-9]{40})\t(.+)$/.exec(entry)!; return { mode: match[1], type: match[2], id: match[3], name: match[4], path: directory ? `${directory}/${match[4]}` : match[4] }
       }); objects.push({ projectId: project.id, operation: 'tree', ref }); return json(response, 200, tree)
     }
     if (action.startsWith('repository/files/') && action.endsWith('/raw')) {

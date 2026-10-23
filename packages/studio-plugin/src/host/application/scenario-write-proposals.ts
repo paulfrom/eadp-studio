@@ -31,7 +31,7 @@ export function parseWriteProposal(response: string, draft: MaterialDraft, readE
   if (blocks.length !== 1) throw new Error('需要且仅允许一个 eadp-write-proposal JSON 块')
   const value = object(JSON.parse(blocks[0]![1]!), ['entityId', 'conclusions', 'evidenceIds', 'body', 'target'], ['target'])
   id(value.entityId)
-  if (value.entityId !== draft.entityId) throw new Error('写入提议场景身份不一致')
+  if (value.entityId !== draft.entityId) throw new Error('写入提议材料身份不一致')
   if (value.target !== undefined && value.target !== 'context') throw new Error('写入提议目标无效')
   if (!Array.isArray(value.conclusions) || !value.conclusions.length || value.conclusions.length > conclusionLimit) throw new Error('写入提议结论无效')
   const conclusions: Array<{ id: string; text: string }> = [], conclusionIds = new Set<string>()

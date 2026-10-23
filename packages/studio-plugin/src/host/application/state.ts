@@ -1,16 +1,17 @@
 import type { LocalScenarioRepair } from './scenario-repairs.ts'
 import type { ScenarioRecord } from './scenario-workspaces.ts'
 import type { TemplateOperation } from './scenario-templates.ts'
+import type { LocalConsistencyComparison } from './consistency-comparisons.ts'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { AdoptRequest, AssetSource, FixedReference } from '@eadp/contracts'
+import type { AdoptRequest, AssetSource, FixedReference, MaterialMetadata } from '@eadp/contracts'
 import type { LocalReview } from './reviews.ts'
 import type { Candidate, LocalProject, TaskView, StudioRecovery } from '../../shared/studio.ts'
 
 const recordName = 'studio-state.json'
 /** Collections every current-version record carries; a record missing one is a previous version's. */
-const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs'] as const
+const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
 const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 
 export interface PendingOperation {
@@ -26,6 +27,7 @@ export interface AdoptionOperation {
 export interface MaterialReservation {
   id: string; projectId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; templateId?: string; templateRef?: FixedReference; scenarioIds: string[]; sources: AssetSource[];
   phase: 'reserving' | 'unknown' | 'reserved' | 'materialized'; entityId?: string; message?: string;
+  initialContent?: { body: string; summary: string; quality: Pick<MaterialMetadata, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'> };
 }
 export interface ProjectInitialization {
   id: string; name: string; namespaceId: number; path: string; projectId?: string;
@@ -36,9 +38,10 @@ export interface LocalState {
   clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
   candidates: Candidate[]; operations: PendingOperation[]; reviews: LocalReview[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
   materialReservations: MaterialReservation[]; templateOperations: TemplateOperation[]; scenarios: ScenarioRecord[]; scenarioStructureCheck: boolean; scenarioRepairs: LocalScenarioRepair[];
+  consistencyComparisons: LocalConsistencyComparison[];
 }
 
-const emptyState = (): LocalState => ({ clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioStructureCheck: false, scenarioRepairs: [] })
+const emptyState = (): LocalState => ({ clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioStructureCheck: false, scenarioRepairs: [], consistencyComparisons: [] })
 
 /**
  * Read one stored record as the current version.

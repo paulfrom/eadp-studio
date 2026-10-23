@@ -3,6 +3,7 @@ import type { EntityView, MaterialMetadata, StudioCommand, StudioReply, StudioSt
 import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { StudioProps } from '../studio/StudioPanel.tsx'
 import { MaterialConversation } from '../components/MaterialConversation.tsx'
+import { ConsistencyPanel } from '../components/ConsistencyPanel.tsx'
 import { ScenarioChatPanel, type ScenarioCandidateFace, type ScenarioChatActions, type ScenarioRevisionFace, type ScenarioSplitFace } from './ScenarioChatPanel.tsx'
 import { ScenarioGates } from './ScenarioGates.tsx'
 import { ScenarioSpecPanel } from './ScenarioSpecPanel.tsx'
@@ -13,12 +14,14 @@ interface WorkspaceProps {
   workspace: Workspace; entity: EntityView; state: StudioState; faces: StudioProps; busy: boolean;
   call(command: StudioCommand): Promise<StudioReply | undefined>;
   registerFlush(flush?: () => Promise<boolean>): void;
+  onOpenMaterial?(entity: EntityView): void;
+  onOpenRequirement(entityId: string): void;
 }
 /**
  * Scenario page: the AI conversation beside the material spec. Owns the draft
  * boundary, so every version-changing action first flushes the shared buffer.
  */
-export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call, registerFlush }: WorkspaceProps) {
+export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call, registerFlush, onOpenRequirement, onOpenMaterial }: WorkspaceProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [showImpact, setShowImpact] = useState(false)
   const [splitLater, setSplitLater] = useState(false)
@@ -63,7 +66,9 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   const sessions = workspace.sessions.filter(session => session.entityId === entity.id && session.purpose === 'material')
   const activeTask = sessions.find(session => session.sessionId === workspace.activeSessionId)
   const activeSessionId = workspace.repair?.status === 'active' ? workspace.repair.sessionId : activeTask?.sessionId
-  const candidates = state.candidates.filter(candidate => candidate.scenarioId === entity.id)
+  const entities = useMemo(() => (state.collaboration?.entities ?? []).filter((value): value is EntityView => 'title' in value), [state.collaboration])
+  const relatedRequirements = useMemo(() => entities.filter(value => value.kind === 'requirement' && value.scenarioIds.includes(entity.id)), [entities, entity.id])
+  const candidates = state.candidates.filter(candidate => candidate.sources.some(source => source.entityId === entity.id))
   const locked = busy || !!snapshot.conflict || workspace.repair?.status === 'active'
   const chat = useMemo<ScenarioChatActions>(() => ({
     refresh: () => { void execute({ action: 'openScenario', entityId: entity.id }) },
@@ -76,7 +81,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     },
     undoWrite: () => {
       const receipt = workspace.writeReceipt
-      if (receipt) void execute(hash => ({ action: 'undoScenarioWrite', entityId: entity.id, operationId: crypto.randomUUID(), expectedHash: hash }))
+      if (receipt) void execute(hash => ({ action: 'undoScenarioWrite', entityId: entity.id, operationId: receipt.operationId, expectedHash: hash }))
     },
   }), [execute, entity.id, faces, actions, workspace.writeProposal, workspace.writeReceipt])
   const revision: ScenarioRevisionFace = {
@@ -94,15 +99,16 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   }
   const candidateFace: ScenarioCandidateFace = {
     items: candidates,
-    create: candidateId => { void execute({ action: 'selectCandidate', candidateId }) },
+    create: candidateId => { const candidate = candidates.find(value => value.id === candidateId); return candidate ? execute({ action: 'selectCandidate', candidateId, expectedInputHash: candidate.inputHash }) : Promise.resolve(undefined) },
   }
   return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
-    <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
+    <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} relatedRequirements={relatedRequirements} onOpenRequirement={onOpenRequirement} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
       <MaterialConversation sessionId={activeSessionId} faces={faces} attachments={{ sources: workspace.sources, disabled: locked, readOnly: workspace.readOnly, onImport: actions.importSource, onRetry: actions.retrySource, onSelect: actions.selectSource }}>
         <span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。明确同意写入后，才会更新正文。'}</p>
       </MaterialConversation>
     </ScenarioChatPanel>
     <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.scenarios} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
+      <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} />
       <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
     </ScenarioSpecPanel>
   </div>

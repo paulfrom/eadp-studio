@@ -6,7 +6,7 @@ import { within } from '../shared/deadline.ts'
 import type { ProjectProgressReply, StudioCommand, StudioReply } from '../shared/studio.ts'
 
 export type { Config }
-export const inject = ['tools', 'agents', 'systemPrompt', 'sessionPersistence', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections', 'agentDefaultModel']
+export const inject = ['tools', 'agents', 'llm', 'systemPrompt', 'sessionPersistence', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections', 'agentDefaultModel']
 /**
  * Longest a command waits for composition. Composition runs once per Host
  * process and loads the platform runtime, so it is allowed the same order of

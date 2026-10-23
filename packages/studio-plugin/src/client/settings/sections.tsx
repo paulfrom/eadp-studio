@@ -9,7 +9,7 @@ import type { StudioProjectionStore } from '../store.ts'
 import type { ThemeFace } from '../theme.ts'
 import studioCss from '../studio.module.css'
 import css from './sections.module.css'
-import { ScenarioTemplateSettings } from './ScenarioTemplateSettings.tsx'
+import { MaterialTemplateSettings } from './ScenarioTemplateSettings.tsx'
 
 /** Faces the Studio settings sections act through (wired from the client context); project progress is the workbench panel's. */
 export interface StudioSettingsFaces extends Omit<StudioSessionActions, 'progress'> {
@@ -61,6 +61,7 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
 export const settingsSections: Array<{ id: string; order: number; label: string; component: (props: SectionProps) => ReactNode }> = [
   { id: 'studio-collab', order: -9, label: '协同账号', component: CollabAccountSection },
   { id: 'studio-scenario-templates', order: 4, label: '场景模板', component: ScenarioTemplateSection },
+  { id: 'studio-requirement-templates', order: 4.5, label: '需求模板', component: RequirementTemplateSection },
   { id: 'studio-appearance', order: 5, label: '外观', component: AppearanceSection },
   { id: 'studio-connection', order: 6, label: '协同连接', component: ConnectionSection },
   { id: 'studio-about', order: 200, label: '关于', component: AboutSection },
@@ -230,13 +231,15 @@ function AboutSection(props: SectionProps) {
  * and writing through the same owner as the account sections. Without a project
  * there is nothing to manage, and without a first answer there is not yet a fact.
  */
-function ScenarioTemplateSection(props: SectionProps) {
+function ScenarioTemplateSection(props: SectionProps) { return <MaterialTemplateSection {...props} kind="scenario" /> }
+function RequirementTemplateSection(props: SectionProps) { return <MaterialTemplateSection {...props} kind="requirement" /> }
+function MaterialTemplateSection(props: SectionProps & { kind: 'scenario' | 'requirement' }) {
   const { projection, loading, error } = useStudioSettings(props)
   if (projection === undefined) {
-    return <Section>{loading ? <Loading label="正在读取场景模板" /> : <Unavailable detail={error} onRetry={props.sync} />}</Section>
+    return <Section>{loading ? <Loading label={`正在读取${props.kind === 'scenario' ? '场景' : '需求'}模板`} /> : <Unavailable detail={error} onRetry={props.sync} />}</Section>
   }
   return <Section>
-    <ScenarioTemplateSettings state={projection} run={props.run} />
+    <MaterialTemplateSettings key={props.kind} kind={props.kind} state={projection} run={props.run} />
     {error && <p role="alert" className={css.inlineError}>{error}<button onClick={props.sync}>重试</button></p>}
   </Section>
 }

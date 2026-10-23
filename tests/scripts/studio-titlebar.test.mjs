@@ -86,7 +86,7 @@ test('shared toolbar keeps the live project, preview target and refresh action',
   const panel = await readFile(path.join(client, 'studio/StudioPanel.tsx'), 'utf8')
   assert.match(panel, /<StudioTopbar faces=\{\{ state[\s\S]*props\.openSettings/, 'the toolbar receives the shared projection and the session faces')
   assert.match(panel, /props\.useStore\(snapshot => snapshot\.projection\)/, 'the panel reads the shared projection instead of holding a copy')
-  assert.match(panel, /refresh: \(\) => props\.sync\(\)/, 'refreshing asks the session to re-read the shared projection')
+  assert.match(panel, /refresh: \(\) => (?:\{\s*)?props\.sync\(\)/, 'refreshing asks the session to re-read the shared projection')
   assert.doesNotMatch(panel, /EADP Studio/, 'the workbench title lives in the declarative identity, not the panel')
 })
 

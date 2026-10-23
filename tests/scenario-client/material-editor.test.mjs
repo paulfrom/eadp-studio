@@ -9,8 +9,10 @@ const ts = createRequire(path.join(repo, '.local/build/dsh/package.json'))('type
 const source = await readFile(path.join(repo, 'packages/studio-plugin/src/client/components/MaterialEditor.tsx'), 'utf8')
 const compiled = ts.transpileModule(source.replace(/^import .+\n/gm, '').replace(/\bexport /g, ''), { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } }).outputText
 const createElement = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
-const Component = new Function('React', 'useState', 'useEffect', 'css', `${compiled}; return MaterialEditor`)(
-  { createElement }, initial => [initial, () => {}], () => {}, new Proxy({}, { get: (_, key) => key }),
+const Component = new Function('React', 'useState', 'useEffect', 'useRef', 'useCallback', 'useDraftBuffer', 'css', `${compiled}; return MaterialEditor`)(
+  { createElement }, initial => [initial, () => {}], () => {}, value => ({ current: value }), value => value,
+  draft => ({ buffer: {}, snapshot: { ...draft, dirty: false, saving: false, error: '' } }),
+  new Proxy({}, { get: (_, key) => key }),
 )
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(nodes)]
 

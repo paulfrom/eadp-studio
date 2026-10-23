@@ -49,6 +49,11 @@ function loadClient(relative) {
   modules.set(filename, module)
   new Function('require', 'module', 'exports', compiled)(specifier => {
     if (specifier.endsWith('.css')) return new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) })
+    // The primitives package imports its CSS at load time; rendering is asserted through the stub's text output.
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return {
+      MarkdownText: ({ text }) => React.createElement('div', {}, text),
+      DiffBlock: () => null,
+    }
     if (specifier.startsWith('.')) return loadClient(path.relative(client, path.resolve(path.dirname(filename), specifier)))
     return reactRequire(specifier)
   }, module, module.exports)
@@ -215,19 +220,20 @@ test('read-only materials retain source records while import, retry, and selecti
   assert.deepEqual(calls, [])
 })
 
-function editableRequirement(onSave, registerFlush) {
+function editableRequirement(onSave, registerFlush, extra = {}) {
   const metadata = { kind: 'requirement', entityId: 'requirement', title: '业务要求', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }, scenarioIds: [],
     sources: [], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: true, acceptanceCriteriaPresent: true }
-  return h(MaterialEditor, { draft: { entityId: metadata.entityId, metadata, body: '原始业务正文', path: '需求/requirement.md' },
+  return h(MaterialEditor, { draft: { entityId: metadata.entityId, metadata, body: '原始业务正文', path: '需求/requirement.md', sha256: 'hash-initial' },
     entities: [], projectId: 'project', busy: false,
-    onSave, onBindTemplate: async () => {}, registerFlush,
+    onSave, onBindTemplate: async () => {}, registerFlush, ...extra,
   })
 }
+const savedMaterialReply = (input, sha256 = 'hash-saved') => ({ ok: true, state: { drafts: [{ entityId: 'requirement', metadata: input.metadata, body: input.body, path: '需求/requirement.md', sha256 }] } })
 
 test('attachment actions can flush hand edits, while an unchanged material needs no save', async () => {
   let flush
   const saves = []
-  const view = render(editableRequirement(async (...args) => { saves.push(args); return { ok: true } }, next => { flush = next }))
+  const view = render(editableRequirement(async input => { saves.push(input); return savedMaterialReply(input) }, next => { flush = next }))
   assert.equal(await flush(), true)
   assert.equal(saves.length, 0)
   fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '手工补充的业务正文' } })
@@ -235,8 +241,10 @@ test('attachment actions can flush hand edits, while an unchanged material needs
   await act(async () => { result = await flush() })
   assert.equal(result, true)
   assert.equal(saves.length, 1)
-  assert.equal(saves[0][0], '手工补充的业务正文')
-  assert.equal(saves[0][1].title, '业务要求')
+  assert.equal(saves[0].body, '手工补充的业务正文')
+  assert.equal(saves[0].metadata.title, '业务要求')
+  assert.equal(saves[0].expectedHash, 'hash-initial')
+  assert.equal(typeof saves[0].operationId, 'string')
   view.unmount()
   assert.equal(flush, undefined)
 })
@@ -257,13 +265,227 @@ for (const failure of ['validation', 'host']) test(`a ${failure} failure blocks 
   if (failure === 'host') assert.match(view.getByRole('alert').textContent, /本地保存失败/)
 })
 
+test('requirement save retries keep their operation identity and acknowledged hash', async () => {
+  let flush
+  const saves = []
+  const view = render(editableRequirement(async input => {
+    saves.push(input)
+    return saves.length === 1 ? { ok: false, message: '磁盘暂不可写' } : savedMaterialReply(input)
+  }, next => { flush = next }))
+  fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '需要可靠保存的正文' } })
+  let first, second
+  await act(async () => { first = await flush() })
+  assert.equal(first, false)
+  await act(async () => { second = await flush() })
+  assert.equal(second, true)
+  assert.equal(saves[0].operationId, saves[1].operationId)
+  assert.equal(saves[0].expectedHash, 'hash-initial')
+  assert.equal(saves[1].expectedHash, 'hash-initial')
+})
+
+test('polling preserves unsaved requirement input and the external copy until explicit hash-bound resolution', async () => {
+  let flush
+  const saves = [], resolutions = []
+  const props = editableRequirement(async input => { saves.push(input); return savedMaterialReply(input) }, next => { flush = next }, {
+    onResolveConflict: async input => { resolutions.push(input); return savedMaterialReply(input, 'hash-resolved') },
+  }).props
+  const view = render(h(MaterialEditor, props))
+  fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '用户未保存的业务正文' } })
+  view.rerender(h(MaterialEditor, { ...props, draft: { ...props.draft, body: '并发外部正文', sha256: 'hash-external' } }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '外部文件冲突' })))
+  assert.equal(view.getByRole('textbox', { name: '材料 Markdown 正文' }).value, '用户未保存的业务正文')
+  assert.equal(view.getByLabelText('外部文件').value, '并发外部正文')
+  await act(async () => { assert.equal(await flush(), false) })
+  assert.equal(saves.length, 0)
+  fireEvent.click(view.getByRole('button', { name: '保存当前合并结果' }))
+  await waitFor(() => assert.equal(resolutions.length, 1))
+  assert.equal(resolutions[0].expectedHash, 'hash-external')
+  assert.equal(resolutions[0].body, '用户未保存的业务正文')
+  await waitFor(() => assert.equal(view.queryByRole('region', { name: '外部文件冲突' }), null))
+})
+
+test('invalid unsaved evidence survives a new projection and blocks navigation saves', async () => {
+  let flush
+  const saves = []
+  const props = editableRequirement(async input => { saves.push(input); return savedMaterialReply(input) }, next => { flush = next }).props
+  const view = render(h(MaterialEditor, props))
+  fireEvent.change(view.getByLabelText(/正式依据（JSON/), { target: { value: '{用户正在编辑' } })
+  view.rerender(h(MaterialEditor, { ...props, draft: { ...props.draft, body: '外部业务正文', sha256: 'hash-external' } }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '外部文件冲突' })))
+  assert.equal(view.getByLabelText(/正式依据（JSON/).value, '{用户正在编辑')
+  assert.equal(view.getByLabelText('外部文件').value, '外部业务正文')
+  await act(async () => { assert.equal(await flush(), false) })
+  assert.equal(saves.length, 0)
+})
+
+test('requirement template switching flushes edits first and accepts the updated binding without filling the body', async () => {
+  let flush
+  const calls = []
+  let lastInput
+  const nextRef = { commitSha: 'c'.repeat(40), path: '.template/requirements/custom.md', sha256: 'd'.repeat(64) }
+  const view = render(editableRequirement(async input => {
+    lastInput = input; calls.push(['save', input.expectedHash]); return savedMaterialReply(input)
+  }, next => { flush = next }, {
+    templates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认需求模板' }, { id: 'custom', name: '定制需求模板' }] },
+    onBindTemplate: async (id, expectedHash) => { calls.push(['bind', id, expectedHash]); return savedMaterialReply({ ...lastInput, metadata: { ...lastInput.metadata, templateId: id, templateRef: nextRef } }, 'hash-bound') },
+  }))
+  fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '保留用户自己的正文' } })
+  fireEvent.change(view.getByRole('combobox', { name: '需求模板' }), { target: { value: 'custom' } })
+  fireEvent.click(view.getByRole('button', { name: '切换模板绑定' }))
+  await waitFor(() => assert.deepEqual(calls, [['save', 'hash-initial'], ['bind', 'custom', 'hash-saved']]))
+  await waitFor(() => assert.match(view.container.textContent, /当前固定模板：custom/))
+  assert.equal(view.getByRole('textbox', { name: '材料 Markdown 正文' }).value, '保留用户自己的正文')
+  await act(async () => { assert.equal(await flush(), true) })
+  assert.equal(calls.length, 2)
+  assert.equal(view.queryByRole('region', { name: '外部文件冲突' }), null)
+})
+
+// Keep these tests on the requirement command boundary; scenario and desktop-caption rendering have their own suites.
+for (const [relative, name] of [['scenarios/ScenarioWorkspace.tsx', 'ScenarioWorkspace'], ['components/StudioTopbar.tsx', 'StudioTopbar'], ['components/LegacyMaterial.tsx', 'LegacyMaterial']]) modules.set(path.join(client, relative), { exports: { [name]: () => null } })
+const { StudioPanel } = loadClient('studio/StudioPanel.tsx')
+function requirementPanel(readOnly = false, readComparisons, readSummaries) {
+  const element = editableRequirement(async () => {}, () => {})
+  const initialDraft = element.props.draft
+  const entity = { id: 'requirement', kind: 'requirement', code: 'REQ-0001', sequence: 1, title: '需求能力', revision: 3, materialVersion: readOnly ? 1 : 0, confirmationStatus: readOnly ? 'confirmed' : 'draft', taskStatus: 'idle', scenarioIds: ['scene'], prerequisites: [], authorId: 1 }
+  const project = { id: 'project', name: '业务项目', stableBranch: 'main', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1 }
+  let current = { connected: true, account: { id: 1, name: '作者', gitlabUsername: 'author' }, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], pending: [], reviews: [], drafts: [initialDraft], tasks: [], candidates: [], project,
+    collaboration: { project, entities: [entity], baselines: [], integrations: [] },
+    materialSources: [{ entityId: entity.id, readOnly, sources: [] }],
+    requirement: { entityId: entity.id, draft: initialDraft, readOnly, template: { id: 'default', name: '默认需求模板', fixed: initialDraft.metadata.templateRef, body: '# 模板正文不能自动写入' }, structureCheck: false, gates: [], sources: [], sessions: [], settlement: { status: readOnly ? 'settled' : 'draft' },
+      writeProposal: { id: 'proposal-original', baseHash: initialDraft.sha256, createdAt: '2026-10-23T00:00:00Z', conclusions: ['本轮明确结论'], evidenceCount: 1, status: 'pending' },
+    },
+  }
+  const commands = []
+  let update
+  const run = async command => {
+    commands.push(command)
+    if (command.action === 'listConsistencyComparisons' && readComparisons) return readComparisons(command, current)
+    if (command.action === 'listConsistencySummaries' && readSummaries) return readSummaries(command, current)
+    if (command.action === 'saveRequirement') {
+      const draft = { ...initialDraft, body: command.body, metadata: command.metadata, sha256: 'hash-saved' }
+      current = { ...current, drafts: [draft], requirement: { ...current.requirement, draft } }
+    }
+    if (command.action === 'resolveRequirementWriteProposal' && command.decision === 'write' && command.expectedHash !== initialDraft.sha256) return { ok: false, code: 'STALE_PROPOSAL', message: '正文已变化，旧写入提议已作废。' }
+    update(current)
+    return { ok: true, state: current }
+  }
+  const faces = { run, sync: () => {}, progress: () => {}, openSettings: () => {}, startSession: () => {}, SessionProvider: ({ children }) => h(React.Fragment, null, children), renderFactorySlot: () => null, retainSession: () => ({ ready: Promise.resolve(), release: () => {} }) }
+  function Harness() {
+    const [projection, setProjection] = React.useState(current); update = setProjection
+    return h(StudioPanel, { ...faces, useStore: selector => selector({ projection, progress: [], loading: false, error: '' }) })
+  }
+  return { commands, render: () => render(h(Harness)) }
+}
+async function selectRequirement(view) {
+  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  await waitFor(() => assert.ok(view.getByRole('button', { name: /需求能力/ })))
+  fireEvent.click(view.getByRole('button', { name: /需求能力/ }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '需求对话' })))
+}
+function editRequirementBody(view, value) {
+  fireEvent.click(view.getByRole('button', { name: '源码' }))
+  fireEvent.change(view.getByRole('textbox', { name: '需求 Markdown 正文' }), { target: { value } })
+}
+
+test('requirement write proposals require an explicit gesture and keep their original identity after hand edits flush', async () => {
+  const fixture = requirementPanel(), view = fixture.render()
+  await selectRequirement(view)
+  assert.ok(fixture.commands.some(command => command.action === 'listConsistencySummaries'), '目录读取每项材料的最近一次结论')
+  assert.ok(fixture.commands.some(command => command.action === 'listConsistencyComparisons' && command.entityId === 'requirement'), '详情面板查询实体级历史')
+  assert.equal(fixture.commands.filter(command => command.action === 'openRequirement').length, 1)
+  assert.equal(fixture.commands.some(command => command.action === 'resolveRequirementWriteProposal'), false)
+  assert.match(view.getByRole('region', { name: '写入提议' }).textContent, /整篇写入需求/)
+  editRequirementBody(view, '刚刚手工修改的需求')
+  fireEvent.click(view.getByRole('button', { name: '写入整篇正文' }))
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'resolveRequirementWriteProposal').length, 1))
+  const saveIndex = fixture.commands.findIndex(command => command.action === 'saveRequirement')
+  const resolveIndex = fixture.commands.findIndex(command => command.action === 'resolveRequirementWriteProposal')
+  assert.ok(saveIndex < resolveIndex)
+  assert.equal(fixture.commands[saveIndex].expectedHash, 'hash-initial')
+  assert.deepEqual(fixture.commands[resolveIndex], { action: 'resolveRequirementWriteProposal', entityId: 'requirement', proposalId: 'proposal-original', decision: 'write', expectedHash: 'hash-saved' })
+  assert.equal(view.getByRole('textbox', { name: '需求 Markdown 正文' }).value, '刚刚手工修改的需求')
+  await waitFor(() => assert.match(view.getByRole('alert').textContent, /旧写入提议已作废/))
+})
+
+test('an outstanding comparison-history query does not lock requirement confirmation', async () => {
+  let finish
+  const fixture = requirementPanel(false, (_command, state) => new Promise(resolve => { finish = () => resolve({ ok: true, state, comparisons: [] }) }))
+  const view = fixture.render()
+  await selectRequirement(view)
+  assert.equal(view.getByRole('button', { name: '确认材料' }).disabled, false)
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmMaterial')))
+  await act(async () => finish())
+})
+
+test('comparison summary failures are local and can be retried without opening a material', async () => {
+  let fail = true
+  const fixture = requirementPanel(false, undefined, (_command, state) => fail ? { ok: false, code: 'UNAVAILABLE', message: '最近结论服务暂不可用' } : { ok: true, state })
+  const view = fixture.render()
+  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  await act(async () => {})
+  assert.match(view.getByRole('alert').textContent, /对比未知：最近结论服务暂不可用/)
+  assert.ok(view.getByText('对比未知'))
+  fail = false
+  fireEvent.click(view.getByRole('button', { name: '重试读取最近对比' }))
+  await act(async () => {})
+  assert.equal(view.queryByRole('alert'), null)
+  assert.equal(fixture.commands.filter(command => command.action === 'listConsistencySummaries').length, 2)
+})
+
+test('the requirement directory periodically reads comparison summaries shared by other members', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const fixture = requirementPanel(), view = fixture.render()
+  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  await act(async () => {})
+  assert.equal(fixture.commands.filter(command => command.action === 'listConsistencySummaries').length, 1)
+  await act(async () => t.mock.timers.tick(10_000))
+  assert.equal(fixture.commands.filter(command => command.action === 'listConsistencySummaries').length, 2)
+  view.unmount()
+})
+
+test('declining a proposal and starting a new requirement session use requirement commands', async () => {
+  const fixture = requirementPanel(), view = fixture.render()
+  await selectRequirement(view)
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '不写入' }).disabled, false))
+  fireEvent.click(view.getByRole('button', { name: '不写入' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'resolveRequirementWriteProposal')))
+  const decline = fixture.commands.find(command => command.action === 'resolveRequirementWriteProposal')
+  assert.deepEqual(decline, { action: 'resolveRequirementWriteProposal', entityId: 'requirement', proposalId: 'proposal-original', decision: 'reject', expectedHash: 'hash-initial' })
+  fireEvent.click(view.getByRole('button', { name: '新会话' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'newRequirementSession')))
+  assert.equal(fixture.commands.some(command => command.action === 'startSession' || command.action === 'saveMaterial'), false)
+})
+
+test('requirement confirmation flushes the input and binds the saved hash', async () => {
+  const fixture = requirementPanel(), view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '用户最终阅读的正文')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmMaterial')))
+  assert.deepEqual(fixture.commands.find(command => command.action === 'confirmMaterial'), { action: 'confirmMaterial', entityId: 'requirement', expectedHash: 'hash-saved', method: 'direct' })
+  assert.ok(fixture.commands.findIndex(command => command.action === 'saveRequirement') < fixture.commands.findIndex(command => command.action === 'confirmMaterial'))
+})
+
+test('confirmed requirements render their fixed text and require an explicit revision before editing', async () => {
+  const fixture = requirementPanel(true), view = fixture.render()
+  await selectRequirement(view)
+  assert.equal(view.queryByRole('textbox', { name: '需求 Markdown 正文' }), null)
+  assert.equal(view.queryByRole('button', { name: '确认材料' }), null)
+  assert.match(view.getByRole('region', { name: '需求说明' }).textContent, /原始业务正文/)
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '开始修订需求' }).disabled, false))
+  fireEvent.click(view.getByRole('button', { name: '开始修订需求' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'startRequirementRevision')))
+  assert.deepEqual(fixture.commands.find(command => command.action === 'startRequirementRevision'), { action: 'startRequirementRevision', entityId: 'requirement', expectedRevision: 3 })
+})
+
 test('the plugin contributes the attachment button to the native composer left slot', () => {
   const entry = readFileSync(path.join(client, 'index.ts'), 'utf8')
   assert.match(entry, /slots\.inject\('conversation\.input\.left',\s*\(\)\s*=>\s*ctx\.slots\.register\(\{\s*name:\s*'conversation\.input\.left',\s*id:\s*'studio-material-attachments',\s*order:\s*0,?\s*\},\s*MaterialAttachmentButton\)\)/)
 })
 
 test('scenario and requirement pages reach the shared attachment conversation without an old inline source panel', () => {
-  for (const relative of ['scenarios/ScenarioWorkspace.tsx', 'studio/StudioPanel.tsx']) {
+  for (const relative of ['scenarios/ScenarioWorkspace.tsx', 'requirements/RequirementWorkspace.tsx']) {
     const contents = readFileSync(path.join(client, relative), 'utf8')
     assert.match(contents, /<MaterialConversation\b/, `${relative} must use the shared material conversation`)
     assert.doesNotMatch(contents, /<ScenarioEvidence\b/)

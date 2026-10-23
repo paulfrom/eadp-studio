@@ -229,6 +229,23 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     assert.equal(general.code, 'SC-0001'); assert.equal(general.materialVersion, 1)
     const viaGeneral = await requirement('通用来源需求', [{ projectId: project.id, entityId: general.id, version: 1 }])
     assert.deepEqual(viaGeneral.scenarioSources, [{ projectId: project.id, entityId: general.id, version: 1 }])
+    const editGeneral = await send('POST', `${base}/entities/${general.id}/claim`, { idempotencyKey: key(), expectedRevision: general.revision, taskId: key(), clientId: key(), purpose: 'design' })
+    assert.equal(editGeneral.statusCode, 409, editGeneral.body); assert.equal(errorCode(editGeneral), 'BUILTIN_SCENARIO_IMMUTABLE')
+    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'scenario', title: '伪造预置', builtinKey: 'general' })).statusCode, 400)
+  })
+  await t.test('R11 requirements enforce business quality with general sources while accepting non-GWT wording', async () => {
+    const general = (await state()).entities.find(value => value.builtinKey === 'general')!
+    let value = await claim(await requirement('非GWT需求验收', [{ projectId: project.id, entityId: general.id, version: 1 }]))
+    for (const override of [
+      { coreRulesPresent: false }, { acceptanceCriteriaPresent: false }, { businessEvidence: [] },
+      { openQuestions: [{ blocking: true, limitation: '核心授权未明确', excludedScope: '不确认授权范围' }] },
+    ]) {
+      const rejected = await send('POST', `${base}/integrations`, await candidate([{ value, metadata: material(value, override) }]))
+      assert.equal(rejected.statusCode, 422, rejected.body)
+    }
+    await accept(await candidate([{ value, metadata: material(value) }]))
+    value = await entity(value.id)
+    assert.equal(value.confirmationStatus, 'confirmed'); assert.equal(value.materialVersion, 1)
   })
   await t.test('R13 a confirmed scenario revises under a plain design occupation; relations never freeze or auto-advance', async () => {
     const impact = await get<{ requirements: Array<{ id: string }> }>(`${base}/entities/${first.id}/revision-impact`)
@@ -266,6 +283,8 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     dependent = await entity(dependent.id)
     assert.equal(dependent.materialVersion, 1, 'Document confirmation is not blocked by a prerequisite without production evidence')
     assert.deepEqual(dependent.prerequisites, [{ requirementId: reqA.id, version: 1 }])
+    const prematurePrototype = await send('POST', `${base}/entities/${dependent.id}/claim`, { idempotencyKey: key(), expectedRevision: dependent.revision, taskId: key(), clientId: key(), purpose: 'prototype' })
+    assert.equal(prematurePrototype.statusCode, 409, prematurePrototype.body); assert.equal(errorCode(prematurePrototype), 'PREREQUISITE_INCOMPLETE')
     const upstream = await claim(await entity(reqA.id))
     const cycle = await send('PUT', `${base}/entities/${upstream.id}/relations`, { idempotencyKey: key(), token: token(upstream), sources: upstream.scenarioSources, scenarioIds: upstream.scenarioIds, prerequisites: [{ requirementId: dependent.id, version: 1 }] })
     assert.equal(cycle.statusCode, 409, cycle.body); assert.equal(errorCode(cycle), 'DEPENDENCY_CYCLE')

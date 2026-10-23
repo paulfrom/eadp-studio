@@ -20,20 +20,24 @@
                 回答先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接修改任何文件、运行命令或自行确认。
                 需要环境事实时自行用只读工具或子代理查证，不向作者索要可自查的事实。ADR 产出关闭，只维护 CONTEXT.md。
                 资料文件尚未读取时不得引用其内容；图片必须使用 read_image，并遵守当前模型实际支持的输入能力。写入只在作者通过写入提议卡明确同意后由工作台执行。
-          - id: tool-skill
+          - &eadp-tool-skill
+            id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
-          - id: tool-fs
+          - &eadp-tool-fs
+            id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
             config:
               read: true
               readImage: true
               write: false
               edit: false
-          - id: tool-fs-search
+          - &eadp-tool-fs-search
+            id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
               sampleOverCapGlobResults: false
-          - id: compaction
+          - &eadp-compaction
+            id: compaction
             name: cordis:group
             group: true
             isolate:
@@ -50,5 +54,25 @@
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024
+    - id: preset-eadp-requirement
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: eadp-requirement
+        name: 需求设计助手
+        description: 按独立业务能力细化需求，追溯真实固定场景来源，归纳结论并提议由工作台整篇写入。
+        order: 6
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |-
+                你是需求设计助手。需求是一项可独立描述、验证和交付的业务能力；可以覆盖多页面、主流程与异常分支。联合拆分时，每个候选只引用实际读取且与其相关的所选普通场景子集，参考已有需求减少重复，保留已有需求。
+                使用 grilling 逐问明确目标、范围、角色、业务规则、异常及验收条件，并用 domain-modeling 归纳项目术语。来源必须追溯到工作台提供的真实场景固定确认版本和实际原文片段；通用场景只提供归属，不能充当业务依据。资料尚未读取时不得引用其内容。
+                按当前绑定的需求模板组织结论，GWT 是表达规则和验收的推荐方式，不是确认门禁；确认依赖可判断的核心规则、验收及真实业务依据。需求与场景各自独立修订和确认，保留已绑定来源版本。
+                回答先用可读中文归纳本轮明确结论、实际依据及待澄清问题，再提出写入提议。写入提议只是一项问题；必须由用户真实动作明确回答后，可信 Host 校验当前 hash、模板、依据和占用，再整篇写入需求或项目根 CONTEXT.md。你只读理解材料，不自行写文件、运行命令、授权写入或确认材料，不产出 ADR。
+          - *eadp-tool-skill
+          - *eadp-tool-fs
+          - *eadp-tool-fs-search
+          - *eadp-compaction
     - id: studio-plugin
       name: '@eadp-studio/studio-plugin'

@@ -2,6 +2,8 @@ import { randomUUID, createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
+import { generalScenarioDocument } from '@eadp/asset-domain'
+import { defaultRequirementTemplate, defaultRequirementTemplateBody, defaultScenarioTemplate, defaultScenarioTemplateBody } from './default-material-templates.ts'
 import type { StudioCommand, LocalProject, ProjectSync, ProjectProgressPhase } from '../../shared/studio.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
@@ -10,9 +12,7 @@ import { clonePercent, pushPercent, type ProjectProgressTracker } from './progre
 import { StudioStore, type ProjectInitialization } from './state.ts'
 
 const exists = async (target: string) => stat(target).then(() => true, error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; return false })
-const defaultScenarioTemplate = { id: 'default', name: '默认场景模板', path: '.template/default.md' }
-const defaultScenarioTemplateBody = "# 场景名称\n\n## 目标与范围\n\n<!-- 说明业务目标、适用范围及不适用范围，明确本场景为后续细化需求提供的共同业务边界。 -->\n\n## 角色\n\n<!-- 说明参与角色、业务职责及交互关系；保留用户明确提供的约束，不把 AI 推导的实现直接写成既定前提。 -->\n\n## 流程\n\n<!-- 整理触发条件、业务步骤及结果；可以表达分支、退回、重试与循环，并说明相应业务条件。 -->\n\n## 业务规则\n\n<!-- 记录可判断的业务规则与用户明确约束，可用稳定编号及 GIVEN / WHEN / THEN 辅助表达。 -->\n\n## 异常\n\n<!-- 说明异常触发条件、业务影响、处理路径及恢复条件，区分已明确规则与仍待澄清的问题。 -->\n\n## 验收条件\n\n<!-- 描述能够由用户判断的业务结果与验收条件，覆盖主要路径、边界及异常；必要时关联对应业务规则。 -->\n\n## 依据\n\n<!-- 记录用户选定的正式依据及来源；来源、归档相对路径、文件 hash 和引用范围随材料保存，依据文件随同一 Git 提交归档。会话及未选定的临时资料保持本地，不自动成为正式依据。 -->\n\n## 待澄清项\n\n<!-- 列明问题及其影响。使核心规则或验收条件不能判断的问题阻断确认；非阻断项须明确保留限制及不适用范围，不把假设写成已解决结论。 -->\n"
-const expectedManifest = (project: ProjectView) => ({ schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: defaultScenarioTemplate.id, templates: [defaultScenarioTemplate] } })
+const expectedManifest = (project: ProjectView) => ({ schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: defaultScenarioTemplate.id, templates: [defaultScenarioTemplate] }, requirementTemplates: { defaultTemplateId: defaultRequirementTemplate.id, templates: [defaultRequirementTemplate] } })
 async function writeInitialFile(target: string, value: string): Promise<void> {
   try { await writeFile(target, value, { flag: 'wx' }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; if ((await lstat(target)).isSymbolicLink() || await readFile(target, 'utf8') !== value) throw new Error('初始化文件已被修改，请保留并核对原现场。') }
@@ -256,9 +256,12 @@ export class ProjectWorkspaces {
     return directory
   }
   private async initializeFiles(directory: string, project: ProjectView): Promise<void> {
+    if (!project.generalScenario) throw new Error('后台尚未预留项目通用场景身份，不能初始化项目。')
     for (const name of ['场景', '需求', '交接']) { const target = path.join(directory, name); await mkdir(target, { recursive: true }); if ((await lstat(target)).isSymbolicLink()) throw new Error('初始化目录不能为符号链接。'); await writeInitialFile(path.join(target, '.gitkeep'), '') }
     const templates = path.join(directory, '.template'); await mkdir(templates, { recursive: true }); if ((await lstat(templates)).isSymbolicLink()) throw new Error('模板目录不能为符号链接。')
-    await writeInitialFile(path.join(templates, 'default.md'), defaultScenarioTemplateBody)
+    await writeInitialFile(path.join(directory, defaultScenarioTemplate.path), defaultScenarioTemplateBody)
+    await writeInitialFile(path.join(directory, defaultRequirementTemplate.path), defaultRequirementTemplateBody)
+    await writeInitialFile(path.join(directory, '场景/通用场景.md'), generalScenarioDocument(project.generalScenario.entityId))
     const prototype = path.join(directory, '原型代码')
     await this.ports.installTemplate(prototype)
     await writeInitialFile(path.join(directory, '.gitattributes'), '*.md text eol=lf\n*.json text eol=lf\n*.ts text eol=lf\n*.tsx text eol=lf\n')
@@ -289,7 +292,7 @@ export class ProjectWorkspaces {
     const actual = value as Record<string, unknown>
     // A valid manifest naming another project means this repository is already that project's.
     if (actual.projectId !== project.id) throw new Error(`该 GitLab 仓库的项目清单属于另一个项目（${String(actual.projectId)}），一个仓库只能对应一个后台项目。`)
-    for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates' && key !== 'directories')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
+    for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates' && key !== 'requirementTemplates' && key !== 'directories')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
     // The declared layout is either the current four directories or the three a
     // project accepted before the handoff directory existed carries.
     return (actual.directories as readonly string[])

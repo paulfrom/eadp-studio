@@ -11,7 +11,7 @@ import test from 'node:test'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 
 /** A record as this version writes it: every collection and the check flag present. */
-const currentRecord = { clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [] }
+const currentRecord = { clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [], consistencyComparisons: [] }
 /** A record an earlier version wrote: later collections are absent. */
 const previousRecord = { clientId: 'client-previous', projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [] }
 

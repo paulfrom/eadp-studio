@@ -1,5 +1,6 @@
 import type { CheckEvidence, FixedReference, MaterialMetadata, StudioIdentity, StudioUser } from '@eadp/contracts'
 import type { TaskView } from '../../shared/studio.ts'
+import type { ConsistencyModelInput } from '../../shared/consistency.ts'
 import type { WorkspaceGit } from '../adapters/workspace/git.js'
 
 export type SessionOutput = ({ kind: 'assistant'; content: string } | { kind: 'turn-ended'; reason: string }
@@ -16,6 +17,8 @@ export interface HostPorts {
   installTemplate(destination: string): Promise<void>
   session(task: TaskView, rules: string): Promise<string>
   prompt(sessionId: string, text: string): Promise<void>
+  /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */
+  compareConsistency?(input: ConsistencyModelInput, signal: AbortSignal): Promise<string>
   cancelSession?(sessionId: string): Promise<void>
   /** Release the Agent handles owned by one task worktree; other tasks stay live. */
   releaseTask?(worktree: string): Promise<void>

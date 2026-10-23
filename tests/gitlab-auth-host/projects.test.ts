@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import type { ProjectView, StudioUser } from '@eadp/contracts'
+import { generalScenarioDocument } from '../../packages/asset-domain/src/index.ts'
+import { verifyProjectInitialization } from '../../apps/collaboration-api/src/project-initialization.ts'
+import type { GitLab } from '../../apps/collaboration-api/src/auth/gitlab.ts'
+import type { Actor } from '../../apps/collaboration-api/src/auth/session.ts'
 import { ProjectWorkspaces } from '../../packages/studio-plugin/src/host/application/projects.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 import { StudioApplication } from '../../packages/studio-plugin/src/host/application/studio.ts'
@@ -16,9 +20,34 @@ import { copyTemplate, verifyTemplate } from '../../packages/studio-plugin/src/h
 
 const user: StudioUser = { id: 1, username: 'tester', name: '测试管理员', email: 'tester@example.test', admin: true, gitlabUserId: 17, gitlabUsername: 'liu', gitlabEmail: 'liu@example.test' }
 const sha = 'a'.repeat(40)
-const initial = (): ProjectView => ({ id: 'project-1', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'pending', name: '项目', recognizedHead: null, revision: 0 })
+const initial = (): ProjectView => ({ id: 'project-1', gitlabProjectId: 101, repositoryUrl: 'http://gitlab.example.test/team/project.git', stableBranch: 'main', namespaceId: 7, namespacePath: 'team', initializationStatus: 'pending', name: '项目', recognizedHead: null, revision: 0, generalScenario: { entityId: 'general-1', code: 'SCN-0001' } })
 const command = { action: 'createProject' as const, name: '项目', namespaceId: 7, path: 'project' }
-async function fixture(failure?: 'create-response' | 'push-response' | 'initialize-response') {
+/** Serve the bytes written by the Host through the backend's actual initialization verifier. */
+async function verifyWrittenInitialization(directory: string, project: ProjectView, head?: string) {
+  const blobs = new Map<string, Uint8Array>()
+  const tree = async (relative = '') => Promise.all((await readdir(path.join(directory, relative), { withFileTypes: true })).filter(entry => entry.name !== '.git').map(async entry => {
+    const filename = path.posix.join(relative, entry.name)
+    const bytes = entry.isDirectory() ? Buffer.from(filename) : await readFile(path.join(directory, filename))
+    const id = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+    if (!entry.isDirectory()) blobs.set(id, bytes)
+    return { name: entry.name, path: filename, type: entry.isDirectory() ? 'tree' : 'blob', mode: entry.isDirectory() ? '040000' : '100644', id }
+  }))
+  const gitlab = {
+    authorize: async () => {},
+    branchHead: async () => head,
+    json: async () => ({ id: head, parent_ids: [] }),
+    list: async (route: string) => tree(new URL(route, 'https://fixture.test').searchParams.get('path') ?? ''),
+    bytes: async (route: string) => {
+      const blob = /\/blobs\/([a-f0-9]{40})\/raw$/.exec(route)
+      if (blob) { const bytes = blobs.get(blob[1]!); assert.ok(bytes, `unknown Git blob ${blob[1]}`); return bytes }
+      const file = /\/files\/([^/]+)\/raw\?/.exec(route)
+      assert.ok(file, `unexpected fixed content route ${route}`)
+      return readFile(path.join(directory, decodeURIComponent(file[1]!)))
+    },
+  } as unknown as GitLab
+  return verifyProjectInitialization(gitlab, { gitlabUserId: user.gitlabUserId } as Actor, project, sha)
+}
+async function fixture(failure?: 'create-response' | 'push-response' | 'initialize-response' | 'install-template') {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-project-recovery-')), storeRoot = path.join(root, 'state'), workspaceRoot = path.join(root, 'workspace')
   let currentUser: StudioUser | undefined = user, project = initial(), remoteHead: string | undefined, localHead: string | undefined
   let failed = false, creates = 0, commits = 0, pushes = 0, initializes = 0, clones = 0
@@ -34,6 +63,8 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
     }
     if (method === 'POST' && route.endsWith('/initialize')) {
       ++initializes; assert.equal(body!.commitSha, sha); assert.equal(remoteHead, sha)
+      const verified = await verifyWrittenInitialization(path.join(workspaceRoot, 'users/1/project-project-1'), project, remoteHead)
+      assert.equal(verified.generalFixed.path, '场景/通用场景.md')
       project = { ...project, initializationStatus: 'ready', recognizedHead: sha }
       if (failure === 'initialize-response' && !failed) { failed = true; throw new Error('初始化响应丢失') }
       return project
@@ -41,10 +72,11 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
     if (route === '/v1/projects') return currentUser?.id === 1 ? [project] : []
     if (route === '/v1/namespaces') return [{ id: 7, name: '团队', fullPath: 'team' }]
     if (method === 'GET' && route === '/v1/projects/project-1/templates') {
-      const file = '.template/default.md'
-      const bytes = await readFile(path.join(workspaceRoot, 'users/1/project-project-1', file))
-      const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: { commitSha: sha, path: file, sha256: createHash('sha256').update(bytes).digest('hex') } }] }
-      return { acceptedHead: sha, scenarios: catalog, requirements: catalog }
+      const catalog = async (id: string, name: string) => {
+        const file = `.template/${id}.md`, bytes = await readFile(path.join(workspaceRoot, 'users/1/project-project-1', file))
+        return { defaultTemplateId: id, templates: [{ id, name, fixed: { commitSha: sha, path: file, sha256: createHash('sha256').update(bytes).digest('hex') } }] }
+      }
+      return { acceptedHead: sha, scenarios: await catalog('default', '默认场景模板'), requirements: await catalog('default-requirement', '默认需求模板') }
     }
     return { project, entities: [], baselines: [], integrations: [] }
   } } as unknown as CollaborationClient
@@ -64,20 +96,25 @@ async function fixture(failure?: 'create-response' | 'push-response' | 'initiali
       commitFiles: async (directory: string, _files: string[], _message: string, identity: object) => {
         ++commits; assert.deepEqual(identity, { name: user.name, email: user.gitlabEmail })
         const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8'))
-        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } })
+        assert.deepEqual(manifest, { schemaVersion: 1, projectId: project.id, gitlabProjectId: 101, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] }, requirementTemplates: { defaultTemplateId: 'default-requirement', templates: [{ id: 'default-requirement', name: '默认需求模板', path: '.template/default-requirement.md' }] } })
         assert.ok(_files.includes('.template/default.md'), 'initial commit must include the declared default template')
+        assert.ok(_files.includes('.template/default-requirement.md'), 'initial commit must include the independent requirement template')
+        assert.ok(_files.includes('场景/通用场景.md'), 'initial commit must include the reserved general scenario')
         assert.match(await readFile(path.join(directory, '.template/default.md'), 'utf8'), /目标与范围/)
+        assert.equal(await readFile(path.join(directory, '.template/default-requirement.md'), 'utf8'), await readFile(new URL('../../docs/design/templates/default-requirement.md', import.meta.url), 'utf8'))
+        assert.equal(await readFile(path.join(directory, '场景/通用场景.md'), 'utf8'), generalScenarioDocument(project.generalScenario!.entityId))
         localHead = sha; return sha
       },
       push: async () => { ++pushes; remoteHead = sha; if (failure === 'push-response' && !failed) { failed = true; throw new Error('推送响应丢失') } },
     },
-    gitLocal: async () => 'project.assets.json\0.gitattributes\0.template/default.md\0场景/.gitkeep\0需求/.gitkeep\0交接/.gitkeep\0原型代码/package.json\0',
-    installTemplate: async (directory: string) => { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'package.json'), '{}\n') },
+    gitLocal: async () => 'project.assets.json\0.gitattributes\0.template/default.md\0.template/default-requirement.md\0场景/通用场景.md\0场景/.gitkeep\0需求/.gitkeep\0交接/.gitkeep\0原型代码/package.json\0',
+    installTemplate: async (directory: string) => { if (failure === 'install-template' && !failed) { failed = true; throw new Error('原型模板安装中断') }; await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'package.json'), '{}\n') },
   } as unknown as HostPorts
   const store = new StudioStore(storeRoot); store.useUser(user.id)
   const lane = new BackgroundLane()
   const service = new ProjectWorkspaces(store, api, ports, lane, new ProjectProgressTracker())
   return { settlement: () => lane.settle(), root, storeRoot, workspaceRoot, store, service, ports, api, calls, setUser: (next?: StudioUser) => { currentUser = next },
+    setGeneralScenario: (next?: ProjectView['generalScenario']) => { project = { ...project, generalScenario: next } },
     counts: () => ({ creates, uniqueCreations: creationKeys.size, commits, pushes, initializes, clones }),
     dispose: async () => { await lane.settle(); await service.dispose(); await rm(root, { recursive: true, force: true }) } }
 }
@@ -140,6 +177,66 @@ test('lost initialize response opens the accepted project without a second initi
     assert.match(failed.message ?? '', /响应丢失/)
     await f.service.retry(failed.id); await f.settlement()
     assert.equal(f.counts().initializes, 1); assert.equal(f.counts().creates, 1); assert.equal((await f.store.read()).projects.length, 1)
+  } finally { await f.dispose() }
+})
+
+test('initialization requires the backend-reserved general scenario identity before writing project files', async () => {
+  const f = await fixture()
+  try {
+    f.setGeneralScenario()
+    const failed = await queued(f)
+    assert.equal(failed.phase, 'unknown')
+    assert.match(failed.message ?? '', /尚未预留项目通用场景身份/)
+    assert.equal(f.counts().commits, 0)
+    assert.equal(f.counts().initializes, 0)
+    await assert.rejects(readFile(path.join(f.workspaceRoot, 'users/1/project-project-1/场景/通用场景.md')), { code: 'ENOENT' })
+  } finally { await f.dispose() }
+})
+
+test('an interrupted initialization reuses identical requirement template and general scenario bytes', async () => {
+  const f = await fixture('install-template')
+  try {
+    const failed = await queued(f), directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
+    assert.match(failed.message ?? '', /模板安装中断/)
+    const general = await readFile(path.join(directory, '场景/通用场景.md'))
+    const requirement = await readFile(path.join(directory, '.template/default-requirement.md'))
+    await f.service.retry(failed.id); await f.settlement()
+    assert.equal((await f.store.read()).projectInitializations[0]!.phase, 'ready')
+    assert.deepEqual(await readFile(path.join(directory, '场景/通用场景.md')), general)
+    assert.deepEqual(await readFile(path.join(directory, '.template/default-requirement.md')), requirement)
+    assert.equal(f.counts().commits, 1)
+  } finally { await f.dispose() }
+})
+
+for (const relative of ['.template/default-requirement.md', '场景/通用场景.md']) test(`an initialization retry preserves a changed ${relative} and refuses to commit it`, async () => {
+  const f = await fixture('install-template')
+  try {
+    const failed = await queued(f), target = path.join(f.workspaceRoot, 'users/1/project-project-1', relative)
+    await writeFile(target, 'preserve local edits\n')
+    await f.service.retry(failed.id); await f.settlement()
+    const operation = (await f.store.read()).projectInitializations[0]!
+    assert.equal(operation.phase, 'unknown')
+    assert.match(operation.message ?? '', /初始化文件已被修改/)
+    assert.equal(await readFile(target, 'utf8'), 'preserve local edits\n')
+    assert.equal(f.counts().commits, 0)
+    assert.equal(f.counts().initializes, 0)
+  } finally { await f.dispose() }
+})
+
+test('opening an accepted project permits both template catalogs to evolve independently', async () => {
+  const f = await fixture()
+  try {
+    await queued(f)
+    const directory = path.join(f.workspaceRoot, 'users/1/project-project-1'), file = path.join(directory, 'project.assets.json')
+    const manifest = JSON.parse(await readFile(file, 'utf8'))
+    manifest.scenarioTemplates.templates.push({ id: 'service', name: '服务场景', path: '.template/service.md' })
+    manifest.scenarioTemplates.defaultTemplateId = 'service'
+    manifest.requirementTemplates.templates.push({ id: 'business', name: '业务需求', path: '.template/business.md' })
+    manifest.requirementTemplates.defaultTemplateId = 'business'
+    await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`)
+    await f.service.open('project-1'); await f.settlement()
+    assert.equal((await f.store.read()).projectInitializations[0]!.phase, 'ready')
+    assert.equal(f.counts().initializes, 1)
   } finally { await f.dispose() }
 })
 

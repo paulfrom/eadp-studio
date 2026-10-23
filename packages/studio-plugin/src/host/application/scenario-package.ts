@@ -6,12 +6,12 @@ import { digest } from '../adapters/assets/materials.ts'
 const projectContextPath = 'CONTEXT.md'
 
 /**
- * Keeps the project-root CONTEXT.md reference in a scenario's file manifest.
+ * Keeps the project-root CONTEXT.md reference in a design material's file manifest.
  * The confirmation package declares this file through `metadata.files`; an
  * absent context file removes a stale reference instead of keeping it.
  */
 export async function syncProjectContext(root: string, metadata: MaterialMetadata): Promise<MaterialMetadata> {
-  if (metadata.kind !== 'scenario') return metadata
+  if (metadata.kind !== 'scenario' && metadata.kind !== 'requirement') return metadata
   const files = (metadata.files ?? []).filter(file => file.path !== projectContextPath)
   let bytes: Buffer
   try { bytes = await readFile(path.join(root, projectContextPath)) }

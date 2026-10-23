@@ -129,15 +129,49 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
     assert.deepEqual(replay, original)
     const stored = await database.query<{ count: string }>('SELECT count(*) AS count FROM studio_consistency_comparisons WHERE project_id=$1 AND operation_key=$2', [project.id, payload.idempotencyKey])
     assert.equal(stored.rows[0]!.count, '1')
+    const audits = await database.query<{ count: string }>("SELECT count(*) AS count FROM studio_audit WHERE project_id=$1 AND action='consistency.submit' AND data->>'comparisonId'=$2", [project.id, payload.id])
+    assert.equal(audits.rows[0]!.count, '1', 'Network retries must not duplicate the submission audit')
     const changed = await send('POST', comparisonsUrl, { ...payload, summary: '同一操作键下的不同结论' })
     assert.equal(changed.statusCode, 409, changed.body)
     assert.equal(changed.json<{ error: { code: string } }>().error.code, 'IDEMPOTENCY_CONFLICT')
   })
 
+  await t.test('concurrent submission retries return one sealed result and create one audit', async () => {
+    const payload = comparison({ conflicts: [conflict(1, [scene.id, reqA.id])] })
+    const replies = await Promise.all(Array.from({ length: 8 }, () => send('POST', comparisonsUrl, payload)))
+    for (const reply of replies) assert.equal(reply.statusCode, 200, reply.body)
+    const original = replies[0]!.json<ConsistencyComparisonView>()
+    for (const reply of replies) assert.deepEqual(reply.json(), original)
+    assert.equal((await database.query('SELECT id FROM studio_consistency_comparisons WHERE project_id=$1 AND operation_key=$2', [project.id, payload.idempotencyKey])).rowCount, 1)
+    assert.equal((await database.query("SELECT id FROM studio_audit WHERE project_id=$1 AND action='consistency.submit' AND data->>'comparisonId'=$2", [project.id, payload.id])).rowCount, 1)
+    assert.equal((await database.query('SELECT id FROM studio_consistency_conflicts WHERE project_id=$1 AND comparison_id=$2', [project.id, payload.id])).rowCount, 1)
+  })
+
+  await t.test('latest-per-target queries retain each material and do not substitute old failures for its latest conclusion', async () => {
+    const older = await post<ConsistencyComparisonView>(comparisonsUrl, comparison({ entityId: reqB.id, result: 'failed', coverage: 'partial', failureCode: 'read-failed', summary: '此前读取失败' }))
+    const current = await post<ConsistencyComparisonView>(comparisonsUrl, comparison({ entityId: reqB.id }))
+    const other = await post<ConsistencyComparisonView>(comparisonsUrl, comparison({ entityId: reqA.id }))
+    const recent = await Promise.all(Array.from({ length: 4 }, () => post<ConsistencyComparisonView>(comparisonsUrl, comparison())))
+    assert.equal(new Set(recent.map(value => value.id)).size, 4, 'Separate operations keep separate immutable results')
+    const gitBefore = gitlab.paths.length
+    const latest = await get<ConsistencyComparisonView[]>(`${comparisonsUrl}?latestPerEntity=true&limit=100`)
+    assert.equal(latest.length, 3); assert.equal(new Set(latest.map(value => value.entityId)).size, 3)
+    assert.equal(latest.find(value => value.entityId === reqB.id)!.id, current.id)
+    assert.equal(latest.find(value => value.entityId === reqA.id)!.id, other.id)
+    const pages = await Promise.all([0, 1, 2].map(offset => get<ConsistencyComparisonView[]>(`${comparisonsUrl}?latestPerEntity=true&limit=1&offset=${offset}`)))
+    assert.deepEqual(pages.flat(), latest)
+    const failedHistory = await get<ConsistencyComparisonView[]>(`${comparisonsUrl}?entityId=${reqB.id}&result=failed`)
+    assert.deepEqual(failedHistory, [older])
+    assert.deepEqual(await get(`${comparisonsUrl}?latestPerEntity=true&entityId=${reqB.id}&result=failed`), [])
+    assertNoContentRead(gitBefore)
+  })
+
   await t.test('a confirmation-triggered comparison binds one material confirmation of its target exactly once', async () => {
     const confirmationId = scene.current!.confirmationId
-    const accepted = await post<ConsistencyComparisonView>(comparisonsUrl, comparison({ trigger: 'confirmation', confirmationId, coverage: 'partial' }))
+    const payload = comparison({ trigger: 'confirmation', confirmationId, coverage: 'partial' })
+    const accepted = await post<ConsistencyComparisonView>(comparisonsUrl, payload)
     assert.equal(accepted.trigger, 'confirmation'); assert.equal(accepted.confirmationId, confirmationId)
+    assert.deepEqual(await post<ConsistencyComparisonView>(comparisonsUrl, payload), accepted)
     const duplicate = await send('POST', comparisonsUrl, comparison({ trigger: 'confirmation', confirmationId }))
     assert.equal(duplicate.statusCode, 409, duplicate.body)
     assert.equal(duplicate.json<{ error: { code: string } }>().error.code, 'AUTO_COMPARISON_RECORDED')
@@ -158,6 +192,8 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
       { ...valid, conflicts: [conflict(0, [scene.id])] },
       { ...valid, id: 'illegal id!' },
       { ...valid, idempotencyKey: 'k'.repeat(101) },
+      ...['body', 'diff', 'rawModelResponse', 'session', 'absolutePath', 'prompt', 'toolLog'].map(field => ({ ...valid, [field]: 'forbidden material or process payload' })),
+      ...['status', 'processed', 'ignored', 'reminder', 'revision'].map(field => ({ ...valid, conflicts: [conflict(1, [scene.id], { [field]: 'forbidden conflict processing state' })] })),
     ]) assert.equal((await send('POST', comparisonsUrl, body)).statusCode, 400, JSON.stringify(body).slice(0, 120))
   })
 
@@ -204,16 +240,19 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
     const gitBefore = gitlab.paths.length
     const sceneContext = await get<ConsistencyContextView>(`${base}/entities/${scene.id}/consistency-context`)
     assert.equal(sceneContext.entity.id, scene.id); assert.equal(sceneContext.entity.kind, 'scenario'); assert.equal(sceneContext.entity.occupied, false)
+    assert.equal(sceneContext.entity.path, scene.current!.fixed.path)
+    assert.deepEqual(sceneContext.builtinScenario, { entityId: created.generalScenario!.entityId, path: '场景/通用场景.md' })
     assert.deepEqual(sceneContext.sources, []); assert.deepEqual(sceneContext.prerequisites, [])
     assert.deepEqual(sceneContext.requirements.map(item => item.id), [reqA.id, reqB.id])
     const [cardA, cardB] = sceneContext.requirements
     assert.equal(cardA!.code, reqA.code); assert.equal(cardA!.confirmationStatus, 'confirmed'); assert.equal(cardA!.occupied, false)
     assert.equal(cardB!.confirmationStatus, 'draft'); assert.equal(cardB!.occupied, true)
+    assert.equal(cardA!.path, reqA.current!.fixed.path); assert.equal(cardB!.path, undefined)
     for (const card of sceneContext.requirements) assert.deepEqual(card.sources, [{ projectId: project.id, entityId: scene.id, version: 1 }])
     const reqContext = await get<ConsistencyContextView>(`${base}/entities/${reqB.id}/consistency-context`)
     assert.equal(reqContext.entity.id, reqB.id); assert.equal(reqContext.entity.occupied, true)
     assert.deepEqual(reqContext.sources, [{ entityId: scene.id, code: scene.code, title: scene.title, version: 1, confirmationId: scene.current!.confirmationId, fixed: scene.current!.fixed }])
-    assert.deepEqual(reqContext.prerequisites, [{ requirementId: reqA.id, code: reqA.code, title: reqA.title, version: 1, confirmationId: reqA.current!.confirmationId }])
+    assert.deepEqual(reqContext.prerequisites, [{ requirementId: reqA.id, code: reqA.code, title: reqA.title, version: 1, confirmationId: reqA.current!.confirmationId, path: reqA.current!.fixed.path }])
     assert.deepEqual(reqContext.requirements, [])
     const missing = await send('GET', `${base}/entities/missing-entity/consistency-context`)
     assert.equal(missing.statusCode, 404, missing.body)
@@ -228,7 +267,7 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
     const unknown = await send('GET', `${comparisonsUrl}/missing-comparison`)
     assert.equal(unknown.statusCode, 404, unknown.body)
     assert.equal(unknown.json<{ error: { code: string } }>().error.code, 'COMPARISON_NOT_FOUND')
-    for (const query of ['limit=0', 'limit=101', 'offset=-1', 'limit=abc', 'entityId=-illegal']) {
+    for (const query of ['limit=0', 'limit=101', 'offset=-1', 'limit=abc', 'entityId=-illegal', 'latestPerEntity=1', 'result=unknown']) {
       const reply = await send('GET', `${comparisonsUrl}?${query}`)
       assert.equal(reply.statusCode, 422, query)
       assert.equal(reply.json<{ error: { code: string } }>().error.code, 'INVALID_PAGINATION')

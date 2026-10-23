@@ -242,16 +242,22 @@ export const SubmitConsistencyComparisonSchema = Type.Union([
   ...comparisonResults.map(r => object({ ...comparisonBase, ...r, trigger: Type.Literal('confirmation'), confirmationId: IdSchema })),
 ]);
 export type SubmitConsistencyComparisonRequest = Static<typeof SubmitConsistencyComparisonSchema>;
+export function isSubmitConsistencyComparisonRequest(value: unknown): value is SubmitConsistencyComparisonRequest { return Value.Check(SubmitConsistencyComparisonSchema, value); }
 export interface ConsistencyConflictView { id: string; ordinal: number; summary: string; relation: 'formal' | 'potential'; entities: string[] }
 export interface ConsistencyComparisonView {
   id: string; entityId: string; trigger: 'manual' | 'confirmation'; confirmationId?: string;
   result: 'completed' | 'failed' | 'cancelled'; coverage: 'complete' | 'partial'; failureCode?: ComparisonFailure; summary: string;
   conflictCount: number; creator: AuditIdentity; createdAt: string; conflicts: ConsistencyConflictView[];
 }
+/** Filters for independent comparison history or the latest observation per target. */
+export interface ConsistencyComparisonFilter {
+  entityId?: string; result?: ConsistencyComparisonView['result']; latestPerEntity?: boolean; limit: number; offset: number;
+}
 /** Formal relation catalog for one comparison target; control fields only, never material content. */
 export interface ConsistencyContextView {
-  entity: { id: string; kind: EntityKind; builtinKey?: 'general'; code?: string; title: string; revision: number; materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; occupied: boolean };
+  builtinScenario?: { entityId: string; path: '场景/通用场景.md' };
+  entity: { id: string; kind: EntityKind; builtinKey?: 'general'; code?: string; title: string; revision: number; materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; occupied: boolean; /** Last accepted project-relative material path, when one exists. */ path?: string };
   sources: Array<{ entityId: string; code?: string; title: string; version: number; confirmationId: string; fixed: FixedReference }>;
-  requirements: Array<{ id: string; code?: string; title: string; revision: number; materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; occupied: boolean; sources: AssetSource[] }>;
-  prerequisites: Array<{ requirementId: string; code?: string; title: string; version: number; confirmationId: string }>;
+  requirements: Array<{ id: string; code?: string; title: string; revision: number; materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; occupied: boolean; path?: string; sources: AssetSource[] }>;
+  prerequisites: Array<{ requirementId: string; code?: string; title: string; version: number; confirmationId: string; path?: string }>;
 }

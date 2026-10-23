@@ -17,6 +17,7 @@ import { CollaborationTransport } from './adapters/collaboration/transport.js'
 import { WorkspaceGit } from './adapters/workspace/git.js'
 import { studioToolGuard } from './adapters/platform/execution-guard.js'
 import { DshTaskSessions } from './adapters/dsh/sessions.ts'
+import { compareLocalMaterials } from './adapters/dsh/consistency.ts'
 import { readScenarioSource } from './adapters/dsh/scenario-sources.ts'
 import { checkStaticPreview } from './adapters/dsh/browser-check.ts'
 import { copyTemplate } from './prototype/template.js'
@@ -113,7 +114,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
-    prompt: (id, text) => sessions.prompt(id, text), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
+    prompt: (id, text) => sessions.prompt(id, text), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
     preview: async task => {
         try {
           const { input, binding } = await bind(task)

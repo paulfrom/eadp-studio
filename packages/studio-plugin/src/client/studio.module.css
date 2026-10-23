@@ -318,8 +318,6 @@
 .assetItem > div { display: flex; justify-content: space-between; gap: 5px; font-size: 10px; color: var(--text-3); }
 .studio .selectedAsset { background: var(--accent-soft); border-color: var(--accent-border); }
 .addMaterial { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
-.categoryForm { padding: 10px 13px; border-top: 1px solid var(--border); color: var(--text-2); font-size: 11px; }
-.categoryForm form { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
 .taskHeader { height: 65px; display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; border-bottom: 1px solid var(--border); gap: 10px; }
 .taskHeader .eyebrow { font: 9px Consolas, monospace; }
 .taskHeader h2 { margin-top: 3px; font-size: 13px; }
@@ -426,12 +424,7 @@
 /* Material browsing and editing follow separate list/detail layouts. */
 .materialCatalog { margin: 0 24px 20px; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .materialCatalog .catalogHeader { align-items: center; padding: 0 0 16px; border: 0; }
-.catalogBody { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 20px; flex: 1; min-height: 0; }
-.categorySidebar { display: flex; flex-direction: column; align-items: stretch; gap: 5px; overflow: auto; border-right: 1px solid var(--border); padding-right: 16px; }
-.categorySidebar > strong { padding: 8px 10px 12px; color: var(--text-2); font-size: 12px; }
-.studio .categorySidebar > button { display: flex; justify-content: space-between; gap: 8px; text-align: left; white-space: normal; border-color: transparent; background: transparent; }
-.studio .categorySidebar > button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent-text); border-color: var(--accent-border); }
-.categorySidebar .categoryForm { margin-top: 16px; padding: 12px 0; }
+.catalogBody { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; flex: 1; min-height: 0; }
 .catalogResults { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .catalogResults .search { margin: 0 0 16px !important; width: min(100%, 360px); flex-shrink: 0; }
 .assetGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 16px; overflow: auto; padding: 2px 4px 16px 2px; }
@@ -442,6 +435,22 @@
 .cardSummary { color: var(--text-2); font-size: 12px; line-height: 1.8; min-height: 44px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cardMetadata, .cardStatus { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--text-3); font-size: 11px; }
 .cardStatus { padding-top: 12px; margin-top: auto; border-top: 1px solid var(--border); }
+.cardSources { display: flex; flex-wrap: wrap; gap: 6px; }
+.sourceChip { padding: 1px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 10px; }
+.reminder { color: var(--warn); }
+.consistencyActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; }
+.consistencyConclusion { margin: 8px 0 0; font-size: 11.5px; line-height: 1.8; color: var(--text-2); }
+.consistencyConflicts, .consistencyHistory { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.consistencyConflicts > strong, .consistencyHistory > strong { font-size: 11.5px; }
+.consistencyConflicts ul { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.consistencyConflicts li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 11px; }
+.consistencyConflicts li p { flex: 1 1 100%; margin: 0; line-height: 1.8; color: var(--text-2); }
+.potentialTag { padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--warn); color: var(--warn); font-size: 10px; }
+.consistencyHistory > button { margin-top: 8px; }
+.candidateBody { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.splitChoices { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.splitChoices legend { padding: 0 4px; color: var(--text-3); font-size: 11px; }
+.splitChoices label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
 .createAsset { display: flex; align-items: end; gap: 12px; padding: 16px; margin-bottom: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .createAsset label:first-child { flex: 1; }
 .studio .backToList { padding: 0; margin-bottom: 8px; border: 0; background: transparent; color: var(--accent-text); }
@@ -449,11 +458,7 @@
 .materialWorkspace > .taskArea { overflow-y: auto; }
 .materialWorkspace > .taskArea > :not(.nativeConversation):not(.conversationEmpty) { flex-shrink: 0; }
 .materialWorkspace > .inspector { grid-column: auto; max-height: none; min-height: 0; }
-.workspace.materialCollapsed { grid-template-columns: minmax(0, 1fr) auto; }
-.materialWorkspace .hiddenMaterial { display: none; }
-.restoreMaterial { align-self: start; }
 @media (max-width: 1100px) {
-  .catalogBody { grid-template-columns: 140px minmax(0, 1fr); gap: 12px; }
   .materialCatalog { margin: 0 16px 16px; }
   .studio .assetCard { padding: 16px; }
 }
@@ -462,7 +467,6 @@
   .createAsset { flex-wrap: wrap; }
   .workspace.materialWorkspace { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .materialWorkspace > .taskArea, .materialWorkspace > .inspector { min-height: 480px; }
-  .workspace.materialCollapsed { grid-template-columns: minmax(0, 1fr); }
 }
 .catalogToolbar { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .catalogToolbar select { max-width: 140px; }
@@ -561,6 +565,7 @@
 .templateSections > li { padding: 3px 9px; border: 1px dashed var(--border-strong); border-radius: 999px; color: var(--text-2); font-size: 11px; }
 
 .specFooter { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.specPanel > .dockCard { flex-shrink: 0; max-height: 45%; overflow-y: auto; margin: 0 12px 10px; }
 .gateStrip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 10.5px; color: var(--text-2); }
 .gateChip { display: inline-flex; align-items: center; gap: 5px; }
 .gateChip i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
@@ -608,5 +613,3 @@
 .catalogToolbar { flex-wrap: wrap; }
 .catalogToolbar .search { flex: 1 1 220px; }
 .catalogToolbar select { flex: 0 1 140px; }
-
-.catalogBody.scenarioCatalogBody { grid-template-columns: minmax(0, 1fr); }

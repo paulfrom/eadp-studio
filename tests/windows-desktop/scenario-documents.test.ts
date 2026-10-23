@@ -87,6 +87,16 @@ test('formal evidence archives only explicit selected versions with original byt
   assert.match((await scenarioFileErrors(root, current)).join('\n'), /文件内容已变化/)
 })
 
+for (const [text, endLine] of [['第一行\n第二行', 2], ['第一行\n第二行\n', 2], ['第一行\n第二行\n\n', 3], ['第一行\r\n第二行\r\n', 2]] as const) test(`formal evidence line ranges preserve terminal separators: ${JSON.stringify(text)}`, async t => {
+  const { root } = await fixture(t), original = Buffer.from(text)
+  const source: ScenarioSource = { id: 'lines', name: '业务依据.txt', format: 'txt', sha256: digest(original),
+    status: 'read', ranges: ['line:1-2'], text, selected: true, formal: true }
+  const [evidence] = await archiveSelectedEvidence(root, [{ source, original }], ['lines'])
+  assert.equal(evidence!.ranges[0]!.endLine, endLine)
+  assert.equal(await readFile(path.join(root, evidence!.ranges[0]!.path), 'utf8'), text.replace(/\r\n?/g, '\n'))
+  assert.deepEqual(await readFile(path.join(root, evidence!.files[0]!.path)), original)
+})
+
 test('business checks do not infer completeness from titles or text length; optional template headings ignore fenced examples', async t => {
   const { draft } = await fixture(t, '## 自定义范围\n甲\n## 判断\n乙')
   const formal = { label: '确认依据', reference: 'source:approved', files: [{ path: '.eadp/evidence/hash/original.txt', sha256: 'd'.repeat(64) }], ranges: [{ path: '.eadp/evidence/hash/original.txt', startLine: 1, endLine: 1 }] }

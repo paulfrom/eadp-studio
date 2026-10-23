@@ -39,7 +39,7 @@ function pdf(text: string): Uint8Array {
   return new TextEncoder().encode(content)
 }
 
-test('a requirement session uses the same read-only design preset and bundled skills', async () => {
+test('a requirement session uses its dedicated read-only design preset and shared bundled skills', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-requirement-native-'))
   try {
     const presets: string[] = [], skillMounts: unknown[] = []
@@ -55,7 +55,7 @@ test('a requirement session uses the same read-only design preset and bundled sk
     const sessions = new DshTaskSessions(ctx as never, '', async () => {}, undefined, path.join(root, 'skills'))
     await saveMaterial(root, initialMetadata({ id: 'requirement', kind: 'requirement', title: '需求', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } }), '# 需求正文')
     await sessions.open({ projectId: 'p', entityId: 'requirement', purpose: 'material', sessionId: 'requirement-session', inputHash: '', worktree: root }, 'read only', undefined)
-    assert.deepEqual(presets, ['eadp-scenario'], 'requirements share the scenario preset')
+    assert.deepEqual(presets, ['eadp-requirement'], 'requirements use their own persona with the shared read-only tools')
     assert.deepEqual(skillMounts, [{ providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [path.join(root, 'skills')], watch: false }])
   } finally { await rm(root, { recursive: true, force: true }) }
 })

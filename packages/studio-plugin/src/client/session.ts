@@ -1,6 +1,6 @@
 /** One plugin-lifetime Studio session: the shared projection store plus every command that writes it. */
 
-import type { ProjectProgress, StudioCommand, StudioReply } from '../shared/studio.ts'
+import type { ProjectProgress, StudioCommand, StudioReply, StudioState } from '../shared/studio.ts'
 import { emptyStudioState } from './state.ts'
 import { createStudioProjectionStore, type StudioProjectionStore } from './store.ts'
 
@@ -44,6 +44,17 @@ function failureText(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '工作台状态获取失败'
 }
 
+/** Preserve newer immutable comparison facts when another projection arrives later. */
+function preserveComparisons(next: StudioState, previous: StudioState | undefined): StudioState {
+  if (!previous || !next.project?.id || next.project.id !== previous.project?.id || next.account?.id !== previous.account?.id) return next
+  const latest = new Map((previous.consistencyLatest ?? []).map(item => [item.entityId, item]))
+  for (const item of next.consistencyLatest ?? []) {
+    const prior = latest.get(item.entityId)
+    if (!prior || Date.parse(item.createdAt) > Date.parse(prior.createdAt) || item.createdAt === prior.createdAt && item.id > prior.id) latest.set(item.entityId, item)
+  }
+  return { ...next, consistencyLatest: [...latest.values()] }
+}
+
 /**
  * Create the Studio session. The projection is read once per request and written
  * in one place, so the workbench and the settings sections cannot disagree about
@@ -63,10 +74,11 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   // changes reach all of them at once; joining the running read keeps that
   // fan-in to one Host round trip.
   let syncing: Promise<void> | undefined
+  let summaryRead = 0
 
   const applyRead = (token: number, reply: StudioReply): void => {
     if (token !== newest) return
-    if (reply.ok) actions.settle(reply.state)
+    if (reply.ok) actions.settle(preserveComparisons(reply.state, instance.getSnapshot().projection))
     else if (reply.code === 'LOGIN_REQUIRED') actions.settle(emptyStudioState())
     else actions.fail(reply.message)
   }
@@ -83,11 +95,20 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   // A command reply that is a full projection supersedes a read still
   // outstanding, which is why the token moves and the read slot is released.
   const execute = async (command: StudioCommand, settle: boolean): Promise<StudioReply> => {
-    newest += 1
-    syncing = undefined
+    const query = command.action === 'readRequirementSource' || command.action === 'listConsistencyComparisons' || command.action === 'listConsistencySummaries'
+    const summaryToken = command.action === 'listConsistencySummaries' ? ++summaryRead : undefined
+    if (!query) { newest += 1; syncing = undefined }
     try {
       const reply = await call(command)
-      if (settle && reply.ok) actions.settle(reply.state)
+      if (settle && reply.ok) {
+        if (!query) actions.settle(preserveComparisons(reply.state, instance.getSnapshot().projection))
+        else if (command.action === 'listConsistencySummaries' && summaryToken === summaryRead) {
+          const current = instance.getSnapshot().projection
+          if (current?.project?.id && current.project.id === reply.state.project?.id && current.account?.id === reply.state.account?.id) {
+            actions.settle(preserveComparisons({ ...current, consistencyLatest: reply.state.consistencyLatest ?? [] }, current))
+          }
+        }
+      }
       return reply
     } catch (error) {
       return { ok: false, code: 'CHANNEL_FAILED', message: failureText(error) }

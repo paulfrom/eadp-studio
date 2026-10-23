@@ -71,7 +71,7 @@ test('notice uses final assembly route and skips missing variables without readi
 })
 
 test('actual Cordis scope shutdown releases the shared notice and both installer subscriptions', async () => {
-  const { Context } = await import(pathToFileURL(path.join(sharedRoot, '.local/build/dsh/apps/desktop/.desktop-build/targets/win-x64/dsh/node_modules/@deepseek-ai/cordis/lib/index.js')))
+  const { Context } = await import(pathToFileURL(path.join(sharedRoot, '.local/build/dsh/vendor/cordis/lib/index.js')))
   const install = installer(), ctx = new Context()
   const first = install(ctx, { current: undefined, assembled: undefined })
   const second = install(ctx, { current: undefined, assembled: undefined })

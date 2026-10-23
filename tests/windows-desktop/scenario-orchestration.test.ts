@@ -39,7 +39,7 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const fail = (kind: typeof loseResponse) => { if (loseResponse === kind) { loseResponse = undefined; throw new Error('response lost') } }
   const api = { async request(method: string, route: string, body?: object) {
     calls.push(`${method} ${route}`)
-    if (route.endsWith('/templates')) { const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: templateRef }] }; return { acceptedHead: remote.project.recognizedHead, scenarios: catalog, requirements: catalog } }
+    if (route.endsWith('/templates')) { const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: templateRef }] }; return { acceptedHead: remote.project.recognizedHead, scenarios: catalog, requirements: { templates: [] } } }
     if (route.includes('/operations/') && method === 'GET') {
       const result = receipts.get(route.split('/').at(-1)!)
       if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'operation missing', 404)
@@ -177,6 +177,7 @@ test('an accepted context proposal writes only the project root snapshot and bin
   await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
   f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
   const content = '已整理。\n```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body }) + '\n```'
+  await f.workspaces.context(f.task)
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
   assert.equal(proposal.target, 'context')
@@ -195,6 +196,7 @@ test('a concurrently accepted context returns to the conversation instead of ove
   f.remote.project.recognizedHead = acceptedHead
   f.contexts.set(`${acceptedHead}:CONTEXT.md`, Buffer.from('外部已接受的新上下文'))
   const content = '```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body: '本地新上下文' }) + '\n```'
+  await f.workspaces.context(f.task)
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
   await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /其他已确认版本/)
@@ -208,6 +210,7 @@ test('a context proposal expires when the worktree file changes after the questi
   await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
   f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
   const content = '```eadp-write-proposal\n' + JSON.stringify({ entityId: 'scene', target: 'context', conclusions: [{ id: 'C1', text: '统一审批术语' }], evidenceIds: ['evidence'], body: '提议正文' }) + '\n```'
+  await f.workspaces.context(f.task)
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
   await writeFile(path.join(f.root, 'CONTEXT.md'), '作者刚刚修改的上下文')
@@ -218,8 +221,8 @@ test('a context proposal expires when the worktree file changes after the questi
 
 test('template preview rejects deleting historical identities and publication stops before touching materials when the accepted head changes', async t => {
   const f = await fixture(t), lane = new BackgroundLane(), templates = new ScenarioTemplates(f.store, f.api, f.ports, f.projects, lane)
-  await assert.rejects(templates.preview(f.remote, [{ id: 'different', name: '替代', body: '## 范围' }], 'different'), /不支持删除/)
-  await templates.preview(f.remote, [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
+  await assert.rejects(templates.preview(f.remote, 'scenario', [{ id: 'different', name: '替代', body: '## 范围' }], 'different'), /不支持删除/)
+  await templates.preview(f.remote, 'scenario', [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
   const operation = f.local.templateOperations[0]!
   f.remote.project.recognizedHead = 'e'.repeat(40)
   // Publication queues its Git work: the reply returns at once and the stopped
@@ -248,7 +251,7 @@ test('template publication builds outside the material worktree and rejects a ca
     async changedFiles() { return ['project.assets.json', '.template/default.md', '场景/scene.md'] },
   } } as unknown as HostPorts
   const templates = new ScenarioTemplates(f.store, f.api, ports, projects, lane)
-  await templates.preview(f.remote, [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
+  await templates.preview(f.remote, 'scenario', [{ id: 'default', name: '默认', body: '## 更新范围' }], 'default')
   await templates.publish(f.local.templateOperations[0]!.preview.operationId, f.remote)
   await lane.settle()
   const recorded = (await f.store.read()).templateOperations[0]!

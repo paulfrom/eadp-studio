@@ -3,8 +3,8 @@ import type { PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deep
 import type { PropsStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import { NativeConversation } from '../components/NativeConversation.tsx'
-import { MaterialConversation } from '../components/MaterialConversation.tsx'
 import { ScenarioWorkspace } from '../scenarios/ScenarioWorkspace.tsx'
+import { RequirementWorkspace } from '../requirements/RequirementWorkspace.tsx'
 import type { ConfirmationChoice, EntityView, Stage, StudioCommand, StudioReply } from '../../shared/studio.ts'
 import { MaterialCatalog } from '../components/MaterialCatalog.tsx'
 import { LegacyMaterial } from '../components/LegacyMaterial.tsx'
@@ -52,31 +52,42 @@ export function StudioPanel(props: StudioProps) {
   const [selectedId, setSelectedId] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [comparisonError, setComparisonError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [filter, setFilter] = useState('')
-  const [materialCollapsed, setMaterialCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
   const [naturalConfirmation, setNaturalConfirmation] = useState('')
   const flushRef = useRef<(() => Promise<boolean>) | undefined>(undefined)
   const registerFlush = useCallback((flush?: () => Promise<boolean>) => { flushRef.current = flush }, [])
   const flushBeforeLeave = useCallback(async () => !flushRef.current || await flushRef.current(), [])
+  const materialOperations = useRef(new Map<string, { fingerprint: string; id: string }>())
+  const materialOperationId = (action: string, input: unknown): string => {
+    const fingerprint = JSON.stringify(input), previous = materialOperations.current.get(action)
+    if (previous?.fingerprint === fingerprint) return previous.id
+    const id = crypto.randomUUID(); materialOperations.current.set(action, { fingerprint, id }); return id
+  }
   const actions = useRef(0)
   const run = props.run
   const sync = props.sync
-  const call = useCallback(async (command: StudioCommand) => {
-    actions.current += 1
-    setError(''); setBusy(true)
+  const call = useCallback(async (command: StudioCommand, localError = false) => {
+    const background = command.action === 'listConsistencyComparisons' || command.action === 'listConsistencySummaries' || command.action === 'readRequirementSource'
+    if (!background) { actions.current += 1; if (!localError) setError(''); setBusy(true) }
     try {
       const result = await run(command)
       if (!result.ok) {
         if (result.code === 'LOGIN_REQUIRED') props.openSettings('studio-collab')
-        setError(result.message)
+        if (!localError && !background) setError(result.message)
       }
       return result
-    } catch (err) { setError(err instanceof Error ? err.message : '操作未完成，请重新查询状态'); return undefined }
-    finally { actions.current -= 1; setBusy(actions.current > 0) }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '操作未完成，请重新查询状态'
+      if (!localError && !background) setError(message)
+      return { ok: false as const, code: 'CHANNEL_FAILED', message }
+    }
+    finally { if (!background) { actions.current -= 1; setBusy(actions.current > 0) } }
   }, [run, props.openSettings])
+  const localCall = useCallback((command: StudioCommand) => call(command, true), [call])
   useEffect(() => {
     // The session joins a poll and a section's read into one Host round trip, and
     // a user action always writes the newer projection, so polling cannot undo it.
@@ -84,6 +95,12 @@ export function StudioPanel(props: StudioProps) {
     const timer = setInterval(() => sync(), 10_000)
     return () => clearInterval(timer)
   }, [sync])
+  const materialTaskRunning = state.tasks.some(task => task.purpose === 'split' && ['pending', 'sent'].includes(task.split?.status ?? '')) || (state.consistencyTasks ?? []).some(task => task.phase === 'running' || task.phase === 'pending-sync')
+  useEffect(() => {
+    if (!materialTaskRunning) return
+    const timer = setInterval(sync, 1000)
+    return () => clearInterval(timer)
+  }, [materialTaskRunning, sync])
   // A recorded initialization is the project operation in flight: the bar follows
   // it, and the record leaving the projection is what stops this poll.
   const initializing = state.projectInitializations.length > 0
@@ -94,6 +111,25 @@ export function StudioPanel(props: StudioProps) {
     const timer = setInterval(readProgress, 500)
     return () => clearInterval(timer)
   }, [initializing, readProgress])
+  // Comparison summaries have their own read path, including results shared by other members.
+  const consistencyProjectId = state.project?.id
+  const summaryScope = useRef(consistencyProjectId); summaryScope.current = consistencyProjectId
+  const summaryCall = useRef(call); summaryCall.current = call
+  const summaryRead = useRef(0)
+  const refreshComparisons = useCallback(async () => {
+    const request = ++summaryRead.current
+    const reply = await summaryCall.current({ action: 'listConsistencySummaries' })
+    if (request !== summaryRead.current || summaryScope.current !== consistencyProjectId) return
+    setComparisonError(reply?.ok ? '' : reply && !reply.ok ? reply.message : '最近对比结论未能读取，请重试。')
+  }, [consistencyProjectId])
+  const sharedComparisons = (state.consistencyTasks ?? []).filter(task => task.phase === 'shared').map(task => task.id).sort().join(':')
+  useEffect(() => {
+    if (stage !== 'requirements' || !consistencyProjectId) return
+    setComparisonError('')
+    void refreshComparisons()
+    const timer = setInterval(() => void refreshComparisons(), 10_000)
+    return () => { clearInterval(timer); summaryRead.current += 1 }
+  }, [stage, consistencyProjectId, sharedComparisons, refreshComparisons])
   const loadError = storeError || (state.connected ? '' : '请登录后读取项目目录')
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const openProjectDialog = async () => { if (!await flushBeforeLeave()) return; setProjectDialog(true); await call({ action: 'namespaces' }) }
@@ -107,15 +143,37 @@ export function StudioPanel(props: StudioProps) {
     .filter(e => `${e.title} ${e.id}`.toLowerCase().includes(filter.toLowerCase()))
   const currentStage = stages.find(s => s.id === stage)!
   const materialStage = stage === 'scenarios' || stage === 'requirements'
-  const selectStage = async (next: Stage) => { if (!await flushBeforeLeave()) return; setStage(next); setSelectedId(undefined); setFilter(''); setMaterialCollapsed(false) }
+  const selectStage = async (next: Stage) => { if (!await flushBeforeLeave()) return; setStage(next); setSelectedId(undefined); setFilter('') }
   const backToList = async () => { if (await flushBeforeLeave()) setSelectedId(undefined) }
+  const selectTab = async (next: 'material' | 'versions') => { if (await flushBeforeLeave()) setActiveTab(next) }
   const selectMaterial = async (id: string) => {
     if (!await flushBeforeLeave()) return
-    setSelectedId(id); setActiveTab('material'); setMaterialCollapsed(false)
+    setSelectedId(id); setActiveTab('material')
     if (stage === 'scenarios' && !entities.find(e => e.id === id)?.legacyCurrent) await call({ action: 'openScenario', entityId: id })
+    if (stage === 'requirements' && !entities.find(e => e.id === id)?.legacyCurrent) await call({ action: 'openRequirement', entityId: id })
   }
-  const confirm = (choice: ConfirmationChoice) => draft && call({ action: 'confirmMaterial', entityId: draft.entityId, expectedHash: draft.sha256, ...choice })
-  const materialSources = state.materialSources?.find(value => value.entityId === selectedId)
+  /** A requirement's formal source opens in the scenario stage with its own workspace. */
+  const openScenarioFromRequirement = async (entityId: string) => {
+    if (!await flushBeforeLeave()) return
+    setStage('scenarios'); setSelectedId(entityId); setActiveTab('material')
+    await call({ action: 'openScenario', entityId })
+  }
+  /** A scenario's related requirement opens in the requirement stage with its own workspace. */
+  const openRequirementFromScenario = async (entityId: string) => {
+    if (!await flushBeforeLeave()) return
+    setStage('requirements'); setSelectedId(entityId); setActiveTab('material')
+    await call({ action: 'openRequirement', entityId })
+  }
+  const openRelatedMaterial = (entity: EntityView) => {
+    if (entity.kind === 'scenario') void openScenarioFromRequirement(entity.id)
+    else if (entity.kind === 'requirement') void openRequirementFromScenario(entity.id)
+  }
+  const confirm = async (choice: ConfirmationChoice) => {
+    if (!draft || !await flushBeforeLeave()) return undefined
+    const refreshed = await call({ action: 'state' })
+    const current = refreshed?.ok ? refreshed.state.drafts.find(value => value.entityId === draft.entityId) : undefined
+    return current ? call({ action: 'confirmMaterial', entityId: current.entityId, expectedHash: current.sha256, ...choice }) : undefined
+  }
   const sourceCommand = async (command: StudioCommand) => {
     if (!await flushBeforeLeave()) return undefined
     return call(command)
@@ -130,7 +188,7 @@ export function StudioPanel(props: StudioProps) {
     {storeError ? <><h2>无法确认工作台状态</h2><p role="alert">{storeError}</p><button className={css.primary} onClick={() => props.sync()}>重新同步</button></> : <><h2>正在读取工作台状态</h2><p>{loading ? '正在与协同工作台核对登录状态与项目目录…' : '等待工作台答复。'}</p></>}
   </div></div>
   return <div className={`${css.studio} studio-root`} data-studio-panel="studio">
-    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => props.sync(), selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
+    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => { props.sync(); if (stage === 'requirements' && consistencyProjectId) void refreshComparisons() }, selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
     <div className={css.shell}>
       <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
         <button className={css.repoBox} disabled={!state.connected} onClick={() => void openProjectDialog()} title="切换、新建或获取项目">
@@ -169,7 +227,7 @@ export function StudioPanel(props: StudioProps) {
         </div>
       </aside>
       <main className={css.main}>
-        <header className={`${css.pageHeader} ${stage === 'scenarios' && selected ? css.compactHeader : ''}`}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}{!(stage === 'scenarios' && selected) && <><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></>}</div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
+        <header className={`${css.pageHeader} ${materialStage && selected ? css.compactHeader : ''}`}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}{!(materialStage && selected) && <><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></>}</div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
         {state.projectInitializations.map(operation => <ProjectProgressNotice key={operation.id} operation={operation} progress={progress.find(item => item.operationId === operation.id)} busy={busy} onRetry={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })} />)}
@@ -178,31 +236,21 @@ export function StudioPanel(props: StudioProps) {
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>原型完成后自动形成，无需再次审批</span></div>
           {(state.collaboration?.baselines ?? []).length === 0 && <Empty text="完成一个需求的原型确认后，固定基线会出现在这里。" />}
           {state.collaboration?.baselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>{entities.find(e => e.id === b.entityId)?.title ?? b.entityId}</h3><p>{b.id} · 版本 {b.version}</p><code>{b.commitSha}</code></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
-        </div> : selected?.legacyCurrent ? <LegacyMaterial entity={selected} body={state.legacyMaterials?.find(material => material.entityId === selected.id)?.body} /> : materialStage && !selected ? <MaterialCatalog key={`${state.project.id}:${stage}`} entities={entities} drafts={state.drafts} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} busy={busy} call={call} onSelect={id => void selectMaterial(id)} loadError={loadError} onRetry={() => props.sync()} /> : stage === 'scenarios' && selected ? state.scenario?.entityId === selected.id ? <ScenarioWorkspace key={`${state.project.id}:${selected.id}`} workspace={state.scenario} entity={selected} state={state} faces={props} busy={busy} call={call} registerFlush={registerFlush} /> : <div className={css.empty}>正在读取场景材料…<button disabled={busy} onClick={() => void call({ action: 'openScenario', entityId: selected.id })}>重新读取</button></div> : <div className={`${css.workspace} ${materialStage ? css.materialWorkspace : ''} ${materialStage && materialCollapsed ? css.materialCollapsed : ''}`}>
-          {!materialStage && <section className={css.catalog} aria-label="资产列表"><div className={css.catalogHeader}><strong>{stage === 'handoffs' ? '清单' : '需求'}目录</strong><span>{visible.length}</span></div><input className={css.search} placeholder="搜索标题或编号…" aria-label="搜索资产" value={filter} onChange={e => setFilter(e.target.value)} />
+        </div> : selected?.legacyCurrent ? <LegacyMaterial entity={selected} body={state.legacyMaterials?.find(material => material.entityId === selected.id)?.body} /> : materialStage && !selected ? <MaterialCatalog key={`${state.project.id}:${stage}`} entities={entities} drafts={state.drafts} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} busy={busy} call={localCall} onSelect={id => void selectMaterial(id)} onOpenMaterial={openRelatedMaterial} loadError={loadError} onRetry={() => props.sync()} comparisonError={comparisonError} onRetryComparisons={() => void refreshComparisons()} consistencyLatest={comparisonError ? [] : state.consistencyLatest ?? []} consistencyTasks={state.consistencyTasks ?? []} tasks={state.tasks} candidates={stage === 'requirements' ? state.candidates.filter(candidate => candidate.projectId === state.project!.id) : []} /> : stage === 'scenarios' && selected ? state.scenario?.entityId === selected.id ? <ScenarioWorkspace key={`${state.project.id}:${selected.id}`} workspace={state.scenario} entity={selected} state={state} faces={props} busy={busy} call={call} registerFlush={registerFlush} onOpenMaterial={openRelatedMaterial} onOpenRequirement={id => void openRequirementFromScenario(id)} /> : <div className={css.empty}>正在读取场景材料…<button disabled={busy} onClick={() => void call({ action: 'openScenario', entityId: selected.id })}>重新读取</button></div> : stage === 'requirements' && selected ? state.requirement?.entityId === selected.id ? <RequirementWorkspace key={`${state.project.id}:${selected.id}`} workspace={state.requirement} entity={selected} state={state} faces={props} busy={busy} call={call} registerFlush={registerFlush} onOpenMaterial={openRelatedMaterial} onOpenScenario={id => void openScenarioFromRequirement(id)} /> : <div className={css.empty}>正在读取需求材料…<button disabled={busy} onClick={() => void call({ action: 'openRequirement', entityId: selected.id })}>重新读取</button></div> : <div className={css.workspace}>
+          <section className={css.catalog} aria-label="资产列表"><div className={css.catalogHeader}><strong>{stage === 'handoffs' ? '清单' : '需求'}目录</strong><span>{visible.length}</span></div><input className={css.search} placeholder="搜索标题或编号…" aria-label="搜索资产" value={filter} onChange={e => setFilter(e.target.value)} />
             <div className={css.assetList}>{visible.map(e => <button key={e.id} className={`${css.assetItem} ${selectedId === e.id ? css.selectedAsset : ''}`} onClick={() => { setSelectedId(e.id); setActiveTab('material') }}><small>{e.id}</small><strong>{e.title}</strong><div><span className={e.confirmationStatus === 'confirmed' ? css.success : css.muted}>{e.confirmationStatus === 'confirmed' ? '材料已确认' : '草稿'}</span><span>{e.occupation ? '处理中' : '空闲'}</span></div></button>)}{visible.length === 0 && <Empty text="还没有资产" />}</div>
-          </section>}
+          </section>
           <section className={css.taskArea}><div className={css.taskHeader}><div><span className={css.eyebrow}>{selected?.id ?? 'AI WORKSPACE'}</span><h2>{selected?.title ?? '选择一项材料，与 AI 一起完善'}</h2></div>{selected && <button disabled={busy || !!selected.legacyCurrent} onClick={() => void call({ action: 'startSession', entityId: selected.id, purpose: taskPurpose })}>{task ? '恢复对话' : '与 AI 整理'}</button>}</div>
             {selected ? <><div className={css.contextStrip}><span>输入版本 {selected.materialVersion || '草稿'}</span><span>{selected.occupation ? `由 #${selected.occupation.ownerId} 处理中` : '尚未认领'}</span></div>{task?.error && <div className={css.notice}>{task.error}</div>}
-              {stage === 'requirements' ? <MaterialConversation key={`${state.project.id}:${selected.id}`} sessionId={task?.sessionId} faces={props} attachments={{
-                sources: materialSources?.sources ?? [], disabled: busy || !materialSources, readOnly: materialSources?.readOnly ?? true,
-                onImport: async (name, base64) => {
-                  const result = await sourceCommand({ action: 'importScenarioSource', entityId: selected.id, name, base64, operationId: crypto.randomUUID() })
-                  if (!result?.ok) throw new Error(result && !result.ok ? result.message : '资料未能导入，请先处理保存问题后重试。')
-                },
-                onRetry: sourceId => { void sourceCommand({ action: 'retryScenarioSource', entityId: selected.id, sourceId }) },
-                onSelect: (source, selectedSource, formal) => { void sourceCommand({ action: 'selectScenarioSource', entityId: selected.id, sourceId: source.id, selected: selectedSource, formal }) },
-              }}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></MaterialConversation> : task ? <NativeConversation key={task.sessionId} {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
+              {task ? <NativeConversation key={task.sessionId} {...props} sessionId={task.sessionId} /> : <div className={css.conversationEmpty}><span>✦</span><h3>让业务意图更清晰</h3><p>点击「与 AI 整理」打开原生 Agent 对话。<br />材料、来源与当前输入将绑定到该任务。</p></div>}
               {stage === 'prototype' && <div className={css.actionBar}><button disabled={busy} onClick={() => operation('claimPrototype')}>认领原型任务</button><button disabled={busy} onClick={() => operation('checkPrototype')}>运行工程检查</button><button disabled={busy} onClick={() => operation('startPreview')}>启动预览</button><button disabled={busy} onClick={() => operation('stopPreview')}>停止预览</button><button className={css.primary} disabled={busy} onClick={() => void call({ action: 'confirmPrototype', entityId: selected.id, method: 'direct' })}>确认当前需求完成</button></div>}
               {stage !== 'prototype' && draft && <><div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>检查通过后，由你确认当前已保存的材料版本</small></div><button className={css.primary} disabled={busy} onClick={() => void confirm({ method: 'direct' })}>确认材料</button></div><form className={css.naturalConfirm} onSubmit={e => { e.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { void confirm({ method: 'direct' }); setNaturalConfirmation('') } else setError('请明确输入“确认当前材料”，操作仅绑定右侧已保存的版本。') }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={e => setNaturalConfirmation(e.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy}>发送确认</button></form></>}
-              {(purpose === 'prototype' || draft) && <ReviewPanel key={`${state.project.id}:${selected.id}:${purpose}`} review={review} purpose={purpose} busy={busy} onRequest={() => void call({ action: 'requestReview', entityId: selected.id, purpose })} onConfirm={choice => { if (purpose === 'prototype') void call({ action: 'confirmPrototype', entityId: selected.id, ...choice }); else void confirm(choice) }} />}
+              {(purpose === 'prototype' || draft) && <ReviewPanel key={`${state.project.id}:${selected.id}:${purpose}`} review={review} purpose={purpose} busy={busy} onRequest={() => void sourceCommand({ action: 'requestReview', entityId: selected.id, purpose })} onConfirm={choice => { if (purpose === 'prototype') void call({ action: 'confirmPrototype', entityId: selected.id, ...choice }); else void confirm(choice) }} />}
             </> : <Empty text="选择左侧资产，查看材料和协作状态。" />}
-            {stage === 'scenarios' && state.candidates.some(c => c.scenarioId === selectedId) && <div className={css.candidates}><h3>AI 拆分的需求候选</h3>{state.candidates.filter(c => c.scenarioId === selectedId).map(c => <div key={c.id}><div><strong>{c.title}</strong><p>{c.summary}</p></div><button disabled={busy || !!c.selectedEntityId} onClick={() => void call({ action: 'selectCandidate', candidateId: c.id })}>{c.selectedEntityId ? '已选用' : '选用并完善'}</button></div>)}</div>}
           </section>
-          <aside className={`${css.inspector} ${materialStage && materialCollapsed ? css.hiddenMaterial : ''}`} aria-label="材料与固定版本"><div className={css.tabs}>{materialStage && <button onClick={() => setMaterialCollapsed(true)} aria-label="收起材料面板">收起 →</button>}<button aria-selected={activeTab === 'material'} onClick={() => setActiveTab('material')}>材料内容</button><button aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>确认与复用</button></div>{activeTab === 'material' ? draft ? <MaterialEditor key={`${draft.entityId}:${draft.sha256}`} draft={draft} entities={entities} projectId={state.project!.id} scenarioTemplates={state.projectTemplates?.scenarios} busy={busy} registerFlush={stage === 'requirements' ? registerFlush : undefined} onSave={(body, metadata) => call({ action: 'saveMaterial', entityId: draft.entityId, body, metadata })} onBindTemplate={templateId => call({ action: 'bindScenarioTemplate', entityId: draft.entityId, templateId })} /> : <Empty text="材料保存在项目 Git 仓库中。" /> : selected && <VersionPanel entity={selected} entities={entities} projectId={state.project.id} busy={busy} call={call} />}
+          <aside className={css.inspector} aria-label="材料与固定版本"><div className={css.tabs}><button aria-selected={activeTab === 'material'} onClick={() => void selectTab('material')}>材料内容</button><button aria-selected={activeTab === 'versions'} onClick={() => void selectTab('versions')}>确认与复用</button></div>{activeTab === 'material' ? draft ? <MaterialEditor key={`${state.project.id}:${draft.entityId}`} draft={draft} entities={entities} projectId={state.project!.id} templates={draft.metadata.kind === 'requirement' ? state.projectTemplates?.requirements : state.projectTemplates?.scenarios} busy={busy} onSave={input => draft.metadata.kind === 'requirement' ? call({ action: 'saveRequirement', entityId: draft.entityId, ...input }) : call({ action: 'saveMaterial', entityId: draft.entityId, body: input.body, metadata: input.metadata })} onResolveConflict={draft.metadata.kind === 'requirement' ? input => call({ action: 'resolveRequirementConflict', entityId: draft.entityId, ...input }) : undefined} onBindTemplate={(templateId, expectedHash) => draft.metadata.kind === 'requirement' ? call({ action: 'bindRequirementTemplate', entityId: draft.entityId, templateId, expectedHash, operationId: materialOperationId('bindRequirementTemplate', { entityId: draft.entityId, templateId, expectedHash }) }) : call({ action: 'bindScenarioTemplate', entityId: draft.entityId, templateId })} /> : <Empty text="材料保存在项目 Git 仓库中。" /> : selected && <VersionPanel entity={selected} entities={entities} projectId={state.project.id} busy={busy} call={call} />}
             {selected?.occupation && <button className={css.release} disabled={busy} onClick={() => operation('releaseOccupation')}>取消本人任务并释放占用</button>}{stage === 'handoffs' && selected?.current && <button disabled={busy} onClick={() => void call({ action: 'acknowledgeHandoff', entityId: selected.id, note: '已收悉固定交接材料' })}>研发收悉</button>}
           </aside>
-          {materialStage && materialCollapsed && <button className={css.restoreMaterial} onClick={() => setMaterialCollapsed(false)}>← 展开材料</button>}
         </div>}
         {stage === 'prototype' && state.project && <div className={css.publication}><span>发布项目当前已确认基线</span><button disabled={busy} onClick={() => void call({ action: 'publish' })}>部署到远端</button><button disabled={busy} onClick={() => void call({ action: 'revokePublication' })}>撤回当前站点</button></div>}
       </main>

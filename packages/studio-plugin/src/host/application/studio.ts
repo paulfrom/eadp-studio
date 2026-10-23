@@ -1,10 +1,10 @@
 import { ScenarioWorkspaces } from './scenario-workspaces.ts'
-import { ScenarioTemplates, type TemplateCatalogResponse } from './scenario-templates.ts'
+import { ScenarioTemplates } from './scenario-templates.ts'
 import { ScenarioRepairs } from './scenario-repairs.ts'
 import { scenarioFileErrors } from './scenario-documents.ts'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { reviewInputText } from '@eadp/contracts'
+import { isMaterialMetadata, reviewInputText } from '@eadp/contracts'
 import { canonical, prototypeBindings } from '@eadp/asset-domain'
 import path from 'node:path'
 import type { NamespaceView, CheckEvidence, ConfirmationInput, EntityOccupancyView, EntityView, FixedReference, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, MaterialMetadata } from '@eadp/contracts'
@@ -19,6 +19,13 @@ import { AuthorReviews, type ReviewCandidate, type ReviewFile } from './reviews.
 import { syncProjectContext } from './scenario-package.ts'
 import { BackgroundLane } from './background-lane.ts'
 import { ProjectProgressTracker } from './progress.ts'
+import { RequirementCandidates } from './requirement-candidates.ts'
+import { ConsistencyComparisons } from './consistency-comparisons.ts'
+import type { CandidateTemplate, SplitSource } from '../../shared/requirements.ts'
+import type { ConsistencyCommand } from '../../shared/consistency.ts'
+import type { RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
+import { candidateBusinessEvidence } from './requirement-candidate-content.ts'
+import { readRequirementSource } from './requirement-sources.ts'
 
 const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
 const key = (): string => randomUUID()
@@ -46,21 +53,31 @@ export class StudioApplication {
   private readonly scenarios: ScenarioWorkspaces
   private readonly templates: ScenarioTemplates
   private readonly repairs: ScenarioRepairs
+  private readonly candidates: RequirementCandidates
+  private readonly comparisons: ConsistencyComparisons
+  private lastState: StudioState | undefined
   constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress); this.reviews = new AuthorReviews(store, ports)
     this.maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => this.projects.syncMain(projectId, commit), release: task => this.releaseTask(task) })
     this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
     this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
     this.repairs = new ScenarioRepairs(this.scenarios, (id, hash, repairId) => this.confirmRepairedScenario(id, hash, repairId))
+    this.candidates = new RequirementCandidates(store, ports, {
+      readFixed: (projectId, fixed) => this.projects.readFixed(projectId, fixed.commitSha, fixed.path, fixed.sha256),
+      template: projectId => this.requirementTemplate(projectId),
+      create: candidate => this.createMaterial('requirement', candidate.title, candidate.sources.map(source => source.entityId), candidate.id, candidate),
+      write: (candidate, entityId) => this.verifyCandidateContent(candidate, entityId),
+    })
+    this.comparisons = new ConsistencyComparisons(store, api, ports)
   }
   /** Await every queued command and every background Git task this workbench started. */
-  async settle(): Promise<void> { await this.queue; await this.lane.settle() }
+  async settle(): Promise<void> { await this.queue; await this.lane.settle(); await this.comparisons.settle() }
   /**
    * Read the progress of the project operations the background lane is running.
    * This is a local read: no network, no Git, and no wait for the work it reports.
    * @returns the operations currently running or stopped with a reason.
    */
   projectProgress(): ProjectProgressReply { return { operations: this.progress.views() } }
-  async dispose(): Promise<void> { this.scenarios.dispose(); await this.settle(); await this.projects.dispose() }
+  async dispose(): Promise<void> { this.scenarios.dispose(); await this.comparisons.dispose(); await this.settle(); await this.projects.dispose() }
   /**
    * Run one command. Projection reads keep their own lane so a long local write
    * (worktree, dependency install, checks, agent resume) cannot hold the state the
@@ -94,9 +111,19 @@ export class StudioApplication {
   private async execute(command: Exclude<StudioCommand, { action: 'state' }>): Promise<StudioReply> {
     let sessionId: string | undefined
     if (command.action !== 'login' && command.action !== 'logout') await this.requireAccount()
+    if (command.action === 'readRequirementSource') {
+      const { remote, entity } = await this.entity(command.entityId)
+      const requirementSource = await readRequirementSource(remote.project.id, entity, command.sourceEntityId, command.expectedVersion, {
+        versions: entityId => this.api.request<FixedVersion[]>('GET', this.route(remote.project.id, `/entities/${encodeURIComponent(entityId)}/versions`)),
+        read: fixed => this.projects.readFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256),
+      })
+      return { ok: true, state: await this.state(), requirementSource }
+    }
+    if (['compareConsistency', 'cancelConsistencyComparison', 'retryConsistencySubmission', 'checkConsistencyFreshness', 'listConsistencyComparisons', 'listConsistencySummaries'].includes(command.action)) return this.executeConsistency(command as ConsistencyCommand)
     sessionId = await this.executeScenario(command)
     switch (command.action) {
       case 'login': {
+        await this.comparisons.dispose(); this.lastState = undefined
         await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []
         const identity = await this.ports.login(command.username, command.password)
         this.store.useUser(identity.user.id)
@@ -106,23 +133,19 @@ export class StudioApplication {
         // full state right after.
         return { ok: true, state: { connected: true, account: identity.user, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] } }
       }
-      case 'logout': { try { await this.ports.logout() } finally { this.scenarios.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.namespaces = [] } break }
+      case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.lastState = undefined; this.namespaces = [] } break }
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
       case 'retryProjectInitialization': await this.projects.retry(command.operationId); break
       case 'bindScenarioTemplate': await this.bindScenarioTemplate(command.entityId, command.templateId); break
+      case 'splitRequirements': sessionId = await this.splitRequirements(command.scenarioIds); break
       case 'createMaterial': { const entity = await this.createMaterial(command.kind, command.title, command.scenarioIds, command.operationId); if (entity.kind === 'scenario') this.scenarios.activeEntityId = entity.id; break }
       case 'saveMaterial': {
         const context = await this.entity(command.entityId)
-        if (context.entity.kind === 'scenario') throw new Error('场景编辑必须使用带版本检查的保存命令')
+        if (context.entity.kind === 'scenario' || context.entity.kind === 'requirement') throw new Error('场景与需求编辑必须使用带版本检查的保存命令')
         const task = await this.designTask(context.remote, context.entity)
         if (command.metadata.entityId !== command.entityId || command.metadata.kind !== context.entity.kind) throw new Error('材料身份不能修改')
-          if (context.entity.kind === 'requirement' && (JSON.stringify(command.metadata.scenarioIds) !== JSON.stringify(context.entity.scenarioIds) || JSON.stringify(command.metadata.sources) !== JSON.stringify(context.entity.scenarioSources ?? []) || JSON.stringify(command.metadata.prerequisites) !== JSON.stringify(context.entity.prerequisites))) {
-          const fresh = await this.entity(command.entityId)
-            if (fresh.entity.kind !== 'requirement') throw new Error('只有需求材料可以修改场景来源关系')
-            await this.api.request('PUT', this.route(context.remote.project.id, `/entities/${context.entity.id}/relations`), { idempotencyKey: key(), token: await this.requireOwned(fresh.entity), scenarioIds: command.metadata.scenarioIds, sources: command.metadata.sources, prerequisites: command.metadata.prerequisites })
-        }
         await saveMaterial(task.worktree, command.metadata, command.body); break
       }
       case 'startSession': {
@@ -131,7 +154,7 @@ export class StudioApplication {
           const task = await this.prototypeTask(remote, entity)
           sessionId = await this.ports.session(task, prototypeRules)
         } else {
-          if (entity.kind === 'scenario' && entity.current && !entity.occupation) throw new Error('已确认场景只读，请显式开始修订')
+          if ((entity.kind === 'scenario' || entity.kind === 'requirement') && entity.current && !entity.occupation) throw new Error('已确认材料只读，请显式开始修订')
           const task = await this.designTask(remote, entity)
           const draft = await readMaterial(task.worktree, entity.kind, entity.id)
           sessionId = await this.ports.session(task, this.materialRules(draft))
@@ -157,7 +180,7 @@ export class StudioApplication {
         const { remote } = await this.entity(command.entityId)
         await this.api.request('POST', this.route(remote.project.id, `/entities/${command.entityId}/eligibility`), { idempotencyKey: key(), version: command.version, enabled: command.enabled, reason: command.reason }); break
       }
-      case 'selectCandidate': await this.selectCandidate(command.candidateId); break
+      case 'selectCandidate': { const local = await this.store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目'); await this.candidates.select(command.candidateId, local.selectedProjectId, command.expectedInputHash); break }
       case 'adopt': await this.adopt(command); break
       case 'retryOperation': {
         const local = await this.store.read(); const operation = local.operations.find(op => op.id === command.operationId)
@@ -165,10 +188,12 @@ export class StudioApplication {
           else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
             const repairAuthorization = local.scenarios.find(record => record.projectId === local.selectedProjectId && record.repairAuthorization?.request.idempotencyKey === command.operationId)
             const repairEvent = local.scenarioRepairs.find(record => record.projectId === local.selectedProjectId && (record.pending?.idempotencyKey === command.operationId || record.recoverPending?.idempotencyKey === command.operationId))
+            const templateBinding = local.scenarios.find(record => record.projectId === local.selectedProjectId && (record.templateBinding?.request.idempotencyKey === command.operationId || record.templateBinding?.application?.operationId === command.operationId))
             if (adoption) await this.resumeAdoption(adoption)
             else if (reservation) await this.retryMaterialReservation(reservation)
             else if (repairAuthorization) await this.repairs.retryStart(repairAuthorization.entityId)
             else if (repairEvent) await this.repairs.checkConcurrent(repairEvent.entityId, repairEvent.projectId)
+            else if (templateBinding) await this.scenarios.retryTemplateBinding(templateBinding.entityId)
             else if (local.templateOperations.some(op => op.preview.operationId === command.operationId)) { const { remote } = await this.selected(); await this.templates.publish(command.operationId, remote) }
             else throw new Error('未找到原操作现场') }
         break
@@ -204,27 +229,61 @@ export class StudioApplication {
   async scenarioSessionContext(task: TaskView, signal?: AbortSignal): Promise<{ text: string; readPaths: string[] }> {
     signal?.throwIfAborted()
     if ((await this.ports.account())?.id !== this.store.accountId) throw new Error('会话登录身份已变化')
-    // Requirements use the same design orchestration but read a requirement material instead of a scenario package.
-    if (task.purpose === 'material' && !task.scenarioRepair && !await findMaterialFile(task.worktree, 'scenario', task.entityId)) return { text: await this.requirementSessionContext(task), readPaths: await this.scenarios.sources.readPaths(task) }
     const text = await this.scenarios.context(task), local = await this.store.read()
     const paths = await this.scenarios.sources.readPaths(task)
     for (const value of local.tasks.filter(item => item.projectId === task.projectId && item.entityId === task.entityId && item.purpose === 'material')) { const relative = await findMaterialFile(value.worktree, 'scenario', value.entityId); if (relative) paths.push(path.join(value.worktree, relative)) }
     return { text, readPaths: paths }
   }
-  /** Read-only context for a requirement material; accepted scene files stay readable in the same worktree. */
-  private async requirementSessionContext(task: TaskView): Promise<string> {
-    const relative = await findMaterialFile(task.worktree, 'requirement', task.entityId)
-    if (!relative) throw new Error('当前需求的本地材料不存在')
-    const draft = await readMaterial(task.worktree, 'requirement', task.entityId)
-    return `当前需求 ${task.entityId}，整文件 baseHash=${draft.sha256}。
-回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
-当前有效材料绝对路径：${path.join(task.worktree, draft.path)}
-当前元数据：${JSON.stringify(draft.metadata)}
-当前Markdown正文：
-${draft.body}
-${await this.scenarios.sources.context(task)}`
+  private async requirementTemplate(projectId: string): Promise<CandidateTemplate> {
+    const remote = await this.api.request<ProjectState>('GET', this.route(projectId))
+    const catalog = await this.templates.catalog(remote.project)
+    const template = catalog?.requirements.templates.find(value => value.id === catalog.requirements.defaultTemplateId)
+    if (!template) throw new Error('本项目默认需求模板尚未就绪，请先发布或等待后台同步')
+    return { id: template.id, fixed: template.fixed, body: template.body }
+  }
+  /** Split only the chosen accepted inputs; later confirmations never replace these references. */
+  private async splitRequirements(scenarioIds: string[]): Promise<string> {
+    const { project, remote } = await this.selected()
+    if (!scenarioIds.length || new Set(scenarioIds).size !== scenarioIds.length) throw new Error('请选择不同的已确认普通场景')
+    const sources: SplitSource[] = scenarioIds.map(id => {
+      const entity = remote.entities.find((value): value is EntityView => isEntityView(value) && value.id === id)
+      if (!entity || entity.kind !== 'scenario' || entity.builtinKey || !entity.current) throw new Error('联合拆分只接受本项目已确认普通场景')
+      return { projectId: project.id, entityId: entity.id, title: entity.title, version: entity.current.version, confirmationId: entity.current.confirmationId, fixed: entity.current.fixed }
+    })
+    const existingRequirements = remote.entities.filter(isEntityView).filter(entity => entity.kind === 'requirement' && entity.scenarioIds.some(id => scenarioIds.includes(id))).map(entity => ({ id: entity.id, title: entity.title, ...(entity.summary !== undefined ? { summary: entity.summary } : {}) }))
+    return (await this.candidates.start({ projectId: project.id, worktree: project.directory, sources, existingRequirements })).sessionId
+  }
+  /** The adopted candidate is written during the same recoverable materialization as its reservation. */
+  private async verifyCandidateContent(candidate: Candidate, entityId: string): Promise<void> {
+    const { remote, entity } = await this.entity(entityId, candidate.projectId)
+    if (entity.kind !== 'requirement') throw new Error('候选目标不是需求')
+    const task = await this.designTask(remote, entity), draft = await readMaterial(task.worktree, 'requirement', entity.id)
+    const sources = candidate.sources.map(source => ({ projectId: source.projectId, entityId: source.entityId, version: source.version }))
+    if (draft.body !== candidate.body || draft.metadata.kind !== 'requirement' || draft.metadata.templateId !== candidate.template.id || canonical(draft.metadata.templateRef) !== canonical(candidate.template.fixed) || canonical(draft.metadata.sources) !== canonical(sources) || canonical(draft.metadata.openQuestions) !== canonical(candidate.quality.openQuestions)) throw new Error('原候选目标内容已变化，保留当前材料并核对原操作')
+  }
+  /** Comparison commands reply from local projection only, keeping state/Git loading outside their call path. */
+  private async executeConsistency(command: ConsistencyCommand): Promise<StudioReply> {
+    const local = await this.store.read(), project = local.projects.find(value => value.id === local.selectedProjectId)
+    if (!project) throw new Error('请先打开当前项目')
+    switch (command.action) {
+      case 'compareConsistency': {
+        const task = local.tasks.findLast(value => value.projectId === project.id && value.entityId === command.entityId && value.purpose === 'material' && !value.cleanup)
+        const worktree = task && await exists(task.worktree) ? task.worktree : project.directory
+        await this.comparisons.start({ projectId: project.id, entityId: command.entityId, worktree, trigger: 'manual' }); break
+      }
+      case 'cancelConsistencyComparison': await this.comparisons.cancel(command.comparisonId, project.id); break
+      case 'retryConsistencySubmission': await this.comparisons.retry(command.comparisonId, project.id); break
+      case 'checkConsistencyFreshness': await this.comparisons.checkFreshness(command.comparisonId, project.id); break
+      case 'listConsistencyComparisons': await this.comparisons.list(project.id, command.entityId, command.limit, command.offset); break
+      case 'listConsistencySummaries': await this.comparisons.listLatest(project.id); break
+    }
+    const account = await this.ports.account()
+    const state: StudioState = this.lastState?.account?.id === account?.id && this.lastState?.selectedProjectId === project.id ? this.lastState : { connected: true, ...(account ? { account } : {}), projects: local.projects, selectedProjectId: project.id, availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] }
+    const comparisons = command.action === 'listConsistencyComparisons' ? this.comparisons.historyViews(project.id, command.entityId) : undefined
+    return { ok: true, state: { ...state, consistencyTasks: await this.comparisons.views(project.id), consistencyLatest: this.comparisons.latestViews(project.id) }, ...(comparisons ? { comparisons } : {}) }
   }
   private async executeScenario(command: StudioCommand): Promise<string | undefined> {
+    if (['openRequirement', 'startRequirementRevision', 'saveRequirement', 'resolveRequirementConflict', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'newRequirementSession', 'selectRequirementSession', 'bindRequirementTemplate'].includes(command.action)) return this.executeRequirement(command as RequirementWorkspaceCommand)
     switch (command.action) {
       case 'openScenario': await this.scenarios.open(command.entityId); break
       case 'saveScenario': case 'resolveScenarioConflict': await this.repairs.checkConcurrent(command.entityId); await this.scenarios.save(command); await this.repairs.checkConcurrent(command.entityId); break
@@ -250,18 +309,55 @@ ${await this.scenarios.sources.context(task)}`
         }
         const record = await this.scenarios.record(entity.id); record.activeSessionId = task.sessionId; this.scenarios.activeEntityId = entity.id; await this.store.save(); break
       }
-      case 'splitScenario': { const { remote, entity } = await this.entity(command.entityId); if (!entity.current || entity.kind !== 'scenario') throw new Error('请先确认场景'); const integration = remote.integrations.find(i => i.status === 'accepted' && i.confirmationIds?.includes(entity.current!.confirmationId)); if (!integration) throw new Error('场景接受记录缺失'); await this.splitScenario(remote, entity, integration.id); const record = await this.scenarios.record(entity.id); record.splitOffered = false; await this.store.save(); break }
+      case 'splitScenario': { const sessionId = await this.splitRequirements([command.entityId]); const record = await this.scenarios.record(command.entityId); record.splitOffered = false; await this.store.save(); return sessionId }
       case 'startScenarioRepair': await this.repairs.start(command); break
       case 'resumeScenarioRepair': await this.repairs.resume(command); break
       case 'cancelScenarioRepair': await this.repairs.cancel(command.entityId); break
-      case 'previewScenarioTemplates': { const { remote } = await this.selected(); await this.templates.preview(remote, command.templates, command.defaultTemplateId); break }
-      case 'publishScenarioTemplates': { const { remote } = await this.selected(); await this.templates.publish(command.operationId, remote); break }
+      case 'previewMaterialTemplates': { const { remote } = await this.selected(); await this.templates.preview(remote, command.kind, command.templates, command.defaultTemplateId); break }
+      case 'publishMaterialTemplates': { const { remote } = await this.selected(); await this.templates.publish(command.operationId, remote); break }
     }
     return undefined
   }
-  private async validateScenarioConfirmation(entityId: string, hash: string): Promise<void> {
+  private async executeRequirement(command: RequirementWorkspaceCommand): Promise<string | undefined> {
+    const { entity, remote } = await this.entity(command.entityId)
+    if (entity.kind !== 'requirement') throw new Error('此操作只适用于需求材料')
+    switch (command.action) {
+      case 'openRequirement': await this.scenarios.open(entity.id); break
+      case 'saveRequirement': case 'resolveRequirementConflict':
+        if (await this.updateRequirementRelations(command)) await this.scenarios.save(command); break
+      case 'resolveRequirementWriteProposal': await this.scenarios.resolveWriteProposal(command); break
+      case 'undoRequirementWrite': await this.scenarios.undoWrite(command); break
+      case 'newRequirementSession': return this.scenarios.newSession(entity.id)
+      case 'selectRequirementSession': return this.scenarios.selectSession(entity.id, command.sessionId)
+      case 'bindRequirementTemplate': await this.scenarios.bindTemplate(entity.id, command.templateId, command.expectedHash, command.operationId); break
+      case 'startRequirementRevision': {
+        if (!entity.current || entity.revision !== command.expectedRevision) throw new Error('需求版本已变化，请刷新后重新开始修订')
+        const task = await this.designTask(remote, entity)
+        if (!await findMaterialFile(task.worktree, 'requirement', entity.id)) {
+          const fixed = entity.current.fixed, bytes = await this.projects.readFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
+          const draft = parseMaterial(Buffer.from(bytes), fixed.path)
+          if (digest(bytes) !== fixed.sha256 || draft.entityId !== entity.id) throw new Error('需求修订固定输入无效')
+          await saveMaterial(task.worktree, draft.metadata, draft.body)
+        }
+        const record = await this.scenarios.record(entity.id); record.activeSessionId = task.sessionId
+        this.scenarios.activeEntityId = entity.id; await this.store.save(); break
+      }
+    }
+    return undefined
+  }
+  private async updateRequirementRelations(command: Extract<RequirementWorkspaceCommand, { action: 'saveRequirement' | 'resolveRequirementConflict' }>): Promise<boolean> {
+    const { remote, entity, task } = await this.scenarios.editable(command.entityId)
+    if (!isMaterialMetadata(command.metadata) || entity.kind !== 'requirement' || command.metadata.kind !== 'requirement' || command.metadata.entityId !== entity.id) throw new Error('需求身份不能改变')
+    const draft = await readMaterial(task.worktree, 'requirement', entity.id)
+    // File conflicts are preserved by the document service before any relation mutation.
+    if (draft.sha256 !== command.expectedHash) { await this.scenarios.save(command); return false }
+    if (canonical(command.metadata.scenarioIds) === canonical(entity.scenarioIds) && canonical(command.metadata.sources) === canonical(entity.scenarioSources ?? []) && canonical(command.metadata.prerequisites) === canonical(entity.prerequisites)) return true
+    await this.api.request('PUT', this.route(remote.project.id, `/entities/${entity.id}/relations`), { idempotencyKey: `${command.operationId}-relations`, token: await this.requireOwned(entity), scenarioIds: command.metadata.scenarioIds, sources: command.metadata.sources, prerequisites: command.metadata.prerequisites })
+    return true
+  }
+  private async validateDesignConfirmation(entityId: string, hash: string): Promise<void> {
     const { entity } = await this.entity(entityId)
-    if (entity.kind !== 'scenario') return
+    if (entity.kind !== 'scenario' && entity.kind !== 'requirement') return
     this.scenarios.activeEntityId = entityId
     const { remote } = await this.selected(), workspace = await this.scenarios.snapshot(remote)
     if (!workspace || workspace.readOnly || workspace.draft.sha256 !== hash) throw new Error('请核对当前场景版本与有效占用')
@@ -270,7 +366,7 @@ ${await this.scenarios.sources.context(task)}`
     if (blocked.length || fileErrors.length) throw new Error([...blocked, ...fileErrors].join('；'))
   }
   private async confirmRepairedScenario(entityId: string, hash: string, repairId: string): Promise<void> {
-    await this.validateScenarioConfirmation(entityId, hash)
+    await this.validateDesignConfirmation(entityId, hash)
     const snapshot = await this.prepareCandidate(entityId, 'material', hash)
     await this.integrate(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map((value): ConfirmationInput => value.entityId === entityId ? { ...value, readHash: value.fixed.sha256, authorConfirmed: true, confirmationMethod: 'ai-repair', repairTaskId: repairId } : { ...value, readHash: value.fixed.sha256, authorConfirmed: true, confirmationMethod: 'direct' }) })
   }
@@ -288,10 +384,12 @@ ${await this.scenarios.sources.context(task)}`
   async state(): Promise<StudioState> {
     const account = await this.ports.account()
     if (!account) {
+      await this.comparisons.dispose(); this.lastState = undefined
       if (this.store.scoped) { await this.ports.stopPreview(); await this.projects.dispose() }
       this.scenarios.dispose(); this.store.useUser(); this.previewState = undefined
       return { connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] }
     }
+    if (this.store.scoped && this.store.accountId !== account.id) await this.comparisons.dispose()
     this.store.useUser(account.id)
     const local = await this.store.read()
     const availableProjects = await this.api.request<ProjectView[]>('GET', '/v1/projects')
@@ -303,7 +401,7 @@ ${await this.scenarios.sources.context(task)}`
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
     const drafts: MaterialDraft[] = []
     if (remote) for (const entity of remote.entities.filter(isEntityView).filter(entity => entity.kind !== 'scenario')) {
-      const task = tasks.find(task => task.entityId === entity.id && (task.purpose === 'material' || task.purpose === 'handoff'))
+      const task = tasks.findLast(task => task.entityId === entity.id && !task.cleanup && (task.purpose === 'material' || task.purpose === 'handoff') && (!entity.occupation || path.basename(task.worktree) === entity.occupation.taskId))
       if (task) {
         try { drafts.push(await readMaterial(task.worktree, entity.kind, entity.id)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
@@ -321,12 +419,14 @@ ${await this.scenarios.sources.context(task)}`
       const bytes = await this.projects.localFixed(remote.project.id, legacy.fixed.commitSha, legacy.fixed.path, legacy.fixed.sha256)
       if (bytes) legacyMaterials.push({ entityId: entity.id, body: Buffer.from(bytes).toString('utf8') })
     }
-    const scenario = remote ? await this.scenarios.snapshot(remote) : undefined
+    const workspace = remote ? await this.scenarios.snapshot(remote) : undefined
+    const scenario = workspace?.draft.metadata.kind === 'scenario' ? workspace : undefined
+    const requirement = workspace?.draft.metadata.kind === 'requirement' ? workspace : undefined
     if (scenario) { await this.repairs.checkConcurrent(scenario.entityId); const repair = await this.repairs.view(scenario.entityId); if (repair) scenario.repair = repair }
     const materialSources = remote ? await this.scenarios.sources.views(remote, drafts) : []
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
     const recovery = this.store.preservedRecord
-    return { ...(scenario ? { scenario } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
+    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
         // record the account can no longer read cannot be finished, so it stops being a task
@@ -334,16 +434,20 @@ ${await this.scenarios.sources.context(task)}`
         .filter(op => op.phase !== 'ready' && (op.projectId === undefined || allowed.has(op.projectId)))
         .map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(projectTemplates ? { projectTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
-      candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
+      candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id), ...(this.previewState ? { preview: this.previewState } : {}),
+      consistencyTasks: await this.comparisons.views(selected?.id), consistencyLatest: this.comparisons.latestViews(selected?.id),
       pending: [
         ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.repairAuthorization?.status === 'pending').map(record => ({ id: record.repairAuthorization!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.repairAuthorization!.message ?? '修复授权结果待核对' })),
         ...local.scenarioRepairs.filter(record => record.projectId === selected?.id && (record.pending || record.recoverPending)).map(record => ({ id: (record.pending ?? record.recoverPending)!.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.message ?? '修复轮次结果待核对' })),
         ...local.templateOperations.filter(op => op.projectId === selected?.id && op.phase === 'unknown').map(op => ({ id: op.preview.operationId, entityId: 'templates', phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
+        ...local.scenarios.filter(record => record.projectId === selected?.id && record.templateBinding?.status === 'pending').map(record => ({ id: record.templateBinding!.application?.operationId ?? record.templateBinding!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.templateBinding!.message ?? '模板绑定结果待核对' })),
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
       ] }
+    this.lastState = state
+    return state
   }
-  private async requireAccount() { const account = await this.ports.account(); if (!account) { this.store.useUser(); throw new CollaborationError('LOGIN_REQUIRED', '请先登录协同工作台。', 401) }; this.store.useUser(account.id); return account }
+  private async requireAccount() { const account = await this.ports.account(); if (!account) { await this.comparisons.dispose(); this.store.useUser(); throw new CollaborationError('LOGIN_REQUIRED', '请先登录协同工作台。', 401) }; if (this.store.scoped && this.store.accountId !== account.id) await this.comparisons.dispose(); this.store.useUser(account.id); return account }
   private route(projectId: string, suffix = '') { return `/v1/projects/${encodeURIComponent(projectId)}${suffix}` }
   private async selected() {
     const state = await this.store.read(); const project = state.projects.find(p => p.id === state.selectedProjectId)
@@ -371,7 +475,8 @@ ${await this.scenarios.sources.context(task)}`
       return this.ports.session(repair.task, '只读场景修复助手，由Host执行受控写入和确认。')
     }
     const task = local.tasks.find(value => value.sessionId === sessionId && value.projectId === local.selectedProjectId)
-    if (!task || !['material', 'handoff', 'prototype'].includes(task.purpose)) throw new Error('未找到当前项目可恢复的工作台任务')
+    if (!task || !['material', 'handoff', 'prototype', 'split'].includes(task.purpose)) throw new Error('未找到当前项目可恢复的工作台任务')
+    if (task.purpose === 'split') { await this.candidates.resume(task.sessionId); return task.sessionId }
     const { remote, entity } = await this.entity(task.entityId)
     if (entity.kind === 'scenario' && task.purpose === 'material') return this.scenarios.selectSession(entity.id, sessionId)
     const expectedPurpose = task.purpose === 'prototype' ? 'prototype' : entity.kind === 'handoff' ? 'handoff' : 'material'
@@ -392,12 +497,12 @@ ${await this.scenarios.sources.context(task)}`
     if (account.gitlabEmail) return { name: account.name || account.gitlabUsername, email: account.gitlabEmail }
     const { project } = await this.selected(); return this.ports.git.identity(project.directory)
   }
-    private async createMaterial(kind: 'scenario' | 'requirement' | 'handoff', title: string, scenarioIds: string[] = [], operationId = key()): Promise<EntityView> {
+    private async createMaterial(kind: 'scenario' | 'requirement' | 'handoff', title: string, scenarioIds: string[] = [], operationId = key(), candidate?: Candidate): Promise<EntityView> {
       const { remote } = await this.selected()
       const currentSources = scenarioIds.map(id => remote.entities.find((value): value is EntityView => isEntityView(value) && value.id === id && value.kind === 'scenario' && value.materialVersion > 0))
       if (currentSources.some(source => !source) || new Set(scenarioIds).size !== scenarioIds.length) throw new Error('需求来源必须是本项目已确认的场景版本')
-      let template: { templateId: string; templateRef: FixedReference } | undefined
-      if (kind !== 'handoff') {
+      let template: { templateId: string; templateRef: FixedReference } | undefined = candidate ? { templateId: candidate.template.id, templateRef: candidate.template.fixed } : undefined
+      if (kind !== 'handoff' && !candidate) {
         const catalogs = await this.templates.catalog(remote.project)
         if (kind === 'scenario' && !catalogs?.scenarios.templates.length) throw new Error('本项目尚未发布场景模板，请先在设置里上传并发布默认场景模板，再新建场景。')
         if (kind === 'requirement') {
@@ -411,12 +516,12 @@ ${await this.scenarios.sources.context(task)}`
       if (kind === 'requirement' && !currentSources.length) throw new Error('新需求必须绑定至少一个已确认场景版本')
       const local = await this.store.read()
       let reservation = local.materialReservations.find(value => value.id === operationId)
-      const exact = (value: MaterialReservation) => value.projectId === remote.project.id && value.kind === kind && value.title === title && value.templateId === template?.templateId && JSON.stringify(value.scenarioIds) === JSON.stringify(scenarioIds)
+      const exact = (value: MaterialReservation) => value.projectId === remote.project.id && value.kind === kind && value.title === title && value.templateId === template?.templateId && JSON.stringify(value.templateRef) === JSON.stringify(template?.templateRef) && JSON.stringify(value.scenarioIds) === JSON.stringify(scenarioIds)
       if (reservation && !exact(reservation)) throw new Error('新建操作编号已绑定其他场景请求')
       if (reservation?.phase === 'materialized') { const entityId = reservation.entityId; const value = remote.entities.find((e): e is EntityView => e.id === entityId && isEntityView(e)); if (!value) throw new Error('原场景不可访问'); return value }
       if (!reservation) {
-        const sources = currentSources.filter((source): source is EntityView => !!source).map(source => ({ projectId: remote.project.id, entityId: source.id, version: source.materialVersion }))
-        reservation = { id: operationId, projectId: remote.project.id, kind, title, ...(template ?? {}), scenarioIds, sources, phase: 'reserving' }
+        const sources = candidate ? candidate.sources.map(source => ({ projectId: source.projectId, entityId: source.entityId, version: source.version })) : currentSources.filter((source): source is EntityView => !!source).map(source => ({ projectId: remote.project.id, entityId: source.id, version: source.materialVersion }))
+        reservation = { id: operationId, projectId: remote.project.id, kind, title, ...(template ?? {}), scenarioIds, sources, phase: 'reserving', ...(candidate ? { initialContent: { body: candidate.body, summary: candidate.summary, quality: candidate.quality } } : {}) }
         local.materialReservations.push(reservation); await this.store.save()
       }
       const entity = await this.reserveMaterial(reservation)
@@ -440,40 +545,42 @@ ${await this.scenarios.sources.context(task)}`
     private async materializeReservation(operation: MaterialReservation, entity: EntityView, remote: ProjectState): Promise<EntityView> {
       if (operation.phase === 'materialized') return entity
       const task = await this.designTask(remote, entity)
-      const metadata = await syncProjectContext(task.worktree, initialMetadata(entity, operation.scenarioIds, operation.sources))
+      let metadata = await syncProjectContext(task.worktree, initialMetadata(entity, operation.scenarioIds, operation.sources))
       try {
         await readMaterial(task.worktree, entity.kind, entity.id)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        await saveMaterial(task.worktree, metadata, operation.kind === 'scenario' ? '' : starter(operation.title))
+        if (operation.initialContent) {
+          const candidate = (await this.store.read()).candidates.find(candidate => candidate.id === operation.id)
+          if (!candidate) throw new Error('原候选采用现场缺失，不能重新生成依据')
+          metadata = { ...metadata, businessEvidence: await candidateBusinessEvidence(task.worktree, candidate, (projectId, fixed) => this.projects.readFixed(projectId, fixed.commitSha, fixed.path, fixed.sha256)) }
+        }
+        await saveMaterial(task.worktree, operation.initialContent ? { ...metadata, ...operation.initialContent.quality, summary: operation.initialContent.summary } : metadata,
+          operation.initialContent?.body ?? (operation.kind === 'handoff' ? starter(operation.title) : ''))
       }
       operation.phase = 'materialized'; delete operation.message; operation.entityId = entity.id; await this.store.save(); return entity
     }
   private async bindScenarioTemplate(entityId: string, templateId: string): Promise<void> {
-    const { remote, entity, task } = await this.scenarios.editable(entityId)
+    const { task, entity } = await this.scenarios.editable(entityId)
     if (entity.kind !== 'scenario') throw new Error('只有场景可以绑定场景模板')
-    const catalog = await this.api.request<TemplateCatalogResponse>('GET', this.route(remote.project.id, '/templates'))
-    const template = catalog.scenarios.templates.find(value => value.id === templateId)
-    if (!template || catalog.acceptedHead !== remote.project.recognizedHead) throw new Error('模板目录已变化，请刷新项目后重试')
-    const fresh = await this.entity(entityId)
-    const token = await this.requireOwned(fresh.entity)
-    await this.api.request<EntityView>('PUT', this.route(remote.project.id, `/entities/${entity.id}/template`), { idempotencyKey: key(), token, templateId, templateRef: template.fixed })
     const draft = await readMaterial(task.worktree, 'scenario', entity.id)
-    await saveMaterial(task.worktree, await syncProjectContext(task.worktree, { ...draft.metadata, templateId, templateRef: template.fixed }), draft.body)
+    await this.scenarios.bindTemplate(entity.id, templateId, draft.sha256, key())
   }
   private async designTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     const local = await this.store.read()
     let current = entity
     if (!current.occupation) current = await this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: 'design' })
     const token = await this.requireOwned(current)
-    const existing = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && (t.purpose === 'material' || t.purpose === 'handoff') && path.basename(t.worktree) === token.taskId)
+    const sessions = local.tasks.filter(t => t.projectId === remote.project.id && t.entityId === entity.id && (t.purpose === 'material' || t.purpose === 'handoff') && path.basename(t.worktree) === token.taskId)
+    const activeSessionId = local.scenarios.find(record => record.projectId === remote.project.id && record.entityId === entity.id)?.activeSessionId
+    const existing = sessions.find(task => task.sessionId === activeSessionId) ?? sessions.at(-1)
     if (existing) return existing
     const project = local.projects.find(p => p.id === remote.project.id)!
     await this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!)
     const worktree = path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)
     await this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/${token.generation}`, remote.project.recognizedHead!)
     const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: entity.kind === 'handoff' ? 'handoff' : 'material', inputHash: entity.current?.fixed.sha256 ?? '', worktree }
-    if (entity.kind !== 'scenario') local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === task.purpose)); local.tasks.push(task); await this.store.save(); return task
+    if (entity.kind === 'handoff') local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === task.purpose)); local.tasks.push(task); await this.store.save(); return task
   }
   private async prototypeTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     if (entity.kind !== 'requirement' || !entity.current) throw new Error('请先确认唯一需求材料')
@@ -638,7 +745,7 @@ ${await this.scenarios.sources.context(task)}`
     return result
   }
   private async confirmMaterial(entityId: string, expectedHash: string, choice: ConfirmationChoice) {
-    await this.validateScenarioConfirmation(entityId, expectedHash)
+    await this.validateDesignConfirmation(entityId, expectedHash)
     const snapshot = await this.prepareCandidate(entityId, 'material', expectedHash)
     const authority = await this.reviews.confirmation(choice, snapshot.review)
     await this.integrate(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map(value => ({ ...value, readHash: value.fixed.sha256, ...authority, authorConfirmed: true as const })) })
@@ -665,8 +772,8 @@ ${await this.scenarios.sources.context(task)}`
     this.lane.schedule(`operation:${operation.id}`, () => this.resumeOperation(operation))
   }
   /** Settle this machine once an integration is accepted; the reply never waits for it. */
-  private scheduleMaintenance(task: TaskView, commit: string): void {
-    this.lane.schedule(`maintenance:${task.worktree}`, () => this.maintenance.settle(task, commit))
+  private scheduleMaintenance(task: TaskView, commit: string, inputsRead = Promise.resolve()): void {
+    this.lane.schedule(`maintenance:${task.worktree}`, async () => { await inputsRead; await this.maintenance.settle(task, commit) })
   }
   /** Release one task's file observation, preview and Agent handles; other tasks stay live. */
   private async releaseTask(task: TaskView): Promise<void> {
@@ -701,8 +808,19 @@ ${await this.scenarios.sources.context(task)}`
         integration = await this.api.request<IntegrationView>('POST', this.route(project.id, `/integrations/${integration.id}/complete`), { idempotencyKey: `${operation.id}-complete`, token: operation.token })
       }
       operation.phase = 'accepted'; delete operation.message; await this.store.save()
+      const comparisonReads: Promise<void>[] = []
+      if (integration.stage === 'material') {
+        const confirmations = (operation.prepare as MaterialIntegrationRequest).confirmations
+        for (const [index, confirmation] of confirmations.entries()) {
+          const confirmationId = integration.confirmationIds?.[index]
+          if (confirmationId) {
+            const comparison = await this.comparisons.start({ projectId: project.id, entityId: confirmation.entityId, worktree: task.worktree, trigger: 'confirmation', confirmationId }).catch(() => undefined)
+            if (comparison) comparisonReads.push(comparison.inputsRead)
+          }
+        }
+      }
       const remote = await this.api.request<ProjectState>('GET', this.route(project.id)); const entity = remote.entities.find(e => e.id === operation.entityId)
-      if (remote.project.recognizedHead) this.scheduleMaintenance(task, remote.project.recognizedHead)
+      if (remote.project.recognizedHead) this.scheduleMaintenance(task, remote.project.recognizedHead, Promise.all(comparisonReads).then(() => undefined))
       for (const adoptionId of operation.adoptionIds ?? []) {
         const adoption = local.adoptions.find(value => value.id === adoptionId)
         if (!adoption) throw new Error('采用恢复记录缺失，不能申报复用成功')
@@ -725,71 +843,14 @@ ${await this.scenarios.sources.context(task)}`
       }
     } catch (error) { if (operation.phase !== 'accepted') operation.phase = 'unknown'; operation.message = error instanceof Error ? error.message : '原操作结果未知'; await this.store.save(); throw error }
   }
-  private async splitScenario(remote: ProjectState, entity: EntityView, integrationId: string) {
-    const local = await this.store.read(), input = entity.current!
-    let task = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && t.purpose === 'split' && t.split?.integrationId === integrationId)
-    if (!task) {
-      const base = local.tasks.find(t => t.entityId === entity.id && t.projectId === remote.project.id && t.purpose === 'material')
-      const opened = local.projects.find(p => p.id === remote.project.id)!
-      // The material worktree is cleaned once accepted; splitting then reads the
-      // fixed bytes and runs in the main checkout that already contains them.
-      const workspace = base && await exists(base.worktree) ? base : { projectId: remote.project.id, entityId: entity.id, worktree: opened.directory }
-      task = { projectId: workspace.projectId, entityId: workspace.entityId, worktree: workspace.worktree, sessionId: `studio-${key()}`, purpose: 'split', inputHash: input.fixed.sha256,
-        split: { integrationId, confirmationId: input.confirmationId, version: input.version, fixed: { ...input.fixed }, status: 'pending' } }
-      local.tasks.push(task); await this.store.save()
-    }
-    const split = task.split!
-    if (split.confirmationId !== input.confirmationId || task.inputHash !== input.fixed.sha256 || split.version !== input.version) throw new Error('拆分任务已绑定其他确认版本，不能替换其输入')
-    if (split.status === 'completed') return
-    const rules = '仅从工作台提供的固定已确认场景生成需求候选。不要预留正式ID或认领；每项给出title与summary。不要读取未确认草稿或修改项目文件。'
-    if (split.status === 'sent') { await this.ports.session(task, rules); return }
-    try {
-      // Read accepted Git bytes, never a subsequently edited material worktree.
-      const bytes = await this.projects.readFixed(task.projectId, split.fixed.commitSha, split.fixed.path, split.fixed.sha256)
-      if (digest(bytes) !== task.inputHash) throw new Error('场景拆分固定输入哈希校验失败')
-      await this.ports.session(task, rules)
-      await this.ports.prompt(task.sessionId, `场景 ${entity.id} 第 ${split.version} 版已确认，确认记录 ${split.confirmationId}，输入哈希 ${task.inputHash}。仅根据以下固定材料拆分需求候选。先用可读中文说明拆分思路和每条候选为什么独立成立，再在会话最后输出唯一代码块 \`\`\`eadp-candidates，内容为JSON数组 [{"title":"…","summary":"…"}]。不要修改项目文件。\n\n${Buffer.from(bytes).toString('utf8')}`)
-      split.status = 'sent'; delete task.error; await this.store.save()
-    } catch (error) {
-      split.status = 'failed'; task.error = error instanceof Error ? error.message : '场景拆分请求未完成'; await this.store.save(); throw error
-    }
-  }
   acceptSessionOutput(sessionId: string, output: SessionOutput): Promise<void> {
     const result = this.queue.then(async () => {
       if (!this.store.scoped || (await this.ports.account())?.id !== this.store.accountId) return
       if (output.kind === 'source-read') { await this.acceptSourceRead(sessionId, output); return }
       if (await this.repairs.accept(sessionId, output)) return
-      if (!await this.reviews.accept(sessionId, output) && output.kind === 'assistant' && !await this.scenarios.accept(sessionId, output.content)) await this.acceptCandidateContent(sessionId, output.content)
+      if (!await this.reviews.accept(sessionId, output) && output.kind === 'assistant' && !await this.scenarios.accept(sessionId, output.content)) await this.candidates.accept(sessionId, output.content)
     })
     this.queue = result.catch(() => undefined); return result
-  }
-  private async acceptCandidateContent(sessionId: string, content: string): Promise<void> {
-    const local = await this.store.read(); const task = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'split')
-    if (!task?.split || task.split.status === 'completed') return
-    const remote = await this.api.request<ProjectState>('GET', this.route(task.projectId))
-    const found = remote.entities.find(entity => entity.id === task.entityId)
-    const current = found && 'current' in found ? found.current : undefined
-    if (!current || current.confirmationId !== task.split.confirmationId || current.version !== task.split.version || current.fixed.sha256 !== task.inputHash) return
-    const match = /```eadp-candidates\s*\n([\s\S]*?)\n```/.exec(content)
-    if (!match) return
-    const values: unknown = JSON.parse(match[1]!)
-    if (!Array.isArray(values) || values.length > 50 || values.some(v => !v || typeof v.title !== 'string' || !v.title.trim() || v.title.length > 150 || typeof v.summary !== 'string' || v.summary.length > 2000)) throw new Error('需求候选格式无效')
-    const split = task.split
-    local.candidates.push(...values.map(v => ({ id: key(), projectId: task.projectId, scenarioId: task.entityId, sessionId: task.sessionId, integrationId: split.integrationId, confirmationId: split.confirmationId, version: split.version, inputHash: task.inputHash, title: v.title, summary: v.summary }) as Candidate))
-    split.status = 'completed'; delete task.error; await this.store.save()
-  }
-  private currentCandidate(candidate: Candidate, remote: ProjectState): boolean {
-    const found = remote.entities.find(entity => entity.id === candidate.scenarioId)
-    const current = found && 'current' in found ? found.current : undefined
-    return candidate.projectId === remote.project.id && current?.confirmationId === candidate.confirmationId && current.version === candidate.version && current.fixed.sha256 === candidate.inputHash
-  }
-  private async selectCandidate(id: string) {
-    const local = await this.store.read(); const candidate = local.candidates.find(c => c.id === id)
-    if (!candidate || candidate.selectedEntityId) throw new Error('候选不存在或已采用')
-    const { remote } = await this.selected()
-    if (!this.currentCandidate(candidate, remote)) throw new Error('候选来源场景已修订，请采用当前确认版本的候选')
-    const entity = await this.createMaterial('requirement', candidate.title, [candidate.scenarioId])
-    candidate.selectedEntityId = entity.id; await this.store.save()
   }
   private async adopt(command: Extract<StudioCommand, { action: 'adopt' }>) {
     const { remote, entity } = await this.entity(command.targetEntityId); const task = await this.designTask(remote, entity), local = await this.store.read()

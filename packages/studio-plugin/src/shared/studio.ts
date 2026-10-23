@@ -1,5 +1,10 @@
 import type { ScenarioCommand, ScenarioSource, ScenarioTemplatePreview, ScenarioWorkspace } from './scenarios.ts'
 import type { FixedReference, EntityView, MaterialMetadata, NamespaceView, ProjectState, ProjectView, StudioUser } from '@eadp/contracts'
+import type { Candidate, SplitTaskBinding } from './requirements.ts'
+import type { ConsistencyCommand, ConsistencyTaskView } from './consistency.ts'
+import type { ConsistencyComparisonView } from '@eadp/contracts'
+import type { RequirementSourceView, RequirementWorkspaceCommand } from './requirement-workspace.ts'
+export type { Candidate } from './requirements.ts'
 
 /** One project template catalog; `defaultTemplateId` is absent while a project has published no template. */
 export interface TemplateCatalogView { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference; body: string }> }
@@ -32,8 +37,7 @@ export interface TaskCleanup {
   archive?: string; head?: string; branch?: string; message?: string;
 }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: { integrationId: string; confirmationId: string; version: number; fixed: FixedReference; status: 'pending' | 'sent' | 'failed' | 'completed' } }
-export interface Candidate { id: string; projectId: string; scenarioId: string; sessionId: string; integrationId: string; confirmationId: string; version: number; inputHash: string; title: string; summary: string; selectedEntityId?: string }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding }
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
@@ -46,11 +50,13 @@ export interface StudioState {
   /** Attachment projections for requirement materials; extracted text remains in the Host. */
   materialSources?: Array<{ entityId: string; readOnly: boolean; sources: ScenarioSource[] }>;
   scenario?: ScenarioWorkspace; templatePreview?: ScenarioTemplatePreview; collaboration?: ProjectState; projectTemplates?: ProjectTemplateCatalogs; reviews: ReviewView[]; drafts: MaterialDraft[];
+  requirement?: ScenarioWorkspace;
+  consistencyTasks?: ConsistencyTaskView[]; consistencyLatest?: ConsistencyComparisonView[];
   /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
   legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
 }
-export type StudioCommand = ScenarioCommand
+export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWorkspaceCommand
   | { action: 'state' }
   | { action: 'namespaces' }
   | { action: 'login'; username: string; password: string }
@@ -59,6 +65,7 @@ export type StudioCommand = ScenarioCommand
   | { action: 'openProject'; projectId: string }
   | { action: 'retryProjectInitialization'; operationId: string }
   | { action: 'bindScenarioTemplate'; entityId: string; templateId: string }
+  | { action: 'splitRequirements'; scenarioIds: string[] }
   | { action: 'createMaterial'; operationId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; scenarioIds?: string[] }
   | { action: 'saveMaterial'; entityId: string; body: string; metadata: MaterialMetadata }
   | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
@@ -66,7 +73,7 @@ export type StudioCommand = ScenarioCommand
   | ({ action: 'confirmMaterial'; entityId: string; expectedHash: string } & ConfirmationChoice)
   | { action: 'requestReview'; entityId: string; purpose: 'material' | 'prototype' }
   | ({ action: 'confirmPrototype'; entityId: string } & ConfirmationChoice)
-  | { action: 'selectCandidate'; candidateId: string }
+  | { action: 'selectCandidate'; candidateId: string; expectedInputHash: string }
   | { action: 'claimPrototype' | 'checkPrototype' | 'startPreview' | 'stopPreview' | 'releaseOccupation'; entityId: string }
   | { action: 'setEligibility'; entityId: string; version: number; enabled: boolean; reason: string }
   | { action: 'adopt'; sourceProjectId: string; sourceEntityId: string; version: number; targetEntityId: string; reason: string }
@@ -76,7 +83,7 @@ export type StudioCommand = ScenarioCommand
   | { action: 'generateHandoff'; baselineId: string }
   | { action: 'acknowledgeHandoff'; entityId: string; note: string }
   | { action: 'publish' | 'revokePublication' }
-export type StudioReply = { ok: true; state: StudioState; sessionId?: string } | { ok: false; message: string; code: string }
+export type StudioReply = { ok: true; state: StudioState; sessionId?: string; comparisons?: ConsistencyComparisonView[]; requirementSource?: RequirementSourceView } | { ok: false; message: string; code: string }
 export type { EntityView, MaterialMetadata }
 
 export type * from './scenarios.ts'

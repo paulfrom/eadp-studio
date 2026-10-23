@@ -3,7 +3,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
-import type { CheckEvidence, EntityView, ProjectState, StudioIdentity, StudioUser } from '../../packages/contracts/src/index.ts'
+import { fileURLToPath } from 'node:url'
+import type { CheckEvidence, EntityView, StudioIdentity, StudioUser } from '../../packages/contracts/src/index.ts'
 import { createApp } from '../../apps/collaboration-api/src/app.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
@@ -54,13 +55,12 @@ test('the loopback GitLab fixture pushes real objects through standard Git smart
   assert.deepEqual(f.gitlab.failures, [])
 })
 
-test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline, handoff and adoption with recovery', { skip: !runtimeRoot || !databaseUrl, timeout: 3_600_000 }, async t => {
+test('actual Host, API, PostgreSQL and smart HTTP Git execute requirement collaboration with recovery', { skip: !runtimeRoot || !databaseUrl, timeout: 300_000 }, async t => {
   assert.match(new URL(databaseUrl!).pathname, /^\/eadp_auth_check_[a-z0-9]+$/, 'Only a fresh, disposable suite-owned PostgreSQL database is allowed')
   const f = await fixture(); t.after(() => f.close())
   const config = loadConfig({ DATABASE_URL: databaseUrl, PG_SSL: 'disable', GITLAB_URL: f.gitlab.origin, GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: gitHttpToken })
   const database = createDatabase(config)
-  const tables = await database.query("SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema='public'")
-  assert.equal(tables.rows[0].count, 0, 'The suite must never initialize or reuse a shared database')
+  assert.equal((await database.query("SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema='public'")).rows[0].count, 0)
   await database.query(await readFile(new URL('../../apps/collaboration-api/db/schema.sql', import.meta.url), 'utf8'))
   const server = createApp(config, database); t.after(() => server.close()); await server.listen({ port: 0, host: '127.0.0.1' })
   const address = server.server.address(); assert.ok(address && typeof address !== 'string'); const origin = `http://127.0.0.1:${address.port}`
@@ -75,72 +75,111 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   const api = new CollaborationClient(origin, async () => token, undefined, requestHttp)
   const store = new StudioStore(path.join(f.gitlab.root, 'local-state'))
   const prompts: Array<{ sessionId: string; text: string }> = []
+  const comparisons: Array<{ targetId: string; paths: string[] }> = []
   const ports: HostPorts = {
     workspaceRoot: path.join(f.gitlab.root, 'workspace'), git: f.git, gitLocal: (args, cwd) => f.git.local(cwd, args),
     login: async (username, password) => { const session = await api.request<StudioIdentity & { token: string }>('POST', '/v1/auth/login', { username, password }); token = session.token; account = session.user; return session },
     logout: async () => { await api.request('POST', '/v1/auth/logout'); token = ''; account = undefined }, account: async () => account,
-    installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.resolve('packages/studio-plugin/assets/prototype-template'), manifestPath: path.resolve('packages/studio-plugin/assets/prototype-template.manifest.json'), destinationRoot }) },
+    installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: fileURLToPath(new URL('../../packages/studio-plugin/assets/prototype-template', import.meta.url)), manifestPath: fileURLToPath(new URL('../../packages/studio-plugin/assets/prototype-template.manifest.json', import.meta.url)), destinationRoot }) },
     session: async task => task.sessionId, prompt: async (sessionId, text) => { prompts.push({ sessionId, text }) },
+    readScenarioSource: async source => ({ status: 'read', ranges: ['line:1-2'], text: await readFile(source.path, 'utf8') }),
+    compareConsistency: async input => {
+      for (const material of input.materials) assert.equal(digest(material.text), material.sha256, 'Model input and recorded hash come from identical bytes')
+      comparisons.push({ targetId: input.targetId, paths: input.materials.map(value => value.path) })
+      return JSON.stringify({ summary: '本次实际读取范围未发现冲突', conflicts: [] })
+    },
     checks: async (_task, candidateSha): Promise<CheckEvidence> => ({ candidateSha, passed: true, checks: ['engineering', 'mock', 'browser', 'relations'].map(name => ({ name, passed: true, evidenceHash: digest(`deterministic-test-check:${name}:${candidateSha}`) })) }),
-    preview: async () => { throw new Error('This suite does not claim native preview verification') }, stopPreview: async () => {}, publication: async () => { throw new Error('Publication is outside G0 local workflow') },
+    preview: async () => { throw new Error('This suite does not claim native preview verification') }, stopPreview: async () => {}, publication: async () => { throw new Error('Publication is outside requirement collaboration') },
   }
   const app = new StudioApplication(store, api, ports); t.after(() => app.dispose())
   const command = async (input: StudioCommand) => { const reply = await app.command(input); assert.equal(reply.ok, true, JSON.stringify(reply)); if (!reply.ok) throw new Error('unreachable'); console.info('workflow command completed:', input.action); return reply.state }
   const rejected = async (input: StudioCommand, message: RegExp) => { const reply: StudioReply = await app.command(input); assert.equal(reply.ok, false); if (reply.ok) throw new Error('Expected rejection'); assert.match(reply.message, message) }
+  const waitUntil = async (ready: () => Promise<boolean>) => {
+    const deadline = Date.now() + 30_000
+    while (!await ready()) { assert.ok(Date.now() < deadline, 'The local asynchronous operation did not finish'); await new Promise(resolve => setTimeout(resolve, 20)) }
+  }
   await command({ action: 'login', username: 'studioAdmin', password: 'admin@123' })
-  let state = await command({ action: 'createProject', name: 'Workflow integration', namespaceId: 42, path: 'workflow-integration' })
+  let state = await command({ action: 'createProject', name: 'Requirement collaboration', namespaceId: 42, path: 'requirement-collaboration' })
+  await waitUntil(async () => {
+    const initializations = (await store.read()).projectInitializations
+    const failed = initializations.find(value => value.phase === 'unknown')
+    assert.equal(failed?.message, undefined, 'Project initialization failed: ' + failed?.message)
+    return initializations.some(value => value.phase === 'ready')
+  })
+  state = await command({ action: 'state' })
   assert.equal(state.project?.initializationStatus, 'ready'); assert.match(state.project.recognizedHead!, /^[a-f0-9]{40}$/)
   const projectId = state.project.id, rootSha = state.project.recognizedHead
+  const general = state.collaboration!.entities.find(value => value.builtinKey === 'general')!
+  assert.equal(general.materialVersion, 1); assert.equal(general.code, 'SC-0001')
+  const createOperation = randomUUID()
+  state = await command({ action: 'createMaterial', operationId: createOperation, kind: 'requirement', title: 'Manual requirement', scenarioIds: [general.id] })
+  const manual = state.drafts.find(value => value.metadata.kind === 'requirement')!
+  assert.equal(manual.body, ''); assert.deepEqual(manual.metadata.sources, [{ projectId, entityId: general.id, version: 1 }])
+  state = await command({ action: 'createMaterial', operationId: createOperation, kind: 'requirement', title: 'Manual requirement', scenarioIds: [general.id] })
+  assert.equal(state.collaboration!.entities.filter(value => value.kind === 'requirement').length, 1)
+  await rejected({ action: 'confirmMaterial', entityId: manual.entityId, expectedHash: manual.sha256, method: 'direct' }, /核心|验收|明确|缺失|依据/)
+  await rejected({ action: 'splitRequirements', scenarioIds: [general.id] }, /普通场景|通用/)
+
   state = await command({ action: 'createMaterial', operationId: randomUUID(), kind: 'scenario', title: 'Purchase scenario' })
-  const scenario = state.drafts.find(draft => draft.metadata.kind === 'scenario')!
-  await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /核心|验收|明确|缺失/)
-  const body = (title: string) => `# ${title}\n\n## 核心业务规则\n\n数量必须大于零，提交保留固定来源。\n\n## 验收条件\n\n输入合法时显示成功，非法时显示校验错误。\n`
-  const saveReady = async (entityId: string, title: string) => {
-    const current = (await app.state()).drafts.find(draft => draft.entityId === entityId)!
-    return command({ action: 'saveMaterial', entityId, metadata: { ...current.metadata, businessEvidence: [...current.metadata.businessEvidence, { label: 'Explicit synthetic author input', reference: 'test:studio-workflow-fixture' }], coreRulesPresent: true, acceptanceCriteriaPresent: true }, body: body(title) })
-  }
-  state = await saveReady(scenario.entityId, 'Purchase scenario')
-  await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /变化|新版本/)
+  const scenario = state.scenario!.draft
+  const evidenceId = randomUUID()
+  await command({ action: 'importScenarioSource', entityId: scenario.entityId, name: 'business-interview.txt', base64: Buffer.from('采购数量必须大于零。\n提交采购申请后进入审核。\n').toString('base64'), operationId: evidenceId })
+  await waitUntil(async () => (await store.read()).scenarios.find(value => value.entityId === scenario.entityId)?.sources.some(value => value.id === evidenceId && value.status === 'read') === true)
+  state = await command({ action: 'selectScenarioSource', entityId: scenario.entityId, sourceId: evidenceId, selected: true, formal: true })
+  const scenarioBody = '# Purchase scenario\n\n## 业务规则\n\n1. 采购数量必须大于零。\n2. 提交采购申请后进入审核。\n\n## 验收条件\n\n数量为零时拒绝提交，数量为一时进入审核。\n'
+  let draft = state.scenario!.draft
+  state = await command({ action: 'saveScenario', entityId: draft.entityId, expectedHash: draft.sha256, operationId: randomUUID(), metadata: { ...draft.metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true }, body: scenarioBody })
+  await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /变化|新版本|版本/)
   loseCompletion = true
-  const lost = await app.command({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: state.drafts.find(draft => draft.entityId === scenario.entityId)!.sha256, method: 'direct' })
-  assert.equal(lost.ok, false); assert.equal(completionResponseLost, true, JSON.stringify({ reply: lost, requests }))
-  const operation = (await store.read()).operations[0]!
+  const lost = await app.command({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: state.scenario!.draft.sha256, method: 'direct' })
+  assert.equal(lost.ok, true, 'The command records its pending operation before publication finishes')
+  const operation = (await store.read()).operations.find(value => value.entityId === scenario.entityId)!
+  await waitUntil(async () => operation.phase === 'unknown')
+  assert.equal(completionResponseLost, true, JSON.stringify({ operation, requests }))
   state = await command({ action: 'retryOperation', operationId: operation.id })
-  const split = (await store.read()).tasks.find(task => task.purpose === 'split')!
-  await app.acceptSessionOutput(split.sessionId, { kind: 'assistant', content: '```eadp-candidates\n' + JSON.stringify([{ title: 'Purchase requirement', summary: 'Deterministic model fixture output' }]) + '\n```' })
+  await waitUntil(async () => operation.phase === 'accepted')
+  state = await command({ action: 'state' })
+  assert.equal((await store.read()).tasks.filter(value => value.purpose === 'split').length, 0, 'Confirmation offers splitting without creating a split or requirement')
+  assert.equal(state.collaboration!.entities.filter(value => value.kind === 'requirement').length, 1)
+  state = await command({ action: 'splitRequirements', scenarioIds: [scenario.entityId] })
+  const split = (await store.read()).tasks.find(value => value.purpose === 'split')!
+  const goal = '允许采购员提交采购申请', scope = '采购提交与审核入口', rule = '采购数量必须大于零。', acceptance = '数量为零时拒绝提交，数量为一时进入审核。'
+  const candidateBody = `# Purchase requirement\n\n## 目标\n\n${goal}\n\n## 范围\n\n${scope}\n\n## 业务规则\n\n1. ${rule}\n\n## 验收条件\n\n${acceptance}\n`
+  const lines = scenarioBody.split('\n'), line = lines.findIndex(value => value.includes(rule)) + 1
+  await app.acceptSessionOutput(split.sessionId, { kind: 'assistant', content: '```eadp-candidates\n' + JSON.stringify([{ title: 'Purchase requirement', summary: 'Deterministic capability candidate', goal, scope, rules: [rule], acceptanceCriteria: [acceptance], openQuestions: [], body: candidateBody, sources: [{ entityId: scenario.entityId, excerpts: [{ startLine: line, endLine: line, text: lines[line - 1] }] }] }]) + '\n```' })
   state = await command({ action: 'state' }); assert.equal(state.candidates.length, 1)
-  state = await command({ action: 'selectCandidate', candidateId: state.candidates[0]!.id })
-  const requirement = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.kind === 'requirement')!
-  state = await saveReady(requirement.id, 'Purchase requirement')
-  state = await command({ action: 'confirmMaterial', entityId: requirement.id, expectedHash: state.drafts.find(draft => draft.entityId === requirement.id)!.sha256, method: 'direct' })
-  const prototype = (await store.read()).tasks.find(task => task.entityId === requirement.id && task.purpose === 'prototype')!
-  assert.ok(prototype)
-  const codePath = path.join(prototype.worktree, '原型代码', 'src', 'pages', 'workflow', 'index.tsx'); await mkdir(path.dirname(codePath), { recursive: true }); await writeFile(codePath, 'export default function Workflow() { return <div>合成工作流演示</div> }\n')
-  await command({ action: 'checkPrototype', entityId: requirement.id })
-  state = await command({ action: 'confirmPrototype', entityId: requirement.id, method: 'direct' })
-  const baseline = state.collaboration!.baselines[0]!; assert.ok(baseline); assert.equal(baseline.entityId, requirement.id)
-  const handoff = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.kind === 'handoff')!
-  assert.ok(handoff)
-  state = await saveReady(handoff.id, 'Author-edited handoff')
-  const handoffHash = state.drafts.find(draft => draft.entityId === handoff.id)!.sha256, promptCount = prompts.length
-  state = await command({ action: 'generateHandoff', baselineId: baseline.id })
-  assert.equal(state.drafts.find(draft => draft.entityId === handoff.id)!.sha256, handoffHash); assert.equal(prompts.length, promptCount, 'retry must not overwrite or resend an already delivered handoff')
-  state = await command({ action: 'confirmMaterial', entityId: handoff.id, expectedHash: handoffHash, method: 'direct' })
-  await command({ action: 'acknowledgeHandoff', entityId: handoff.id, note: 'Synthetic receiver located fixed acceptance material' })
-  state = await command({ action: 'createMaterial', operationId: randomUUID(), kind: 'requirement', title: 'Adopted target', scenarioIds: [scenario.entityId] })
-  const target = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.title === 'Adopted target')!
-  const source = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.id === requirement.id)!
-  await command({ action: 'setEligibility', entityId: source.id, version: source.materialVersion, enabled: false, reason: 'Synthetic stop-new-adoption check' })
-  await rejected({ action: 'adopt', sourceProjectId: projectId, sourceEntityId: source.id, version: source.materialVersion, targetEntityId: target.id, reason: 'Adapt to target' }, /不能采用|停用|eligible/)
-  await command({ action: 'setEligibility', entityId: source.id, version: source.materialVersion, enabled: true, reason: 'Synthetic restore' })
-  state = await command({ action: 'adopt', sourceProjectId: projectId, sourceEntityId: source.id, version: source.materialVersion, targetEntityId: target.id, reason: 'Adapt to target' })
-  const accepted = await api.request<Array<{ id: string; status: string }>>('GET', `/v1/projects/${projectId}/adoptions`); assert.equal(accepted.length, 1); assert.equal(accepted[0]!.status, 'accepted')
-  state = await saveReady(target.id, 'Adjusted target requirement')
-  state = await command({ action: 'confirmMaterial', entityId: target.id, expectedHash: state.drafts.find(draft => draft.entityId === target.id)!.sha256, method: 'direct' })
-  const adopted = await api.request<Array<{ id: string; status: string; targetConfirmationId?: string; targetVersion?: number; source: unknown }>>('GET', `/v1/projects/${projectId}/adoptions`)
-  assert.equal(adopted[0]!.status, 'succeeded'); assert.ok(adopted[0]!.targetConfirmationId); assert.equal(adopted[0]!.targetVersion, 1)
-  const pgVersion = (await database.query('SHOW server_version')).rows[0].server_version
+  const selected = state.candidates[0]!
+  state = await command({ action: 'selectCandidate', candidateId: selected.id, expectedInputHash: selected.inputHash })
+  const requirement = state.collaboration!.entities.find((value): value is EntityView => value.kind === 'requirement' && value.id !== manual.entityId)!
+  draft = state.drafts.find(value => value.entityId === requirement.id)!
+  assert.ok(draft.body.includes(candidateBody.trimEnd())); assert.ok(draft.metadata.businessEvidence.length > 0)
+  assert.deepEqual(draft.metadata.sources, [{ projectId, entityId: scenario.entityId, version: 1 }])
+  assert.equal(requirement.code, 'REQ-0002')
+  state = await command({ action: 'selectCandidate', candidateId: selected.id, expectedInputHash: selected.inputHash })
+  assert.equal(state.collaboration!.entities.filter(value => value.kind === 'requirement').length, 2)
+  state = await command({ action: 'confirmMaterial', entityId: requirement.id, expectedHash: draft.sha256, method: 'direct' })
+  const requirementOperation = (await store.read()).operations.find(value => value.entityId === requirement.id)!
+  await waitUntil(async () => {
+    assert.notEqual(requirementOperation.phase, 'unknown', requirementOperation.message)
+    return requirementOperation.phase === 'accepted'
+  })
+  state = await command({ action: 'state' })
+  const confirmed = state.collaboration!.entities.find(value => value.id === requirement.id) as EntityView
+  assert.equal(confirmed.confirmationStatus, 'confirmed'); assert.equal(confirmed.materialVersion, 1)
+  const source = await app.command({ action: 'readRequirementSource', entityId: requirement.id, sourceEntityId: scenario.entityId, expectedVersion: 1 })
+  assert.ok(source.ok && source.requirementSource, JSON.stringify(source)); assert.equal(source.requirementSource.version, 1); assert.equal(source.requirementSource.body, scenarioBody)
+  await waitUntil(async () => (await store.read()).consistencyComparisons.filter(value => value.trigger === 'confirmation').length === 2 && (await store.read()).consistencyComparisons.filter(value => value.trigger === 'confirmation').every(value => value.phase === 'shared'))
+  const automatic = (await store.read()).consistencyComparisons.filter(value => value.trigger === 'confirmation')
+  assert.equal(new Set(automatic.map(value => value.confirmationId)).size, 2)
+  const beforeGit = f.gitlab.gitRequests(), beforeReads = f.gitlab.objects.length
+  const history = await app.command({ action: 'listConsistencyComparisons', entityId: requirement.id, limit: 20, offset: 0 })
+  assert.ok(history.ok && history.comparisons?.length === 1)
+  assert.equal(history.comparisons[0]!.result, 'completed')
+  assert.equal(f.gitlab.gitRequests(), beforeGit); assert.equal(f.gitlab.objects.length, beforeReads, 'Comparison history does not load Git material content')
+  assert.equal((await database.query('SELECT id FROM studio_confirmations WHERE project_id=$1 AND entity_id=$2', [projectId, scenario.entityId])).rowCount, 1)
+  assert.equal((await database.query('SELECT id FROM studio_confirmations WHERE project_id=$1 AND entity_id=$2', [projectId, requirement.id])).rowCount, 1)
+  assert.equal(state.collaboration!.entities.find(value => value.id === general.id)!.materialVersion, 1)
   assert.deepEqual(f.gitlab.failures, [])
-  const evidence = { status: 'passed', scope: 'actual-Host-API-PostgreSQL-and-Git-objects-with-loopback-test-GitLab-and-deterministic-model-check-ports', actualEnterpriseGitLabVerified: false, liveModelVerified: false, nativeGuiVerified: false, tools: { clientGit: { version: f.runtime.manifest.tools.git.version, sha256: f.runtime.manifest.tools.git.sha256 }, serverGit: f.gitlab.serverGit }, pgVersion, projectId, rootSha, baseline, adoption: adopted[0], completionResponseLost, gitRequests: f.gitlab.gitRequests(), objectReads: f.gitlab.objects, requests }
-  const evidencePath = process.env.STUDIO_WORKFLOW_EVIDENCE ?? path.resolve('.local/acceptance/g0-workflow-e2e/result.json'); await mkdir(path.dirname(evidencePath), { recursive: true }); await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + '\n')
+  const evidence = { status: 'passed', scope: 'actual-Host-API-PostgreSQL-and-Git-objects-with-loopback-GitLab-and-deterministic-model-ports', actualEnterpriseGitLabVerified: false, liveModelVerified: false, nativeGuiVerified: false, platform: process.platform, tools: { clientGit: { version: f.runtime.manifest.tools.git.version, sha256: f.runtime.manifest.tools.git.sha256 }, serverGit: f.gitlab.serverGit }, pgVersion: (await database.query('SHOW server_version')).rows[0].server_version, projectId, rootSha, requirementId: requirement.id, completionResponseLost, comparisons, gitRequests: f.gitlab.gitRequests(), objectReads: f.gitlab.objects, requests }
+  const evidencePath = process.env.STUDIO_WORKFLOW_EVIDENCE ?? path.resolve('.local/acceptance/requirements-workflow/result.json'); await mkdir(path.dirname(evidencePath), { recursive: true }); await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + '\n')
 })

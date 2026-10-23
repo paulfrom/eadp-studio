@@ -557,7 +557,7 @@ test('requirement attachments share source extraction, retry, context, formal ar
   const context = await app.scenarioSessionContext(f.local.tasks[0]!)
   assert.deepEqual(context.readPaths, [record.sourcePaths[source.id]])
   assert.match(context.text, /实际读取的需求规则/); assert.match(context.text, /page:1/)
-  assert.doesNotMatch(context.text, /eadp-write-proposal/)
+  assert.match(context.text, /eadp-write-proposal/)
   const original = await readMaterial(f.worktree, 'requirement', f.value.id)
   reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: true, formal: true })
   assert.equal(reply.ok, true, JSON.stringify(reply))

@@ -28,7 +28,9 @@ export interface ScenarioSettlementView {
   sync?: { status: 'pending' | 'blocked' | 'synced'; message?: string };
   cleanup?: TaskView['cleanup'];
 }
-export interface ScenarioTemplatePreview { operationId: string; expectedHead: string; expectedRevision: number; templates: Array<{ id: string; name: string; body: string }>; defaultTemplateId: string }
+/** The material catalog one explicit project-template publication changes. */
+export type MaterialTemplateKind = 'scenario' | 'requirement'
+export interface ScenarioTemplatePreview { kind: MaterialTemplateKind; operationId: string; expectedHead: string; expectedRevision: number; templates: Array<{ id: string; name: string; body: string }>; defaultTemplateId: string }
 export interface ScenarioWorkspace {
   entityId: string; draft: MaterialDraft; readOnly: boolean;
   template: { id: string; name: string; fixed: FixedReference; body: string };
@@ -61,5 +63,5 @@ export type ScenarioCommand =
   | { action: 'startScenarioRepair'; entityId: string; expectedHash: string; userActionId: string }
   | { action: 'resumeScenarioRepair'; entityId: string; answer: string; expectedHash: string; userActionId: string }
   | { action: 'cancelScenarioRepair'; entityId: string }
-  | { action: 'previewScenarioTemplates'; templates: Array<{ id: string; name: string; body: string }>; defaultTemplateId: string }
-  | { action: 'publishScenarioTemplates'; operationId: string }
+  | { action: 'previewMaterialTemplates'; kind: MaterialTemplateKind; templates: Array<{ id: string; name: string; body: string }>; defaultTemplateId: string }
+  | { action: 'publishMaterialTemplates'; operationId: string }
