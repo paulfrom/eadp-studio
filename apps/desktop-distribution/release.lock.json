@@ -6,44 +6,43 @@
     "manifest": "runtime/studio-tools/runtime-manifest.json",
     "windowsAcceptance": "passed-development-machine-unsigned-source-build"
   },
-  "status": "windows-unsigned-source-build-verified",
+  "status": "source-archive-extraction-verified",
   "dsh": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
-    "tag": "dsh-v0.2.1-alpha.4",
-    "commit": "86a402200d95fecef4529d969836f1fe13c6cb0d",
+    "tag": "687f282e8625c6b8d11ff58211a90524be2e4317",
+    "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
     "sourceDirectory": ".local/upstream/dsh",
     "archive": {
-      "url": "https://codeload.github.com/deepseek-ai/deepseek-harness/tar.gz/86a402200d95fecef4529d969836f1fe13c6cb0d",
-      "sha256": "760a37c54194345c8ecab6517a97017a5bcbbb9f045631490876302a8c4e0b1a",
-      "bytes": 34632067,
-      "rootDirectory": "deepseek-harness-86a402200d95fecef4529d969836f1fe13c6cb0d",
-      "entryCount": 18674,
+      "url": "https://codeload.github.com/deepseek-ai/deepseek-harness/tar.gz/687f282e8625c6b8d11ff58211a90524be2e4317",
+      "sha256": "157903b22c2881d3678d846755afe957a48df834e747deda805a1195ce25a146",
+      "bytes": 34728365,
+      "rootDirectory": "deepseek-harness-687f282e8625c6b8d11ff58211a90524be2e4317",
+      "entryCount": 18759,
       "symlinkCount": 14
     },
     "package": {
       "name": "@deepseek-ai/dsh-root",
-      "version": "0.2.1-alpha.4",
+      "version": "0.2.1-rc.2",
       "packageManager": "pnpm@11.28.5",
       "nodeEngine": "^22.19.0 || >=24.0.0",
       "typescript": "^6.0.3"
     },
     "verifiedFiles": {
-      "package.json": "8bb7e0f4693c9d68f0a3200e0503c03f25f30090bdfe373ccfc9a71b706158dc",
-      "pnpm-lock.yaml": "ee1c37b5429c535974bafa09475cb03fc473e87dded8f56d54d909ed621e1317",
+      "package.json": "12bb41cd8212021a784b33a20c2b84372189a9505b42081d5e3869e21ff5cffc",
+      "pnpm-lock.yaml": "4637cca3b89c4c8d5a147321710e597aa62ec2444a3772ab542be5690893dfe4",
       "pnpm-workspace.yaml": "3c624c26e58ab02ffc8d653bb8a9e8767a63fe0576bc0dbfaa3a5e43f88d973b",
-      "apps/desktop/package.json": "28f2d54d275852f66950b16a7c1fc49d37d6c6ba4cae7016f3ed87776dbb2cb3"
+      "apps/desktop/package.json": "913095d3048ad424335acccf8e3193bb9523961604709062a430f57c4ac22479"
     }
   },
   "acceptance": {
     "sourceArchiveVerified": true,
     "fullSourceExtractionVerified": true,
     "fullSourceExtractionPlatforms": [
-      "linux",
       "windows"
     ],
     "targetReleasePocVerified": false,
-    "dependencyInstallVerified": true,
-    "nativeBuildVerified": true,
+    "dependencyInstallVerified": false,
+    "nativeBuildVerified": false,
     "distributionVerified": false,
     "releaseReady": false
   },

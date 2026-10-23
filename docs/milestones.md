@@ -73,6 +73,16 @@
 - **待处理通知区分进行中与失败**：`creating/initializing/pushing/verifying` 显示"正在初始化"，不提供动作；只有 `unknown` 才显示原因与"继续初始化"。
 - **测试**：新增 `tests/gitlab-auth-host/projects.test.ts` 的旧清单认领用例与 `tests/windows-desktop/legacy-material.test.ts`；`gitlab-content`、`project-initialization` 与 client 源码测试按新契约更新。
 
+### 旧项目目录契约读取兼容（2026-10-23）
+
+用户报告项目初始化最后提示 `项目清单无效。`。诊断见 [ADR-0007](adr/0007-legacy-project-directory-contract.md)：上一轮把项目目录契约由三目录改为四目录（加入 `交接`），已接受项目仍按三目录记录，读取时被当前 schema 判为无效；同一现场还有把同一仓库登记成第二个后台项目的情况，被同一句掩盖。
+
+- **清单接受两套目录布局（只对已接受项目）**：`ProjectManifestSchema.directories` 接受当前四目录或交接目录引入前三目录，`parseProjectManifest` 随之可通过，旧项目的候选提交仍能被后台读取。
+- **按声明布局核验目录**：Host 打开已接受项目时要求清单声明的每个业务目录存在；新初始化仍写四目录清单与 `交接/.gitkeep`，后台新初始化接受仍要求四目录（三目录清单返回 `INITIALIZATION_MANIFEST_MISMATCH`）。
+- **仓库已属于另一个项目**：清单 `projectId` 不是本项目时报"该 GitLab 仓库的项目清单属于另一个项目（id），一个仓库只能对应一个后台项目。"，不认领目录、不新建第二份克隆。
+- **未完成记录随后台可用项目显示**：`projectInitializations` 只报告 `GET /v1/projects` 仍提供的项目记录，后台已不再提供的旧记录（例如早已删除的「测试项目」返回 `Project was not found`）自动不再展示，不需要点重试；本地记录保留，权限恢复后重新出现。
+- **测试**：`tests/gitlab-auth-host/projects.test.ts` 新增三目录已接受项目打开、"属于另一个项目"、未完成记录随后台消失三条用例；`apps/collaboration-api/src/project-initialization.test.ts` 新增三目录新初始化被拒的样本。
+
 
 ## 设计稿用语与领域语言映射
 

@@ -62,8 +62,14 @@ export function isFixedManifest(value: unknown): value is FixedManifest { return
 export function isMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(MaterialMetadataSchema, value); }
 export const TemplateCatalogSchema = object({ defaultTemplateId: IdSchema, templates: Type.Array(object({ id: IdSchema, name: text, path: Type.String({ minLength: 1, maxLength: 400 }) }), { minItems: 1, maxItems: 100 }) });
 export type TemplateCatalog = Static<typeof TemplateCatalogSchema>;
+/** Directory layouts declared by accepted project manifests. New projects declare all four. */
+export const ProjectDirectoriesSchema = Type.Union([
+  Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('交接'), Type.Literal('原型代码')]),
+  Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('原型代码')]),
+]);
+export type ProjectDirectories = Static<typeof ProjectDirectoriesSchema>;
 export const ProjectManifestSchema = object({ schemaVersion: Type.Literal(1), projectId: IdSchema, gitlabProjectId: Type.Integer({ minimum: 1 }), repositoryUrl: text, stableBranch: text,
-  directories: Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('交接'), Type.Literal('原型代码')]),
+  directories: ProjectDirectoriesSchema,
   /** Absent in projects accepted before the template catalogs existed; reading them must not fail. */
   scenarioTemplates: Type.Optional(TemplateCatalogSchema),
   /** Requirement template catalog; new initializations must declare it. */
