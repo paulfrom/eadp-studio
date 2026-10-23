@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { DomainError, repositoryPath, requireCondition } from '@eadp/asset-domain';
+import { DomainError, GENERAL_SCENARIO_SUMMARY, GENERAL_SCENARIO_TITLE, repositoryPath, requireCondition } from '@eadp/asset-domain';
 import type { CreateProjectRequest, InitializeProjectRequest, ProjectView } from '@eadp/contracts';
 import type { GitLab, GitLabProject } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
@@ -94,6 +94,12 @@ export class Projects {
       await transactionOn(connection, async () => {
         const c = connection;
         await c.query('UPDATE studio_projects SET state=\'assigned\',last_editor_id=$1,last_editor_account=$4,last_editor_name=$5 WHERE creator_id=$1 AND key=$2 AND gitlab_project_id=$3', [actor.id, input.idempotencyKey, remote.id, actor.username, actor.name]);
+        // 通用场景身份随项目分配事务预留，占用项目内第一个场景编号 SC-0001
+        await c.query("INSERT INTO studio_project_counters(project_id,kind) VALUES($1,'scenario') ON CONFLICT(project_id,kind) DO NOTHING", [pending.id]);
+        const reserved = await c.query<{ sequence: string }>("UPDATE studio_project_counters SET next_sequence=next_sequence+1 WHERE project_id=$1 AND kind='scenario' RETURNING next_sequence-1 AS sequence", [pending.id]);
+        const sequence = Number(reserved.rows[0]!.sequence);
+        await c.query(`INSERT INTO studio_entity_numbers(project_id,kind,sequence,code,operation_key,entity_id,request_hash,creator_id,creator_account,creator_name) VALUES($1,'scenario',$2,$3,'general-scenario',$4,$5,$6,$7,$8) ON CONFLICT(project_id,operation_key) DO NOTHING`,
+          [pending.id, sequence, `SC-${String(sequence).padStart(4, '0')}`, randomUUID(), repository.requestHash({ generalScenario: pending.id }), actor.id, actor.username, actor.name]);
         await repository.audit(c, pending.id, actor, 'project.created', { gitlabProjectId: remote.id, namespaceId: pending.namespaceId });
       });
       return await repository.project(connection, pending.id);
@@ -119,13 +125,27 @@ export class Projects {
       requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'INITIALIZATION_HEAD_MISMATCH', 'The initialized stable branch head changed', 409); return project;
     }
     requireCondition(project.initializationStatus === 'pending' && project.recognizedHead === null, 'PROJECT_ALREADY_INITIALIZED', 'The project is already initialized', 409);
-    await verifyProjectInitialization(this.gitlab, actor, project, input.commitSha);
+    const { generalFixed } = await verifyProjectInitialization(this.gitlab, actor, project, input.commitSha);
     return transaction(this.database, async c => {
       const current = await repository.project(c, projectId, true), replay = await repository.previous(c, projectId, actor, 'project.initialize', input);
       if (replay.found) return replay.result as ProjectView;
       requireCondition(current.initializationStatus === 'pending' && current.recognizedHead === null, 'PROJECT_ALREADY_INITIALIZED', 'The project is already initialized', 409);
+      const reserved = current.generalScenario;
+      requireCondition(reserved, 'GENERAL_SCENARIO_UNRESERVED', 'The project has no reserved general scenario identity', 409);
+      const initializationId = randomUUID(), confirmationId = randomUUID();
+      await c.query(`INSERT INTO studio_project_initializations(id,project_id,operation_key,request_hash,commit_sha,creator_id,creator_account,creator_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [initializationId, projectId, input.idempotencyKey, repository.requestHash(input), input.commitSha, actor.id, actor.username, actor.name]);
+      const sequence = Number((await c.query<{ sequence: string }>('SELECT sequence FROM studio_entity_numbers WHERE project_id=$1 AND entity_id=$2', [projectId, reserved.entityId])).rows[0]!.sequence);
+      // 实体与确认记录互相引用：先写实体，写确认，再回填 current_confirmation_id（外键均非延迟）
+      await c.query(`INSERT INTO studio_entities(project_id,id,kind,builtin_key,sequence,code,title,summary,revision,generation,material_version,confirmation_status,task_status,creator_id,creator_account,creator_name,last_editor_id,last_editor_account,last_editor_name) VALUES($1,$2,'scenario','general',$3,$4,$5,$6,1,0,1,'confirmed','idle',$7,$8,$9,$7,$8,$9)`,
+        [projectId, reserved.entityId, sequence, reserved.code, GENERAL_SCENARIO_TITLE, GENERAL_SCENARIO_SUMMARY, actor.id, actor.username, actor.name]);
+      await c.query(`INSERT INTO studio_confirmations(id,project_id,entity_id,version,stage,revision,title,summary,commit_sha,path,sha256,acceptance_kind,initialization_id,source_count) VALUES($1,$2,$3,1,'material',1,$4,$5,$6,$7,$8,'system-provisioned',$9,0)`,
+        [confirmationId, projectId, reserved.entityId, GENERAL_SCENARIO_TITLE, GENERAL_SCENARIO_SUMMARY, generalFixed.commitSha, generalFixed.path, generalFixed.sha256, initializationId]);
+      await c.query('UPDATE studio_entities SET current_confirmation_id=$3 WHERE project_id=$1 AND id=$2', [projectId, reserved.entityId, confirmationId]);
       current.initializationStatus = 'ready'; current.recognizedHead = input.commitSha; current.revision++;
-      await repository.saveProject(c, current); await repository.remember(c, projectId, actor, 'project.initialize', input, current); return current;
+      await repository.saveProject(c, current);
+      await repository.remember(c, projectId, actor, 'project.initialize', input, current);
+      return current;
     });
   }
 }

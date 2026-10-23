@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { afterEach, mock, test } from 'node:test';
-import { DomainError } from '@eadp/asset-domain';
+import { DomainError, generalScenarioDocument } from '@eadp/asset-domain';
 import type { ProjectView } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
@@ -11,14 +11,16 @@ import { verifyProjectInitialization } from './project-initialization.js';
 const config = loadConfig({ DATABASE_URL: 'postgresql://synthetic', PG_SSL: 'disable', GITLAB_URL: 'http://gitlab.test', GITLAB_ALLOW_HTTP: 'true', SEI_GITLAB_TOKEN: 'synthetic-private-management-token' });
 const gitlab = new GitLab(config), rootSha = 'a'.repeat(40);
 const actor: Actor = { id: 1, name: '测试管理员', username: 'studioAdmin', email: 'songlin.liu@changhong.com', admin: true, gitlabUserId: 42, gitlabUsername: 'bound-user', sessionHash: 'b'.repeat(64) };
-const project: ProjectView = { id: 'server-project', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: '项目', namespaceId: 2, namespacePath: 'team', initializationStatus: 'pending', revision: 0, recognizedHead: null };
+const project: ProjectView = { id: 'server-project', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: '项目', namespaceId: 2, namespacePath: 'team', initializationStatus: 'pending', revision: 0, recognizedHead: null, generalScenario: { entityId: 'reserved-general-scenario', code: 'SC-0001' } };
 const remote = { id: 7, name: '项目', path: 'project', path_with_namespace: 'team/project', http_url_to_repo: project.repositoryUrl, namespace: { id: 2, full_path: 'team' }, visibility: 'private', default_branch: null, description: 'marker' };
-const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } };
+const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] }, requirementTemplates: { defaultTemplateId: 'requirement', templates: [{ id: 'requirement', name: '默认需求模板', path: '.template/requirement.md' }] } };
+const gitBlobId = (bytes: Uint8Array) => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const code = (expected: string) => (error: unknown) => error instanceof DomainError && error.code === expected;
 const json = (value: unknown) => new Response(JSON.stringify(value));
 afterEach(() => mock.restoreAll());
-function fixture(options: { body?: Buffer; root?: boolean; missingDirectory?: boolean; manifestMode?: string; wrongHead?: boolean; corruptBlob?: boolean; denied?: boolean; missingTemplates?: boolean; missingTemplate?: boolean } = {}) {
-  const body = options.body ?? Buffer.from(`${JSON.stringify(manifest)}\n`), blob = createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex');
+function fixture(options: { body?: Buffer; root?: boolean; missingDirectory?: boolean; manifestMode?: string; wrongHead?: boolean; corruptBlob?: boolean; denied?: boolean; missingTemplates?: boolean; missingTemplate?: boolean; missingGeneral?: boolean; generalBytes?: Buffer } = {}) {
+  const body = options.body ?? Buffer.from(`${JSON.stringify(manifest)}\n`), blob = gitBlobId(body);
+  const generalBytes = options.generalBytes ?? Buffer.from(generalScenarioDocument(project.generalScenario!.entityId)), generalBlob = gitBlobId(generalBytes);
   const calls: string[] = [];
   mock.method(globalThis, 'fetch', async (url: string | URL | Request, request: RequestInit) => {
     assert.equal((request.headers as Record<string, string>)['PRIVATE-TOKEN'], config.gitlabToken);
@@ -33,18 +35,22 @@ function fixture(options: { body?: Buffer; root?: boolean; missingDirectory?: bo
       ...options.missingTemplates ? [] : [{ name: '.template', path: '.template', id: 'e'.repeat(40), mode: '040000', type: 'tree' }],
       { name: 'project.assets.json', path: 'project.assets.json', id: blob, mode: options.manifestMode ?? '100644', type: 'blob' },
     ]);
+    if (path === `/projects/7/repository/tree?ref=${rootSha}&path=${encodeURIComponent('场景')}&per_page=100&page=1`) return json(options.missingGeneral ? [] : [{ name: '通用场景.md', path: '场景/通用场景.md', id: generalBlob, mode: '100644', type: 'blob' }]);
     if (path === `/projects/7/repository/blobs/${blob}/raw`) return new Response(Buffer.from(options.corruptBlob ? 'different private bytes' : body));
+    if (path === `/projects/7/repository/blobs/${generalBlob}/raw`) return new Response(Buffer.from(generalBytes));
     if (parsed.pathname.includes('/repository/files/') && decodeURIComponent(parsed.pathname).endsWith('/project.assets.json/raw')) return new Response(Buffer.from(body));
     if (parsed.pathname.includes('/repository/files/') && decodeURIComponent(parsed.pathname).endsWith('/.template/default.md/raw')) return options.missingTemplate ? new Response('{}', { status: 404 }) : new Response('# 默认模板\n\n## 业务范围\n');
+    if (parsed.pathname.includes('/repository/files/') && decodeURIComponent(parsed.pathname).endsWith('/.template/requirement.md/raw')) return options.missingTemplate ? new Response('{}', { status: 404 }) : new Response('# 需求模板\n\n## 需求描述\n');
     throw new Error(`Unexpected path ${path}`);
   });
   return calls;
 }
 
 test('initialization verifies the exact pushed root commit, regular manifest blob bytes and all versioned business directories', async () => {
-  const calls = fixture(); await verifyProjectInitialization(gitlab, actor, project, rootSha);
+  const calls = fixture(); const result = await verifyProjectInitialization(gitlab, actor, project, rootSha);
   assert.equal(calls.filter(path => path === '/projects/7/repository/branches/main').length, 2);
   assert.ok(calls.some(path => path.endsWith('/raw')));
+  assert.deepEqual(result.generalFixed, { commitSha: rootSha, path: '场景/通用场景.md', sha256: createHash('sha256').update(generalScenarioDocument(project.generalScenario!.entityId)).digest('hex') });
 });
 
 test('a different stable head or a non-root commit cannot initialize the project', async () => {
@@ -87,4 +93,31 @@ test('a new initialization must declare the scenario template catalog even when 
   const { scenarioTemplates: _catalog, ...withoutCatalog } = manifest;
   fixture({ body: Buffer.from(`${JSON.stringify(withoutCatalog)}\n`) });
   await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_TEMPLATES_REQUIRED'));
+});
+
+test('a new initialization must also declare the requirement template catalog', async () => {
+  const { requirementTemplates: _catalog, ...withoutCatalog } = manifest;
+  fixture({ body: Buffer.from(`${JSON.stringify(withoutCatalog)}\n`) });
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_TEMPLATES_REQUIRED'));
+});
+
+test('initialization requires the provisioned general scenario document', async () => {
+  fixture({ missingGeneral: true });
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('GENERAL_SCENARIO_REQUIRED'));
+});
+
+test('general scenario bytes must match the reserved identity and provisioned document exactly', async () => {
+  const correct = Buffer.from(generalScenarioDocument(project.generalScenario!.entityId));
+  const altered = Buffer.concat([correct.subarray(0, correct.length - 2), Buffer.from('。\n')]);
+  fixture({ generalBytes: altered });
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('GENERAL_SCENARIO_MISMATCH'));
+  mock.restoreAll(); fixture({ generalBytes: Buffer.from(generalScenarioDocument('another-entity')) });
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('GENERAL_SCENARIO_MISMATCH'));
+});
+
+test('initialization requires the reserved general scenario identity', async () => {
+  fixture();
+  const unreserved: ProjectView = { ...project };
+  delete unreserved.generalScenario;
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, unreserved, rootSha), code('GENERAL_SCENARIO_UNRESERVED'));
 });

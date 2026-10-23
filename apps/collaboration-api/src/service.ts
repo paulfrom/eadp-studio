@@ -31,6 +31,9 @@ export class CollaborationService {
           materials.set(key, material);
         }
         return material;
+      }, loadBuiltin: async (projectId, fixed, entityId) => {
+        const project = await repository.project(c, projectId);
+        return this.content.readBuiltinScenario(actor, project.gitlabProjectId, fixed, entityId);
       } }, () => action(c));
     });
   }

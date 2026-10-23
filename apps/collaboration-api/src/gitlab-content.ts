@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { canonical, DomainError, isMaterialPathOf, parseMaterial, parseProjectManifest, repositoryPath, requireCondition, validateMaterialMetadata } from '@eadp/asset-domain';
-import { isFixedManifest, type EntityKind, type FixedReference, type MaterialMetadata, type PrepareIntegrationRequest, type ProjectManifest, type TemplateCatalog } from '@eadp/contracts';
+import { canonical, DomainError, isMaterialPathOf, parseBuiltinScenario, parseMaterial, parseProjectManifest, repositoryPath, requireCondition, validateMaterialMetadata } from '@eadp/asset-domain';
+import { isFixedManifest, type BuiltinScenarioMetadata, type EntityKind, type FixedReference, type MaterialMetadata, type PrepareIntegrationRequest, type ProjectManifest, type TemplateCatalog } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
 
@@ -57,6 +57,13 @@ export class GitLabContent {
   /** Reads business metadata only from the immutable material; callers may hydrate API views with it. */
   async loadMaterial(actor: Reader, gitlabProjectId: number, fixed: FixedReference): Promise<MaterialMetadata> {
     return this.verify(actor, gitlabProjectId, fixed);
+  }
+  /** Strict provisioned-content read; selected by persisted acceptance kind, never as a parse fallback. */
+  async readBuiltinScenario(actor: Reader, gitlabProjectId: number, fixed: FixedReference, entityId: string): Promise<BuiltinScenarioMetadata> {
+    await this.gitlab.authorize(actor, gitlabProjectId);
+    const bytes = await this.file(gitlabProjectId, fixed.commitSha, fixed.path);
+    requireCondition(digest(bytes) === fixed.sha256, 'CONTENT_HASH_MISMATCH', 'Fixed Git material does not match the confirmed SHA-256', 422);
+    return parseBuiltinScenario(utf8(bytes, 'INVALID_MATERIAL_ENCODING'), entityId);
   }
   async verify(actor: Reader, gitlabProjectId: number, fixed: FixedReference, identity?: { entityId: string; kind: EntityKind }): Promise<MaterialMetadata> {
     await this.gitlab.authorize(actor, gitlabProjectId);

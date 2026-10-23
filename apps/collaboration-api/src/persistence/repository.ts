@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, DomainError, requireCondition } from '@eadp/asset-domain';
 import { isBuiltinScenarioMetadata } from '@eadp/contracts';
-import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
+import type { BaselineView, BuiltinScenarioMetadata, ConfirmationEvent, ConfirmationInput, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { AdoptionRecord } from '../modules/reuse.js';
 import type { StoredIntegration } from '../modules/integration.js';
@@ -12,6 +12,7 @@ type Row = Record<string, unknown>;
 export interface RepositoryContext {
   actor: Pick<Actor, 'id' | 'username' | 'name'>;
   loadMaterial?: (projectId: string, fixed: FixedReference) => Promise<MaterialMetadata>;
+  loadBuiltin?: (projectId: string, fixed: FixedReference, entityId: string) => Promise<BuiltinScenarioMetadata>;
 }
 const contexts = new AsyncLocalStorage<RepositoryContext>();
 /** Bind authenticated audit identity and fixed Git content to a request. */
@@ -25,6 +26,12 @@ export async function loadMaterial(projectId: string, fixed: FixedReference): Pr
   const loader = context().loadMaterial;
   requireCondition(loader, 'FIXED_CONTENT_LOADER_REQUIRED', 'Accepted material must be read from its fixed Git version', 500);
   return loader(projectId, fixed);
+}
+/** 系统预置版本的严格读取通道，由持久化的接受途径选择，不作普通解析失败后的兜底。 */
+export async function loadBuiltin(projectId: string, fixed: FixedReference, entityId: string): Promise<BuiltinScenarioMetadata> {
+  const loader = context().loadBuiltin;
+  requireCondition(loader, 'FIXED_CONTENT_LOADER_REQUIRED', 'Accepted material must be read from its fixed Git version', 500);
+  return loader(projectId, fixed, entityId);
 }
 export const newId = () => randomUUID();
 export const now = () => new Date().toISOString();
@@ -181,12 +188,18 @@ export async function listIntegrations(c: Transaction, projectId: string): Promi
  */
 const legacyMaterialCodes = new Set(['INVALID_MATERIAL', 'INVALID_MANIFEST', 'INVALID_MATERIAL_PATH', 'CORE_UNRESOLVED', 'SCENARIO_SOURCE_REQUIRED', 'TEMPLATE_IDENTITY_MISMATCH', 'TEMPLATE_REFERENCE_MISMATCH', 'EVIDENCE_PATH_SCOPE', 'EVIDENCE_RANGE_INVALID', 'FILE_REFERENCE_CONFLICT', 'SELF_REFERENCE']);
 async function versionRows(c: Transaction, projectId: string, entityId: string, version?: number): Promise<Row[]> {
-  return (await c.query<Row>("SELECT f.*,e.enabled,e.reason,b.id AS baseline_id FROM studio_confirmations f JOIN studio_eligibility e USING(project_id,entity_id,version) LEFT JOIN studio_baselines b USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
+  return (await c.query<Row>("SELECT f.*,e.enabled,e.reason,b.id AS baseline_id FROM studio_confirmations f LEFT JOIN studio_eligibility e USING(project_id,entity_id,version) LEFT JOIN studio_baselines b USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
 }
 function fixedReference(row: Row): FixedReference { return { commitSha: String(row.commit_sha), path: String(row.path), sha256: String(row.sha256) }; }
 async function fixedVersionOf(projectId: string, row: Row): Promise<FixedVersion> {
   const fixed = fixedReference(row);
-  return { version: Number(row.version), fixed, metadata: await loadMaterial(projectId, fixed), confirmationId: String(row.id), confirmedBy: Number(row.creator_id), confirmedAt: date(row.created_date), title: String(row.title), summary: String(row.summary), applicability: row.applicability as 'applicable' | 'not-applicable', ...(row.applicability_reason ? { applicabilityReason: String(row.applicability_reason) } : {}), readHash: String(row.read_hash), reuse: { enabled: Boolean(row.enabled), reason: String(row.reason) }, ...(row.baseline_id ? { prototypeBaselineId: String(row.baseline_id) } : {}) };
+  const builtin = row.acceptance_kind === 'system-provisioned';
+  return { version: Number(row.version), fixed,
+    metadata: builtin ? await loadBuiltin(projectId, fixed, String(row.entity_id)) : await loadMaterial(projectId, fixed),
+    ...(builtin ? { builtin: true } : {}),
+    confirmationId: String(row.id), confirmedBy: Number(row.creator_id ?? 0), confirmedAt: date(row.created_date), title: String(row.title), summary: String(row.summary), applicability: row.applicability as 'applicable' | 'not-applicable', ...(row.applicability_reason ? { applicabilityReason: String(row.applicability_reason) } : {}), ...(row.read_hash ? { readHash: String(row.read_hash) } : {}),
+    // 内置场景无 studio_eligibility 行：系统预置版本不提供复用资格
+    reuse: builtin ? { enabled: false, reason: 'Built-in scenario is provisioned by initialization' } : { enabled: Boolean(row.enabled), reason: String(row.reason) }, ...(row.baseline_id ? { prototypeBaselineId: String(row.baseline_id) } : {}) };
 }
 export async function versions(c: Transaction, projectId: string, entityId: string, version?: number): Promise<FixedVersion[]> {
   const result: FixedVersion[] = [];
@@ -257,7 +270,9 @@ function stripMaterial(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripMaterial);
   if (!value || typeof value !== 'object') return value;
   const source = value as Record<string, unknown>;
-  const result = Object.fromEntries(Object.entries(source).filter(([key]) => !['metadata', 'body', 'businessEvidence', 'openQuestions', 'files', 'evidence', 'coreRulesPresent', 'acceptanceCriteriaPresent'].includes(key)).map(([key, item]) => [key, stripMaterial(item)]));
+  // 系统预置版本的元数据是固定契约产物而非材料快照，随控制结果保留
+  const keepMetadata = source.builtin === true;
+  const result = Object.fromEntries(Object.entries(source).filter(([key]) => (keepMetadata && key === 'metadata') || !['metadata', 'body', 'businessEvidence', 'openQuestions', 'files', 'evidence', 'coreRulesPresent', 'acceptanceCriteriaPresent'].includes(key)).map(([key, item]) => [key, stripMaterial(item)]));
   if (typeof source.id === 'string' && typeof source.kind === 'string' && Array.isArray(source.files)) result.fileProjectionFromCurrent = true;
   return result;
 }
@@ -270,7 +285,7 @@ async function hydrateResult(value: unknown, projectId: string): Promise<unknown
   if (!value || typeof value !== 'object') return value;
   const source = value as Record<string, unknown>, result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(source)) result[key] = await hydrateResult(item, projectId);
-  if (source.fixed && source.version && source.confirmationId) result.metadata = await loadMaterial(projectId, source.fixed as FixedReference);
+  if (source.fixed && source.version && source.confirmationId && source.builtin !== true) result.metadata = await loadMaterial(projectId, source.fixed as FixedReference);
   if (source.fileProjectionFromCurrent === true) {
     const current = result.current as { metadata: MaterialMetadata } | undefined;
     result.files = current?.metadata.files?.map(file => file.path) ?? [];

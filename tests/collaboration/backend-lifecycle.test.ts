@@ -6,7 +6,8 @@ import { createApp } from '../../apps/collaboration-api/src/app.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
 import type { EntityView, LoginResponse, ProjectState, ProjectView } from '../../packages/contracts/src/index.ts'
-import { boundUser, fixtureToken, gitlabFixture, templateCatalog } from './gitlab-fixture.ts'
+import { generalScenarioDocument } from '../../packages/asset-domain/src/index.ts'
+import { boundUser, fixtureToken, gitlabFixture, requirementCatalog, templateCatalog } from './gitlab-fixture.ts'
 
 // Run only against a new, disposable database named eadp_auth_check_*.
 // STUDIO_TEST_DATABASE_URL=... pnpm --dir apps/collaboration-api exec tsx --test ../../tests/collaboration/backend-lifecycle.test.ts
@@ -71,6 +72,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     created = first.json<ProjectView>()
     assert.equal(created.initializationStatus, 'pending')
     assert.equal(created.recognizedHead, null)
+    assert.equal(created.generalScenario?.code, 'SC-0001', 'Project creation reserves the general scenario identity as the first scenario number')
     const second = await app.inject({ method: 'POST', url: '/v1/projects', headers: auth(), payload })
     assert.ok([200, 201].includes(second.statusCode), second.body)
     assert.equal(second.json<ProjectView>().id, created.id)
@@ -128,10 +130,13 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const remote = gitlab.projects.get(created.gitlabProjectId)!
     const payload = { idempotencyKey: randomUUID(), commitSha: initialSha }
     const initialize = () => app.inject({ method: 'POST', url: `/v1/projects/${created.id}/initialize`, headers: auth(), payload })
+    const pending = await app.inject({ method: 'GET', url: `/v1/projects/${created.id}`, headers: auth() })
+    assert.equal(pending.statusCode, 200, pending.body)
+    assert.equal(pending.json<ProjectState>().project.generalScenario?.code, 'SC-0001')
     const notPushed = await initialize()
     assert.ok(notPushed.statusCode >= 400, notPushed.body)
     remote.head = initialSha; remote.default_branch = 'main'; remote.empty_repo = false
-    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog }
+    remote.manifest = { schemaVersion: 1, projectId: 'wrong-project', gitlabProjectId: remote.id, repositoryUrl: remote.http_url_to_repo, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog, requirementTemplates: requirementCatalog }
     const wrongIdentity = await initialize()
     assert.ok(wrongIdentity.statusCode >= 400, wrongIdentity.body)
     assert.equal((await database.query('SELECT state,recognized_head FROM studio_projects WHERE id=$1', [created.id])).rows[0].state, 'assigned')
@@ -140,6 +145,7 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const nonRoot = await initialize()
     assert.ok(nonRoot.statusCode >= 400, nonRoot.body)
     gitlab.controls.wrongRootParent = false
+    remote.generalDocument = generalScenarioDocument(created.generalScenario!.entityId)
     const accepted = await initialize()
     assert.equal(accepted.statusCode, 200, accepted.body)
     assert.equal(accepted.json<ProjectView>().recognizedHead, initialSha)
@@ -147,6 +153,18 @@ test('backend sessions, GitLab provisioning and initialization use a real isolat
     const replay = await initialize()
     assert.equal(replay.statusCode, 200, replay.body)
     assert.deepEqual(replay.json(), accepted.json())
+    const provisioned = await database.query<{ count: string }>("SELECT count(*) AS count FROM studio_entities WHERE project_id=$1 AND builtin_key='general'", [created.id])
+    assert.equal(provisioned.rows[0]!.count, '1', 'Replaying initialization must not provision the general scenario twice')
+    const ready = await app.inject({ method: 'GET', url: `/v1/projects/${created.id}`, headers: auth() })
+    assert.equal(ready.statusCode, 200, ready.body)
+    const general = ready.json<ProjectState>().entities.find(entity => entity.builtinKey === 'general')
+    assert.ok(general, 'The initialized project directory must contain the built-in general scenario')
+    assert.equal(general.code, 'SC-0001')
+    assert.equal(general.title, '通用场景')
+    assert.equal(general.confirmationStatus, 'confirmed')
+    const blocked = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/entities/${general.id}/claim`, headers: auth(), payload: { idempotencyKey: randomUUID(), expectedRevision: general.revision, taskId: randomUUID(), clientId: randomUUID(), purpose: 'design' } })
+    assert.equal(blocked.statusCode, 409, blocked.body)
+    assert.equal(blocked.json<{ error: { code: string } }>().error.code, 'BUILTIN_SCENARIO_IMMUTABLE')
     const category = await app.inject({ method: 'POST', url: `/v1/projects/${created.id}/categories`, headers: auth(), payload: { idempotencyKey: randomUUID(), categoryId: randomUUID(), name: '业务分类', expectedRevision: accepted.json<ProjectView>().revision } })
     assert.equal(category.statusCode, 404, category.body)
   })

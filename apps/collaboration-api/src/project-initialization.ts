@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { canonical, parseProjectManifest, requireCondition } from '@eadp/asset-domain';
-import type { ProjectView } from '@eadp/contracts';
+import { canonical, generalScenarioDocument, parseProjectManifest, requireCondition } from '@eadp/asset-domain';
+import type { FixedReference, ProjectView } from '@eadp/contracts';
 import type { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
 import { GitLabContent } from './gitlab-content.js';
 const directories = ['场景', '需求', '交接', '原型代码'];
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, project: ProjectView, commitSha: string): Promise<void> {
+export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, project: ProjectView, commitSha: string): Promise<{ generalFixed: FixedReference }> {
   await gitlab.authorize(actor, project.gitlabProjectId, true);
   requireCondition(await gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch has not reached the exact initialization commit', 409);
   const prefix = `/projects/${project.gitlabProjectId}/repository`;
@@ -31,9 +31,18 @@ export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, 
   try { manifest = parseProjectManifest(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { requireCondition(false, 'INITIALIZATION_MANIFEST_INVALID', 'Project manifest is not valid UTF-8 JSON', 422); }
   requireCondition(record(manifest) && manifest.schemaVersion === 1 && manifest.projectId === project.id && manifest.gitlabProjectId === project.gitlabProjectId && manifest.repositoryUrl === project.repositoryUrl && manifest.stableBranch === project.stableBranch && canonical(manifest.directories) === canonical(directories), 'INITIALIZATION_MANIFEST_MISMATCH', 'Project manifest identity or directory contract differs from its registered project', 422);
-  // Only projects accepted before the catalog existed may omit it; a new
-  // initialization must declare the templates it ships under `.template/`.
-  requireCondition(manifest.scenarioTemplates, 'INITIALIZATION_TEMPLATES_REQUIRED', 'Initialization must declare the project scenario template catalog', 422);
+  // 新的初始化必须声明 `.template/` 下随项目版本化的场景与需求模板目录。
+  requireCondition(manifest.scenarioTemplates && manifest.requirementTemplates, 'INITIALIZATION_TEMPLATES_REQUIRED', 'Initialization must declare the project scenario and requirement template catalogs', 422);
   await new GitLabContent(gitlab).loadProjectTemplates(actor, project.gitlabProjectId, commitSha);
+  const scenarioEntries = await gitlab.list(`${prefix}/tree?ref=${commitSha}&path=${encodeURIComponent('场景')}`);
+  const generalEntry = scenarioEntries.find((entry): entry is Record<string, unknown> => record(entry) && entry.name === '通用场景.md' && entry.type === 'blob');
+  requireCondition(generalEntry && typeof generalEntry.id === 'string' && /^[a-f0-9]{40}$/.test(generalEntry.id), 'GENERAL_SCENARIO_REQUIRED', 'Initialization requires the provisioned general scenario document', 422);
+  const generalBytes = await gitlab.bytes(`${prefix}/blobs/${generalEntry.id}/raw`, 64 * 1024);
+  requireCondition(createHash('sha1').update(`blob ${generalBytes.length}\0`).update(generalBytes).digest('hex') === generalEntry.id, 'GENERAL_SCENARIO_MISMATCH', 'General scenario bytes differ from the fixed Git blob', 422);
+  requireCondition(!(generalBytes[0] === 0xef && generalBytes[1] === 0xbb && generalBytes[2] === 0xbf) && !generalBytes.includes(13), 'GENERAL_SCENARIO_MISMATCH', 'General scenario must use UTF-8 without BOM and LF line endings', 422);
+  requireCondition(project.generalScenario, 'GENERAL_SCENARIO_UNRESERVED', 'The project has no reserved general scenario identity', 409);
+  const generalText = new TextDecoder('utf-8', { fatal: true }).decode(generalBytes);
+  requireCondition(generalText === generalScenarioDocument(project.generalScenario.entityId), 'GENERAL_SCENARIO_MISMATCH', 'General scenario content does not match the reserved identity and provisioned document', 422);
   requireCondition(await gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch changed during initialization verification', 409);
+  return { generalFixed: { commitSha, path: '场景/通用场景.md', sha256: createHash('sha256').update(generalBytes).digest('hex') } };
 }
