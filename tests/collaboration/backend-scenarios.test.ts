@@ -6,8 +6,8 @@ import { createApp } from '../../apps/collaboration-api/src/app.ts'
 import { loadConfig } from '../../apps/collaboration-api/src/config.ts'
 import { createDatabase } from '../../apps/collaboration-api/src/persistence/database.ts'
 import type { EntityView, IntegrationView, LoginResponse, MaterialIntegrationRequest, MaterialMetadata, ProjectState, ProjectView, RepairTaskView, TemplateIntegrationRequest } from '../../packages/contracts/src/index.ts'
-import { materialPathOf, type MaterialKind } from '../../packages/asset-domain/src/index.ts'
-import { defaultTemplate, fixtureToken, gitlabFixture, templateCatalog } from './gitlab-fixture.ts'
+import { generalScenarioDocument, materialPathOf, type MaterialKind } from '../../packages/asset-domain/src/index.ts'
+import { defaultTemplate, fixtureToken, gitlabFixture, requirementCatalog, requirementTemplate, templateCatalog } from './gitlab-fixture.ts'
 
 // Real SQL transactions and a test-owned GitLab HTTP boundary. This is not an
 // enterprise GitLab, desktop, model-reading or Windows acceptance certificate.
@@ -15,6 +15,7 @@ const databaseUrl = process.env.STUDIO_TEST_DATABASE_URL
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 const key = () => randomUUID()
 const token = (value: EntityView) => { const { occupationId, generation, taskId, clientId, expectedRevision } = value.occupation!; return { occupationId, generation, taskId, clientId, expectedRevision } }
+const errorCode = (reply: { json: <T>() => T }) => reply.json<{ error: { code: string } }>().error.code
 const initialSha = 'a'.repeat(40)
 const evidencePath = '.eadp/evidence/interview.md'
 const evidence = Buffer.from('业务访谈记录：订单提交后应进行审核。\n审核退回允许修改并重新提交。\n')
@@ -35,26 +36,34 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
   async function post<T>(url: string, payload: object): Promise<T> { const reply = await send('POST', url, payload); assert.equal(reply.statusCode, 200, reply.body); return reply.json<T>() }
   async function get<T>(url: string): Promise<T> { const reply = await send('GET', url); assert.equal(reply.statusCode, 200, reply.body); return reply.json<T>() }
   async function createProject(name: string) {
-    const project = await post<ProjectView>('/v1/projects', { idempotencyKey: key(), name, path: `scenario-${name}`, namespaceId: 42 })
-    const remote = gitlab.projects.get(project.gitlabProjectId)!
+    const created = await post<ProjectView>('/v1/projects', { idempotencyKey: key(), name, path: `scenario-${name}`, namespaceId: 42 })
+    const remote = gitlab.projects.get(created.gitlabProjectId)!
     remote.head = initialSha; remote.empty_repo = false; remote.default_branch = 'main'
-    remote.manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: remote.id, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog }
-    const initialized = await post<ProjectView>(`/v1/projects/${project.id}/initialize`, { idempotencyKey: key(), commitSha: initialSha })
-    remote.snapshots = new Map([[initialSha, new Map([
-      ['project.assets.json', Buffer.from(JSON.stringify(remote.manifest) + '\n')], ['.template/default.md', defaultTemplate], [evidencePath, evidence], [attachmentPath, attachment],
+    remote.manifest = { schemaVersion: 1, projectId: created.id, gitlabProjectId: remote.id, repositoryUrl: created.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: templateCatalog, requirementTemplates: requirementCatalog }
+    remote.generalDocument = generalScenarioDocument(created.generalScenario!.entityId)
+    const project = await post<ProjectView>(`/v1/projects/${created.id}/initialize`, { idempotencyKey: key(), commitSha: initialSha })
+    remote.snapshots = new Map([[initialSha, new Map<string, Uint8Array>([
+      ['project.assets.json', Buffer.from(JSON.stringify(remote.manifest) + '\n')],
+      ['.template/default.md', defaultTemplate],
+      ['.template/requirement.md', requirementTemplate],
+      ['场景/通用场景.md', Buffer.from(remote.generalDocument)],
+      [evidencePath, evidence], [attachmentPath, attachment],
     ])]])
     remote.commits = new Map([[initialSha, []]]); remote.comparisons = new Map()
-    return { project: initialized, remote }
+    return { project, remote }
   }
   const { project, remote } = await createProject('primary'), base = `/v1/projects/${project.id}`
   const scene = (title: string, idempotencyKey = key()) => post<EntityView>(`${base}/entities`, { idempotencyKey, kind: 'scenario', title })
   const state = () => get<ProjectState>(base)
   async function entity(id: string) { const value = (await state()).entities.find(e => e.id === id); assert.ok(value && 'title' in value); return value as EntityView }
-  const claim = (value: EntityView, purpose: 'design' | 'scenario-batch' | 'prototype' = 'design') => post<EntityView>(`${base}/entities/${value.id}/claim`, { idempotencyKey: key(), expectedRevision: value.revision, taskId: key(), clientId: key(), purpose })
+  const claim = (value: EntityView, purpose: 'design' | 'prototype' = 'design') => post<EntityView>(`${base}/entities/${value.id}/claim`, { idempotencyKey: key(), expectedRevision: value.revision, taskId: key(), clientId: key(), purpose })
+  const requirementRef = async () => ({ commitSha: (await state()).project.recognizedHead!, path: '.template/requirement.md', sha256: hash(requirementTemplate) })
+  const requirement = async (title: string, sources: Array<{ projectId: string; entityId: string; version: number }>, idempotencyKey = key()) =>
+    post<EntityView>(`${base}/entities`, { idempotencyKey, kind: 'requirement', title, templateId: 'requirement', templateRef: await requirementRef(), sources })
   let candidateNumber = 0
   function material(value: EntityView, overrides: Partial<MaterialMetadata> = {}): MaterialMetadata {
     return { entityId: value.id, kind: value.kind, title: value.title,
-      ...(value.kind === 'scenario' ? { templateId: value.templateId!, templateRef: value.templateRef! } : { categoryId: value.categoryId! }),
+      ...(value.kind === 'scenario' || value.kind === 'requirement' ? { templateId: value.templateId!, templateRef: value.templateRef! } : {}),
       scenarioIds: value.scenarioIds, prerequisites: value.prerequisites, sources: value.scenarioSources ?? [],
       businessEvidence: [{ label: '订单访谈', reference: '已选择的业务访谈', files: [{ path: evidencePath, sha256: hash(evidence) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 2 }] }],
       files: [{ path: attachmentPath, sha256: hash(attachment) }],
@@ -63,19 +72,25 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
   async function candidate(values: Array<{ value: EntityView; metadata: MaterialMetadata }>, stage: MaterialIntegrationRequest['stage'] = 'material') {
     const current = (await state()).project, sha = (++candidateNumber).toString(16).padStart(40, '0')
     const files = new Map(remote.snapshots!.get(current.recognizedHead!)!)
+    const removals: string[] = []
     const confirmations = values.map(({ value, metadata }) => {
-      const path = materialPathOf(value.kind as MaterialKind, value.title)
+      const path = materialPathOf(value.kind as MaterialKind, metadata.title)
       const bytes = Buffer.from('```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 自定义业务约束\n\n订单审核退回后允许重新提交，验收时可验证循环。\n')
       files.set(path, bytes)
+      // A title edit renames the material: the candidate removes its own previous confirmed path.
+      const previous = value.current ? materialPathOf(value.kind as MaterialKind, value.title) : path
+      if (previous !== path) { files.delete(previous); removals.push(previous) }
       return { entityId: value.id, expectedRevision: value.revision, fixed: { commitSha: sha, path, sha256: hash(bytes) }, readHash: hash(bytes), authorConfirmed: true as const, confirmationMethod: 'direct' as const }
     })
     remote.snapshots!.set(sha, files); remote.commits!.set(sha, [current.recognizedHead!])
-    remote.comparisons!.set(`${current.recognizedHead}:${sha}`, confirmations.map(c => ({ old_path: c.fixed.path, new_path: c.fixed.path, deleted_file: false, renamed_file: false, diff: `+${sha}:${c.entityId}` })))
+    remote.comparisons!.set(`${current.recognizedHead}:${sha}`, [
+      ...confirmations.map(c => ({ old_path: c.fixed.path, new_path: c.fixed.path, deleted_file: false, renamed_file: false, diff: `+${sha}:${c.entityId}` })),
+      ...removals.map(path => ({ old_path: path, new_path: path, deleted_file: true, renamed_file: false, diff: `-${sha}` })),
+    ])
     const root = values.find(v => v.value.kind === 'scenario')?.value ?? values[0]!.value
     const input: MaterialIntegrationRequest = { idempotencyKey: key(), entityId: root.id, token: token(root), stage,
-      sourceSha: sha, expectedHead: current.recognizedHead!, candidateSha: sha, allowedPaths: confirmations.map(c => c.fixed.path),
-      checks: { candidateSha: sha, passed: true, checks: ['materials', 'relations'].map(name => ({ name, passed: true, evidenceHash: '1'.repeat(64) })) }, confirmations,
-      ...(stage === 'scenario-batch' ? { expectedAssociationRevision: root.associationRevision, batchRequirementIds: (await state()).entities.filter(e => 'frozenBy' in e && e.frozenBy.includes(root.occupation!.occupationId)).map(e => e.id) } : {}) }
+      sourceSha: sha, expectedHead: current.recognizedHead!, candidateSha: sha, allowedPaths: [...confirmations.map(c => c.fixed.path), ...removals],
+      checks: { candidateSha: sha, passed: true, checks: ['materials', 'relations'].map(name => ({ name, passed: true, evidenceHash: '1'.repeat(64) })) }, confirmations }
     return input
   }
   async function accept(input: MaterialIntegrationRequest | TemplateIntegrationRequest) {
@@ -89,13 +104,15 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
   let first: EntityView
   await t.test('S01/S35 scenarios need only a name; client categories and business numbers are rejected', async () => {
     first = await scene('订单审核')
-    assert.equal(first.code, 'SC-0001'); assert.equal(first.sequence, 1)
-    assert.ok(first.templateRef); assert.equal(first.categoryId, undefined); assert.equal(first.current, undefined)
-    assert.equal((await state()).project.categories.length, 0)
+    assert.equal(first.code, 'SC-0002', 'Project creation reserves SC-0001 for the built-in general scenario'); assert.equal(first.sequence, 2)
+    assert.ok(first.templateRef); assert.equal(first.current, undefined)
+    const current = (await state()).project
+    assert.equal(current.generalScenario?.code, 'SC-0001')
+    assert.equal('categories' in current, false, 'The project view no longer carries requirement categories')
     for (const extra of [{ categoryId: 'default' }, { code: 'SC-0100' }, { sequence: 100 }]) {
       assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'scenario', title: '不能自报', ...extra })).statusCode, 400)
     }
-    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '无来源需求', categoryId: 'any' })).statusCode, 400)
+    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '无模板需求', sources: [{ projectId: project.id, entityId: first.id, version: 1 }] })).statusCode, 400)
   })
   await t.test('S37/S38 concurrent retries allocate one entity, distinct operations allocate unique project-scoped numbers', async () => {
     const operation = key(), same = await Promise.all(Array.from({ length: 8 }, () => scene('重复创建', operation)))
@@ -105,7 +122,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     assert.equal(new Set(distinct.map(v => v.sequence)).size, 8)
     const other = await createProject('secondary')
     const created = await post<EntityView>(`/v1/projects/${other.project.id}/entities`, { idempotencyKey: key(), kind: 'scenario', title: '另一个项目' })
-    assert.equal(created.code, 'SC-0001')
+    assert.equal(created.code, 'SC-0002')
     const changed = await send('POST', `${base}/entities`, { idempotencyKey: operation, kind: 'scenario', title: '改变同一操作' })
     assert.equal(changed.statusCode, 409)
   })
@@ -120,11 +137,12 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     await database.query('DROP TRIGGER test_entity_failure ON studio_entities; DROP FUNCTION test_entity_failure()')
     const next = await scene('故障后的新场景')
     assert.ok(next.sequence! > Number(allocated.sequence))
-    const crossAction = await send('POST', `${base}/categories`, { idempotencyKey: operation, categoryId: 'stolen-key', name: '不可占用编号操作键', expectedRevision: (await state()).project.revision })
+    const crossAction = await send('POST', `${base}/entities/${first.id}/claim`, { idempotencyKey: operation, expectedRevision: first.revision, taskId: key(), clientId: key(), purpose: 'design' })
     assert.equal(crossAction.statusCode, 409)
+    assert.equal(errorCode(crossAction), 'IDEMPOTENCY_CONFLICT')
     const retried = await post<EntityView>(`${base}/entities`, payload)
     assert.equal(retried.id, allocated.entity_id); assert.equal(retried.code, allocated.code)
-    await database.query('UPDATE studio_project_counters SET next_sequence=10000 WHERE project_id=$1', [project.id])
+    await database.query("UPDATE studio_project_counters SET next_sequence=10000 WHERE project_id=$1 AND kind='scenario'", [project.id])
     assert.equal((await scene('超过四位编号')).code, 'SC-10000')
   })
   await t.test('S12/S14/S19 confirm exact fixed bytes without prescribed headings; unknown completion replays one acceptance', async () => {
@@ -155,39 +173,114 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     assert.equal((await entity(draft.id)).materialVersion, 0)
   })
 
-  let requirement: EntityView
-  await t.test('S21 requirements retain classification and at least one accepted fixed scenario source', async () => {
-    const current = (await state()).project
-    await post(`${base}/categories`, { idempotencyKey: key(), expectedRevision: current.revision, categoryId: 'orders', name: '订单' })
-    const invalid = await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '不存在的来源', categoryId: 'orders', sources: [{ projectId: project.id, entityId: 'missing', version: 1 }] })
-    assert.ok(invalid.statusCode >= 400)
-    requirement = await post<EntityView>(`${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '订单审核要求', categoryId: 'orders', sources: [{ projectId: project.id, entityId: first.id, version: 1 }] })
-    assert.equal(requirement.categoryId, 'orders'); assert.equal(requirement.code, undefined)
-    assert.deepEqual(requirement.scenarioSources, [{ projectId: project.id, entityId: first.id, version: 1 }])
+  let reqA: EntityView, reqB: EntityView, reqC: EntityView
+  await t.test('R01 requirement reserve returns a stable REQ number and identity, and failures never reclaim numbers', async () => {
+    const operation = key()
+    const input = { idempotencyKey: operation, kind: 'requirement', title: '订单审核要求', templateId: 'requirement', templateRef: await requirementRef(), sources: [{ projectId: project.id, entityId: first.id, version: 1 }] }
+    reqA = await post<EntityView>(`${base}/entities`, input)
+    assert.equal(reqA.code, 'REQ-0001'); assert.equal(reqA.sequence, 1)
+    const replay = await post<EntityView>(`${base}/entities`, input)
+    assert.equal(replay.id, reqA.id); assert.equal(replay.code, reqA.code); assert.deepEqual(replay, reqA)
+    await database.query(`CREATE FUNCTION test_requirement_failure() RETURNS trigger AS $$ BEGIN IF NEW.title='需求故障注入' THEN RAISE EXCEPTION 'injected requirement write failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER test_requirement_failure BEFORE INSERT ON studio_entities FOR EACH ROW EXECUTE FUNCTION test_requirement_failure()`)
+    const failedOperation = key()
+    const failing = { idempotencyKey: failedOperation, kind: 'requirement', title: '需求故障注入', templateId: 'requirement', templateRef: await requirementRef(), sources: [{ projectId: project.id, entityId: first.id, version: 1 }] }
+    assert.equal((await send('POST', `${base}/entities`, failing)).statusCode, 503)
+    const allocated = (await database.query('SELECT entity_id,sequence,code FROM studio_entity_numbers WHERE project_id=$1 AND operation_key=$2', [project.id, failedOperation])).rows[0]
+    assert.ok(allocated)
+    assert.equal(allocated.code, 'REQ-0002')
+    assert.equal((await database.query('SELECT id FROM studio_entities WHERE id=$1', [allocated.entity_id])).rowCount, 0)
+    await database.query('DROP TRIGGER test_requirement_failure ON studio_entities; DROP FUNCTION test_requirement_failure()')
+    const next = await requirement('失败后的新需求', [{ projectId: project.id, entityId: first.id, version: 1 }])
+    assert.ok(next.sequence! > Number(allocated.sequence))
+    const retried = await post<EntityView>(`${base}/entities`, failing)
+    assert.equal(retried.id, allocated.entity_id); assert.equal(retried.code, 'REQ-0002')
   })
-  await t.test('S23/S24 read-only history does not claim; explicit revision freezes requirements and accepts the whole batch', async () => {
+  await t.test('R02 renames keep the requirement code and same-title requirements receive递增 numbers', async () => {
+    let draft = await claim(reqA)
+    const renamed = await send('PUT', `${base}/entities/${reqA.id}`, { idempotencyKey: key(), token: token(draft), title: '订单审核与退回要求', summary: '改名验证编号稳定' })
+    assert.equal(renamed.statusCode, 200, renamed.body)
+    draft = renamed.json<EntityView>()
+    assert.equal(draft.id, reqA.id); assert.equal(draft.code, 'REQ-0001'); assert.equal(draft.title, '订单审核与退回要求')
+    await post(`${base}/entities/${reqA.id}/cancel`, { idempotencyKey: key(), token: token(draft), reason: '结束改名验证' })
+    reqA = await entity(reqA.id)
+    reqB = await requirement('同名需求', [{ projectId: project.id, entityId: first.id, version: 1 }])
+    reqC = await requirement('同名需求', [{ projectId: project.id, entityId: first.id, version: 1 }])
+    assert.notEqual(reqB.id, reqC.id)
+    assert.equal(Number(reqC.sequence), Number(reqB.sequence) + 1)
+    assert.notEqual(reqB.code, reqC.code)
+  })
+  await t.test('R04 requirement reserve enforces the template binding and accepted same-project scenario sources', async () => {
+    const template = { templateId: 'requirement', templateRef: await requirementRef() }
+    const source = { projectId: project.id, entityId: first.id, version: 1 }
+    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '缺模板引用', templateId: template.templateId, sources: [source] })).statusCode, 400)
+    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '缺来源需求', ...template })).statusCode, 400)
+    assert.equal((await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '空来源需求', ...template, sources: [] })).statusCode, 400)
+    const crossProject = await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '跨项目来源', ...template, sources: [{ projectId: 'some-other-project', entityId: first.id, version: 1 }] })
+    assert.equal(crossProject.statusCode, 422, crossProject.body); assert.equal(errorCode(crossProject), 'SCENARIO_SOURCE_REQUIRED')
+    const unknown = await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '不存在来源', ...template, sources: [{ projectId: project.id, entityId: 'missing-scenario', version: 1 }] })
+    assert.equal(unknown.statusCode, 404, unknown.body); assert.equal(errorCode(unknown), 'ENTITY_NOT_FOUND')
+    const future = await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '未接受版本', ...template, sources: [{ projectId: project.id, entityId: first.id, version: (await entity(first.id)).materialVersion + 1 }] })
+    assert.equal(future.statusCode, 409, future.body); assert.equal(errorCode(future), 'SCENARIO_VERSION_MISMATCH')
+    const duplicated = await send('POST', `${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '重复来源', ...template, sources: [source, source] })
+    assert.equal(duplicated.statusCode, 422, duplicated.body); assert.equal(errorCode(duplicated), 'SCENARIO_SOURCE_REQUIRED')
+    const general = (await state()).entities.find(value => (value as EntityView).builtinKey === 'general') as EntityView | undefined
+    assert.ok(general, 'The initialized project contains the system-provisioned general scenario')
+    assert.equal(general.code, 'SC-0001'); assert.equal(general.materialVersion, 1)
+    const viaGeneral = await requirement('通用来源需求', [{ projectId: project.id, entityId: general.id, version: 1 }])
+    assert.deepEqual(viaGeneral.scenarioSources, [{ projectId: project.id, entityId: general.id, version: 1 }])
+  })
+  await t.test('R13 a confirmed scenario revises under a plain design occupation; relations never freeze or auto-advance', async () => {
     const impact = await get<{ requirements: Array<{ id: string }> }>(`${base}/entities/${first.id}/revision-impact`)
-    assert.ok(impact.requirements.some(r => r.id === requirement.id))
+    assert.ok(impact.requirements.some(r => r.id === reqA.id))
     await get(`${base}/entities/${first.id}/versions`)
-    assert.equal((await entity(first.id)).occupation, undefined)
-    const rejected = await send('POST', `${base}/entities/${first.id}/claim`, { idempotencyKey: key(), expectedRevision: first.revision, taskId: key(), clientId: key(), purpose: 'design' })
-    assert.equal(rejected.statusCode, 409)
-    first = await claim(await entity(first.id), 'scenario-batch')
-    requirement = await entity(requirement.id)
-    assert.deepEqual(requirement.frozenBy, [first.occupation!.occupationId])
-    const partial = await candidate([{ value: first, metadata: material(first, { title: '审核流程第二版' }) }], 'scenario-batch')
-    assert.equal((await send('POST', `${base}/integrations`, partial)).statusCode, 409)
-    const both = await candidate([
-      { value: requirement, metadata: material(requirement, { sources: [{ projectId: project.id, entityId: first.id, version: 2 }] }) },
-      { value: first, metadata: material(first, { title: '审核流程第二版' }) },
-    ], 'scenario-batch')
-    await accept(both)
-    first = await entity(first.id); requirement = await entity(requirement.id)
-    assert.equal(first.materialVersion, 2); assert.equal(first.code, 'SC-0001')
-    assert.equal(requirement.materialVersion, 1); assert.deepEqual(requirement.frozenBy, [])
-    assert.equal(requirement.scenarioSources![0]!.version, 2)
+    assert.equal((await entity(first.id)).occupation, undefined, 'Read-only inspection must not create an occupation')
+    assert.deepEqual((await entity(reqA.id)).scenarioSources, [{ projectId: project.id, entityId: first.id, version: 1 }])
+    const revising = await claim(await entity(first.id))
+    await accept(await candidate([{ value: revising, metadata: material(revising, { title: '审核流程第二版' }) }]))
+    first = await entity(first.id)
+    assert.equal(first.materialVersion, 2); assert.equal(first.code, 'SC-0002'); assert.equal(first.occupation, undefined)
     const versions = await get<Array<{ metadata: MaterialMetadata }>>(`${base}/entities/${first.id}/versions`)
-    assert.equal(versions.length, 2); assert.equal(versions[1]!.metadata.title, '订单审核')
+    assert.equal(versions.length, 2); assert.equal(versions[0]!.metadata.title, '审核流程第二版'); assert.equal(versions[1]!.metadata.title, '订单审核')
+    const draft = await claim(await entity(reqA.id))
+    await accept(await candidate([{ value: draft, metadata: material(draft) }]))
+    reqA = await entity(reqA.id)
+    assert.equal(reqA.materialVersion, 1)
+    assert.deepEqual(reqA.scenarioSources, [{ projectId: project.id, entityId: first.id, version: 1 }], 'A scenario revision must not advance the requirement source binding')
+  })
+  await t.test('R12 prerequisite relations validate identity, duplication, cycles and accepted versions without blocking document confirmation', async () => {
+    let dependent = await claim(await entity(reqB.id))
+    const relations = (prerequisites: Array<{ requirementId: string; version: number }>) => send('PUT', `${base}/entities/${dependent.id}/relations`, { idempotencyKey: key(), token: token(dependent), sources: dependent.scenarioSources, scenarioIds: dependent.scenarioIds, prerequisites })
+    const self = await relations([{ requirementId: dependent.id, version: 1 }])
+    assert.equal(self.statusCode, 409, self.body); assert.equal(errorCode(self), 'INVALID_PREREQUISITE')
+    const duplicate = await relations([{ requirementId: reqA.id, version: 1 }, { requirementId: reqA.id, version: 1 }])
+    assert.equal(duplicate.statusCode, 409, duplicate.body); assert.equal(errorCode(duplicate), 'DUPLICATE_PREREQUISITE')
+    const unconfirmed = await relations([{ requirementId: reqC.id, version: 1 }])
+    assert.equal(unconfirmed.statusCode, 409, unconfirmed.body); assert.equal(errorCode(unconfirmed), 'PREREQUISITE_UNCONFIRMED')
+    const future = await relations([{ requirementId: reqA.id, version: 2 }])
+    assert.equal(future.statusCode, 409, future.body); assert.equal(errorCode(future), 'PREREQUISITE_UNCONFIRMED')
+    const valid = await relations([{ requirementId: reqA.id, version: 1 }])
+    assert.equal(valid.statusCode, 200, valid.body)
+    dependent = valid.json<EntityView>()
+    await accept(await candidate([{ value: dependent, metadata: material(dependent) }]))
+    dependent = await entity(dependent.id)
+    assert.equal(dependent.materialVersion, 1, 'Document confirmation is not blocked by a prerequisite without production evidence')
+    assert.deepEqual(dependent.prerequisites, [{ requirementId: reqA.id, version: 1 }])
+    const upstream = await claim(await entity(reqA.id))
+    const cycle = await send('PUT', `${base}/entities/${upstream.id}/relations`, { idempotencyKey: key(), token: token(upstream), sources: upstream.scenarioSources, scenarioIds: upstream.scenarioIds, prerequisites: [{ requirementId: dependent.id, version: 1 }] })
+    assert.equal(cycle.statusCode, 409, cycle.body); assert.equal(errorCode(cycle), 'DEPENDENCY_CYCLE')
+    await post(`${base}/entities/${upstream.id}/cancel`, { idempotencyKey: key(), token: token(upstream), reason: '结束关系验证' })
+    reqB = dependent
+  })
+  await t.test('integrations confirm exactly their single occupied entity', async () => {
+    const left = await claim(await scene('联合确认甲')), right = await claim(await scene('联合确认乙'))
+    const joint = await candidate([{ value: left, metadata: material(left) }, { value: right, metadata: material(right) }])
+    const rejected = await send('POST', `${base}/integrations`, joint)
+    assert.equal(rejected.statusCode, 422, rejected.body)
+    assert.equal(errorCode(rejected), 'SINGLE_ENTITY_REQUIRED')
+    await accept(await candidate([{ value: left, metadata: material(left) }]))
+    assert.equal((await entity(left.id)).materialVersion, 1)
+    await post(`${base}/entities/${right.id}/cancel`, { idempotencyKey: key(), token: token(right), reason: '结束联合确认验证' })
   })
   await t.test('existing prototype completion, reuse and handoff still use relational fixed-version records', async () => {
     async function prototype(value: EntityView) {
@@ -200,20 +293,20 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
         allowedPaths: [path], checks: { candidateSha: sha, passed: true, checks: ['engineering', 'mock', 'browser', 'relations'].map(name => ({ name, passed: true as const, evidenceHash: '1'.repeat(64) })) },
         confirmations: [{ entityId: owned.id, expectedRevision: owned.revision, fixed: owned.current!.fixed, readHash: owned.current!.fixed.sha256, authorConfirmed: true, confirmationMethod: 'direct' }] })
     }
-    const sourceCompletion = await prototype(requirement)
+    const sourceCompletion = await prototype(reqA)
     assert.ok(sourceCompletion.accepted.baselineId)
-    await post(`${base}/entities/${requirement.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: false, reason: '临时停止新采用' })
-    await post(`${base}/entities/${requirement.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: true, reason: '恢复采用' })
-    let target = await post<EntityView>(`${base}/entities`, { idempotencyKey: key(), kind: 'requirement', title: '复用审核规则', categoryId: 'orders', sources: [{ projectId: project.id, entityId: first.id, version: 2 }] })
+    await post(`${base}/entities/${reqA.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: false, reason: '临时停止新采用' })
+    await post(`${base}/entities/${reqA.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: true, reason: '恢复采用' })
+    let target = await requirement('复用审核规则', [{ projectId: project.id, entityId: first.id, version: 2 }])
     target = await claim(target)
-    const adopted = await post<{ id: string }>(`${base}/adoptions`, { idempotencyKey: key(), source: { projectId: project.id, entityId: requirement.id, version: 1 }, targetEntityId: target.id, targetTaskId: target.occupation!.taskId, scope: 'prototype-package', adjustmentSummary: '按新订单入口调整' })
-    const fixed = await accept(await candidate([{ value: target, metadata: material(target, { sources: [...target.scenarioSources!, { projectId: project.id, entityId: requirement.id, version: 1 }] }) }]))
+    const adopted = await post<{ id: string }>(`${base}/adoptions`, { idempotencyKey: key(), source: { projectId: project.id, entityId: reqA.id, version: 1 }, targetEntityId: target.id, targetTaskId: target.occupation!.taskId, scope: 'prototype-package', adjustmentSummary: '按新订单入口调整' })
+    const fixed = await accept(await candidate([{ value: target, metadata: material(target, { sources: [...target.scenarioSources!, { projectId: project.id, entityId: reqA.id, version: 1 }] }) }]))
     const premature = await send('POST', `${base}/adoptions/${adopted.id}/success`, { idempotencyKey: key(), targetConfirmationId: fixed.accepted.confirmationIds![0] })
     assert.equal(premature.statusCode, 409)
     const targetCompletion = await prototype(target)
     const succeeded = await post<{ status: string }>(`${base}/adoptions/${adopted.id}/success`, { idempotencyKey: key(), targetConfirmationId: targetCompletion.accepted.confirmationIds![0] })
     assert.equal(succeeded.status, 'succeeded')
-    let handoff = await post<EntityView>(`${base}/entities`, { idempotencyKey: key(), kind: 'handoff', title: '审核交接', categoryId: 'orders' })
+    let handoff = await post<EntityView>(`${base}/entities`, { idempotencyKey: key(), kind: 'handoff', title: '审核交接' })
     handoff = await claim(handoff)
     const done = await accept(await candidate([{ value: handoff, metadata: material(handoff, { referencedAssets: [{ projectId: project.id, entityId: target.id, version: 1 }] }) }]))
     const payload = { idempotencyKey: key(), confirmationId: done.accepted.confirmationIds![0], note: '已收悉固定交接版本' }
@@ -239,14 +332,15 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     const fresh = await scene('新默认模板场景')
     assert.equal(fresh.templateId, 'review'); assert.equal(fresh.templateRef!.commitSha, sha)
     assert.equal((await entity(first.id)).materialVersion, 2)
-    assert.equal((await get<{ templates: unknown[] }>(`${base}/templates`)).templates.length, 2)
-    let revising = await claim(await entity(first.id), 'scenario-batch')
+    const catalogs = await get<{ scenarios: { templates: unknown[] } }>(`${base}/templates`)
+    assert.equal(catalogs.scenarios.templates.length, 2)
+    let revising = await claim(await entity(first.id))
     const switched = await send('PUT', `${base}/entities/${first.id}/template`, { idempotencyKey: key(), token: token(revising), templateId: fresh.templateId, templateRef: fresh.templateRef })
     assert.equal(switched.statusCode, 200, switched.body)
     revising = switched.json<EntityView>(); assert.equal(revising.templateId, 'review'); assert.deepEqual(revising.current!.metadata.templateRef, before)
     const renamed = await send('PUT', `${base}/entities/${first.id}`, { idempotencyKey: key(), token: token(revising), title: '用户修改展示名称', summary: '修订目录摘要' })
     assert.equal(renamed.statusCode, 200, renamed.body)
-    revising = renamed.json<EntityView>(); assert.equal(revising.code, 'SC-0001'); assert.equal(revising.id, first.id)
+    revising = renamed.json<EntityView>(); assert.equal(revising.code, 'SC-0002'); assert.equal(revising.id, first.id)
     assert.equal(revising.current!.metadata.title, '审核流程第二版')
     await post(`${base}/entities/${first.id}/cancel`, { idempotencyKey: key(), token: token(revising), reason: '保留已确认版本，结束本次修订' })
   })

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
@@ -91,8 +91,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   let state = await command({ action: 'createProject', name: 'Workflow integration', namespaceId: 42, path: 'workflow-integration' })
   assert.equal(state.project?.initializationStatus, 'ready'); assert.match(state.project.recognizedHead!, /^[a-f0-9]{40}$/)
   const projectId = state.project.id, rootSha = state.project.recognizedHead
-  state = await command({ action: 'addCategory', name: 'Synthetic business' }); const categoryId = state.project!.categories[0]!.id
-  state = await command({ action: 'createMaterial', kind: 'scenario', title: 'Purchase scenario', categoryId })
+  state = await command({ action: 'createMaterial', operationId: randomUUID(), kind: 'scenario', title: 'Purchase scenario' })
   const scenario = state.drafts.find(draft => draft.metadata.kind === 'scenario')!
   await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /核心|验收|明确|缺失/)
   const body = (title: string) => `# ${title}\n\n## 核心业务规则\n\n数量必须大于零，提交保留固定来源。\n\n## 验收条件\n\n输入合法时显示成功，非法时显示校验错误。\n`
@@ -110,7 +109,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   const split = (await store.read()).tasks.find(task => task.purpose === 'split')!
   await app.acceptSessionOutput(split.sessionId, { kind: 'assistant', content: '```eadp-candidates\n' + JSON.stringify([{ title: 'Purchase requirement', summary: 'Deterministic model fixture output' }]) + '\n```' })
   state = await command({ action: 'state' }); assert.equal(state.candidates.length, 1)
-  state = await command({ action: 'selectCandidate', candidateId: state.candidates[0]!.id, categoryId })
+  state = await command({ action: 'selectCandidate', candidateId: state.candidates[0]!.id })
   const requirement = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.kind === 'requirement')!
   state = await saveReady(requirement.id, 'Purchase requirement')
   state = await command({ action: 'confirmMaterial', entityId: requirement.id, expectedHash: state.drafts.find(draft => draft.entityId === requirement.id)!.sha256, method: 'direct' })
@@ -128,7 +127,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git complete stages, baseline,
   assert.equal(state.drafts.find(draft => draft.entityId === handoff.id)!.sha256, handoffHash); assert.equal(prompts.length, promptCount, 'retry must not overwrite or resend an already delivered handoff')
   state = await command({ action: 'confirmMaterial', entityId: handoff.id, expectedHash: handoffHash, method: 'direct' })
   await command({ action: 'acknowledgeHandoff', entityId: handoff.id, note: 'Synthetic receiver located fixed acceptance material' })
-  state = await command({ action: 'createMaterial', kind: 'requirement', title: 'Adopted target', categoryId })
+  state = await command({ action: 'createMaterial', operationId: randomUUID(), kind: 'requirement', title: 'Adopted target', scenarioIds: [scenario.entityId] })
   const target = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.title === 'Adopted target')!
   const source = state.collaboration!.entities.find((entity): entity is EntityView => 'title' in entity && entity.id === requirement.id)!
   await command({ action: 'setEligibility', entityId: source.id, version: source.materialVersion, enabled: false, reason: 'Synthetic stop-new-adoption check' })

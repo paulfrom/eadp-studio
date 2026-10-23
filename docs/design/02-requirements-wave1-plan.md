@@ -18,7 +18,7 @@
 - 冲突记录无处理状态字段；对比与冲突记录不可变（schema 触发器已强制）。
 - 通用场景：`acceptance_kind='system-provisioned'` 只能由初始化事务写入；固定读取按接受途径选严格契约（`parseBuiltinScenario` 字节比对），禁止普通解析失败后 fallback。
 - 编号：`studio_project_counters(project_id,kind)` 行锁递增；编号独立先提交，业务回滚不回收；同一 `operation_key` 重放返回原编号。
-- 中文错误文案沿用现有风格；DomainError 码新增：`ENTITY_NUMBER_EXHAUSTED`（替代 SCENARIO_NUMBER_EXHAUSTED）、`GENERAL_SCENARIO_REQUIRED`、`GENERAL_SCENARIO_MISMATCH`、`GENERAL_SCENARIO_UNRESERVED`、`INVALID_BUILTIN_SCENARIO`、`BUILTIN_SCENARIO_IMMUTABLE`、`AUTO_COMPARISON_RECORDED`、`COMPARISON_CONFIRMATION_MISMATCH`、`COMPARISON_NOT_FOUND`、`PREREQUISITE_UNCONFIRMED`。
+- 中文错误文案沿用现有风格；DomainError 码新增：`ENTITY_NUMBER_EXHAUSTED`（替代 SCENARIO_NUMBER_EXHAUSTED）、`GENERAL_SCENARIO_REQUIRED`、`GENERAL_SCENARIO_MISMATCH`、`GENERAL_SCENARIO_UNRESERVED`、`INVALID_BUILTIN_SCENARIO`、`BUILTIN_SCENARIO_IMMUTABLE`、`AUTO_COMPARISON_RECORDED`、`COMPARISON_CONFIRMATION_MISMATCH`、`COMPARISON_NOT_FOUND`、`PREREQUISITE_UNCONFIRMED`、`CONFLICT_ORDINAL_SEQUENCE`（422，冲突序号必须为 1..N 连续）。
 - 验证数据库命名约定：`SCENARIO_SCHEMA_TEST_DATABASE_URL` → `eadp_scenario_schema_check_*`；`STUDIO_TEST_DATABASE_URL` → `eadp_auth_check_*`；`check:transactions` → `eadp_scenario_transaction_check_*`。未设置变量的跳过不计入通过。
 
 ## 验证环境准备（所有 DB 套件共用）
@@ -61,7 +61,7 @@ pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.t
   - `ComparisonFailureSchema`/`ComparisonFailure`、`ConsistencyConflictInputSchema`、`SubmitConsistencyComparisonSchema`/`SubmitConsistencyComparisonRequest`、`ConsistencyConflictView`、`ConsistencyComparisonView`、`ConsistencyContextView`
   - asset-domain：`GENERAL_SCENARIO_TITLE`、`GENERAL_SCENARIO_SUMMARY`、`generalScenarioMetadata(entityId)`、`generalScenarioDocument(entityId): string`、`parseBuiltinScenario(markdown, entityId): BuiltinScenarioMetadata`
 
-- [ ] **Step 1: 改写 `packages/contracts/src/index.ts`**
+- [x] **Step 1: 改写 `packages/contracts/src/index.ts`**
 
 按下列锚点编辑（均为精确替换）：
 
@@ -180,7 +180,7 @@ export interface ConsistencyContextView {
 }
 ```
 
-- [ ] **Step 2: 改写 `packages/asset-domain/src/index.ts`**
+- [x] **Step 2: 改写 `packages/asset-domain/src/index.ts`**
 
 1. `validateMaterialMetadata`（:81-84）的模板身份检查从仅 scenario 推广到 scenario+requirement：
 
@@ -245,7 +245,7 @@ export function parseBuiltinScenario(markdown: string, entityId: string): Builti
 
 `BuiltinScenarioMetadata` 需要从 `@eadp/contracts` 导入（加到 :1 的 import 类型列表）。
 
-- [ ] **Step 3: 类型检查并提交**
+- [x] **Step 3: 类型检查并提交**
 
 ```bash
 pnpm --filter @eadp/contracts typecheck && pnpm --filter @eadp/asset-domain typecheck
@@ -272,7 +272,7 @@ git commit -m "阶段二契约：需求去分类、REQ 模板绑定、双模板�
   - `saveConfirmation` 写入 `source_count`，需求来源补 `project_id`/`scenario_id` 列
   - `entityRow(c, projectId, id): Promise<Row>`（纯 SQL 存在性读取，供对比路径使用）
 
-- [ ] **Step 1: 改写编号预留（repository.ts:55-74 整体替换）**
+- [x] **Step 1: 改写编号预留（repository.ts:55-74 整体替换）**
 
 ```ts
 export interface EntityNumber { id: string; sequence: number; code: string }
@@ -297,7 +297,7 @@ export async function reserveEntityNumber(database: Database, projectId: string,
 }
 ```
 
-- [ ] **Step 2: 项目视图去分类、暴露通用场景预留身份（repository.ts:37-46）**
+- [x] **Step 2: 项目视图去分类、暴露通用场景预留身份（repository.ts:37-46）**
 
 `projectView` 删除 `categories: []`，签名改为纯同步组装；`project()`/`listProjects()` 追加预留身份查询：
 
@@ -324,7 +324,7 @@ export async function listProjects(c: Transaction): Promise<ProjectView[]> {
 }
 ```
 
-- [ ] **Step 3: 实体目录读写对齐（repository.ts:76-123）**
+- [x] **Step 3: 实体目录读写对齐（repository.ts:76-123）**
 
 `entities()` 的 view 字面量（:87）：删 `...(row.category_id !== null ? ...)` 与 `frozenBy: [], associationRevision: ...`，在 `kind` 后增 `...(row.builtin_key ? { builtinKey: row.builtin_key as 'general' } : {})`。
 
@@ -346,7 +346,7 @@ export async function saveEntity(c: Transaction, projectId: string, value: Entit
     }
 ```
 
-- [ ] **Step 4: 确认接受写入补齐（repository.ts:196-208）**
+- [x] **Step 4: 确认接受写入补齐（repository.ts:196-208）**
 
 `saveConfirmation` 的 INSERT 增加 `source_count` 列（值 = 需求固定场景来源数，scenario 为 0），需求来源 INSERT 补 `project_id`/`scenario_id`：
 
@@ -362,7 +362,7 @@ export async function saveEntity(c: Transaction, projectId: string, value: Entit
 
 注意：`metadata.kind === 'requirement'` 处 `metadata` 类型现为联合，BuiltinScenarioMetadata 不会进入此路径（内置不经过 saveConfirmation 的用户分支），无需额外收窄——TS 上 `metadata.kind` 判别后即可访问 `templateRef` 等字段；如有残余类型错误，用 `metadata.kind === 'scenario' || metadata.kind === 'requirement'` 判别收窄。
 
-- [ ] **Step 5: 新增纯 SQL 实体读取（供对比路径，不触发 Git）**
+- [x] **Step 5: 新增纯 SQL 实体读取（供对比路径，不触发 Git）**
 
 ```ts
 /** Control-row read without fixed-material hydration; comparison paths must not touch Git. */
@@ -372,7 +372,7 @@ export async function entityRow(c: Transaction, projectId: string, id: string): 
 }
 ```
 
-- [ ] **Step 6: 更新 `check-transactions.ts` 并运行 schema 回归**
+- [x] **Step 6: 更新 `check-transactions.ts` 并运行 schema 回归**
 
 `apps/collaboration-api/src/persistence/check-transactions.ts`：删除 `project.categories` 赋值（:32）与 `categoryId`（:40）；`initial` 实体字面量删 `frozenBy/associationRevision`；把编号检查泛化为 scenario+requirement 双类型（各调 `reserveEntityNumber`，断言 `SC-`/`REQ-` 前缀、回滚不回收、并发唯一）。
 
@@ -385,7 +385,7 @@ pnpm --filter @eadp/collaboration-api exec tsx --test src/persistence/*.test.ts
 ```
 预期：schema 套件全过（对比表/编号/预置互斥回归）；事务检查通过。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add apps/collaboration-api/src/persistence/repository.ts apps/collaboration-api/src/persistence/check-transactions.ts
@@ -408,7 +408,7 @@ git commit -m "持久层对齐目标 schema：双类型编号、去分类与冻�
   - `GitLabContent.loadProjectTemplates(...)` 返回 `{ scenarios: ProjectTemplates; requirements: ProjectTemplates }`（`ProjectTemplates` 形状不变）；`verifyTemplate(actor, gitlabProjectId, kind: 'scenario' | 'requirement', fixed, templateId?)`；`verifyBinding(gitlab, content, actor, project, kind, input)`
   - `service.reserve`：scenario 与 requirement 都经 `reserveEntityNumber`；requirement 校验需求模板目录并绑定；无分类校验、无批次分支
 
-- [ ] **Step 1: 先改测试（失败先行）**
+- [x] **Step 1: 先改测试（失败先行）**
 
 `integration.test.ts`：fixture 的 `project` 删 `categories`；`scenario()`/`requirement()` 实体删 `frozenBy/associationRevision`；`metadata()` 的 requirement 分支（:17）改 `{ ...common, kind: 'requirement', templateId: 'requirement-default', templateRef: { commitSha: fixed.commitSha, path: '.template/requirement-default.md', sha256: '0'.repeat(64) } }`；删除 :29 的批次改写用例，改为「已确认场景以普通 design 占用独立修订确认可通过」用例。
 
@@ -424,7 +424,7 @@ git commit -m "持久层对齐目标 schema：双类型编号、去分类与冻�
 
 运行 `pnpm --filter @eadp/collaboration-api exec tsx --test src/modules/integration.test.ts src/gitlab-content.test.ts` 确认失败。
 
-- [ ] **Step 2: occupations.ts 去批次（整体替换关键函数）**
+- [x] **Step 2: occupations.ts 去批次（整体替换关键函数）**
 
 删除 `assertNotFrozen`（:14）。`claim`（:15-35）替换为：
 
@@ -452,7 +452,7 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
 
 （其余逻辑不变：design 占用 + requirement、validatePrerequisites、来源逐一 `fixedVersion` 真实读出。）同时在 `updateRelations` 开头加 `requireCondition(!value.builtinKey, 'BUILTIN_SCENARIO_IMMUTABLE', ...)`——虽需求才走此路径，防御性保留。
 
-- [ ] **Step 3: visibility.ts / templates.ts / repairs.ts**
+- [x] **Step 3: visibility.ts / templates.ts / repairs.ts**
 
 `visibility.ts:7-8`：destructuring 与返回列表删 `frozenBy, associationRevision`，增 `builtinKey`。
 
@@ -466,7 +466,7 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
 
 `repairs.ts:37`：`['design', 'scenario-batch']` 改 `'design'` 单值比较，并在同处加 builtin 拒绝。
 
-- [ ] **Step 4: integration.ts 去批次（精确替换）**
+- [x] **Step 4: integration.ts 去批次（精确替换）**
 
 1. 删除 `validateBatch`（:22-32）。
 2. `validateSources`（:33-45）：删 `pending` 分支（:41-42），保留：
@@ -510,7 +510,7 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
 6. `confirmMaterial`（:110-116）：删 `value.categoryId = metadata.categoryId;`。
 7. import 清理：删 `assertNotFrozen` 引用。
 
-- [ ] **Step 5: service.ts 改写**
+- [x] **Step 5: service.ts 改写**
 
 1. `reserve`（:81-130）替换核心段：
 
@@ -563,7 +563,7 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
     await templates.verifyBinding(this.gitlab, this.content, actor, project, kind, input);
 ```
 
-- [ ] **Step 6: gitlab-content.ts 双模板目录与需求模板核验**
+- [x] **Step 6: gitlab-content.ts 双模板目录与需求模板核验**
 
 1. `loadProjectTemplates`（:34-48）返回双目录：
 
@@ -627,7 +627,7 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
 
 5. `service.projectTemplates`（:170-173）随行展开：`return { acceptedHead: project.recognizedHead, ...await this.content.loadProjectTemplates(...) }` 现在返回 `{ acceptedHead, scenarios, requirements }`。
 
-- [ ] **Step 7: 运行单元测试与类型检查**
+- [x] **Step 7: 运行单元测试与类型检查**
 
 ```bash
 pnpm --filter @eadp/collaboration-api typecheck
@@ -635,7 +635,7 @@ pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.t
 ```
 预期全绿（studio-plugin 红属预期，Task 6 处理）。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add apps/collaboration-api/src
@@ -658,7 +658,7 @@ git commit -m "协同后台去批次化：独立占用与确认、REQ 编号、�
   - `GitLabContent.readBuiltinScenario(actor, gitlabProjectId, fixed, entityId): Promise<BuiltinScenarioMetadata>`
   - `ProjectView.generalScenario` 在项目创建（assigned）后即可见
 
-- [ ] **Step 1: 先写失败测试**
+- [x] **Step 1: 先写失败测试**
 
 `project-initialization.test.ts` 扩展 fixture（GitLab HTTP fixture 已有 tree/blob 模拟），新增用例：
 - 初始化提交缺 `场景/通用场景.md` → `GENERAL_SCENARIO_REQUIRED`
@@ -669,7 +669,7 @@ git commit -m "协同后台去批次化：独立占用与确认、REQ 编号、�
 
 运行确认失败。
 
-- [ ] **Step 2: 创建项目时预留通用场景身份（projects.ts）**
+- [x] **Step 2: 创建项目时预留通用场景身份（projects.ts）**
 
 在 `createProject` 的 assigned 事务（:94-98）内、audit 之前插入：
 
@@ -683,7 +683,7 @@ git commit -m "协同后台去批次化：独立占用与确认、REQ 编号、�
 
 （ON CONFLICT 兜底：assigned 事务只会执行一次，重试在 :51 提前返回。）
 
-- [ ] **Step 3: 初始化核验通用场景文件（project-initialization.ts）**
+- [x] **Step 3: 初始化核验通用场景文件（project-initialization.ts）**
 
 1. import 增 `generalScenarioDocument`（来自 `@eadp/asset-domain`）与 `FixedReference` 类型。
 2. 函数签名改 `Promise<{ generalFixed: FixedReference }>`；:36 的目录校验改为要求双目录：
@@ -708,7 +708,7 @@ git commit -m "协同后台去批次化：独立占用与确认、REQ 编号、�
 
 4. 末尾 `return { generalFixed: { commitSha, path: '场景/通用场景.md', sha256: createHash('sha256').update(generalBytes).digest('hex') } };`
 
-- [ ] **Step 4: 初始化事务写入预置接受（projects.ts initializeProject）**
+- [x] **Step 4: 初始化事务写入预置接受（projects.ts initializeProject）**
 
 :122-129 替换为：
 
@@ -737,7 +737,7 @@ git commit -m "协同后台去批次化：独立占用与确认、REQ 编号、�
 
 import 增 `GENERAL_SCENARIO_TITLE, GENERAL_SCENARIO_SUMMARY`（`@eadp/asset-domain`）。事务顺序满足触发器：initialization guard 要求 state='assigned'（saveProject 之前成立）；提交时延迟触发器核验不变量。
 
-- [ ] **Step 5: 内置固定读取路径（repository.ts + gitlab-content.ts + service.ts）**
+- [x] **Step 5: 内置固定读取路径（repository.ts + gitlab-content.ts + service.ts）**
 
 1. `RepositoryContext`（repository.ts:11-14）增 `loadBuiltin?: (projectId: string, fixed: FixedReference, entityId: string) => Promise<BuiltinScenarioMetadata>`；新增：
 
@@ -800,7 +800,7 @@ function stripMaterial(value: unknown): unknown {
         },
 ```
 
-- [ ] **Step 6: 运行测试**
+- [x] **Step 6: 运行测试**
 
 ```bash
 pnpm --filter @eadp/collaboration-api typecheck
@@ -810,7 +810,7 @@ STUDIO_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_auth_chec
 
 `backend-lifecycle.test.ts` 初始化用例需先行扩展（随 Step 1 一起改）：创建项目后 GET state 断言 `project.generalScenario.code === 'SC-0001'`；初始化成功后断言目录含 builtinKey='general' 实体、`confirmationStatus='confirmed'`、且对其 `claim` 返回 `BUILTIN_SCENARIO_IMMUTABLE`；重复 initialize 重放返回同一项目视图不重复预置。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add apps/collaboration-api/src tests/collaboration/backend-lifecycle.test.ts
@@ -836,7 +836,7 @@ git commit -m "项目初始化系统预置通用场景：身份预留、固定�
   - `service.submitComparison / listComparisons / getComparison / consistencyContext`
   - 路由：`POST /v1/projects/:projectId/consistency-comparisons`、`GET …/consistency-comparisons`、`GET …/consistency-comparisons/:comparisonId`、`GET …/entities/:entityId/consistency-context`
 
-- [ ] **Step 1: 先建失败测试 `tests/collaboration/backend-comparisons.test.ts`**
+- [x] **Step 1: 先建失败测试 `tests/collaboration/backend-comparisons.test.ts`**
 
 复用 `backend-scenarios.test.ts` 的启动夹具（GitLab HTTP fixture + 临时库初始化项目）。用例清单（对应 R15/R20/R21/R23/R24/R25 后台部分）：
 1. 手动提交 completed+complete+2 条冲突 → 200，视图含 conflicts 且 conflictCount=2；再 GET 列表/详情一致。
@@ -851,7 +851,7 @@ git commit -m "项目初始化系统预置通用场景：身份预留、固定�
 
 运行确认全部失败（路由 404）。
 
-- [ ] **Step 2: repository 对比持久化（追加到 repository.ts 末尾）**
+- [x] **Step 2: repository 对比持久化（追加到 repository.ts 末尾）**
 
 ```ts
 async function comparisonView(c: Transaction, row: Row): Promise<ConsistencyComparisonView> {
@@ -909,7 +909,7 @@ export async function getComparison(c: Transaction, projectId: string, id: strin
 }
 ```
 
-- [ ] **Step 3: repository.consistencyContext（纯 SQL，不加载材料正文）**
+- [x] **Step 3: repository.consistencyContext（纯 SQL，不加载材料正文）**
 
 ```ts
 /** Formal relation catalog for comparison inputs; control fields only, no Git reads. */
@@ -934,7 +934,7 @@ export async function consistencyContext(c: Transaction, projectId: string, enti
 }
 ```
 
-- [ ] **Step 4: service 方法**
+- [x] **Step 4: service 方法**
 
 ```ts
   async submitComparison(actor: Actor, projectId: string, input: SubmitConsistencyComparisonRequest) {
@@ -967,7 +967,7 @@ export async function consistencyContext(c: Transaction, projectId: string, enti
 
 注意 `submitComparison` 用 `transact` 而非 `mutate`：对比记录表自带 operation_key 幂等，不写 `studio_operations`，避免双轨。
 
-- [ ] **Step 5: 路由（routes.ts:51 之后追加）**
+- [x] **Step 5: 路由（routes.ts:51 之后追加）**
 
 ```ts
   write('POST', `${base}/consistency-comparisons`, contract.SubmitConsistencyComparisonSchema, (a, p, b) => service.submitComparison(a, p.projectId!, b));
@@ -983,14 +983,14 @@ export async function consistencyContext(c: Transaction, projectId: string, enti
 
 （routes.ts 需 import `requireCondition`：现无引用，从 `@eadp/asset-domain` 引入。）
 
-- [ ] **Step 6: 运行新套件与全量后端测试**
+- [x] **Step 6: 运行新套件与全量后端测试**
 
 ```bash
 STUDIO_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_auth_check_wave1 pnpm --filter @eadp/collaboration-api exec tsx --test ../../tests/collaboration/backend-comparisons.test.ts
 ```
 预期全绿。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add apps/collaboration-api/src tests/collaboration/backend-comparisons.test.ts
@@ -1010,25 +1010,26 @@ git commit -m "一致性对比记录 API：白名单提交、表级幂等、关�
 - Consumes: Task 1 契约。
 - Produces: studio-plugin 编译通过；候选创建传 `templateId/templateRef`（取需求模板目录默认项）；**不实现**联合拆分、通用场景生成、双栏重构（波次二/三）。
 
-- [ ] **Step 1: 删除分类与批次引用**
+- [x] **Step 1: 删除分类与批次引用**
 
 逐处精确删除/改写（以编译错误清单为准推进）：`ports.ts` 的 initialMetadata 去 categoryId 校验；`studio.ts` 删 `/categories` 拉取与 `createMaterial` 的 categoryId 传参，需求创建改从 `projectTemplates().requirements` 取 `defaultTemplateId` 及对应 `fixed` 传入 `templateId/templateRef`；`shared/studio.ts` 的 `Candidate` 与 `selectCandidate` 删 `categoryId`。
 
-- [ ] **Step 2: 客户端组件去分类**
+- [x] **Step 2: 客户端组件去分类**
 
 MaterialCatalog 删分类侧栏/筛选的渲染与状态（保留既有卡片/分页结构，波次三再按样稿重构）；MaterialEditor/StudioPanel/ScenarioChatPanel 删 categoryId 字段读写；`frozenBy`/`associationRevision` 的展示改为不渲染（冻结提示随批次删除）。
 
-- [ ] **Step 3: 测试同步与全量校验**
+- [x] **Step 3: 测试同步与全量校验**
 
 ```bash
-pnpm --filter @eadp/studio-plugin typecheck
+# studio-plugin 无独立 typecheck 脚本；其编译门禁为装配进 DSH 构建树后的 tsc -b
+node apps/desktop-distribution/build/prepare-studio-plugin.mjs && pnpm --dir .local/build/dsh exec tsc -b
 pnpm --filter @eadp/contracts typecheck && pnpm --filter @eadp/asset-domain typecheck && pnpm --filter @eadp/collaboration-api typecheck
 pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
 node --test tests/gitlab-auth-host/ tests/windows-desktop/ tests/scripts/  # 按各套件实际入口
 ```
 逐处修复引用旧字段的测试断言（删分类、frozenBy 相关断言，实体夹具补 `templateId/templateRef`）。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add packages/studio-plugin tests
@@ -1044,7 +1045,7 @@ git commit -m "消费方适配新契约：移除分类与批次字段引用，�
 - Modify: `apps/collaboration-api/README.md`（删分类、批次、`POST /categories` 描述，补对比端点与通用场景预置）
 - Modify: `docs/milestones.md`（阶段二状态追加波次一记录）、`docs/design/02-requirements-wave1-plan.md`（勾选与偏差记录）
 
-- [ ] **Step 1: backend-scenarios.test.ts 重写**
+- [x] **Step 1: backend-scenarios.test.ts 重写**
 
 - 删除 S21（:158-167 需求分类）、S23/S24（:168-191 批次冻结）及所有 `scenario-batch`/`frozenBy`/`expectedAssociationRevision`/`batchRequirementIds`/`categories` 引用（:53、:78、:90-99、:123、:177、:181、:187-188）。
 - 新增/改写用例（对应 R01/R02/R04/R12/R13 后台部分）：
@@ -1055,11 +1056,11 @@ git commit -m "消费方适配新契约：移除分类与批次字段引用，�
   - R12：关系写入构造自引用/重复/环 → `INVALID_PREREQUISITE`/`DUPLICATE_PREREQUISITE`/`DEPENDENCY_CYCLE`；绑定未接受版本的前置 → `PREREQUISITE_UNCONFIRMED`；文档确认不受未完成前置阻断（确认成功）。
   - R13：已确认场景直接以 design 占用独立修订并确认（无 BATCH_REQUIRED）；关联需求可独立占用/确认；打开/刷新不产生占用或来源升版。
   - 独立确认：单材料 integration（confirmations 长度 1）；长度 >1 → `SINGLE_ENTITY_REQUIRED`。
-- [ ] **Step 2: 同步其余套件**
+- [x] **Step 2: 同步其余套件**
 
 `backend-consistency.test.ts`：reserve/claim 请求体去 categoryId/batch（:45-56）；`studio-workflow.test.ts` 删 `addCategory` 与 `categoryId` 参数。
 
-- [ ] **Step 3: 全量 DB 回归**
+- [x] **Step 3: 全量 DB 回归**
 
 ```bash
 export STUDIO_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_auth_check_wave1
@@ -1069,11 +1070,11 @@ SCENARIO_TRANSACTION_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/
 ```
 注意每套需独立空库（库名后缀区分），全部通过后记录命令与结果。
 
-- [ ] **Step 4: 文档更新**
+- [x] **Step 4: 文档更新**
 
 `README.md`（apps/collaboration-api）：删除分类、批次、`POST /categories` 段落；新增「一致性对比」节（四个端点、白名单约束、幂等语义）与「通用场景预置」节（初始化事务、系统预置互斥）。`docs/milestones.md` 阶段二节追加：波次一完成范围、验证命令与结果、未覆盖项（波次二/三与 R 矩阵产品验收）。本计划文件勾掉已完成步骤并记录偏差。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tests apps/collaboration-api/README.md docs/milestones.md docs/design/02-requirements-wave1-plan.md
@@ -1081,6 +1082,14 @@ git commit -m "阶段二波次一：测试套件重写与文档收尾"
 ```
 
 ---
+
+## 偏差记录（执行收尾时回写）
+
+- **Task 4（初始化事务写入顺序）**：计划字面 SQL 顺序（确认 → 实体）不可行——`studio_entities.current_confirmation_id` 与 `studio_confirmations` 对实体的外键均不可延迟。实际实现为同事务三步：先写实体（`current_confirmation_id` 为 null）→ 写入系统预置确认 → UPDATE 回填 `current_confirmation_id`。
+- **Task 5（错误码清单补登）**：`CONFLICT_ORDINAL_SEQUENCE`（422）由本计划 Task 5 代码引入，但原 Global Constraints 错误码清单遗漏，收尾时已补入。
+- **Task 6（编译门禁命令修正）**：`@eadp/studio-plugin` 没有 `typecheck` 脚本，其编译门禁是装配进 DSH 构建树后的 `tsc -b`（`node apps/desktop-distribution/build/prepare-studio-plugin.mjs` 生成 `.local/build/dsh`）；Task 6 Step 3 命令已据此修正。
+- **Task 6 已知缺口（波次二范围，有意遗留）**：插件初始化清单写入器（`packages/studio-plugin/src/host/application/projects.ts` 的 `expectedManifest`/`initializeFiles`）尚不产出 `requirementTemplates` 与 `场景/通用场景.md`，插件驱动的新项目初始化对新后端会失败，待波次二补齐。
+- **Task 7 Step 3（回归命令按套件拆分）**：四套 tsx DB 套件共用 `eadp_auth_check_*` 命名且各自完整执行非幂等的 `db/schema.sql`，合并为单条 tsx 命令会在同一库上并发建类型冲突；实际执行为每套单独重建空库后逐一运行。
 
 ## 自查记录
 

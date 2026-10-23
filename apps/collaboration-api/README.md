@@ -44,7 +44,7 @@ node --use-env-proxy --env-file=.env --import=tsx src/bootstrap.ts
 
 ## 固定材料
 
-UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`），同项目重名依次追加 `-2`、`-3`，改名时文件随之改名；稳定身份只在唯一的 `eadp-metadata` 块中。下例假定项目 `p1` 已接受场景 `s1` 的第 1 版、分类 `procurement` 已存在，且同一确认提交中包含列出的依据文件：
+UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`），同项目重名依次追加 `-2`、`-3`，改名时文件随之改名；稳定身份只在唯一的 `eadp-metadata` 块中。下例假定项目 `p1` 已接受场景 `s1` 的第 1 版，且同一确认提交中包含列出的依据文件：
 
 ````md
 ```eadp-metadata
@@ -53,7 +53,8 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
   "kind": "requirement",
   "title": "订单审核",
   "summary": "提交后审核，退回后可修改并重新提交。",
-  "categoryId": "procurement",
+  "templateId": "requirement",
+  "templateRef": { "commitSha": "<40 位小写提交 SHA>", "path": ".template/requirement.md", "sha256": "<模板文件 SHA-256>" },
   "scenarioIds": ["s1"],
   "prerequisites": [],
   "sources": [{ "projectId": "p1", "entityId": "s1", "version": 1 }],
@@ -93,7 +94,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 业务访谈确认：订单提交后由审核员审核，退回后允许修改并重新提交。
 ```
 
-完整字段及 Schema 见 `@eadp/contracts`。每个需求至少绑定一个同项目已确认场景及其固定版本，`scenarioIds` 与场景 `sources` 一一对应，可有多个来源。场景不含 `categoryId`，必须含 `templateId` 和 `templateRef: {commitSha,path,sha256}`；业务编号由后台分配，不写成可由材料修改的编号字段。场景必须适用；只有需求可声明 `applicability: {status:"not-applicable",reason:"..."}`，该确认版本会阻断后续生产与新采用，旧历史保留。
+完整字段及 Schema 见 `@eadp/contracts`。每个需求至少绑定一个同项目已确认场景及其固定版本，`scenarioIds` 与场景 `sources` 一一对应，可有多个来源。场景与需求均不含分类字段，都必须含 `templateId` 和 `templateRef: {commitSha,path,sha256}`（分别指向场景/需求模板目录中的已接受固定版本）；业务编号由后台分配，不写成可由材料修改的编号字段。场景必须适用；只有需求可声明 `applicability: {status:"not-applicable",reason:"..."}`，该确认版本会阻断后续生产与新采用，旧历史保留。
 
 `businessEvidence` 是用户选定的正式依据：原始文件及实际引用的抽取文本归档于用户工程 `.eadp/evidence/`，每项记录来源、文件路径、SHA-256 及实际引用的文本行范围。二进制原件可与 UTF-8 抽取文本分别列入 `files`，`ranges` 指向已归档的可读文本。材料顶层 `files` 是显式关联文件的路径/hash 清单。两类文件本体都必须能从材料确认的同一提交读取，允许该树中未修改的文件；缺失、越界、hash 不符或引用范围不成立均阻断。未选资料、会话、提示词及工具过程只留本地。
 
@@ -114,9 +115,9 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 | GET `/v1/projects`、POST `/v1/projects` | 本人可见项目；创建 private 空库并登记 pending 项目 |
 | POST `P/initialize` | 核验首提交、远端头、清单、四个业务目录及默认场景模板后 ready 的 ProjectView |
 | GET `P` | `ProjectState`：项目、实体、集成操作、基线 |
-| POST `P/categories`、POST `P/entities` | 项目、预留的稳定实体（revision 0）；场景仅名称即可创建并取得编号 |
+| POST `P/entities` | 预留的稳定实体（revision 0）；场景仅名称即可创建并取得 `SC-0001` 形编号；需求须传 `templateId`/`templateRef` 与至少一个同项目已接受场景来源，取得 `REQ-0001` 形编号 |
 | PUT `P/entities/:id` | 持有效设计占用更新名称/摘要，返回新 revision；不接受编号字段 |
-| GET `P/entities/:id/revision-impact` | 已确认场景的修订影响清单及当前 revision/associationRevision，不领取占用 |
+| GET `P/entities/:id/revision-impact` | 已确认场景的修订影响清单及当前 revision，不领取占用 |
 | GET `P/templates` | 按已接受 Git 头读取默认模板及模板固定引用，不保存后台模板清单 |
 | PUT `P/entities/:id/template` | 持有效占用显式切换场景模板绑定，返回新 revision |
 | POST `P/entities/:id/repairs` | 本次用户授权对应的 RepairTaskView |
@@ -134,24 +135,26 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 | GET/POST `P/adoptions` | 采用记录列表/本次受理记录 |
 | POST `P/adoptions/:id/success` | 绑定目标确认后的复用成功记录 |
 | GET/POST `P/entities/:id/receipts` | 交接收悉列表/记录 |
+| POST `P/consistency-comparisons`、GET `P/consistency-comparisons`、GET `P/consistency-comparisons/:id` | 提交/查询一致性对比记录（列表可按 `entityId` 过滤并分页） |
+| GET `P/entities/:id/consistency-context` | 纯 SQL 的正式关系目录投影（场景来源、关联需求、前置及确认引用），不读取 Git |
 | POST `P/publication-authorizations`、GET `P/publication-current` | 仅可读取当前基线的 5 分钟特定发布授权/门禁结果 |
 | GET/POST `P/deployment` | 唯一当前远程站点控制记录；未部署为 null |
 
 新建项目只接受 `{name,namespaceId,path,idempotencyKey}`；namespace 必须来自后端的可建仓群组。群组有效成员还需满足 `project_creation_level`：developer 至少 30、maintainer 至少 40，未知策略阻断；不以管理 token 的建仓能力或可见群组代替用户权限。后端创建 private 空库（不初始化 README、不传仅适用于 README 初始化的 default_branch），给现有绑定创建者分配 Maintainer（40），记录 pending 后返回；稳定分支固定 main，由 Host 首次 push 建立。
 
-`ProjectView` 含 `namespaceId`、`namespacePath`、`initializationStatus: pending|ready` 和 `recognizedHead: string|null`。pending 时认可头为 null，拒绝占用、材料确认、完成基线及发布。Host 本机 Git init，写固定四目录、模板和 `project.assets.json`，完成 root 首提交、push main，再向 initialize 发送 `{commitSha,idempotencyKey}`。后端核验真实远端头、root 首提交、四目录 tree 和 manifest 的 `schemaVersion:1`、`projectId`、`gitlabProjectId`、`repositoryUrl`、`stableBranch`、`directories: ["场景","需求","交接","原型代码"]` 及 `scenarioTemplates` 后，才原子置 ready 并登记认可初始头。初始化还要求 `.template/` tree、清单中可读且非空的默认模板与全部模板文件。客户端自报 `gitlabProjectId` 的旧 RegisterProject 入口不再支持。
+`ProjectView` 含 `namespaceId`、`namespacePath`、`initializationStatus: pending|ready` 和 `recognizedHead: string|null`。pending 时认可头为 null，拒绝占用、材料确认、完成基线及发布。Host 本机 Git init，写固定四目录、模板和 `project.assets.json`，完成 root 首提交、push main，再向 initialize 发送 `{commitSha,idempotencyKey}`。后端核验真实远端头、root 首提交、四目录 tree 和 manifest 的 `schemaVersion:1`、`projectId`、`gitlabProjectId`、`repositoryUrl`、`stableBranch`、`directories: ["场景","需求","交接","原型代码"]`、`scenarioTemplates` 与 `requirementTemplates` 双模板目录后，才原子置 ready 并登记认可初始头。初始化还要求 `.template/` tree、清单中可读且非空的默认模板与全部模板文件，以及 `场景/通用场景.md` 的字节精确系统预置文档。客户端自报 `gitlabProjectId` 的旧 RegisterProject 入口不再支持。
 
 建仓、分配成员、推送与 PostgreSQL 不构成一个事务；统一使用 `studio_projects` 保存创建人/key、原请求哈希、稳定项目 UUID、namespace/path/name、随机 marker 及 reserved → creating → created → assigned → ready 生命周期，不再复制到独立项目创建表。失败保留已确定阶段，响应丢失先核对。相同请求的建仓窗口使用 PostgreSQL session advisory lock 串行，进程/连接结束自动释放，不开启跨 HTTP 调用的数据库事务；远端响应丢失时按 path 与 marker 核对归属，不接管未知仓库。同一幂等键及相同输入恢复同一结果，输入变化拒绝；不因 path 冲突接管未知仓库，不重复建仓，不覆盖或删除本地已有现场。initialize 未核验完成保留 pending，不伪报 ready。
 
 持久业务写请求均含 `idempotencyKey`（短发布授权是一次性签发用途，不落库），同项目内同键只能对应同操作者、同动作和相同请求。重连先查询，404 表示后端尚无该操作者的受理结果，不能推断 Git 未发生。错误结构统一为 `{error:{code,message,details?}}`，冲突通常为 409。
 
-场景新建请求为 `{idempotencyKey,kind:"scenario",title}`，可显式选择已接受的 `templateId`；不传模板时绑定当前共享默认模板。场景不接受分类、编号或来源字段。后台独立提交编号预留，以项目计数器行锁原子分配 `sequence` 与 `SC-0001` 格式的 `code`，超过 9999 自然增长；同一新建键重试复用实体 UUID 与编号，改名/修订不变，失败可留空号但不回收。需求仍使用分类，创建时必须传 `sources`，每项含同项目场景 ID 与已确认版本。更新需求关联时同时传 `scenarioIds`、`sources`、`prerequisites` 及占用 token，保持来源一一对应。
+场景新建请求为 `{idempotencyKey,kind:"scenario",title}`，可显式选择已接受的 `templateId`；不传模板时绑定当前共享默认模板。场景不接受分类、编号或来源字段。后台独立提交编号预留，以项目计数器行锁按类型原子分配 `sequence` 与 `SC-0001`/`REQ-0001` 格式的 `code`，超过 9999 自然增长；同一新建键重试复用实体 UUID 与编号，改名/修订不变，失败可留空号但不回收。需求不使用分类，创建时必须传 `templateId`、`templateRef`（指向需求模板目录默认项或显式选择的已接受版本）和 `sources`，每项含同项目场景 ID 与已接受版本（内置通用场景的系统预置版本同样可绑定）。更新需求关联时同时传 `scenarioIds`、`sources`、`prerequisites` 及占用 token，保持来源一一对应；前置必须绑定已接受的需求材料版本（`PREREQUISITE_UNCONFIRMED`），并校验自引用、重复与环（`INVALID_PREREQUISITE`/`DUPLICATE_PREREQUISITE`/`DEPENDENCY_CYCLE`）。
 
-目录更新请求为 `{idempotencyKey,token,title,summary?}`，只接受当前材料设计占用。已确认场景只读打开不领取占用；先 GET `revision-impact` 查看影响，再以 `purpose:"scenario-batch"` 显式领取修订批次。不能以普通 `design` 占用绕过已确认场景的批次修订。
+目录更新请求为 `{idempotencyKey,token,title,summary?}`，只接受当前材料设计占用。已确认场景只读打开不领取占用；可先 GET `revision-impact` 查看影响，然后直接以 `purpose:"design"` 占用独立修订并确认，没有批次或冻结概念，修订不自动改写关联需求或其来源绑定。
 
-材料与原型复用集成底座，材料分支的 `stage` 为 `material`、`prototype` 或 `scenario-batch`，携带 `entityId`、`token`、`sourceSha`、`expectedHead`、`candidateSha`、`allowedPaths`、`checks` 和 `confirmations`。每项 confirmation 包含 `{entityId,expectedRevision,fixed,readHash,authorConfirmed:true,confirmationMethod}`，其中 `fixed={commitSha,path,sha256}`，`readHash` 必须等于最终固定材料的 SHA-256；不传 `metadata` 或业务清单。`direct` 对应用户阅读版本；`ai-assisted` 另传绑定候选与输入的 `reviewEvidence`；`ai-repair` 另传 `repairTaskId`，对应任务最终已记录 hash。
+材料与原型复用集成底座，材料分支的 `stage` 为 `material` 或 `prototype`，携带 `entityId`、`token`、`sourceSha`、`expectedHead`、`candidateSha`、`allowedPaths`、`checks` 和 `confirmations`。每次集成只确认其占用的单个实体（`confirmations` 长度必须为 1 且指向根实体，否则 `SINGLE_ENTITY_REQUIRED`）。每项 confirmation 包含 `{entityId,expectedRevision,fixed,readHash,authorConfirmed:true,confirmationMethod}`，其中 `fixed={commitSha,path,sha256}`，`readHash` 必须等于最终固定材料的 SHA-256；不传 `metadata` 或业务清单。`direct` 对应用户阅读版本；`ai-assisted` 另传绑定候选与输入的 `reviewEvidence`；`ai-repair` 另传 `repairTaskId`，对应任务最终已记录 hash。
 
-Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、冻结、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；项目根目录只允许 `CONTEXT.md`，其余根目录文件不进入写入范围。材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
+Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；项目根目录只允许 `CONTEXT.md`，其余根目录文件不进入写入范围。材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
 
 场景模板保存在 `.template/<模板ID>.md`。项目 `project.assets.json` 的共享模板声明为：
 
@@ -170,13 +173,21 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 
 显式切换模板请求为 `{idempotencyKey,token,templateId,templateRef}`，引用必须在项目已接受 Git 历史中，且路径/hash 与该提交清单的模板身份一致。切换只更新绑定与 revision，不改写正文；进行中的修复授权或待接受确认须先处理。
 
-授权修复开始请求为 `{idempotencyKey,token,userActionId,startHash}`，只接受当前场景 design/scenario-batch 占用。事件均携带 `idempotencyKey`、`token`、`expectedHash`：`round` 另含 `hashAfter`、`improved`；`pause` 的原因固定为 `business-answer-required`；`resume` 必须含新的显式 `userActionId`；`terminate` 原因为 cancelled/concurrent-edit/missing-evidence/no-improvement/round-limit。累计最多 3 轮，暂停/续接不清零；无改善、并发修改、资料不可读、额度耗尽或用户取消时终止，结束占用撤销未完成授权。普通聊天不能续接任务，终止任务不能恢复。后台只记录授权和控制事件，不接收业务补答全文、会话、提示词或工具日志，也不新增 AI 端点。
+授权修复开始请求为 `{idempotencyKey,token,userActionId,startHash}`，只接受当前材料 design 占用。事件均携带 `idempotencyKey`、`token`、`expectedHash`：`round` 另含 `hashAfter`、`improved`；`pause` 的原因固定为 `business-answer-required`；`resume` 必须含新的显式 `userActionId`；`terminate` 原因为 cancelled/concurrent-edit/missing-evidence/no-improvement/round-limit。累计最多 3 轮，暂停/续接不清零；无改善、并发修改、资料不可读、额度耗尽或用户取消时终止，结束占用撤销未完成授权。普通聊天不能续接任务，终止任务不能恢复。后台只记录授权和控制事件，不接收业务补答全文、会话、提示词或工具日志，也不新增 AI 端点。
 
-一次只受理一个项目集成窗口，其他需求的本地任务和占用继续。Git 与数据库没有分布式事务：实际分支与认可头不一致时阻断下一集成和发布；占用释放作废旧操作、原子解冻，但不撤销在途 Git。已推送候选且原占用有效时续办同一操作；占用撤销后保留 Git 证据，由管理员在 Git 做可追溯反向纠正，核验纠正树等于原认可树后登记新头。不执行强推或自动丢弃现场。
+一次只受理一个项目集成窗口，其他需求的本地任务和占用继续。Git 与数据库没有分布式事务：实际分支与认可头不一致时阻断下一集成和发布；占用释放作废旧操作，但不撤销在途 Git。已推送候选且原占用有效时续办同一操作；占用撤销后保留 Git 证据，由管理员在 Git 做可追溯反向纠正，核验纠正树等于原认可树后登记新头。不执行强推或自动丢弃现场。
 
-场景批次用 `purpose=scenario-batch` 领取场景占用，同事务冻结全部相关需求；任何相关占用/其他冻结导致整体拒绝。在批次内预留新需求时传 `batch:{scenarioId,token}`，会递增场景 `associationRevision`。提交须带最新 `expectedAssociationRevision`、完整 `batchRequirementIds`；已完成的当前版本只保留，变化范围派生新 ID，未开始的相关需求全部同事务确认。失败不接受部分更新。
+前置按明确材料版本绑定已接受完成事件/认可 SHA。编辑新版本不篡改旧完成历史，也不会让新范围提前完成；明确指定旧完成版本仍可使用旧依据。完成产生单需求原型基线并自动释放；清单基线是独立 `handoff`/`baseline` 实体，只聚合已接受的完成版本，不重新批准原型。收悉只记录接收人及固定清单确认依据。
 
-前置按明确材料版本绑定已接受完成事件/认可 SHA。编辑新版本不篡改旧完成历史，也不会让新范围提前完成；明确指定旧完成版本仍可使用旧依据。完成产生单需求原型基线并自动释放；清单/批次基线是独立 `handoff`/`baseline` 实体，只聚合已接受的完成版本，不重新批准原型。收悉只记录接收人及固定清单确认依据。
+## 通用场景预置
+
+每个项目固定内置「通用场景」：建仓预留实体时即以专用操作键预留 `SC-0001` 编号，初始化事务核验 `场景/通用场景.md` 与系统约定的字节内容精确一致后，在同一事务写入实体与 `acceptance_kind='system-provisioned'` 的第 1 版接受记录；系统预置不填写业务确认人，真实初始化发起人保存在初始化接受记录中。`system-provisioned` 与 `user-confirmed` 互斥，只能由初始化事务写入；普通材料确认路径无法产生该途径。通用场景拒绝占用与编辑（`BUILTIN_SCENARIO_IMMUTABLE`），其固定读取走严格字节比对契约，不在普通解析失败后回退。需求可像普通已确认场景一样绑定其第 1 版作为来源。
+
+## 一致性对比
+
+一致性对比是独立、非阻断的记录能力，不执行任何 Git 操作、不加载固定材料正文。`POST P/consistency-comparisons` 提交当次结论与冲突摘要（`trigger: manual|confirmation`，confirmation 触发须绑定目标实体的一次材料确认且仅可记录一次）；记录落库即封存，对比与冲突不可变、无处理状态，也不存在修改/删除路由。列表与详情读取按 `entityId` 过滤并分页；`GET P/entities/:id/consistency-context` 以纯 SQL 投影正式关系目录（固定场景来源、关联需求、前置及其确认引用与占用提示），供客户端先行比对正式关系。
+
+提交走白名单契约：未知字段与任何越限（ID/操作键 ≤100 字符、摘要 ≤500 字符、每次冲突 ≤100 条、每条冲突涉及材料 1–100 个、序号 1–100 连续）整体拒绝（400/422），不截断。幂等按表自带 `operation_key`：同键同请求重放返回原记录，同键不同请求拒绝（`IDEMPOTENCY_CONFLICT`）；对比相关路径不产生 Git 读取。写要求仓库编辑成员权限，读要求读取成员权限。
 
 ## 验证边界
 
@@ -191,7 +202,7 @@ pnpm --filter @eadp/collaboration-api typecheck
 pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
 ```
 
-`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
+`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
 
 ```sh
 # 在共用实例中重建空的临时库；实例名与账号按本机实际情况替换。

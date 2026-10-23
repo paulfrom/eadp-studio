@@ -143,6 +143,16 @@
 
 **设计状态（2026-10-21）**：业务决策已逐项确认，阶段二完整设计及工程细化待整体确认，尚未实施。一致性对比独立、非阻断，通过手动入口及材料确认后自动发起，只读当前项目本地实际文件，不执行 Git 操作；先查已有关系，再查本地潜在关联，不自动改正式关系。场景／需求各维护同一文件，历史由原有 Git 流程保存；每次对比的结论与冲突摘要存协同后台，与文件及业务状态分开。冲突不设处理状态，解决在客户端完成；实际文件修改另走写入提议（整篇写入）及独立修订。取消整体关联冻结和强制同批确认。工程方案复用项目权限、修订号冲突检查和项目内提醒，详见[需求协同设计](design/02-requirements.md)、[一致性对比决策](adr/0003-user-directed-revision-consistency.md)及[通用场景决策](adr/0004-builtin-general-scenario.md)。
 
+**波次一实施记录（2026-10-23 完成）**：共享契约 + 协同后台已按 `docs/design/02-requirements-wave1-plan.md` 全部落地（Tasks 1–7）。完成范围：契约基座（双模板目录、REQ 编号、内置场景与一致性对比契约）、持久层对齐目标 schema、模块与服务层去批次化（独立占用/确认、需求模板绑定、内置场景防改写）、通用场景系统预置接受、一致性对比 API（白名单提交、表级幂等、纯 SQL 关系目录）、消费方机械适配、DB 套件重写与文档收尾。偏差与修正记录见计划文件「偏差记录」节。
+
+- 验证结果（隔离 PostgreSQL 17 容器 `eadp-wave1-pg`，每套独立重建空库）：
+  - `STUDIO_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_auth_check_wave1 pnpm --filter @eadp/collaboration-api exec tsx --test ../../tests/collaboration/backend-lifecycle.test.ts` → 10/10 通过；`backend-consistency.test.ts` → 9/9；`backend-scenarios.test.ts` → 19/19；`backend-comparisons.test.ts` → 11/11。
+  - `SCENARIO_SCHEMA_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_scenario_schema_check_wave1 node --test tests/collaboration/scenario-schema.test.mjs` → 11/11 通过。
+  - `SCENARIO_TRANSACTION_TEST_DATABASE_URL=postgres://postgres:test@localhost:55432/eadp_scenario_transaction_check_wave1 pnpm --filter @eadp/collaboration-api check:transactions` → 通过。
+  - `pnpm --filter @eadp/collaboration-api typecheck`、`pnpm --filter @eadp/contracts typecheck`、`pnpm --filter @eadp/asset-domain typecheck` → 通过；后端单元套件 `tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts` → 96/96 通过。
+  - 环境已知失败（与本波次无关，未计入）：`tests/windows-desktop/task-presets-runtime.test.mjs`（robocopy，仅 Windows）、`tests/scripts/model-selection-edits.test.mjs` 与 `studio-frame-edits.test.mjs`（Windows 产物/上游缓存漂移）。
+- 未覆盖项：波次二/三的 Host 侧工作（拆分候选契约与联合拆分、双栏重构等）；插件初始化清单写入器（`packages/studio-plugin/src/host/application/projects.ts`）尚不产出 `requirementTemplates` 与 `场景/通用场景.md`，插件驱动的新项目初始化待波次二补齐（`tests/collaboration/studio-workflow.test.ts` 的运行时端到端验证同样待该缺口关闭）；R 矩阵产品验收未执行。
+
 **需求材料补充决议**：需求不使用分类，删除分类词表和各入口约束，不引入默认分类或兼容层；后台按项目分配稳定 `REQ-0001` 编号，名称／修订不影响编号，技术 ID 保持不变而文件路径跟随名称。需求使用独立项目共享 Markdown 模板，支持内置默认及上传，复用场景模板管理模式。GWT 是规则及验收的推荐表达，不是语法门禁；[默认需求模板](design/templates/default-requirement.md)是设计样稿，尚未装入运行时。
 
 **场景衔接补充决议**：固定内置“通用场景”默认可选，不要求用户先创建、编辑或确认；沿用项目场景关联，使用真实系统预置引用。手工新建需求正文空白，AI 按模板归纳结论并主动提出写入提议，用户明确回答后整篇写入；从候选新建则承接所选内容。同一普通场景可多轮补拆，每轮参考已有需求；多个已确认场景可联合生成候选，每候选只绑定实际相关子集，由用户选用，不覆盖、修改或自动合并已有需求。[通用场景固定说明](design/templates/general-scenario.md)为设计样稿，尚未装入运行时。
