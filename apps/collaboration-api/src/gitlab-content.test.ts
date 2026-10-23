@@ -4,7 +4,7 @@ import { afterEach, mock, test } from 'node:test';
 import { DomainError, parseMaterial, parseProjectManifest } from '@eadp/asset-domain';
 import Fastify from 'fastify';
 import type { TSchema } from '@eadp/contracts';
-import { ConfirmationInputSchema, ReserveEntitySchema, reviewInputText } from '@eadp/contracts';
+import { ConfirmationInputSchema, ReserveEntitySchema, SubmitConsistencyComparisonSchema, reviewInputText } from '@eadp/contracts';
 import type { EntityView, MaterialMetadata, MaterialIntegrationRequest, TemplateIntegrationRequest, ProjectManifest, ProjectView } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import type { Actor } from './auth/session.js';
@@ -205,6 +205,31 @@ test('confirmation requests contain only controls and reject uploaded business m
   const f = fixture('material'), confirmation = f.input.confirmations[0]!;
   assert.equal(await accepts(ConfirmationInputSchema, confirmation), true);
   assert.equal(await accepts(ConfirmationInputSchema, { ...confirmation, metadata: f.metadata }), false);
+});
+
+test('comparison submissions follow the whitelist contract and sealed result rules', async () => {
+  const valid = { idempotencyKey: 'op-1', id: 'comparison-1', entityId: 'asset-1', trigger: 'manual', result: 'completed', coverage: 'complete', summary: '结论一致', conflicts: [] };
+  const conflict = { id: 'conflict-1', ordinal: 1, summary: '规则冲突', relation: 'formal', entities: ['asset-1'] };
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, valid), true);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, conflicts: [conflict, { ...conflict, id: 'conflict-2', ordinal: 2, relation: 'potential', entities: ['asset-1', 'asset-2'] }] }), true);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, trigger: 'confirmation', confirmationId: 'confirmation-1' }), true);
+  // 白名单与协议上限：多余字段、超限摘要、超限冲突与涉及材料、非法序号与非法标识一律拒绝
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, body: '材料正文' }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, summary: '长'.repeat(501) }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, conflicts: Array.from({ length: 101 }, (_, index) => ({ ...conflict, id: `conflict-${index}`, ordinal: index + 1 })) }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, conflicts: [{ ...conflict, entities: Array.from({ length: 101 }, (_, index) => `entity-${index}`) }] }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, conflicts: [{ ...conflict, ordinal: 0 }] }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, id: 'illegal id!' }), false);
+  // 结果与失败码组合：failed 需要非空摘要与非 cancelled 失败码，cancelled 必须为 cancelled，completed 不得携带失败码
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, result: 'failed', summary: '读取失败', failureCode: 'read-failed' }), true);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, result: 'failed', summary: '', failureCode: 'read-failed' }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, result: 'failed', summary: '读取失败', failureCode: 'cancelled' }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, result: 'cancelled', summary: '', failureCode: 'cancelled' }), true);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, result: 'cancelled', summary: '', failureCode: 'timeout' }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, failureCode: 'timeout' }), false);
+  // 手动提交不得携带确认引用，确认触发必须携带
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, confirmationId: 'confirmation-1' }), false);
+  assert.equal(await accepts(SubmitConsistencyComparisonSchema, { ...valid, trigger: 'confirmation' }), false);
 });
 
 test('explicit business checks accept custom headings and short author-confirmed text', () => {

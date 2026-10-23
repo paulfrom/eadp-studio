@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, DomainError, requireCondition } from '@eadp/asset-domain';
 import { isBuiltinScenarioMetadata } from '@eadp/contracts';
-import type { BaselineView, BuiltinScenarioMetadata, ConfirmationEvent, ConfirmationInput, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest } from '@eadp/contracts';
+import type { BaselineView, BuiltinScenarioMetadata, ComparisonFailure, ConfirmationEvent, ConfirmationInput, ConsistencyComparisonView, ConsistencyConflictView, ConsistencyContextView, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest, SubmitConsistencyComparisonRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { AdoptionRecord } from '../modules/reuse.js';
 import type { StoredIntegration } from '../modules/integration.js';
@@ -318,4 +318,78 @@ export async function operation(c: Transaction, projectId: string, key: string, 
 export type ReadyProject = ProjectView & { initializationStatus: 'ready'; recognizedHead: string };
 export function assertProjectReady(value: ProjectView): asserts value is ReadyProject {
   requireCondition(value.initializationStatus === 'ready' && typeof value.recognizedHead === 'string' && /^[a-f0-9]{40}$/.test(value.recognizedHead), 'PROJECT_NOT_INITIALIZED', 'Initialize and push the project before starting business operations', 409);
+}
+
+async function comparisonView(c: Transaction, row: Row): Promise<ConsistencyComparisonView> {
+  const conflicts: ConsistencyConflictView[] = [];
+  const conflictRows = (await c.query<Row>('SELECT * FROM studio_consistency_conflicts WHERE project_id=$1 AND comparison_id=$2 ORDER BY ordinal', [row.project_id, row.id])).rows;
+  for (const conflict of conflictRows) {
+    const entities = (await c.query<{ entity_id: string }>('SELECT entity_id FROM studio_consistency_conflict_entities WHERE project_id=$1 AND comparison_id=$2 AND conflict_id=$3 ORDER BY ordinal', [row.project_id, row.id, conflict.id])).rows.map(r => r.entity_id);
+    conflicts.push({ id: String(conflict.id), ordinal: Number(conflict.ordinal), summary: String(conflict.summary), relation: conflict.relation as 'formal' | 'potential', entities });
+  }
+  return { id: String(row.id), entityId: String(row.entity_id), trigger: row.trigger as 'manual' | 'confirmation',
+    ...(row.confirmation_id ? { confirmationId: String(row.confirmation_id) } : {}),
+    result: row.result as ConsistencyComparisonView['result'], coverage: row.coverage as ConsistencyComparisonView['coverage'],
+    ...(row.failure_code ? { failureCode: row.failure_code as ComparisonFailure } : {}),
+    summary: String(row.summary), conflictCount: Number(row.conflict_count), creator: snapshot(row, 'creator'), createdAt: date(row.created_date), conflicts };
+}
+/** Atomically store one comparison and its sealed conflict set; the operation key makes submission idempotent. */
+export async function saveComparison(c: Transaction, projectId: string, actor: Actor, input: SubmitConsistencyComparisonRequest): Promise<ConsistencyComparisonView> {
+  const hash = requestHash(input);
+  const existing = (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 AND operation_key=$2', [projectId, input.idempotencyKey])).rows[0];
+  if (existing) {
+    requireCondition(Number(existing.creator_id) === actor.id && existing.request_hash === hash, 'IDEMPOTENCY_CONFLICT', 'The comparison operation key already belongs to another request', 409);
+    return comparisonView(c, existing);
+  }
+  requireCondition(input.conflicts.every((conflict, index) => conflict.ordinal === index + 1), 'CONFLICT_ORDINAL_SEQUENCE', 'Conflict ordinals must be a contiguous sequence starting at 1', 422);
+  try {
+    await c.query(`INSERT INTO studio_consistency_comparisons(id,project_id,entity_id,trigger,confirmation_id,operation_key,request_hash,result,coverage,failure_code,summary,conflict_count,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [input.id, projectId, input.entityId, input.trigger, input.trigger === 'confirmation' ? input.confirmationId : null, input.idempotencyKey, hash, input.result, input.coverage, input.result === 'completed' ? null : input.failureCode, input.summary, input.conflicts.length, ...actorFields()]);
+  } catch (error) {
+    if ((error as { constraint?: string }).constraint === 'studio_one_auto_comparison') throw new DomainError('AUTO_COMPARISON_RECORDED', 'This confirmation already has an automatic comparison; query the original record', 409);
+    throw error;
+  }
+  for (const conflict of input.conflicts) {
+    await c.query(`INSERT INTO studio_consistency_conflicts(project_id,comparison_id,id,ordinal,summary,relation,entity_count) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+      [projectId, input.id, conflict.id, conflict.ordinal, conflict.summary, conflict.relation, conflict.entities.length]);
+    for (const [index, entityId] of conflict.entities.entries()) {
+      await c.query(`INSERT INTO studio_consistency_conflict_entities(project_id,comparison_id,conflict_id,ordinal,entity_id) VALUES($1,$2,$3,$4,$5)`,
+        [projectId, input.id, conflict.id, index + 1, entityId]);
+    }
+  }
+  const stored = (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 AND id=$2', [projectId, input.id])).rows[0]!;
+  return comparisonView(c, stored);
+}
+export async function listComparisons(c: Transaction, projectId: string, filter: { entityId?: string; limit: number; offset: number }): Promise<ConsistencyComparisonView[]> {
+  const rows = filter.entityId
+    ? (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 AND entity_id=$2 ORDER BY created_date DESC,id DESC LIMIT $3 OFFSET $4', [projectId, filter.entityId, filter.limit, filter.offset])).rows
+    : (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 ORDER BY created_date DESC,id DESC LIMIT $2 OFFSET $3', [projectId, filter.limit, filter.offset])).rows;
+  const result: ConsistencyComparisonView[] = [];
+  for (const row of rows) result.push(await comparisonView(c, row));
+  return result;
+}
+export async function getComparison(c: Transaction, projectId: string, id: string): Promise<ConsistencyComparisonView> {
+  const row = (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
+  requireCondition(row, 'COMPARISON_NOT_FOUND', 'Comparison was not found', 404);
+  return comparisonView(c, row);
+}
+/** Formal relation catalog for comparison inputs; control fields only, no Git reads. */
+export async function consistencyContext(c: Transaction, projectId: string, entityId: string): Promise<ConsistencyContextView> {
+  const target = await entityRow(c, projectId, entityId);
+  const occupied = async (id: string) => Boolean((await c.query('SELECT id FROM studio_occupations WHERE project_id=$1 AND entity_id=$2 AND active', [projectId, id])).rowCount);
+  const card = (row: Row) => ({ id: String(row.id), kind: row.kind as ConsistencyContextView['entity']['kind'], ...(row.builtin_key ? { builtinKey: 'general' as const } : {}), ...(row.code ? { code: String(row.code) } : {}), title: String(row.title), revision: Number(row.revision), materialVersion: Number(row.material_version), confirmationStatus: row.confirmation_status as 'draft' | 'confirmed' });
+  const sources: ConsistencyContextView['sources'] = [];
+  for (const row of (await c.query<Row>(`SELECT e.id,e.code,e.title,s.scenario_confirmation_id,f.version,f.commit_sha,f.path,f.sha256 FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id JOIN studio_entities e ON e.project_id=f.project_id AND e.id=f.entity_id WHERE s.project_id=$1 AND s.entity_id=$2 ORDER BY e.sequence`, [projectId, entityId])).rows) {
+    sources.push({ entityId: String(row.id), ...(row.code ? { code: String(row.code) } : {}), title: String(row.title), version: Number(row.version), confirmationId: String(row.scenario_confirmation_id), fixed: { commitSha: String(row.commit_sha), path: String(row.path), sha256: String(row.sha256) } });
+  }
+  const requirements: ConsistencyContextView['requirements'] = [];
+  for (const row of (await c.query<Row>(`SELECT e.* FROM studio_scenario_requirements r JOIN studio_entities e ON e.project_id=r.project_id AND e.id=r.requirement_id WHERE r.project_id=$1 AND r.scenario_id=$2 ORDER BY e.sequence`, [projectId, entityId])).rows) {
+    const requirementSources = (await c.query<Row>('SELECT f.entity_id,f.version FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id WHERE s.project_id=$1 AND s.entity_id=$2', [projectId, row.id])).rows;
+    requirements.push({ ...card(row), occupied: await occupied(String(row.id)), sources: requirementSources.map(s => ({ projectId, entityId: String(s.entity_id), version: Number(s.version) })) });
+  }
+  const prerequisites: ConsistencyContextView['prerequisites'] = [];
+  for (const row of (await c.query<Row>(`SELECT p.requirement_id,p.version,p.confirmation_id,e.code,e.title FROM studio_prerequisites p JOIN studio_entities e ON e.project_id=p.project_id AND e.id=p.requirement_id WHERE p.project_id=$1 AND p.entity_id=$2 ORDER BY e.sequence`, [projectId, entityId])).rows) {
+    prerequisites.push({ requirementId: String(row.requirement_id), ...(row.code ? { code: String(row.code) } : {}), title: String(row.title), version: Number(row.version), confirmationId: String(row.confirmation_id) });
+  }
+  return { entity: { ...card(target), occupied: await occupied(entityId) }, sources, requirements, prerequisites };
 }

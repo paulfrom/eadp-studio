@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { requireCondition } from '@eadp/asset-domain';
 import type { TSchema, Static } from '@eadp/contracts';
 import * as contract from '@eadp/contracts';
 import type { Actor } from './auth/session.js';
@@ -61,4 +62,13 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   write('POST', `${base}/publication-authorizations`, contract.PublicationAuthorizationSchema, (a, p, b) => service.publicationAuthorization(a, p.projectId!, b));
   app.get<{ Params: { projectId: string } }>(`${base}/publication-current`, request => service.publicationCurrent(request.headers.authorization, request.params.projectId));
   write('POST', `${base}/deployment`, contract.DeploymentSchema, (a, p, b) => service.deployment(a, p.projectId!, b));
+  write('POST', `${base}/consistency-comparisons`, contract.SubmitConsistencyComparisonSchema, (a, p, b) => service.submitComparison(a, p.projectId!, b));
+  app.get<{ Params: { projectId: string }; Querystring: Record<string, string> }>(`${base}/consistency-comparisons`, request => {
+    const query = request.query, limit = Number(query.limit ?? '20'), offset = Number(query.offset ?? '0');
+    requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 100 && Number.isInteger(offset) && offset >= 0, 'INVALID_PAGINATION', 'Comparison queries require limit 1..100 and a non-negative offset', 422);
+    if (query.entityId !== undefined) requireCondition(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(query.entityId) && query.entityId.length <= 100, 'INVALID_PAGINATION', 'Invalid entity filter', 422);
+    return service.listComparisons(request.actor, request.params.projectId, { ...(query.entityId ? { entityId: query.entityId } : {}), limit, offset });
+  });
+  read(`${base}/consistency-comparisons/:comparisonId`, (a, p) => service.getComparison(a, p.projectId!, p.comparisonId!));
+  read(`${base}/entities/:entityId/consistency-context`, (a, p) => service.consistencyContext(a, p.projectId!, p.entityId!));
 }

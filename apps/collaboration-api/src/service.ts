@@ -1,5 +1,5 @@
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, UpdateRelationsRequest } from '@eadp/contracts';
+import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, SubmitConsistencyComparisonRequest, UpdateRelationsRequest } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import { SessionAuth, type Actor } from './auth/session.js';
 import { Projects } from './projects.js';
@@ -304,6 +304,32 @@ export class CollaborationService {
       requireCondition(baseline, 'BASELINE_NOT_FOUND', 'Accepted baseline was not found', 404);
       return { baselineId: baseline.id, commitSha: baseline.commitSha, acceptedHead: project.recognizedHead, completionEvidence: baseline.confirmationId };
     });
+  }
+  async submitComparison(actor: Actor, projectId: string, input: SubmitConsistencyComparisonRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.transact(actor, async c => {
+      await repository.entityRow(c, projectId, input.entityId);
+      if (input.trigger === 'confirmation') {
+        const confirmation = await repository.confirmation(c, projectId, input.confirmationId);
+        requireCondition(confirmation.event.entityId === input.entityId && confirmation.stage === 'material', 'COMPARISON_CONFIRMATION_MISMATCH', 'Automatic comparison must bind a material confirmation of its target', 422);
+      }
+      for (const conflict of input.conflicts) for (const involved of conflict.entities) await repository.entityRow(c, projectId, involved);
+      const view = await repository.saveComparison(c, projectId, actor, input);
+      await repository.audit(c, projectId, actor, 'consistency.submit', { comparisonId: view.id });
+      return view;
+    });
+  }
+  async listComparisons(actor: Actor, projectId: string, query: { entityId?: string; limit: number; offset: number }) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => repository.listComparisons(c, projectId, query));
+  }
+  async getComparison(actor: Actor, projectId: string, id: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => repository.getComparison(c, projectId, id));
+  }
+  async consistencyContext(actor: Actor, projectId: string, entityId: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => repository.consistencyContext(c, projectId, entityId));
   }
   async deployment(actor: Actor, projectId: string, input: DeploymentRequest) {
     this.publication.assertPublisher(actor.id);

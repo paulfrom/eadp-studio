@@ -27,6 +27,8 @@ export interface RemoteProject {
 export async function gitlabFixture() {
   const projects = new Map<number, RemoteProject>()
   const counts = { creates: 0, members: 0, searches: 0, headReads: 0 }
+  /** 已接收请求路径：供测试断言某段交互不触发 Git 内容读取 */
+  const paths: string[] = []
   const controls = { loseNextCreateResponse: false, failNextMember: false, wrongRootParent: false, groupMemberLevel: 30, commitParent: null as string | null }
   const namespaces = [
     { id: 42, name: 'Delivery', path: 'delivery', full_path: 'delivery', project_creation_level: 'developer', visibility: 'private' },
@@ -40,6 +42,7 @@ export async function gitlabFixture() {
     assert.equal(request.headers['private-token'] ?? request.headers.authorization?.replace(/^Bearer /, ''), fixtureToken)
     const url = new URL(request.url ?? '/', origin)
     const route = decodeURIComponent(url.pathname.replace(/^\/api\/v4/, ''))
+    paths.push(`${request.method} ${route}`)
     if (route === '/user') return send(response, 200, { id: 900, username: 'manager', is_admin: true, state: 'active' })
     if (route === '/users' && request.method === 'GET') {
       counts.searches++
@@ -146,5 +149,5 @@ export async function gitlabFixture() {
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   origin = `http://127.0.0.1:${address.port}`
-  return { origin, projects, counts, controls, close: () => new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections() }) }
+  return { origin, projects, counts, controls, paths, close: () => new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections() }) }
 }
