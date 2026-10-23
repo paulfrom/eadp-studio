@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
 import type { StudioCommand, LocalProject, ProjectSync, ProjectProgressPhase } from '../../shared/studio.ts'
@@ -245,7 +245,12 @@ export class ProjectWorkspaces {
     else {
       operation.directory = directory; operation.directoryOwned = false; await this.store.save()
       await mkdir(path.dirname(directory), { recursive: true }); await mkdir(directory)
-      await writeFile(marker, JSON.stringify({ projectId: project.id }), { flag: 'wx', mode: 0o600 })
+      // Deleting a checkout outside the app leaves its sibling ownership marker behind.
+      // The empty directory holds nothing to protect, so the marker is rewritten after
+      // confirming it does not name another project.
+      const previous = await readFile(marker, 'utf8').then(value => JSON.parse(value) as { projectId?: string }).catch(() => undefined)
+      if (previous && previous.projectId !== project.id) throw new Error('项目目录归属记录与当前项目不一致，请核对原现场。')
+      await writeFile(marker, JSON.stringify({ projectId: project.id }), { mode: 0o600 })
       operation.directoryOwned = true; await this.store.save()
     }
     return directory
@@ -263,18 +268,31 @@ export class ProjectWorkspaces {
     const account = await this.ports.account(); if (!account) throw new Error('请先登录协同工作台。')
     return account.gitlabEmail ? { name: account.name || account.gitlabUsername, email: account.gitlabEmail } : this.ports.git.identity(directory)
   }
+  /**
+   * Verify a checkout the backend already accepted: its origin is the registered
+   * repository, its manifest names this project and an accepted directory layout,
+   * and every directory the manifest declares exists.
+   */
   private async verify(directory: string, project: ProjectView): Promise<void> {
     const state = await this.ports.git.state(directory)
     if (state.repositoryUrl !== project.repositoryUrl) throw new Error('本地仓库与后台项目地址不一致。')
     const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8')) as unknown
-    this.checkManifest(manifest, project)
-    for (const name of ['场景', '需求', '交接', '原型代码']) if (!(await stat(path.join(directory, name))).isDirectory()) throw new Error('项目不符合工作台目录契约。')
+    for (const name of this.checkManifest(manifest, project)) if (!(await stat(path.join(directory, name))).isDirectory()) throw new Error(`项目缺少「${name}」目录，请核对本地现场。`)
   }
   private async verifyFixedManifest(directory: string, project: ProjectView, commitSha: string): Promise<void> { this.checkManifest(JSON.parse((await this.ports.git.readBlob(directory, commitSha, 'project.assets.json')).toString('utf8')), project) }
-  private checkManifest(value: unknown, project: ProjectView): void {
+  /**
+   * Check a manifest against the registered project.
+   * @returns the business directories the manifest declares, which the caller must find on disk.
+   */
+  private checkManifest(value: unknown, project: ProjectView): readonly string[] {
     if (!isProjectManifest(value)) throw new Error('项目清单无效。')
     const actual = value as Record<string, unknown>
-    for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
+    // A valid manifest naming another project means this repository is already that project's.
+    if (actual.projectId !== project.id) throw new Error(`该 GitLab 仓库的项目清单属于另一个项目（${String(actual.projectId)}），一个仓库只能对应一个后台项目。`)
+    for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates' && key !== 'directories')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
+    // The declared layout is either the current four directories or the three a
+    // project accepted before the handoff directory existed carries.
+    return (actual.directories as readonly string[])
   }
   /**
    * Whether the local record still holds the checkout the backend project names.
@@ -287,6 +305,17 @@ export class ProjectWorkspaces {
     const owner = await readFile(`${local.directory}.studio-owner.json`, 'utf8').then(value => JSON.parse(value) as { projectId?: string }).catch(() => undefined)
     return owner?.projectId === project.id
   }
+  /**
+   * Move files left in a directory whose checkout is gone, so the clone does not
+   * overwrite them and the user can still recover them beside the new checkout.
+   */
+  private async preserveLeftover(directory: string): Promise<string> {
+    const backup = `${directory}.backup-${Date.now()}`
+    try { await rename(directory, backup) }
+    catch (error) { throw new Error(`本地目录无法移动，请关闭占用该目录的程序后重试：${error instanceof Error ? error.message : '未知原因'}`) }
+    await mkdir(directory, { recursive: true })
+    return backup
+  }
   /** Open a project the backend already accepted: reuse the local checkout or clone it, reporting progress. */
   private async openReady(project: ProjectView, operation: ProjectInitialization, report: (phase: ProjectProgressPhase, percent: number, label: string) => void): Promise<void> {
     const local = await this.store.read(), existing = local.projects.find(p => p.id === project.id)
@@ -297,9 +326,19 @@ export class ProjectWorkspaces {
     report('matching', 2, '正在核对本地项目与后台登记')
     const directory = await this.ownedDirectory(project, operation)
     if (!await exists(path.join(directory, '.git'))) {
-      if ((await readdir(directory)).length) throw new Error('本地目录有未核对内容，已保留现场。')
-      report('cloning', 10, '从 GitLab 获取项目仓库')
-      await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), '从 GitLab 获取项目仓库'))
+      if ((await readdir(directory)).length) {
+        // The user may have deleted the checkout and kept files; the clone never
+        // overwrites them, so they move beside the directory and stay attributable.
+        const backup = await this.preserveLeftover(directory)
+        const label = `本地目录缺少 Git 仓库，原文件已移至 ${path.basename(backup)}，正在从 GitLab 恢复`
+        report('cloning', 10, label)
+        try { await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), label)) }
+        catch (error) { throw new Error(`从 GitLab 恢复失败，原文件保留在 ${backup}：${error instanceof Error ? error.message : '未知原因'}`) }
+      } else {
+        const label = existing ? '本地项目目录已丢失，正在从 GitLab 恢复' : '从 GitLab 获取项目仓库'
+        report('cloning', 10, label)
+        await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), label))
+      }
     }
     report('verifying', 85, '校验项目清单')
     await this.verify(directory, project); await this.bind(project, operation)

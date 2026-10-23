@@ -206,6 +206,77 @@ test('an accepted project whose manifest predates the template catalog opens ins
   } finally { await f.dispose() }
 })
 
+/** Rewrite the accepted checkout as one initialized before the handoff directory existed. */
+async function beforeHandoffDirectory(directory: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8')) as Record<string, unknown>
+  manifest.directories = ['场景', '需求', '原型代码']
+  await writeFile(path.join(directory, 'project.assets.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  await rm(path.join(directory, '交接'), { recursive: true, force: true })
+}
+
+test('an accepted project whose manifest predates the handoff directory opens instead of failing', async () => {
+  const f = await fixture()
+  try {
+    await queued(f)
+    const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
+    await beforeHandoffDirectory(directory)
+    // A rebuilt local record re-adopts the marker-named directory, exactly as the
+    // production case where the accepted project keeps the three business directories.
+    await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
+    const next = restarted(f)
+    try {
+      await next.service.open('project-1'); await next.lane.settle()
+      const local = await next.store.read()
+      assert.deepEqual(local.projects.map(project => project.directory), [directory], 'the legacy accepted project is opened')
+      assert.equal(local.selectedProjectId, 'project-1')
+      assert.equal(local.projectInitializations[0]!.phase, 'ready')
+      assert.equal(local.projectInitializations[0]!.message, undefined, 'a three-directory project is not reported as an invalid manifest')
+      assert.equal(f.counts().initializes, 1, 'the accepted initialization is not sent again')
+      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+    } finally { await next.lane.settle(); await next.service.dispose() }
+  } finally { await f.dispose() }
+})
+
+test('a repository whose manifest names another project is reported instead of adopted', async () => {
+  const f = await fixture()
+  try {
+    await queued(f)
+    const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
+    const manifest = JSON.parse(await readFile(path.join(directory, 'project.assets.json'), 'utf8')) as Record<string, unknown>
+    await writeFile(path.join(directory, 'project.assets.json'), `${JSON.stringify({ ...manifest, projectId: 'project-other' }, null, 2)}\n`)
+    await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
+    const next = restarted(f)
+    try {
+      // A second backend project can be registered on a repository that already belongs to
+      // another project; the checkout is never adopted as this project's.
+      await next.service.open('project-1'); await next.lane.settle()
+      const saved = await next.store.read()
+      assert.deepEqual(saved.projects, [])
+      assert.match(saved.projectInitializations[0]!.message ?? '', /属于另一个项目（project-other）/)
+      assert.equal(f.counts().clones, 0, 'no second checkout is created for the same repository')
+    } finally { await next.lane.settle(); await next.service.dispose() }
+  } finally { await f.dispose() }
+})
+
+test('unfinished local work is reported only while the backend still offers its project', async () => {
+  const f = await fixture()
+  try {
+    const local = await f.store.read()
+    local.projectInitializations.push(
+      { id: 'offered', name: '在册项目', namespaceId: 7, path: '', projectId: 'project-1', phase: 'unknown', message: '后台尚未接受首次提交' },
+      // The account can no longer read this project: the backend answers 404 for it.
+      { id: 'gone', name: '测试项目', namespaceId: 7, path: '', projectId: 'project-gone', phase: 'unknown', message: 'Project was not found' },
+      // A creation that has not reached the backend has no project identity to check yet.
+      { id: 'creating', name: '新项目', namespaceId: 7, path: 'fresh', phase: 'creating' },
+    )
+    await f.store.save()
+    const app = new StudioApplication(f.store, f.api, f.ports)
+    const state = await app.state()
+    assert.deepEqual(state.projectInitializations.map(op => op.id), ['offered', 'creating'], 'a record the backend no longer offers stops being a task without a retry')
+    assert.deepEqual((await f.store.read()).projectInitializations.map(op => op.id), ['offered', 'gone', 'creating'], 'the record itself is kept, so restored access reports it again')
+  } finally { await f.dispose() }
+})
+
 test('signed-out and other users never receive old local projects, tasks or pending operations', async () => {
   const f = await fixture()
   try {

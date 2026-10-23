@@ -178,7 +178,28 @@ test('Electron installer uses only its workspace-owned cache and same-volume tem
     assert.equal(installation.environment.electron_config_cache, path.join(f.root, '.local/cache/electron'))
     assert.equal(installation.environment.TMP, path.join(f.root, '.local/cache/electron/tmp'))
     assert.equal(installation.environment.TEMP, installation.environment.TMP)
-    assert.equal(f.environments.find(call => call.command.includes('run start:desktop')).environment.TMP, process.env.TMP)
+    assert.equal(f.environments.find(call => call.command.includes('run start:desktop')).environment.TMP, path.join(f.root, '.local/cache/tmp'))
+  } finally { await f.clean() }
+})
+
+test('every development subprocess receives writable workspace temporary storage without changing the parent', async () => {
+  const f = await fixture()
+  const parent = { TMP: process.env.TMP, TEMP: process.env.TEMP }
+  try {
+    await f.run({ tools: undefined })
+    await f.run({ prepare: true })
+    const temporary = path.join(f.root, '.local/cache/tmp')
+    assert.ok((await stat(temporary)).isDirectory())
+    for (const { command, environment } of f.environments) {
+      assert.equal(environment.TMP, temporary, command)
+      assert.equal(environment.TEMP, temporary, command)
+      for (const [key, value] of Object.entries(process.env)) {
+        if (!['TMP', 'TEMP', 'CI'].includes(key)) assert.equal(environment[key], value, `${command}: ${key}`)
+      }
+    }
+    assert.ok(f.environments.some(call => call.command.includes('prepareStudioTools')))
+    assert.ok(f.environments.some(call => call.command.includes('prepare:primary-runtime')))
+    assert.deepEqual({ TMP: process.env.TMP, TEMP: process.env.TEMP }, parent)
   } finally { await f.clean() }
 })
 
@@ -282,7 +303,7 @@ test('runner propagates child failure and removes signal listeners', async () =>
   assert.equal(process.listenerCount('SIGINT'), before)
 })
 
-test('runner forwards detached child output and leaves both parent streams open', () => {
+test('runner forwards child output and leaves both parent streams open', () => {
   const moduleUrl = pathToFileURL(path.resolve(import.meta.dirname, '../../scripts/dev-desktop.mjs')).href
   const childCode = "process.stdout.write('child-out\\n'); process.stderr.write('child-err\\n')"
   const code = `import { executeDev } from ${JSON.stringify(moduleUrl)}; await executeDev(process.execPath, ['-e', ${JSON.stringify(childCode)}], process.cwd()); process.stdout.write('parent-out\\n'); process.stderr.write('parent-err\\n')`
@@ -290,6 +311,19 @@ test('runner forwards detached child output and leaves both parent streams open'
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, 'child-out\nparent-out\n')
   assert.equal(result.stderr, 'child-err\nparent-err\n')
+})
+
+test('Windows runner forwards cmd descendant output on both streams', { skip: process.platform !== 'win32' }, async () => {
+  const f = await fixture()
+  try {
+    await f.put('probe.cjs', "process.stdout.write('nested-out\\n'); process.stderr.write('nested-err\\n')")
+    const moduleUrl = pathToFileURL(path.resolve(import.meta.dirname, '../../scripts/dev-desktop.mjs')).href
+    const code = `import { executeDev } from ${JSON.stringify(moduleUrl)}; await executeDev('cmd.exe', ['/d', '/s', '/c', 'node probe.cjs'], ${JSON.stringify(f.root)})`
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', windowsHide: true })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, 'nested-out\n')
+    assert.equal(result.stderr, 'nested-err\n')
+  } finally { await f.clean() }
 })
 
 test('Ctrl+C stops the owned child and grandchild before releasing the lock', async () => {

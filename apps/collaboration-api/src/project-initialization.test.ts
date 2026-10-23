@@ -63,6 +63,8 @@ test('manifest identity, encoding, line endings and directory contract are valid
     [Buffer.from(JSON.stringify({ ...manifest, projectId: 'forged' })), 'INITIALIZATION_MANIFEST_MISMATCH'],
     [Buffer.from(JSON.stringify({ ...manifest, repositoryUrl: 'https://attacker.test/repo.git' })), 'INITIALIZATION_MANIFEST_MISMATCH'],
     [Buffer.from(JSON.stringify({ ...manifest, directories: ['场景', '需求'] })), 'INITIALIZATION_MANIFEST_INVALID'],
+    // The three-directory layout stays readable for accepted projects, but a new initialization must still declare all four.
+    [Buffer.from(JSON.stringify({ ...manifest, directories: ['场景', '需求', '原型代码'] })), 'INITIALIZATION_MANIFEST_MISMATCH'],
     [Buffer.from('\ufeff{}'), 'INVALID_MANIFEST_ENCODING'],
     [Buffer.from('{}\r\n'), 'INVALID_MANIFEST_ENCODING'],
     [Buffer.from([0xff]), 'INITIALIZATION_MANIFEST_INVALID'],

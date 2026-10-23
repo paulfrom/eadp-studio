@@ -106,9 +106,9 @@ export async function inputDigest(root, paths, { ignoreGeneratedStyles = false }
 export async function executeDev(command, args, cwd, environment = process.env) {
   if (interruptedSignal) throw new Error(`Desktop development interrupted (${interruptedSignal}).`)
   await new Promise((resolve, reject) => {
-    // A detached Windows process cannot inherit a PTY's console handles.
-    // Pipe output explicitly; this keeps the owned process group hidden and debuggable.
-    const child = spawn(command, args, { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: true })
+    // Windows cmd descendants lose their output handles when detached; taskkill owns that tree.
+    // POSIX needs a separate process group for signal-based tree cleanup.
+    const child = spawn(command, args, { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' })
     child.stdout.pipe(process.stdout, { end: false })
     child.stderr.pipe(process.stderr, { end: false })
     let interrupted
@@ -182,11 +182,15 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
   if (!prepare) await assertNoRunningDevelopmentApp(desktop, appPids)
   const statePath = path.join(sharedRoot, '.local/build/.studio-desktop-dev.json')
   const state = await json(statePath) ?? {}
-  const pnpm = (operation, cwd, environment = {}) => {
+  // Build tools and runtime preparation share a writable, workspace-owned temp directory.
+  const temporary = path.join(sharedRoot, '.local/cache/tmp')
+  await mkdir(temporary, { recursive: true })
+  const environment = { ...process.env, TMP: temporary, TEMP: temporary }
+  const pnpm = (operation, cwd, overlay = {}) => {
     const invocation = pnpmInvocation(operation)
-    return execute(invocation.command, invocation.args, cwd, { ...process.env, ...environment, CI: 'true' })
+    return execute(invocation.command, invocation.args, cwd, { ...environment, ...overlay, CI: 'true' })
   }
-  const runNode = (file, args = [], cwd = root) => execute(process.execPath, [file, ...args], cwd)
+  const runNode = (file, args = [], cwd = root) => execute(process.execPath, [file, ...args], cwd, environment)
   const save = () => writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`)
   const dependencies = await inputDigest(root, PRODUCT_DEPENDENCIES)
   if (state.productDependencies !== dependencies || !await exists(path.join(root, 'node_modules/.modules.yaml'))) {
@@ -263,7 +267,7 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
     console.log('Desktop development: preparing fixed Studio runtime tools...')
     const archiveCache = path.join(desktop, '.desktop-build/downloads/studio-tools-archives')
     if (tools) await tools(runtime, archiveCache)
-    else await execute(process.execPath, ['--input-type=module', '-e', 'const { prepareStudioTools } = await import(process.argv[1]); await prepareStudioTools(process.argv[2], process.argv[3])', pathToFileURL(path.join(desktop, 'scripts/prepare-studio-tools.mjs')).href, runtime, archiveCache], tree)
+    else await execute(process.execPath, ['--input-type=module', '-e', 'const { prepareStudioTools } = await import(process.argv[1]); await prepareStudioTools(process.argv[2], process.argv[3])', pathToFileURL(path.join(desktop, 'scripts/prepare-studio-tools.mjs')).href, runtime, archiveCache], tree, environment)
     await verifyTools(runtime)
     state.tools = runtimeKey
     await save()

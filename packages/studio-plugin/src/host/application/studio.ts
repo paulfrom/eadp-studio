@@ -339,7 +339,12 @@ ${await this.scenarios.sources.context(task)}`
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
     const recovery = this.store.preservedRecord
     return { ...(scenario ? { scenario } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
-      projectInitializations: local.projectInitializations.filter(op => op.phase !== 'ready').map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
+      projectInitializations: local.projectInitializations
+        // Unfinished local work is reported only while the backend still offers its project; a
+        // record the account can no longer read cannot be finished, so it stops being a task
+        // instead of waiting for a retry. The record itself stays, so restored access brings it back.
+        .filter(op => op.phase !== 'ready' && (op.projectId === undefined || allowed.has(op.projectId)))
+        .map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
       ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(scenarioTemplates ? { scenarioTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id && (candidate.selectedEntityId || (remote && this.currentCandidate(candidate, remote)))), ...(this.previewState ? { preview: this.previewState } : {}),
       pending: [

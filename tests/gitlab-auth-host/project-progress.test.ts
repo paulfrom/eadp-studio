@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -34,6 +34,7 @@ async function fixture(pending = false) {
   let release: () => void = () => {}
   const gate = new Promise<void>(resolve => { release = resolve })
   const seen: Array<{ phase: string; percent: number }> = []
+  const labels: string[] = []
   let clones = 0
   const api = { request: async (method: string, route: string) => {
     if (method === 'GET' && route === '/v1/projects/project-1') return { project, entities: [], baselines: [], integrations: [] }
@@ -49,7 +50,7 @@ async function fixture(pending = false) {
       init: async (directory: string) => { await mkdir(path.join(directory, '.git'), { recursive: true }) },
       clone: async (_url: string, directory: string, _signal?: AbortSignal, onProgress?: (progress: GitProgress) => void) => {
         ++clones
-        onProgress?.({ stage: 'receiving', percent: 50 }); seen.push(...tracker.views().map(view => ({ phase: view.phase, percent: view.percent })))
+        onProgress?.({ stage: 'receiving', percent: 50 }); seen.push(...tracker.views().map(view => ({ phase: view.phase, percent: view.percent }))); labels.push(...tracker.views().map(view => view.label))
         entered(); await gate
         await checkout(directory, project)
       },
@@ -69,7 +70,7 @@ async function fixture(pending = false) {
   const store = new StudioStore(storeRoot); store.useUser(user.id)
   const lane = new BackgroundLane()
   const service = new ProjectWorkspaces(store, api, ports, lane, tracker)
-  return { root, store, lane, tracker, service, directories, release, enteredClone, seen, clones: () => clones,
+  return { root, store, lane, tracker, service, directories, release, enteredClone, seen, labels, clones: () => clones,
     // A failed assertion must not leave the lane waiting on the gate the test held.
     dispose: async () => { release(); await lane.settle(); await service.dispose(); await rm(root, { recursive: true, force: true }) } }
 }
@@ -103,8 +104,42 @@ test('a project whose local checkout disappeared is acquired again instead of fa
     await f.service.open('project-1'); await f.lane.settle()
     const reopened = await f.store.read()
     assert.equal(f.clones(), 2, 'a checkout that is gone is cloned again, not assumed to exist')
+    assert.ok(f.labels.some(label => label.includes('本地项目目录已丢失，正在从 GitLab 恢复')), 'the bar says the checkout is being recovered')
     assert.equal(reopened.selectedProjectId, 'project-1')
     assert.deepEqual(reopened.projects.map(project => project.directory), [directory])
+    assert.equal(reopened.projectInitializations.filter(op => op.phase !== 'ready').length, 0)
+  } finally { await f.dispose() }
+})
+
+test('files left behind when only the checkout metadata was deleted are preserved beside the new clone', async () => {
+  const f = await fixture()
+  try {
+    await f.service.open('project-1'); f.release(); await f.lane.settle()
+    const opened = await f.store.read(), directory = opened.projects[0]!.directory
+    await rm(path.join(directory, '.git'), { recursive: true, force: true })
+    await writeFile(path.join(directory, 'private.txt'), 'preserve me')
+    await f.service.open('project-1'); await f.lane.settle()
+    assert.ok(f.labels.some(label => label.includes('原文件已移至')), 'the bar says where the leftover files went')
+    const backups = (await readdir(path.dirname(directory))).filter(name => name.startsWith(`${path.basename(directory)}.backup-`))
+    assert.equal(backups.length, 1)
+    assert.equal(await readFile(path.join(path.dirname(directory), backups[0]!, 'private.txt'), 'utf8'), 'preserve me')
+    assert.equal(f.clones(), 2)
+    assert.equal((await f.store.read()).selectedProjectId, 'project-1')
+  } finally { await f.dispose() }
+})
+
+test('a deleted checkout whose sibling ownership marker survived is acquired again', async () => {
+  const f = await fixture()
+  try {
+    await f.service.open('project-1'); f.release(); await f.lane.settle()
+    const opened = await f.store.read(), directory = opened.projects[0]!.directory
+    assert.equal(f.clones(), 1)
+    // Deleting the folder does not delete the marker stored next to it.
+    await rm(directory, { recursive: true, force: true })
+    await f.service.open('project-1'); await f.lane.settle()
+    const reopened = await f.store.read()
+    assert.equal(f.clones(), 2, 'the leftover marker must not block acquiring the checkout again')
+    assert.equal(reopened.selectedProjectId, 'project-1')
     assert.equal(reopened.projectInitializations.filter(op => op.phase !== 'ready').length, 0)
   } finally { await f.dispose() }
 })
