@@ -5,19 +5,25 @@ import type { LocalConsistencyComparison } from './consistency-comparisons.ts'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { AdoptRequest, AssetSource, FixedReference, MaterialMetadata } from '@eadp/contracts'
+import type { AdoptRequest, AssetSource, FixedReference, IntegrationView, MaterialMetadata } from '@eadp/contracts'
 import type { LocalReview } from './reviews.ts'
 import type { Candidate, LocalProject, TaskView, StudioRecovery } from '../../shared/studio.ts'
 
 const recordName = 'studio-state.json'
+/** Only this format carries the task and request identities required for safe recovery. */
+const formatVersion = 1
 /** Collections every current-version record carries; a record missing one is a previous version's. */
 const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
 const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 
 export interface PendingOperation {
   id: string; projectId: string; entityId: string; phase: 'fixed' | 'prepared' | 'pushed' | 'accepted' | 'unknown';
+  /** The account and exact task that own this candidate, independent of the current selection. */
+  accountId: number; task: Pick<TaskView, 'projectId' | 'entityId' | 'worktree' | 'purpose' | 'sessionId' | 'inputHash'>;
   candidateSha: string; expectedHead: string; fixedPath: string; sha256: string; integrationId?: string;
   prepare: object; token: object; message?: string; adoptionIds?: string[];
+  /** Accepted business facts survive failures in independently delivered follow-up work. */
+  accepted?: IntegrationView; deliveryMessage?: string;
 }
 export interface AdoptionOperation {
   id: string; projectId: string; entityId: string; worktree: string; request: AdoptRequest; sourceFixed: FixedReference;
@@ -35,13 +41,13 @@ export interface ProjectInitialization {
   phase: 'creating' | 'initializing' | 'pushing' | 'verifying' | 'ready' | 'unknown'; message?: string;
 }
 export interface LocalState {
-  clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
+  formatVersion: 1; clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
   candidates: Candidate[]; operations: PendingOperation[]; reviews: LocalReview[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
   materialReservations: MaterialReservation[]; templateOperations: TemplateOperation[]; scenarios: ScenarioRecord[]; scenarioStructureCheck: boolean; scenarioRepairs: LocalScenarioRepair[];
   consistencyComparisons: LocalConsistencyComparison[];
 }
 
-const emptyState = (): LocalState => ({ clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioStructureCheck: false, scenarioRepairs: [], consistencyComparisons: [] })
+const emptyState = (): LocalState => ({ formatVersion, clientId: randomUUID(), projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioStructureCheck: false, scenarioRepairs: [], consistencyComparisons: [] })
 
 /**
  * Read one stored record as the current version.
@@ -53,8 +59,9 @@ function parseRecord(text: string): LocalState | undefined {
   try { value = JSON.parse(text) } catch (error) { if (!(error instanceof SyntaxError)) throw error; return undefined }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
-  if (typeof record.clientId !== 'string' || typeof record.scenarioStructureCheck !== 'boolean') return undefined
+  if (record.formatVersion !== formatVersion || typeof record.clientId !== 'string' || typeof record.scenarioStructureCheck !== 'boolean') return undefined
   if (collections.some(name => !Array.isArray(record[name]))) return undefined
+  if ((record.operations as Array<Partial<PendingOperation>>).some(operation => !operation || !Number.isSafeInteger(operation.accountId) || !operation.task || typeof operation.task.worktree !== 'string' || typeof operation.task.sessionId !== 'string')) return undefined
   return value as LocalState
 }
 

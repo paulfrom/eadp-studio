@@ -301,7 +301,7 @@ test('polling preserves unsaved requirement input and the external copy until ex
   await waitFor(() => assert.equal(resolutions.length, 1))
   assert.equal(resolutions[0].expectedHash, 'hash-external')
   assert.equal(resolutions[0].body, '用户未保存的业务正文')
-  await waitFor(() => assert.equal(view.queryByRole('region', { name: '外部文件冲突' }), null))
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '外部文件冲突' }), false))
 })
 
 test('invalid unsaved evidence survives a new projection and blocks navigation saves', async () => {
@@ -318,32 +318,22 @@ test('invalid unsaved evidence survives a new projection and blocks navigation s
   assert.equal(saves.length, 0)
 })
 
-test('requirement template switching flushes edits first and accepts the updated binding without filling the body', async () => {
-  let flush
-  const calls = []
-  let lastInput
-  const nextRef = { commitSha: 'c'.repeat(40), path: '.template/requirements/custom.md', sha256: 'd'.repeat(64) }
-  const view = render(editableRequirement(async input => {
-    lastInput = input; calls.push(['save', input.expectedHash]); return savedMaterialReply(input)
-  }, next => { flush = next }, {
+test('a requirement editor displays its fixed template without offering a switch', () => {
+  let binds = 0
+  const view = render(editableRequirement(async input => savedMaterialReply(input), () => {}, {
     templates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认需求模板' }, { id: 'custom', name: '定制需求模板' }] },
-    onBindTemplate: async (id, expectedHash) => { calls.push(['bind', id, expectedHash]); return savedMaterialReply({ ...lastInput, metadata: { ...lastInput.metadata, templateId: id, templateRef: nextRef } }, 'hash-bound') },
+    onBindTemplate: async () => { binds++; throw new Error('editing cannot change templates') },
   }))
-  fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '保留用户自己的正文' } })
-  fireEvent.change(view.getByRole('combobox', { name: '需求模板' }), { target: { value: 'custom' } })
-  fireEvent.click(view.getByRole('button', { name: '切换模板绑定' }))
-  await waitFor(() => assert.deepEqual(calls, [['save', 'hash-initial'], ['bind', 'custom', 'hash-saved']]))
-  await waitFor(() => assert.match(view.container.textContent, /当前固定模板：custom/))
-  assert.equal(view.getByRole('textbox', { name: '材料 Markdown 正文' }).value, '保留用户自己的正文')
-  await act(async () => { assert.equal(await flush(), true) })
-  assert.equal(calls.length, 2)
-  assert.equal(view.queryByRole('region', { name: '外部文件冲突' }), null)
+  assert.ok(view.getByText(/固定需求模板：默认需求模板/))
+  assert.equal(view.queryByRole('combobox', { name: '需求模板' }), null)
+  assert.equal(view.queryByRole('button', { name: '切换模板绑定' }), null)
+  assert.equal(binds, 0)
 })
 
 // Keep these tests on the requirement command boundary; scenario and desktop-caption rendering have their own suites.
 for (const [relative, name] of [['scenarios/ScenarioWorkspace.tsx', 'ScenarioWorkspace'], ['components/StudioTopbar.tsx', 'StudioTopbar'], ['components/LegacyMaterial.tsx', 'LegacyMaterial']]) modules.set(path.join(client, relative), { exports: { [name]: () => null } })
 const { StudioPanel } = loadClient('studio/StudioPanel.tsx')
-function requirementPanel(readOnly = false, readComparisons, readSummaries) {
+function requirementPanel(readOnly = false, readComparisons, readSummaries, respond, restore) {
   const element = editableRequirement(async () => {}, () => {})
   const initialDraft = element.props.draft
   const entity = { id: 'requirement', kind: 'requirement', code: 'REQ-0001', sequence: 1, title: '需求能力', revision: 3, materialVersion: readOnly ? 1 : 0, confirmationStatus: readOnly ? 'confirmed' : 'draft', taskStatus: 'idle', scenarioIds: ['scene'], prerequisites: [], authorId: 1 }
@@ -355,13 +345,18 @@ function requirementPanel(readOnly = false, readComparisons, readSummaries) {
       writeProposal: { id: 'proposal-original', baseHash: initialDraft.sha256, createdAt: '2026-10-23T00:00:00Z', conclusions: ['本轮明确结论'], evidenceCount: 1, status: 'pending' },
     },
   }
+  if (restore) current = restore(current)
   const commands = []
   let update
   const run = async command => {
     commands.push(command)
+    if (respond) {
+      const reply = await respond(command, current)
+      if (reply !== undefined) { if (reply.ok) { current = reply.state; update(current) }; return reply }
+    }
     if (command.action === 'listConsistencyComparisons' && readComparisons) return readComparisons(command, current)
     if (command.action === 'listConsistencySummaries' && readSummaries) return readSummaries(command, current)
-    if (command.action === 'saveRequirement') {
+    if (command.action === 'saveRequirement' || command.action === 'confirmRequirement' || command.action === 'resolveRequirementConflict') {
       const draft = { ...initialDraft, body: command.body, metadata: command.metadata, sha256: 'hash-saved' }
       current = { ...current, drafts: [draft], requirement: { ...current.requirement, draft } }
     }
@@ -374,7 +369,7 @@ function requirementPanel(readOnly = false, readComparisons, readSummaries) {
     const [projection, setProjection] = React.useState(current); update = setProjection
     return h(StudioPanel, { ...faces, useStore: selector => selector({ projection, progress: [], loading: false, error: '' }) })
   }
-  return { commands, render: () => render(h(Harness)) }
+  return { commands, render: () => render(h(Harness)), project: change => { current = change(current); update(current) } }
 }
 async function selectRequirement(view) {
   fireEvent.click(view.getByRole('button', { name: '需求协同' }))
@@ -414,7 +409,7 @@ test('an outstanding comparison-history query does not lock requirement confirma
   await selectRequirement(view)
   assert.equal(view.getByRole('button', { name: '确认材料' }).disabled, false)
   fireEvent.click(view.getByRole('button', { name: '确认材料' }))
-  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmMaterial')))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmRequirement')))
   await act(async () => finish())
 })
 
@@ -457,14 +452,21 @@ test('declining a proposal and starting a new requirement session use requiremen
   assert.equal(fixture.commands.some(command => command.action === 'startSession' || command.action === 'saveMaterial'), false)
 })
 
-test('requirement confirmation flushes the input and binds the saved hash', async () => {
+test('requirement confirmation submits the current full input without a separate save command', async () => {
   const fixture = requirementPanel(), view = fixture.render()
   await selectRequirement(view)
   editRequirementBody(view, '用户最终阅读的正文')
   fireEvent.click(view.getByRole('button', { name: '确认材料' }))
-  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmMaterial')))
-  assert.deepEqual(fixture.commands.find(command => command.action === 'confirmMaterial'), { action: 'confirmMaterial', entityId: 'requirement', expectedHash: 'hash-saved', method: 'direct' })
-  assert.ok(fixture.commands.findIndex(command => command.action === 'saveRequirement') < fixture.commands.findIndex(command => command.action === 'confirmMaterial'))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmRequirement')))
+  const confirmation = fixture.commands.find(command => command.action === 'confirmRequirement')
+  assert.equal(confirmation.entityId, 'requirement')
+  assert.equal(confirmation.expectedHash, 'hash-initial')
+  assert.equal(confirmation.body, '用户最终阅读的正文')
+  assert.equal(confirmation.metadata.kind, 'requirement')
+  assert.equal(confirmation.method, 'direct')
+  assert.match(confirmation.operationId, /^[a-f0-9-]{36}$/)
+  assert.equal(fixture.commands.some(command => command.action === 'saveRequirement' || command.action === 'confirmMaterial'), false)
+  assert.equal(view.queryByRole('button', { name: '切换固定模板' }), null)
 })
 
 test('confirmed requirements render their fixed text and require an explicit revision before editing', async () => {
@@ -492,4 +494,310 @@ test('scenario and requirement pages reach the shared attachment conversation wi
   }
   const chatPanel = readFileSync(path.join(client, 'scenarios/ScenarioChatPanel.tsx'), 'utf8')
   assert.doesNotMatch(chatPanel, /<ScenarioEvidence\b/)
+})
+
+test('a directory-only failure keeps the acknowledged draft and retries the original confirmation', async () => {
+  let original
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'confirmRequirement') {
+      original = command.operationId
+      const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-written' }
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...state.requirement, draft,
+        requirementSave: { operationId: original, phase: 'directory', status: 'pending', reason: 'network', documentSaved: true, message: '目录更新暂未完成' },
+        confirmationRecovery: { operationId: original, message: '等待目录更新后继续确认' },
+      } } }
+    }
+    if (command.action === 'retryRequirementSave') {
+      assert.equal(command.operationId, original)
+      const { requirementSave, confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, requirement } }
+    }
+  })
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '磁盘上已经保存的正文')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  const recovery = await waitFor(() => view.getByRole('region', { name: '需求保存恢复' }))
+  assert.ok(within(recovery).getByText('正文已保存，剩余更新仍待完成。'))
+  assert.equal(view.getByRole('textbox', { name: '需求 Markdown 正文' }).value, '磁盘上已经保存的正文')
+  assert.equal(view.queryByRole('region', { name: '外部文件冲突' }), null)
+  assert.match(view.getByRole('region', { name: '需求说明' }).textContent, /保存未完成/)
+  await waitFor(() => assert.equal(within(recovery).getByRole('button', { name: '重试保存并继续确认' }).disabled, false))
+  fireEvent.click(within(recovery).getByRole('button', { name: '重试保存并继续确认' }))
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '需求保存恢复' }), false))
+  assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 1)
+  assert.equal(fixture.commands.filter(command => command.action === 'retryRequirementSave').length, 1)
+})
+
+for (const external of [false, true]) test(`a confirmation conflict preserves both versions and continues after choosing ${external ? 'external' : 'merged'} content`, async () => {
+  let first = true
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'confirmRequirement' && first) {
+      first = false
+      const actual = { ...state.requirement.draft, body: '另一个编辑器写入的正文', sha256: 'hash-external' }
+      return { ok: true, state: { ...state, drafts: [actual], requirement: { ...state.requirement, draft: actual,
+        conflict: { expectedHash: command.expectedHash, actual, localBody: command.body, localMetadata: command.metadata, savedPath: 'preserved' },
+        requirementSave: { operationId: command.operationId, phase: 'document', status: 'recovery', reason: 'conflict', documentSaved: false, message: '选择本次要保存的内容' },
+        confirmationRecovery: { operationId: command.operationId, message: '继续原确认' },
+      } } }
+    }
+    if (command.action === 'resolveRequirementConflict') {
+      const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-merged' }
+      const { conflict, requirementSave, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...requirement, draft } } }
+    }
+    if (command.action === 'confirmRequirement') {
+      const { confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, requirement } }
+    }
+  })
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '用户尚未保存的正文')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  const conflict = await waitFor(() => view.getByRole('region', { name: '外部文件冲突' }))
+  assert.equal(within(conflict).getByLabelText('外部文件').value, '另一个编辑器写入的正文')
+  assert.equal(within(conflict).getByLabelText('未保存输入').value, '用户尚未保存的正文')
+  assert.equal(view.getByRole('button', { name: '确认当前需求' }).disabled, false)
+  if (!external) {
+    fireEvent.click(within(conflict).getByRole('button', { name: '编辑并合并内容' }))
+    fireEvent.change(view.getByRole('textbox', { name: '需求 Markdown 正文' }), { target: { value: '明确合并后的正文' } })
+  }
+  const label = external ? '采用外部版本并确认' : '保存当前内容并确认'
+  await waitFor(() => assert.equal(within(conflict).getByRole('button', { name: label }).disabled, false))
+  fireEvent.click(within(conflict).getByRole('button', { name: label }))
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 2))
+  const resolved = fixture.commands.find(command => command.action === 'resolveRequirementConflict')
+  const confirmed = fixture.commands.filter(command => command.action === 'confirmRequirement')
+  assert.equal(resolved.expectedHash, 'hash-external')
+  assert.equal(resolved.body, external ? '另一个编辑器写入的正文' : '明确合并后的正文')
+  assert.equal(confirmed[1].body, resolved.body)
+  assert.equal(confirmed[1].expectedHash, 'hash-merged')
+  assert.notEqual(confirmed[1].operationId, confirmed[0].operationId)
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '外部文件冲突' }), false))
+})
+
+test('a failed confirmation channel preserves input and reuses the exact request until the author changes it', async () => {
+  const fixture = requirementPanel(false, undefined, undefined, command => command.action === 'confirmRequirement' ? { ok: false, code: 'CHANNEL_FAILED', message: '连接未恢复，请选择重试' } : undefined)
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '需要保留的内容')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  const recovery = await waitFor(() => view.getByRole('region', { name: '需求保存恢复' }))
+  await waitFor(() => assert.equal(within(recovery).getByRole('button', { name: '重试保存并继续确认' }).disabled, false))
+  fireEvent.click(within(recovery).getByRole('button', { name: '重试保存并继续确认' }))
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 2))
+  const unchanged = fixture.commands.filter(command => command.action === 'confirmRequirement')
+  assert.deepEqual(unchanged[1], unchanged[0])
+  await waitFor(() => assert.equal(within(recovery).getByRole('button', { name: '修改内容或关系' }).disabled, false))
+  fireEvent.click(within(recovery).getByRole('button', { name: '修改内容或关系' }))
+  fireEvent.change(view.getByRole('textbox', { name: '需求 Markdown 正文' }), { target: { value: '用户新选择的内容' } })
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 3))
+  const changed = fixture.commands.filter(command => command.action === 'confirmRequirement')[2]
+  assert.equal(changed.body, '用户新选择的内容')
+  assert.notEqual(changed.operationId, unchanged[0].operationId)
+})
+
+test('invalid requirement fields offer a correction path before continuing the same confirmation', async () => {
+  const fixture = requirementPanel(), view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '正文保持可见')
+  const evidence = view.getByRole('textbox', { name: /正式依据（JSON/ })
+  fireEvent.change(evidence, { target: { value: '{还没输入完' } })
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '需求保存恢复' })))
+  assert.equal(fixture.commands.some(command => command.action === 'confirmRequirement'), false)
+  assert.ok(view.getByRole('button', { name: '修正业务字段' }))
+  fireEvent.change(evidence, { target: { value: '[]' } })
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmRequirement')))
+  assert.equal(fixture.commands.find(command => command.action === 'confirmRequirement').body, '正文保持可见')
+})
+
+test('the shared requirement editor distinguishes written bytes from a pending directory update', async () => {
+  let flush, saved, retries = 0
+  const pending = { operationId: 'saved-request', phase: 'directory', status: 'pending', reason: 'network', documentSaved: true, message: '目录仍待同步' }
+  const view = render(editableRequirement(async input => {
+    saved = input
+    const reply = savedMaterialReply(input)
+    reply.state.requirement = { entityId: 'requirement', draft: reply.state.drafts[0], requirementSave: pending }
+    return reply
+  }, next => { flush = next }, { onRetrySave: async id => { assert.equal(id, pending.operationId); retries++; const reply = savedMaterialReply(saved); reply.state.requirement = { entityId: 'requirement', draft: reply.state.drafts[0] }; return reply } }))
+  fireEvent.change(view.getByRole('textbox', { name: '材料 Markdown 正文' }), { target: { value: '已经写入文件的内容' } })
+  await act(async () => { assert.equal(await flush(), true) })
+  const recovery = view.getByRole('region', { name: '需求保存恢复' })
+  assert.ok(within(recovery).getByText('正文已保存，剩余更新仍待完成。'))
+  fireEvent.click(within(recovery).getByRole('button', { name: '核对并重试保存' }))
+  await waitFor(() => assert.equal(retries, 1))
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '需求保存恢复' }), false))
+})
+
+test('explicitly reacquiring the edit right uses a new save operation and continues confirmation', async () => {
+  let attempted = false
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'confirmRequirement' && !attempted) {
+      attempted = true
+      return { ok: true, state: { ...state, requirement: { ...state.requirement,
+        requirementSave: { operationId: command.operationId, phase: 'relations', status: 'recovery', reason: 'occupation', documentSaved: false, message: '编辑权已变化，请核对' },
+        confirmationRecovery: { operationId: command.operationId, message: '选择恢复并继续确认' },
+      } } }
+    }
+    if (command.action === 'confirmRequirement') {
+      const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-reclaimed' }
+      const { requirementSave, confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...requirement, draft } } }
+    }
+  })
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '重新取得编辑权后仍需保存的内容')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  const recovery = await waitFor(() => view.getByRole('region', { name: '需求保存恢复' }))
+  const reclaim = within(recovery).getByRole('button', { name: '核对并重新取得编辑权' })
+  await waitFor(() => assert.equal(reclaim.disabled, false))
+  fireEvent.click(reclaim)
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 2))
+  const confirmations = fixture.commands.filter(command => command.action === 'confirmRequirement')
+  assert.equal(confirmations[1].body, confirmations[0].body)
+  assert.notEqual(confirmations[1].operationId, confirmations[0].operationId)
+  const repeatedOpen = fixture.commands.findLastIndex(command => command.action === 'openRequirement')
+  assert.equal(fixture.commands[repeatedOpen - 1].action, 'state')
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '需求保存恢复' }), false))
+})
+
+test('a late explicit confirmation reply preserves a queued edit and an independently observed external version', async () => {
+  let finish, submitted
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'confirmRequirement') return new Promise(resolve => {
+      submitted = command
+      finish = () => {
+        const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-confirmed-input' }
+        resolve({ ok: true, state: { ...state, drafts: [draft], requirement: { ...state.requirement, draft } } })
+      }
+    })
+  })
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '本次明确提交的内容')
+  fireEvent.click(view.getByRole('button', { name: '确认材料' }))
+  await waitFor(() => assert.equal(typeof finish, 'function'))
+  const body = view.getByRole('textbox', { name: '需求 Markdown 正文' })
+  assert.equal(body.readOnly, true, 'the visible editor freezes while the explicit command is running')
+  assert.equal(view.getByRole('textbox', { name: /正式依据（JSON/ }).readOnly, true)
+  assert.equal(view.queryByLabelText('需求名称'), null)
+  // An input event already queued before the editor froze must also survive the reply.
+  fireEvent.change(body, { target: { value: '确认期间排队到达的新输入' } })
+  await act(async () => fixture.project(state => {
+    const draft = { ...state.requirement.draft, body: '外部编辑器的新版本', sha256: 'hash-separate-external' }
+    return { ...state, drafts: [draft], requirement: { ...state.requirement, draft } }
+  }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '外部文件冲突' })))
+  await act(async () => finish())
+  await waitFor(() => assert.equal(body.value, '确认期间排队到达的新输入'))
+  const conflict = view.getByRole('region', { name: '外部文件冲突' })
+  assert.equal(within(conflict).getByLabelText('外部文件').value, '外部编辑器的新版本')
+  assert.equal(within(conflict).getByLabelText('未保存输入').value, '确认期间排队到达的新输入')
+  assert.equal(submitted.body, '本次明确提交的内容')
+})
+
+test('reopening an unfinished confirmation shows the durable unsaved input and retries its original operation', async () => {
+  let savedInput
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'retryRequirementSave') {
+      assert.equal(command.operationId, 'before-restart')
+      const draft = { ...state.requirement.draft, ...savedInput, sha256: 'hash-recovered' }
+      const { requirementSave, confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...requirement, draft } } }
+    }
+  }, state => {
+    savedInput = { body: '重启前尚未写入文件的完整正文', metadata: { ...state.requirement.draft.metadata, title: '重启前的新标题' } }
+    return { ...state, requirement: { ...state.requirement,
+      requirementSave: { operationId: 'before-restart', phase: 'relations', status: 'recovery', reason: 'network', documentSaved: false, message: '重启前保存尚未完成', input: savedInput },
+      confirmationRecovery: { operationId: 'before-restart', message: '继续原确认' },
+    } }
+  })
+  const view = fixture.render()
+  await selectRequirement(view)
+  fireEvent.click(view.getByRole('button', { name: '源码' }))
+  assert.equal(view.getByRole('textbox', { name: '需求 Markdown 正文' }).value, savedInput.body)
+  assert.equal(view.getByLabelText('需求名称').value, savedInput.metadata.title)
+  await new Promise(resolve => setTimeout(resolve, 900))
+  assert.equal(fixture.commands.some(command => command.action === 'saveRequirement'), false, 'restoration itself does not write or invent an input hash')
+  const deferred = view.getByRole('region', { name: '需求保存恢复' })
+  fireEvent.click(within(deferred).getByRole('button', { name: '稍后继续' }))
+  fireEvent.click(view.getByRole('button', { name: '返回需求协同列表' }))
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '需求对话' }), false))
+  fireEvent.click(view.getByRole('button', { name: /需求能力/ }))
+  await waitFor(() => assert.ok(view.getByRole('region', { name: '需求对话' })))
+  fireEvent.click(view.getByRole('button', { name: '源码' }))
+  assert.equal(view.getByRole('textbox', { name: '需求 Markdown 正文' }).value, savedInput.body)
+  const recovery = view.getByRole('region', { name: '需求保存恢复' })
+  fireEvent.click(within(recovery).getByRole('button', { name: '重试保存并继续确认' }))
+  await waitFor(() => assert.equal(!!view.queryByRole('region', { name: '需求保存恢复' }), false))
+  assert.equal(fixture.commands.filter(command => command.action === 'retryRequirementSave').length, 1)
+  assert.equal(fixture.commands.some(command => command.action === 'confirmRequirement'), false)
+  assert.equal(view.getByRole('textbox', { name: '需求 Markdown 正文' }).value, savedInput.body)
+})
+
+test('a readonly revision keeps its recovery choices and labels retained input separately from the confirmed version', async () => {
+  const retained = '丢失编辑权前尚未写入的修订内容'
+  const fixture = requirementPanel(true, undefined, undefined, (command, state) => {
+    if (command.action === 'startRequirementRevision') {
+      assert.equal(command.expectedRevision, 3)
+      return { ok: true, state: { ...state, requirement: { ...state.requirement, readOnly: false } } }
+    }
+    if (command.action === 'confirmRequirement') {
+      const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-after-reclaim' }
+      const { requirementSave, confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...requirement, draft } } }
+    }
+  }, state => ({ ...state,
+    collaboration: { ...state.collaboration, entities: state.collaboration.entities.map(entity => ({ ...entity, current: { version: 1, confirmationId: 'accepted-before-revision', metadata: state.requirement.draft.metadata, fixed: { commitSha: 'a'.repeat(40), path: state.requirement.draft.path, sha256: state.requirement.draft.sha256 }, confirmedBy: 1, confirmedAt: '2026-10-23T00:00:00Z' } })) },
+    requirement: { ...state.requirement,
+      requirementSave: { operationId: 'readonly-revision', phase: 'relations', status: 'recovery', reason: 'occupation', documentSaved: false, message: '编辑权需要重新取得', input: { body: retained, metadata: state.requirement.draft.metadata } },
+      confirmationRecovery: { operationId: 'readonly-revision', message: '用户选定恢复方案后继续确认' },
+    },
+  }))
+  const view = fixture.render()
+  await selectRequirement(view)
+  const recovery = view.getByRole('region', { name: '需求保存恢复' })
+  const spec = view.getByRole('region', { name: '需求说明' })
+  assert.match(spec.textContent, /保留的未保存输入/)
+  assert.doesNotMatch(spec.textContent, /固定版本 v1/)
+  fireEvent.click(within(recovery).getByRole('button', { name: '查看保留的输入' }))
+  const body = view.getByRole('textbox', { name: '需求 Markdown 正文' })
+  assert.equal(body.value, retained)
+  assert.equal(body.readOnly, true)
+  assert.equal(fixture.commands.some(command => command.action === 'confirmRequirement' || command.action === 'saveRequirement'), false)
+  fireEvent.click(within(recovery).getByRole('button', { name: '核对并重新取得编辑权' }))
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'confirmRequirement')))
+  assert.ok(fixture.commands.some(command => command.action === 'startRequirementRevision'))
+  assert.equal(fixture.commands.find(command => command.action === 'confirmRequirement').body, retained)
+})
+
+test('confirmation recovery uses the current version after corrected input has already autosaved', async () => {
+  const fixture = requirementPanel(false, undefined, undefined, (command, state) => {
+    if (command.action === 'retryRequirementSave') assert.fail('changed saved input must not retry the old confirmation hash')
+    if (command.action === 'confirmRequirement') {
+      const draft = { ...state.requirement.draft, body: command.body, metadata: command.metadata, sha256: 'hash-confirmed' }
+      const { confirmationRecovery, ...requirement } = state.requirement
+      return { ok: true, state: { ...state, drafts: [draft], requirement: { ...requirement, draft } } }
+    }
+  }, state => ({ ...state, requirement: { ...state.requirement,
+    confirmationRecovery: { operationId: 'earlier-confirmation', expectedHash: 'hash-initial', message: '请修正内容后继续确认' },
+  } }))
+  const view = fixture.render()
+  await selectRequirement(view)
+  editRequirementBody(view, '用户已经修正并自动保存的内容')
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'saveRequirement')), { timeout: 3000 })
+  await act(async () => {})
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '保存', exact: true }).disabled, true))
+  fireEvent.click(within(view.getByRole('region', { name: '需求保存恢复' })).getByRole('button', { name: '重试保存并继续确认' }))
+  await waitFor(() => assert.equal(fixture.commands.filter(command => command.action === 'confirmRequirement').length, 1))
+  const command = fixture.commands.find(command => command.action === 'confirmRequirement')
+  assert.equal(command.body, '用户已经修正并自动保存的内容')
+  assert.equal(command.expectedHash, 'hash-saved')
+  assert.notEqual(command.operationId, 'earlier-confirmation')
+  assert.equal(fixture.commands.some(command => command.action === 'retryRequirementSave'), false)
 })

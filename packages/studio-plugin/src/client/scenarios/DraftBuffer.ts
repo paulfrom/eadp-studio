@@ -6,6 +6,7 @@ export interface DraftSnapshot extends DraftInput {
 }
 export type SaveDraft = (input: DraftInput & { expectedHash: string; operationId: string }) => Promise<MaterialDraft>
 const sameInput = (a: DraftInput, b: DraftInput) => a.body === b.body && JSON.stringify(a.metadata) === JSON.stringify(b.metadata)
+export { sameInput as sameDraftInput }
 
 /** Keeps unsaved input across projections and serializes writes against the last acknowledged hash. */
 export class DraftBuffer {
@@ -15,6 +16,7 @@ export class DraftBuffer {
   private timer: ReturnType<typeof setTimeout> | undefined
   private pending: Promise<boolean> | undefined
   private operation: { input: DraftInput; expectedHash: string; operationId: string } | undefined
+  private explicitObserved: MaterialDraft[] | undefined
   private save: SaveDraft
   private delay: number
   constructor(draft: MaterialDraft, save: SaveDraft, delay = 800) {
@@ -31,6 +33,7 @@ export class DraftBuffer {
   }
   receive(draft: MaterialDraft): void {
     if (draft.sha256 === this.saved.sha256) return
+    this.explicitObserved?.push(draft)
     if (this.snapshot.saving && this.operation && sameInput(draft, this.operation.input)) return
     if (this.snapshot.dirty || this.snapshot.saving) {
       this.cancelTimer()
@@ -45,6 +48,15 @@ export class DraftBuffer {
     this.cancelTimer()
     if (this.snapshot.dirty && !this.snapshot.conflict) this.timer = setTimeout(() => { void this.flush() }, this.delay)
   }
+  /** Gives an explicit write the next turn without starting another automatic save. */
+  async prepareWrite(): Promise<void> {
+    this.cancelTimer()
+    while (this.pending) await this.pending
+    this.cancelTimer()
+    this.explicitObserved = []
+  }
+  /** Ends an explicit command that did not produce an acknowledged document. */
+  finishWrite(): void { this.explicitObserved = undefined }
   /** Resolves only after the latest input is saved; false keeps navigation and confirmation in place. */
   flush = async (): Promise<boolean> => {
     this.cancelTimer()
@@ -64,16 +76,28 @@ export class DraftBuffer {
     this.publish({ ...this.snapshot, saving: true, error: '' })
     try {
       const draft = await this.save({ ...input, expectedHash: this.operation.expectedHash, operationId: this.operation.operationId })
-      this.saved = draft
-      this.operation = undefined
-      const conflict = this.snapshot.conflict?.sha256 === draft.sha256 ? undefined : this.snapshot.conflict
-      const inputNow = sameInput(this.snapshot, input) ? { body: draft.body, metadata: draft.metadata } : this.snapshot
-      this.publish({ ...this.snapshot, ...inputNow, sha256: draft.sha256, saving: false, dirty: !sameInput(inputNow, draft), error: conflict ? '文件已发生外部变化，请合并两份内容后保存。' : '', conflict })
-      return !conflict
+      this.acknowledge(draft, input)
+      return !this.snapshot.conflict
     } catch (error) {
       this.publish({ ...this.snapshot, saving: false, error: error instanceof Error ? error.message : '本地保存失败，输入已保留。' })
       return false
     }
+  }
+  /** Acknowledges exact submitted input while preserving edits or external changes observed during the write. */
+  acknowledge(draft: MaterialDraft, input: DraftInput, resolvedHash?: string): void {
+    this.saved = draft
+    this.operation = undefined
+    const observed = this.explicitObserved?.findLast(value => value.sha256 !== draft.sha256 && value.sha256 !== resolvedHash)
+    this.finishWrite()
+    const candidate = observed ?? this.snapshot.conflict
+    const conflict = candidate?.sha256 === draft.sha256 || candidate?.sha256 === resolvedHash ? undefined : candidate
+    const inputNow = sameInput(this.snapshot, input) ? { body: draft.body, metadata: draft.metadata } : this.snapshot
+    this.publish({ ...this.snapshot, ...inputNow, sha256: draft.sha256, saving: false, dirty: !sameInput(inputNow, draft), error: conflict ? '文件已发生外部变化，请合并两份内容后保存。' : '', conflict })
+  }
+  /** Restores durable unsaved input against the actual file hash without scheduling an implicit write. */
+  restoreInput(input: DraftInput, conflict?: MaterialDraft): void {
+    this.cancelTimer()
+    this.publish({ ...this.snapshot, ...input, dirty: !sameInput(input, this.saved), conflict, error: conflict ? '请选择要保留的内容，或合并后继续保存。' : '' })
   }
   /** An explicit conflict resolution supplies the newly accepted version; it never resumes repair authority. */
   accept(draft: MaterialDraft): void {

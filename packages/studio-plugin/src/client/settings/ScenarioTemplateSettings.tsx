@@ -49,7 +49,7 @@ export function MaterialTemplateSettings({ kind, state, run: send }: { kind: Mat
   const update = (change: Partial<TemplateInput>) => setTemplates(previous => previous.map(template => template.id === selectedId ? { ...template, ...change } : template))
   if (!state.project) return <p className={css.sectionIntro}>打开项目后管理该项目的{material}模板。</p>
   return <>
-    <p className={css.sectionIntro}>模板保存在项目 .template/，随 Git 共享。发布新默认仅影响新建{material}；已有{material}须显式切换固定模板。</p>
+    <p className={css.sectionIntro}>模板保存在项目 .template/，随 Git 共享。发布新默认仅影响新建{material}；{kind === 'requirement' ? '已有需求的模板在编辑期间保持固定。' : '已有场景须显式切换固定模板。'}</p>
     {catalog && catalog.templates.length === 0 && <p role="status">本项目尚未发布{material}模板。上传 Markdown 并发布后，新建{material}会绑定该模板；发布前新建{material}会被拒绝。</p>}
     <div className={css.kvBlock}>{catalog?.templates.map(template => <div key={template.id} className={css.kv}><span className={css.kvK}>{template.name}{template.id === catalog.defaultTemplateId ? ' · 当前默认' : ''}</span><span className={css.kvV}>{template.fixed.commitSha.slice(0, 12)} · {template.fixed.path}</span></div>)}</div>
     <div className={css.group}><h3 className={css.groupTitle}>新增或更新模板</h3><label>模板<select disabled={busy} value={selectedId} onChange={event => setSelectedId(event.target.value)}>{templates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><label>上传 Markdown<input type="file" disabled={busy} accept=".md,text/markdown" onChange={async event => {

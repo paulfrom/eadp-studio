@@ -124,6 +124,8 @@ export const MaterialIntegrationSchema = object({ ...integrationFields, entityId
   confirmations: Type.Array(ConfirmationInputSchema, { minItems: 1, maxItems: 100 }),
 });
 export type MaterialIntegrationRequest = Static<typeof MaterialIntegrationSchema>;
+/** Validate a persisted fixed-material integration before resuming its effects. */
+export function isMaterialIntegrationRequest(value: unknown): value is MaterialIntegrationRequest { return Value.Check(MaterialIntegrationSchema, value); }
 export const TemplateIntegrationSchema = object({ ...integrationFields, stage: Type.Literal('template'), expectedProjectRevision: RevisionSchema });
 export type TemplateIntegrationRequest = Static<typeof TemplateIntegrationSchema>;
 export const PrepareIntegrationSchema = Type.Union([MaterialIntegrationSchema, TemplateIntegrationSchema]);

@@ -162,10 +162,12 @@ export class CollaborationService {
   }
   async bindTemplate(actor: Actor, projectId: string, id: string, input: BindTemplateRequest) {
     const project = await this.authorize(actor, projectId, true);
+    const kind = await this.transact(actor, c => repository.entityRow(c, projectId, id)).then(row => row.kind);
+    requireCondition(kind !== 'requirement', 'REQUIREMENT_TEMPLATE_FIXED', 'A requirement keeps the template selected at creation', 409);
+    requireCondition(kind === 'scenario', 'TEMPLATE_BINDING_REQUIRES_DESIGN', 'Template binding requires a scenario design task', 409);
     const action = `scenario.template:${id}`, replay = await this.replay(actor, projectId, action, input);
     if (replay.found) return replay.result;
-    const kind = await this.transact(actor, c => repository.entityRow(c, projectId, id)).then(row => row.kind as 'scenario' | 'requirement');
-    await templates.verifyBinding(this.gitlab, this.content, actor, project, kind, input);
+    await templates.verifyBinding(this.gitlab, this.content, actor, project, input);
     return this.mutate(actor, projectId, action, input, async (c, current, all) => {
       requireCondition(current.recognizedHead === project.recognizedHead, 'INTEGRATION_HEAD_CHANGED', 'Refresh accepted project history before switching templates');
       await templates.bind(c, projectId, repository.entity(all, id), actor, input);

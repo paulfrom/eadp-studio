@@ -15,6 +15,9 @@ export async function syncProjectContext(root: string, metadata: MaterialMetadat
   const files = (metadata.files ?? []).filter(file => file.path !== projectContextPath)
   let bytes: Buffer
   try { bytes = await readFile(path.join(root, projectContextPath)) }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...metadata, files }; throw error }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return metadata.files?.some(file => file.path === projectContextPath) ? { ...metadata, files } : metadata
+    throw error
+  }
   return { ...metadata, files: [...files, { path: projectContextPath, sha256: digest(bytes) }] }
 }

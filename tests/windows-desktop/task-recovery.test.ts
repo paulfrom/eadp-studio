@@ -12,7 +12,7 @@ import type { PendingOperation } from '../../packages/studio-plugin/src/host/app
 import { initialMetadata, type HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { materialText, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
-import type { EntityView, IntegrationView, ProjectState } from '@eadp/contracts'
+import { isMaterialIntegrationRequest, type EntityView, type IntegrationView, type MaterialIntegrationRequest, type ProjectState } from '../../packages/contracts/src/index.ts'
 
 // Recovery tests isolate DSH message factories and installer registration.
 // task-presets-runtime verifies the actual scoped assembly/request middleware.
@@ -42,16 +42,24 @@ async function fixture(failure?: 'session' | 'prompt') {
   }
 
   const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: 'a'.repeat(40), revision: 1 }, entities: [scenario(1)], baselines: [], integrations: [] }
+  const materialTask = { projectId: 'project', entityId: 'scenario', sessionId: 'material-session', purpose: 'material' as const, inputHash: '', worktree: path.join(root, 'worktree') }
+  local.tasks.push(materialTask)
   const integrations = new Map<string, IntegrationView>()
   const addOperation = (version: number): PendingOperation => {
-    const integration: IntegrationView = { id: `integration-${version}`, entityId: 'scenario', ownerId: 1, status: 'accepted', sourceSha: 'a'.repeat(40), expectedHead: 'a'.repeat(40), candidateSha: 'a'.repeat(40), stage: 'material', confirmationIds: [`confirmation-${version}`], createdAt: '' }
+    const fixed = scenario(version).current!.fixed, id = `operation-${version}`
+    const token = { occupationId: `occupation-${version}`, generation: version, taskId: path.basename(materialTask.worktree), clientId: local.clientId, expectedRevision: version }
+    const prepare: MaterialIntegrationRequest = { idempotencyKey: id, entityId: 'scenario', token, sourceSha: fixed.commitSha, expectedHead: remote.project.recognizedHead!, candidateSha: fixed.commitSha,
+      stage: 'material', allowedPaths: [fixed.path], checks: { candidateSha: fixed.commitSha, passed: true, checks: [{ name: 'materials', passed: true, evidenceHash: fixed.sha256 }] },
+      confirmations: [{ entityId: 'scenario', expectedRevision: version, fixed, readHash: fixed.sha256, authorConfirmed: true, confirmationMethod: 'direct' }] }
+    assert.ok(isMaterialIntegrationRequest(prepare))
+    const integration: IntegrationView = { id: `integration-${version}`, entityId: 'scenario', ownerId: 1, status: 'accepted', sourceSha: prepare.sourceSha, expectedHead: prepare.expectedHead, candidateSha: prepare.candidateSha, stage: prepare.stage, confirmationIds: [`confirmation-${version}`], createdAt: '' }
     integrations.set(integration.id, integration); remote.integrations.push(integration)
-    const operation: PendingOperation = { id: `operation-${version}`, projectId: 'project', entityId: 'scenario', phase: 'accepted', candidateSha: 'a'.repeat(40), expectedHead: 'a'.repeat(40), fixedPath: '场景/scenario.md', sha256: hash(version), integrationId: integration.id, prepare: { confirmations: [{ fixed: scenario(version).current!.fixed }] }, token: {} }
+    const operation: PendingOperation = { id, accountId: 1, projectId: 'project', entityId: 'scenario', task: { ...materialTask }, phase: 'accepted', candidateSha: prepare.candidateSha, expectedHead: prepare.expectedHead,
+      fixedPath: fixed.path, sha256: fixed.sha256, integrationId: integration.id, prepare, token, accepted: structuredClone(integration) }
     local.operations.push(operation); return operation
   }
   const first = addOperation(1)
   local.selectedProjectId = 'project'; local.projects.push({ id: 'project', name: '测试项目', directory: root, repositoryUrl: remote.project.repositoryUrl })
-  local.tasks.push({ projectId: 'project', entityId: 'scenario', sessionId: 'material-session', purpose: 'material', inputHash: '', worktree: path.join(root, 'worktree') })
   await store.save()
   const calls = { sessions: [] as string[], prompts: [] as string[], promptTexts: [] as string[], creates: 0 }; const reservations = new Map<string, EntityView>(); let failed = false, corrupted = false
   const api = { request: async (method: string, route: string, body?: Record<string, unknown>) => {
@@ -69,12 +77,14 @@ async function fixture(failure?: 'session' | 'prompt') {
     if (route === '/v1/projects') return [remote.project]
     if (route === '/v1/namespaces') return []
     if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', fixed: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }] }; return { acceptedHead: remote.project.recognizedHead, scenarios: catalog, requirements: { defaultTemplateId: 'requirement-default', templates: [{ id: 'requirement-default', name: '默认需求', fixed: { commitSha: 'b'.repeat(40), path: '.template/requirement-default.md', sha256: requirementTemplateHash } }] } } }
+    if (route.includes('/operations/')) { const operation = local.operations.find(value => value.id === route.split('/').at(-1)); return { action: 'integration.prepare', result: operation?.accepted } }
     if (route.includes('/integrations/')) return integrations.get(route.split('/').at(-1)!)
     return remote
   } } as unknown as CollaborationClient
   const ports = { git: { state: async () => ({ root, head: 'a'.repeat(40), branch: 'main', dirty: false, repositoryUrl: remote.project.repositoryUrl }), createWorktree: async (_source: string, target: string) => mkdir(target, { recursive: true }), hasCommit: async () => true, fetchCommit: async () => {}, readBlob: async (_directory: string, sha: string, file: string) => Buffer.from(file === '.template/default.md' ? template : file === '.template/requirement-default.md' ? requirementTemplate : corrupted ? 'modified input' : material(Number(sha[0]))) }, account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failure === 'session' && !failed) { failed = true; throw new Error('injected session failure') }; return task.sessionId }, prompt: async (sessionId: string, text: string) => { calls.prompts.push(sessionId); calls.promptTexts.push(text); if (failure === 'prompt' && !failed) { failed = true; throw new Error('injected prompt failure') } } } as unknown as HostPorts
-  const createApp = (nextStore = store) => new StudioApplication(nextStore, api, ports)
-  return { root, ports, api, store, storeRoot, remote, local, calls, first, addOperation, createApp, corruptInput: (value: boolean) => { corrupted = value }, nextVersion: (version: number) => { remote.entities = [scenario(version)] }, dispose: () => rm(root, { recursive: true, force: true }) }
+  const apps: StudioApplication[] = []
+  const createApp = (nextStore = store) => { const app = new StudioApplication(nextStore, api, ports); apps.push(app); return app }
+  return { root, ports, api, store, storeRoot, remote, local, calls, first, addOperation, createApp, corruptInput: (value: boolean) => { corrupted = value }, nextVersion: (version: number) => { remote.entities = [scenario(version)] }, dispose: async () => { for (const app of apps) await app.dispose(); await rm(root, { recursive: true, force: true }) } }
 }
 
 test('accepted confirmation recovery offers splitting and waits for an explicit split command', async () => {

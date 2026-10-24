@@ -10,7 +10,7 @@ import { atomicWriteFile, containedFile, digest, findMaterialFile, materialTarge
 export function sameTemplate(a: FixedReference, b: FixedReference): boolean { return a.commitSha === b.commitSha && a.path === b.path && a.sha256 === b.sha256 }
 
 interface SaveInput { root: string; metadata: MaterialMetadata; body: string; expectedHash: string; operationId: string }
-interface TemplateBindingInput { root: string; kind: 'scenario' | 'requirement'; entityId: string; templateId: string; templateRef: FixedReference; expectedHash: string; operationId: string }
+interface TemplateBindingInput { root: string; kind: 'scenario'; entityId: string; templateId: string; templateRef: FixedReference; expectedHash: string; operationId: string }
 interface Receipt { fingerprint: string; result: MaterialDraft; committed: boolean }
 const queues = new Map<string, Promise<unknown>>()
 
@@ -46,6 +46,7 @@ export class ScenarioDocumentService {
 
   /** Rebinds only the fixed template of an explicitly selected material, preserving its whole body. */
   async bindTemplate(input: TemplateBindingInput): Promise<MaterialDraft> {
+    if (input.kind !== 'scenario') throw new Error('需求创建后模板固定，编辑期间不能切换模板')
     const root = await realpath(input.root)
     return serialized(`${root}\0${input.entityId}`, async () => {
       const current = await readMaterial(root, input.kind, input.entityId)

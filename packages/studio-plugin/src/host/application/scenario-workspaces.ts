@@ -11,16 +11,18 @@ import { CollaborationError, type CollaborationClient } from '../adapters/collab
 import type { HostPorts } from './ports.ts'
 import type { StudioStore } from './state.ts'
 import type { ProjectWorkspaces } from './projects.ts'
-import { ScenarioDocumentService, checkScenarioDocument, sameTemplate, scenarioFileErrors } from './scenario-documents.ts'
+import { ScenarioDocumentService, sameTemplate } from './scenario-documents.ts'
+import { MaterialConfirmationChecks, type MaterialConfirmationOperation } from './material-confirmations.ts'
 import { conclusionKey, parseWriteProposal, proposalInvalidReason, summarizeWrite, type ProposalCurrent } from './scenario-write-proposals.ts'
 import { MaterialSources } from './material-sources.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
+import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
 
 interface DesignRequestContext extends ProposalCurrent { occupationKey: string }
 /** Retains one exact backend request while a local template rebind is being reconciled. */
 export interface MaterialTemplateBinding {
-  projectId: string; kind: 'scenario' | 'requirement'; expectedHash: string; request: BindTemplateRequest;
+  projectId: string; kind: 'scenario'; expectedHash: string; request: BindTemplateRequest;
   status: 'pending' | 'applied'; backendAccepted?: boolean; message?: string;
   /** A fresh user decision can preserve newer local bytes after the backend already accepted the binding. */
   application?: { operationId: string; expectedHash: string };
@@ -31,7 +33,12 @@ type ResolveWriteCommand = Extract<DesignCommand, { action: 'resolveScenarioWrit
 type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | 'undoRequirementWrite' }>
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
-export interface ScenarioRecord { projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; writeProposalOccupationKey?: string; requestContexts?: Record<string, DesignRequestContext>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string } }
+export interface ScenarioRecord {
+  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; writeProposalOccupationKey?: string; requestContexts?: Record<string, DesignRequestContext>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  requirementSaves?: RequirementSaveOperation[];
+  /** Exact confirmation requests and their accepted progress, retained across recovery choices. */
+  materialConfirmations?: MaterialConfirmationOperation[];
+}
 export interface ScenarioDependencies {
   entity(id: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView }>
   task(remote: ProjectState, entity: EntityView): Promise<TaskView>
@@ -42,11 +49,20 @@ export interface ScenarioDependencies {
 /** Owns scenario and requirement design state; fixed Git bytes remain the accepted document authority. */
 export class ScenarioWorkspaces {
   readonly sources: MaterialSources
+  readonly requirementSaves: RequirementSaves
+  readonly confirmationChecks: MaterialConfirmationChecks
   get documents(): ScenarioDocumentService { return new ScenarioDocumentService(this.store.directory) }
   activeEntityId: string | undefined
   private observer: ScenarioFileObserver | undefined
   private observerDirectory: string | undefined
-  constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) { this.sources = new MaterialSources(store, ports, projects, deps, (entityId, projectId) => this.record(entityId, projectId)) }
+  constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {
+    this.sources = new MaterialSources(store, ports, projects, deps, (entityId, projectId) => this.record(entityId, projectId))
+    this.requirementSaves = new RequirementSaves(store, api, {
+      context: (entityId, projectId) => this.requirementContext(entityId, projectId),
+      owned: entity => deps.owned(entity), record: (entityId, projectId) => this.record(entityId, projectId), documents: () => this.documents,
+    })
+    this.confirmationChecks = new MaterialConfirmationChecks(store, ports, this, projects)
+  }
   stopObservation(task: ScenarioObservedTask): void { this.observer?.unobserve(task) }
   /** Release every observation owned by one task worktree. */
   stopWorktree(worktree: string): void { this.observer?.unobserveWorktree(worktree) }
@@ -90,18 +106,34 @@ export class ScenarioWorkspaces {
     if (relative) this.observe(task, relative)
     return context
   }
+  /** Recovery reads an existing owned task; acquiring a new occupation requires a user action. */
+  async requirementContext(entityId: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView; task: TaskView }> {
+    const { remote, entity } = await this.deps.entity(entityId, projectId)
+    if (entity.kind !== 'requirement') throw new Error('请选择需求材料')
+    const token = await this.deps.owned(entity), local = await this.store.read()
+    const task = local.tasks.findLast(value => value.projectId === remote.project.id && value.entityId === entityId && value.purpose === 'material' && !value.cleanup && path.basename(value.worktree) === token.taskId)
+    if (!task) throw new Error('需求编辑现场已变化，请重新打开需求并核对编辑权')
+    const relative = await findMaterialFile(task.worktree, 'requirement', entityId)
+    if (relative) this.observe(task, relative)
+    return { remote, entity, task }
+  }
   async snapshot(remote: ProjectState): Promise<ScenarioWorkspace | undefined> {
     const local = await this.store.read(), entity = remote.entities.find((e): e is EntityView => e.id === this.activeEntityId && 'generation' in e && (e.kind === 'scenario' || e.kind === 'requirement') && !e.builtinKey)
     if (!entity) return undefined
     const record = await this.record(entity.id), account = await this.ports.account()
     const projectSync = local.projects.find(project => project.id === remote.project.id)?.sync
     const owned = entity.occupation?.ownerId === account?.id && entity.occupation?.clientId === local.clientId
+    const requirementSave = entity.kind === 'requirement' ? this.requirementSaves.view(record) : undefined
+    const lastConfirmation = record.materialConfirmations?.at(-1)
+    const confirmation = lastConfirmation && !['accepted', 'superseded'].includes(lastConfirmation.phase) ? lastConfirmation : undefined
+    const recoveringRequirement = !!requirementSave || !!confirmation
     const tasks = local.tasks.filter(t => t.projectId === remote.project.id && t.entityId === entity.id && t.purpose === 'material')
     const task = tasks.find(t => t.sessionId === record.activeSessionId && (!entity.occupation || path.basename(t.worktree) === entity.occupation.taskId)) ?? tasks.findLast(t => entity.occupation && path.basename(t.worktree) === entity.occupation.taskId)
+      ?? (recoveringRequirement ? tasks.findLast(t => !t.cleanup) : undefined)
     const settlementTask = task ?? tasks.findLast(item => item.cleanup)
     const readOnly = !!entity.current && !owned
     let draft: MaterialDraft
-    if (readOnly) {
+    if (readOnly && !recoveringRequirement) {
       const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
       // The fixed version is not local yet: the lane is fetching it, and the
       // workspace appears on the read that follows.
@@ -112,13 +144,12 @@ export class ScenarioWorkspaces {
       draft = await readMaterial(task.worktree, entity.kind, entity.id)
     }
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
-    const fixed = draft.metadata.templateRef, fixedTemplate = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
-    if (!fixedTemplate) return undefined
-    const templateBody = Buffer.from(fixedTemplate).toString('utf8')
-    const check = checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: !!account, hasOccupation: !!owned, conflict: !!record.conflict, structureCheck: local.scenarioStructureCheck, templateBody, fileErrors: !readOnly && task ? await scenarioFileErrors(task.worktree, draft) : [] })
+    const fixed = draft.metadata.templateRef
+    const check = await this.confirmationChecks.inspect({ projectId: remote.project.id, entity, ...(task ? { task } : {}), draft })
+    if (!check) return undefined
+    const templateBody = check.templateBody
     const gates = check.groups
     if (!readOnly && task) this.observe(task, draft.path)
-    if (record.observationError) { const versionGate = gates.find(gate => gate.id === 'version')!; versionGate.status = 'blocked'; versionGate.messages.push(record.observationError) }
     const cleanup = settlementTask?.cleanup
     const settlement: ScenarioWorkspace['settlement'] = !entity.current
       ? { status: 'draft' }
@@ -127,9 +158,11 @@ export class ScenarioWorkspaces {
         : cleanup && cleanup.status !== 'done'
           ? { status: 'cleanup-pending', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), cleanup }
           : { status: 'settled', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), ...(cleanup ? { cleanup } : {}) }
-    return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
+    return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly && !recoveringRequirement ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
       ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
+      ...(requirementSave ? { requirementSave } : {}),
+      ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, message: confirmation.message ?? requirementSave?.message ?? '请按选择恢复保存并继续确认', ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
   }
@@ -141,6 +174,8 @@ export class ScenarioWorkspaces {
   }
   /** Records a fixed template choice before sending its backend request; no body is regenerated. */
   async bindTemplate(entityId: string, templateId: string, expectedHash: string, operationId: string): Promise<void> {
+    const target = await this.deps.entity(entityId)
+    if (target.entity.kind !== 'scenario') throw new Error('需求创建后模板固定，编辑期间不能切换模板')
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(operationId) || !/^[a-f0-9]{64}$/.test(expectedHash)) throw new Error('模板绑定操作或阅读版本无效')
     const record = await this.record(entityId), previous = record.templateBinding
     if (previous && (previous.request.idempotencyKey === operationId || previous.application?.operationId === operationId)) {
@@ -150,7 +185,7 @@ export class ScenarioWorkspaces {
       return
     }
     const { remote, entity, task } = await this.editable(entityId)
-    if (entity.kind !== 'scenario' && entity.kind !== 'requirement') throw new Error('请选择场景或需求材料')
+    if (entity.kind !== 'scenario') throw new Error('需求创建后模板固定，编辑期间不能切换模板')
     const draft = await readMaterial(task.worktree, entity.kind, entity.id)
     if (draft.sha256 !== expectedHash) throw new Error('当前材料不是用户阅读的版本，请重新核对模板绑定')
     if (previous?.status === 'pending') {
@@ -162,7 +197,7 @@ export class ScenarioWorkspaces {
     }
     if (!matchesTemplate(draft.metadata, entity)) throw new Error('材料模板绑定与后台不一致，请先核对模板绑定操作')
     const catalog = await this.api.request<TemplateCatalogResponse>('GET', `/v1/projects/${remote.project.id}/templates`)
-    const template = (entity.kind === 'scenario' ? catalog.scenarios : catalog.requirements).templates.find(value => value.id === templateId)
+    const template = catalog.scenarios.templates.find(value => value.id === templateId)
     if (!template || catalog.acceptedHead !== remote.project.recognizedHead) throw new Error('模板目录已变化，请刷新项目后重试')
     record.templateBinding = { projectId: remote.project.id, kind: entity.kind, expectedHash, request: { idempotencyKey: operationId, token: { ...await this.deps.owned(entity) }, templateId, templateRef: { ...template.fixed } }, status: 'pending' }
     await this.store.save()
@@ -206,9 +241,10 @@ export class ScenarioWorkspaces {
     }
   }
   async save(command: SaveCommand): Promise<void> {
+    if (command.action === 'saveRequirement' || command.action === 'resolveRequirementConflict') return this.requirementSaves.save(command)
     const { task, entity, remote } = await this.editable(command.entityId), record = await this.record(entity.id)
     if (command.metadata.kind !== entity.kind || command.metadata.entityId !== entity.id || !matchesTemplate(command.metadata, entity)) throw new Error('材料身份与模板绑定不能通过编辑改变')
-    if (record.conflict && command.action !== 'resolveScenarioConflict' && command.action !== 'resolveRequirementConflict') throw new Error('请先解决外部修改冲突')
+    if (record.conflict && command.action !== 'resolveScenarioConflict') throw new Error('请先解决外部修改冲突')
     try {
       await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, expectedHash: command.expectedHash, operationId: command.operationId })
       if (command.metadata.title !== entity.title || command.metadata.summary !== entity.summary) await this.api.request('PUT', `/v1/projects/${remote.project.id}/entities/${entity.id}`, { idempotencyKey: `${command.operationId}-directory`, token: await this.deps.owned(entity), title: command.metadata.title, ...(command.metadata.summary !== undefined ? { summary: command.metadata.summary } : {}) })

@@ -15,7 +15,6 @@ export const RequirementGates = memo(function RequirementGates({ workspace, disa
   buffer: DraftBuffer; snapshot: DraftSnapshot;
   onConfirm(): void; onStructureCheck(enabled: boolean): void;
 }) {
-  const conflict = !!workspace.conflict
   const blocked = workspace.gates.filter(gate => gate.status === 'blocked')
   const metadata = snapshot.metadata
   const edit = (change: Partial<MaterialMetadata>) => buffer.edit({ body: snapshot.body, metadata: { ...metadata, ...change } as MaterialMetadata })
@@ -42,10 +41,10 @@ export const RequirementGates = memo(function RequirementGates({ workspace, disa
       <summary>{blocked.length} 项门禁阻断</summary>
       {blocked.map(gate => <article key={gate.id}><strong>{gate.label}</strong>{gate.messages.map((message, index) => <p key={index}>{message}</p>)}</article>)}
     </details>}
-    {dirty && <p role="status" className={css.muted}>内容有变化，保存后重新执行当前版本门禁。</p>}
+    {dirty && <p role="status" className={css.muted}>内容有变化，确认时将保存当前输入并重新执行检查。</p>}
     {!workspace.readOnly && <div className={css.footerBar}>
       <div className={css.footerActions}>
-        <button className={css.primary} disabled={disabled || conflict} onClick={onConfirm} title="确认表示当前版本的核心规则、验收条件、正式依据和待澄清项已完整，后台接受后才形成固定版本。">确认当前需求</button>
+        <button className={css.primary} disabled={disabled} onClick={onConfirm} title="确认表示当前版本的核心规则、验收条件、正式依据和待澄清项已完整，后台接受后才形成固定版本。">确认当前需求</button>
       </div>
     </div>}
   </footer>

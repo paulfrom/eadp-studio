@@ -5,7 +5,6 @@ import type { ScenarioCommand, ScenarioWorkspace } from '../../shared/scenarios.
 import type { TaskView } from '../../shared/studio.ts'
 import { containedFile, digest, findMaterialFile, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError } from '../adapters/collaboration/client.ts'
-import { checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { ScenarioRecord, ScenarioWorkspaces } from './scenario-workspaces.ts'
 
@@ -115,7 +114,7 @@ export class ScenarioRepairs {
   private async continueRound(repair: LocalScenarioRepair): Promise<void> {
     if (repair.view.status !== 'active' || !await this.current(repair)) return
     await this.workspaces.editable(repair.entityId, repair.projectId)
-    const draft = await readMaterial(repair.task.worktree, 'scenario', repair.entityId), after = await this.check(repair.task, draft)
+    const draft = await readMaterial(repair.task.worktree, 'scenario', repair.entityId), after = await this.workspaces.confirmationChecks.inspectTask(repair.task, draft)
     if (after.passed) {
       await this.confirm(repair.entityId, draft.sha256, repair.view.id)
       repair.view = await this.workspaces.api.request('GET', `/v1/projects/${repair.projectId}/repairs/${repair.view.id}`)
@@ -184,9 +183,9 @@ export class ScenarioRepairs {
       const candidate = { ...draft.metadata, coreRulesPresent: result.coreRulesPresent, acceptanceCriteriaPresent: result.acceptanceCriteriaPresent, openQuestions: result.openQuestions }
       if (!isMaterialMetadata(candidate)) throw new Error('修复候选的业务质量项或待澄清项无效')
       const metadata = await syncProjectContext(task.worktree, candidate)
-      const before = await this.check(task, draft)
+      const before = await this.workspaces.confirmationChecks.inspectTask(task, draft)
       const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, expectedHash: draft.sha256, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
-      const after = await this.check(task, next)
+      const after = await this.workspaces.confirmationChecks.inspectTask(task, next)
       const priorIssues = before.groups.flatMap(g => g.messages), remainingIssues = after.groups.flatMap(g => g.messages)
       const improved = after.passed || remainingIssues.length < priorIssues.length || priorIssues.some(issue => !remainingIssues.includes(issue))
       await this.event(repair, { type: 'round', hashAfter: next.sha256, improved })
@@ -194,12 +193,6 @@ export class ScenarioRepairs {
       await this.recoverPending(repair)
     } catch (error) { repair.message = error instanceof Error ? error.message : '修复执行结果待核对'; await w.store.save() }
     await w.store.save(); return true
-  }
-  private async check(task: TaskView, draft: Awaited<ReturnType<typeof readMaterial>>) {
-    const w = this.workspaces, local = await w.store.read(), record = await w.record(task.entityId, task.projectId)
-    const ref = draft.metadata.templateRef!
-    const templateBody = Buffer.from(await w.projects.readFixed(task.projectId, ref.commitSha, ref.path, ref.sha256)).toString('utf8')
-    return checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: true, hasOccupation: true, conflict: !!record.conflict, structureCheck: local.scenarioStructureCheck, templateBody, fileErrors: await scenarioFileErrors(task.worktree, draft) })
   }
   private async terminate(repair: LocalScenarioRepair, reason: 'cancelled' | 'concurrent-edit' | 'missing-evidence' | 'no-improvement' | 'round-limit'): Promise<void> {
     if (!['active', 'paused'].includes(repair.view.status)) return

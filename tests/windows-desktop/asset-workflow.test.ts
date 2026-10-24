@@ -18,6 +18,11 @@ import { validateIntegration } from '../../apps/collaboration-api/src/modules/in
 
 const head = 'a'.repeat(40), candidate = 'b'.repeat(40)
 const { Value } = createRequire(new URL('../../packages/contracts/package.json', import.meta.url))('@sinclair/typebox/value')
+/** A handled exception keeps the confirmation intent and offers recovery instead of reporting acceptance. */
+function assertConfirmationRecovery(reply: Awaited<ReturnType<StudioApplication['command']>>): void {
+  assert.equal(reply.ok, true, JSON.stringify(reply))
+  if (reply.ok) assert.ok(reply.state.pending.some(value => value.phase === 'confirmation-recovery'), JSON.stringify(reply.state.pending))
+}
 const body = '# 材料\n\n## 核心业务规则\n\n用户按固定业务范围检查记录且保留审计依据。\n\n## 验收条件\n\n符合业务规则的记录可以保存，不符合的显示明确错误。\n'
 const templateBody = '## 目标与范围\n\n## 业务规则\n\n## 验收条件\n'
 const templateRef = { commitSha: head, path: '.template/default.md', sha256: digest(templateBody) }
@@ -72,7 +77,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     if (method === 'GET' && route === '/v1/projects') return [project]
     if (method === 'GET' && route.endsWith('/templates')) return { acceptedHead: project.recognizedHead, scenarios: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: templateRef }] }, requirements: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认需求模板', fixed: templateRef }] } }
     if (method === 'GET' && route.endsWith('/versions')) return [source]
-    if (method === 'GET' && route.includes('/operations/')) { const result = records.get(route.split('/').at(-1)!); if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404); return { result } }
+    if (method === 'GET' && route.includes('/operations/')) { const result = records.get(route.split('/').at(-1)!); if (!result) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404); return { action: 'integration.prepare', result } }
     if (method === 'GET' && route.includes('/integrations/')) return remote.integrations.find(integration => integration.id === route.split('/').at(-1))
     if (method === 'GET' && route === '/v1/projects/source-project') return { ...remote, project: { ...project, id: 'source-project' } }
     if (method === 'GET' && route === '/v1/projects/project') return remote
@@ -163,6 +168,7 @@ test('adoption success binds the accepted target confirmation and survives a los
   f.failures.successResponse = true
   const confirmed = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: checked.sha256, method: 'direct' })
   assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+  assert.equal((await rebooted.read()).scenarios.find(record => record.entityId === f.value.id)?.requirementConfirmation?.message, undefined)
   // The confirmation is recorded before its Git publication finishes; the lost
   // acknowledgement surfaces on the operation the surfaces render.
   await app.settle()
@@ -206,6 +212,154 @@ test('a lost integration response resolves the original operation on retry witho
   await app.settle()
   assert.equal(f.calls.prepared.length, 1, 'retry queries the original operation instead of preparing again')
   assert.equal((await f.store.read()).operations[0]!.phase, 'accepted')
+})
+
+/** External adapters that let an accepted requirement open its fixed prototype task. */
+function enablePrototypeStartup(f: Awaited<ReturnType<typeof fixture>>): void {
+  const request = f.api.request.bind(f.api)
+  f.api.request = async (method, route, input?: Record<string, unknown>) => {
+    if (method === 'POST' && route.endsWith('/claim')) {
+      f.value.revision++; f.value.generation++
+      f.value.occupation = { occupationId: 'prototype-occupation', generation: f.value.generation, taskId: String(input!.taskId), clientId: String(input!.clientId), expectedRevision: f.value.revision,
+        entityId: f.value.id, ownerId: 1, purpose: 'prototype', inputVersion: f.value.materialVersion, prerequisiteBindings: [], createdAt: '' }
+      return structuredClone(f.value)
+    }
+    return request(method, route, input)
+  }
+  f.ports.git.createWorktree = async (_root, directory) => { await cp(f.worktree, directory, { recursive: true }) }
+}
+
+test('an unknown prototype send keeps material acceptance and is not resent by confirmation recovery or restart', async t => {
+  const f = await fixture(t)
+  enablePrototypeStartup(f)
+  f.failures.prompt = true
+  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, true)
+  await app.settle()
+  const operation = f.local.operations[0]!, startup = f.local.tasks.find(task => task.purpose === 'material')!.prototypeStart!
+  assert.equal(operation.phase, 'accepted'); assert.equal(operation.accepted!.status, 'accepted')
+  assert.equal(operation.message, undefined); assert.equal(operation.deliveryMessage, undefined)
+  assert.equal(startup.status, 'unknown'); assert.ok(startup.task)
+  assert.equal(f.calls.prompts.length, 1)
+  await app.command({ action: 'retryOperation', operationId: operation.id }); await app.settle()
+  const store = new StudioStore(path.join(f.root, 'state')); store.useUser(1)
+  const restarted = f.app(store)
+  await restarted.command({ action: 'retryOperation', operationId: operation.id }); await restarted.settle()
+  assert.equal(f.calls.prepared.length, 1, 'follow-up recovery never prepares another confirmation')
+  assert.equal(f.calls.prompts.length, 1, 'a missing send acknowledgement is not permission to send again')
+  const pending = await restarted.command({ action: 'state' })
+  assert.ok(pending.ok && pending.state.pending.some(value => value.id === startup.id && value.phase === 'prototype-startup'))
+})
+
+test('a failed final startup receipt never makes an already sent prototype prompt retryable', async t => {
+  const f = await fixture(t)
+  enablePrototypeStartup(f)
+  const save = f.store.save.bind(f.store)
+  let lostReceipt = false
+  f.store.save = async () => {
+    if (!lostReceipt && f.local.tasks.some(task => task.prototypeStart?.status === 'sent')) { lostReceipt = true; throw new Error('startup receipt write failed') }
+    await save()
+  }
+  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
+  const operation = f.local.operations[0]!, startup = f.local.tasks.find(task => task.purpose === 'material')!.prototypeStart!
+  assert.equal(lostReceipt, true); assert.equal(startup.status, 'unknown'); assert.equal(operation.phase, 'accepted')
+  assert.equal(f.calls.prompts.length, 1)
+  await app.command({ action: 'retryOperation', operationId: operation.id }); await app.settle()
+  const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
+  const restarted = f.app(rebooted)
+  await restarted.command({ action: 'retryOperation', operationId: operation.id }); await restarted.settle()
+  assert.equal(f.calls.prompts.length, 1)
+  assert.equal(f.calls.prepared.length, 1)
+})
+
+test('an old automatic prototype startup cannot cancel a later explicit design occupation', async t => {
+  const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
+  const operation = f.local.operations[0]!, original = f.local.tasks.find(task => task.purpose === 'material')!, startup = original.prototypeStart!
+  assert.equal(operation.phase, 'accepted'); assert.equal(startup.status, 'blocked')
+  const worktree = path.join(f.root, 'new-revision'); await cp(f.worktree, worktree, { recursive: true })
+  const next = { ...original, worktree, sessionId: 'new-revision-session' }; delete next.cleanup; delete next.prototypeStart
+  f.local.tasks.push(next)
+  f.value.revision++; f.value.generation++
+  f.value.occupation = { occupationId: 'new-design', generation: f.value.generation, taskId: 'new-revision', clientId: f.local.clientId, expectedRevision: f.value.revision,
+    entityId: f.value.id, ownerId: 1, purpose: 'design', inputVersion: f.value.materialVersion, prerequisiteBindings: [], createdAt: '' }
+  const expected = structuredClone(f.value.occupation), request = f.api.request.bind(f.api)
+  const controls: string[] = []
+  f.api.request = async (method, route, input) => {
+    if (method === 'POST' && /\/(cancel|claim)$/.test(route)) controls.push(route)
+    return request(method, route, input)
+  }
+  await f.store.save()
+  await app.command({ action: 'retryOperation', operationId: startup.id }); await app.settle()
+  assert.deepEqual(controls, []); assert.deepEqual(f.value.occupation, expected)
+  assert.equal(next.cleanup, undefined); assert.equal(startup.status, 'blocked'); assert.match(startup.message!, /设计占用/)
+  assert.equal(operation.phase, 'accepted'); assert.equal(f.calls.prepared.length, 1)
+})
+
+test('switching accounts during prototype preparation never creates or saves a task in the new account', { timeout: 5000 }, async t => {
+  const f = await fixture(t)
+  enablePrototypeStartup(f)
+  let accountId = 1, reached!: () => void, release!: () => void
+  const entered = new Promise<void>(resolve => { reached = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+  f.ports.account = async () => ({ id: accountId, name: '作者', gitlabUsername: 'author', gitlabEmail: 'author@example.invalid' }) as Awaited<ReturnType<HostPorts['account']>>
+  const hasCommit = f.ports.git.hasCommit.bind(f.ports.git), createWorktree = f.ports.git.createWorktree.bind(f.ports.git)
+  const created: string[] = []
+  f.ports.git.hasCommit = async (directory, sha) => {
+    if (directory === f.root && f.value.occupation?.purpose === 'prototype') { reached(); await gate }
+    return hasCommit(directory, sha)
+  }
+  f.ports.git.createWorktree = async (directory, worktree, branch, sha) => { created.push(worktree); await createWorktree(directory, worktree, branch, sha) }
+  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })
+  assert.equal(reply.ok, true)
+  await entered
+  accountId = 2; f.store.useUser(2)
+  const other = await f.store.read()
+  release(); await app.settle()
+  assert.deepEqual(created, []); assert.deepEqual(other.tasks, []); assert.deepEqual(other.projects, [])
+  assert.equal(f.local.tasks.filter(task => task.purpose === 'prototype').length, 0)
+  assert.equal(f.calls.sessions.length, 0); assert.equal(f.calls.prompts.length, 0)
+  assert.equal(f.local.operations[0]!.phase, 'accepted')
+})
+
+test('same-named accepted operations in two projects start their own prototypes exactly once', async t => {
+  const f = await fixture(t)
+  enablePrototypeStartup(f)
+  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
+  const original = f.local.tasks.find(task => task.purpose === 'material')!, first = f.local.operations[0]!
+  assert.equal(original.prototypeStart!.status, 'sent'); assert.equal(f.calls.prompts.length, 1)
+  const directory = path.join(f.root, 'second-project'), worktree = path.join(directory, 'task')
+  await cp(f.worktree, worktree, { recursive: true })
+  const task = { ...structuredClone(original), projectId: 'second-project', worktree, sessionId: 'second-material-session' }
+  delete task.prototypeStart; delete task.cleanup; delete task.error
+  const entity = structuredClone(f.value); delete entity.occupation
+  entity.current!.confirmationId = 'second-confirmation'
+  const project = { ...f.remote.project, id: 'second-project', name: '第二项目', recognizedHead: candidate }
+  const operation = { ...structuredClone(first), projectId: project.id, task: { projectId: project.id, entityId: task.entityId, worktree, sessionId: task.sessionId, purpose: task.purpose, inputHash: task.inputHash } }
+  operation.integrationId = 'second-integration'; operation.accepted!.id = operation.integrationId; operation.accepted!.confirmationIds = ['second-confirmation']
+  const remote: ProjectState = { project, entities: [entity], integrations: [operation.accepted!], baselines: [] }
+  f.local.projects.push({ id: project.id, name: project.name, directory, repositoryUrl: project.repositoryUrl })
+  f.local.tasks.push(task); f.local.operations.push(operation)
+  const request = f.api.request.bind(f.api)
+  f.api.request = async (method, route, input?: Record<string, unknown>) => {
+    if (method === 'GET' && route === '/v1/projects') return [f.remote.project, project]
+    if (method === 'GET' && route === '/v1/projects/second-project') return remote
+    if (method === 'POST' && route === '/v1/projects/second-project/entities/target/claim') {
+      entity.revision++; entity.generation++
+      entity.occupation = { occupationId: 'second-prototype', generation: entity.generation, taskId: String(input!.taskId), clientId: f.local.clientId, expectedRevision: entity.revision,
+        entityId: entity.id, ownerId: 1, purpose: 'prototype', inputVersion: entity.materialVersion, prerequisiteBindings: [], createdAt: '' }
+      return structuredClone(entity)
+    }
+    return request(method, route, input)
+  }
+  await f.store.save(); await app.command({ action: 'state' }); await app.settle()
+  assert.equal(task.prototypeStart!.status, 'sent')
+  assert.notEqual(task.prototypeStart!.id, original.prototypeStart!.id)
+  assert.equal(f.calls.sessions.length, 2); assert.equal(f.calls.prompts.length, 2)
+  await app.command({ action: 'retryOperation', operationId: task.prototypeStart!.id }); await app.settle()
+  assert.equal(f.calls.prepared.length, 1); assert.equal(f.calls.prompts.length, 2)
 })
 
 test('a moved remote head stops the pipeline instead of rewriting the accepted branch', async t => {
@@ -252,6 +406,20 @@ test('scenario confirmation fixes only the scenario material and leaves related 
   assert.deepEqual(request.confirmations.map(item => item.entityId), ['target'])
   assert.deepEqual([...f.calls.commits[0]!].sort(), [evidencePath, '场景/target.md'].sort())
   assert.ok(request.confirmations.every(item => item.fixed.commitSha === candidate))
+})
+
+test('a blocked scenario confirmation retains its original saved input after an external correction', async t => {
+  const f = await fixture(t, 'scenario'), app = f.app()
+  const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
+  const blocked = await saveMaterial(f.worktree, { ...draft.metadata, coreRulesPresent: false }, '作者原始正文\n' + body)
+  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: blocked.sha256, method: 'direct' })).ok, false)
+  const original = f.local.scenarios.find(record => record.entityId === f.value.id)!.materialConfirmations![0]!
+  assert.equal(original.phase, 'recovery'); assert.equal(original.request.body, blocked.body)
+  await saveMaterial(f.worktree, { ...blocked.metadata, coreRulesPresent: true }, '外部修正正文\n' + body)
+  await app.command({ action: 'retryOperation', operationId: original.operationId }); await app.settle()
+  assert.equal(original.request.body, blocked.body); assert.equal(original.request.metadata!.coreRulesPresent, false)
+  assert.equal(original.request.expectedHash, blocked.sha256); assert.equal(original.phase, 'recovery')
+  assert.equal(f.calls.prepared.length, 0, 'an old confirmation cannot silently adopt the externally corrected bytes')
 })
 
 
@@ -345,6 +513,7 @@ test('an author-requested material review binds the local snapshot without commi
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对异常分支并在交付限制中保留说明。' })
   assert.equal(reply.ok, true, JSON.stringify(reply))
+  assert.equal((await f.store.read()).scenarios.find(record => record.entityId === f.value.id)?.materialConfirmations?.at(-1)?.message, undefined)
   const confirmation = f.calls.prepared[0]!.confirmations[0]!
   assert.equal(confirmation.confirmationMethod, 'ai-assisted')
   if (confirmation.confirmationMethod === 'ai-assisted') {
@@ -378,10 +547,10 @@ test('AI-assisted confirmation rejects pending output and blank author dispositi
   const f = await fixture(t), app = f.app()
   await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'material' })
   const review = (await f.store.read()).reviews[0]!, draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已自行检查' })).ok, false)
+  assertConfirmationRecovery(await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已自行检查' }))
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
-  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '   ' })).ok, false)
+  assertConfirmationRecovery(await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '   ' }))
   assert.equal(f.calls.prepared.length, 0)
 })
 
@@ -394,7 +563,7 @@ test('changing author material after review invalidates the original report and 
   const original = await readMaterial(f.worktree, 'requirement', f.value.id)
   const changed = await saveMaterial(f.worktree, original.metadata, original.body + '\n作者新增业务规则。')
   f.gitState.dirtyFiles = [changed.path]
-  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: changed.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '确认旧评审' })).ok, false)
+  assertConfirmationRecovery(await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: changed.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '确认旧评审' }))
   assert.equal((await readMaterial(review.task.worktree, 'requirement', f.value.id)).sha256, original.sha256)
   assert.equal(f.calls.prepared.length, 0)
 })
@@ -481,7 +650,7 @@ for (const reason of ['error', 'aborted']) test('a valid-looking report followed
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })
   assert.equal(review.status, 'pending', 'a report is incomplete until the actual turn succeeds')
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '尝试提前确认' })).ok, false)
+  assertConfirmationRecovery(await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'ai-assisted', reviewId: review.id, authorDisposition: '尝试提前确认' }))
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason })
   assert.equal(review.status, 'failed')
   await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport() })

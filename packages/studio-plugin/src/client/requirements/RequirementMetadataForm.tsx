@@ -19,16 +19,18 @@ function parseFields(evidence: string, questions: string): Pick<MaterialMetadata
 }
 
 export interface RequirementMetadataFormHandle {
-  /** Parses the pending text input; a false result must block saving and confirmation. */
+  /** Parses pending text so an invalid field can be corrected in the recovery flow. */
   validate(): boolean
+  /** Replaces pending field text after the author explicitly chooses another complete version. */
+  accept(metadata: MaterialMetadata): void
 }
 
 /**
  * Requirement business fields driven by the parent's draft buffer: formal
  * evidence JSON, fixed scenario relations, prerequisites, open questions and
  * the two completeness flags. Unparseable text stays local and is never
- * written into the buffer, so saving and confirmation stay blocked until it
- * parses again.
+ * written into the buffer; the recovery flow can correct it or explicitly
+ * choose the external version.
  */
 export const RequirementMetadataForm = forwardRef<RequirementMetadataFormHandle, {
   buffer: DraftBuffer; snapshot: DraftSnapshot; entities: EntityView[]; projectId: string; readOnly: boolean;
@@ -70,10 +72,17 @@ export const RequirementMetadataForm = forwardRef<RequirementMetadataFormHandle,
       setInvalid(false); setError(''); validity.current?.('')
     } catch (reason) { fail(reason) }
   }
-  useImperativeHandle(ref, () => ({ validate: () => {
-    try { parseFields(values.current.evidence, values.current.questions); return true }
-    catch (reason) { fail(reason); return false }
-  } }), [])
+  useImperativeHandle(ref, () => ({
+    validate: () => {
+      try { parseFields(values.current.evidence, values.current.questions); return true }
+      catch (reason) { fail(reason); return false }
+    },
+    accept: value => {
+      const next = { evidence: evidenceText(value), questions: questionText(value) }
+      values.current = next; synced.current = fieldsJson(value)
+      setEvidence(next.evidence); setQuestions(next.questions); setInvalid(false); setError(''); validity.current?.('')
+    },
+  }), [])
   const edit = (change: Partial<MaterialMetadata>) => {
     const current = buffer.getSnapshot()
     buffer.edit({ body: current.body, metadata: { ...current.metadata, ...change } as MaterialMetadata })

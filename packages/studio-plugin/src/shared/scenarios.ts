@@ -1,5 +1,6 @@
 import type { EntityOccupancyView, EntityView, FixedReference, MaterialMetadata, RepairTaskView } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from './studio.ts'
+import type { RequirementSaveView } from './requirement-workspace.ts'
 
 export interface ScenarioSource { id: string; name: string; format: string; sha256: string; status: 'reading' | 'read' | 'partial' | 'failed'; ranges: string[]; text: string; error?: string; selected: boolean; formal: boolean }
 export interface ScenarioGate { id: 'business' | 'evidence' | 'version' | 'template'; label: string; status: 'passed' | 'blocked' | 'disabled'; messages: string[] }
@@ -37,6 +38,9 @@ export interface ScenarioWorkspace {
   structureCheck: boolean; gates: ScenarioGate[]; sources: ScenarioSource[];
   writeProposal?: ScenarioWriteProposalView;
   writeReceipt?: ScenarioWriteReceiptView;
+  requirementSave?: RequirementSaveView;
+  /** A confirmation keeps its user intent while the author resolves an exception. */
+  confirmationRecovery?: { operationId: string; message: string; expectedHash?: string };
   settlement: ScenarioSettlementView;
   sessions: TaskView[]; activeSessionId?: string; conflict?: ScenarioConflict;
   repair?: RepairTaskView & { question?: string; message?: string; sessionId?: string };

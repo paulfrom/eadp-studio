@@ -91,7 +91,7 @@ test('requirement gates render one chip per check with states and confirm withou
   assert.deepEqual([...chips].map(chip => chip.getAttribute('data-state')), ['blocked', 'passed'])
   assert.match(view.container.textContent, /业务完整性 · 阻断/)
   assert.match(view.container.textContent, /模板结构 · 通过/)
-  assert.match(view.container.textContent, /内容有变化，保存后重新执行当前版本门禁。/)
+  assert.match(view.container.textContent, /内容有变化，确认时将保存当前输入并重新执行检查。/)
   assert.match(view.container.textContent, /1 项门禁阻断/)
   assert.match(view.container.textContent, /缺少规则/)
   assert.equal(view.queryByRole('button', { name: /修复/ }), null)
@@ -199,7 +199,7 @@ test('spec panel offers preview/source, export and hides saving for the confirme
   const props = {
     entity: entity(), draft, buffer: { edit() {}, getSnapshot: () => snapshot({ body: draft.body }) },
     snapshot: snapshot({ body: draft.body }), workspace: workspace(), entities, projectId: 'project', candidates: [],
-    busy: false, metadataForm: React.createRef(), onFlush: async () => true, onCollapse() {}, onBindTemplate() {}, onResolve() {}, onOpenScenario() {},
+    busy: false, metadataForm: React.createRef(), onFlush: async () => true, onCollapse() {}, onResolve() {}, onOpenScenario() {},
   }
   const view = render(h(RequirementSpecPanel, props))
   assert.equal(view.getByRole('button', { name: '预览' }).getAttribute('aria-pressed'), 'true')
@@ -223,7 +223,7 @@ test('spec panel offers preview/source, export and hides saving for the confirme
 
 test('requirement workspace wires the requirement commands and StudioPanel routes the stage to it', () => {
   const workspaceSource = readFileSync(path.join(client, 'requirements/RequirementWorkspace.tsx'), 'utf8')
-  for (const command of ['saveRequirement', 'resolveRequirementConflict', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'confirmMaterial', 'startRequirementRevision', 'bindRequirementTemplate', 'newRequirementSession', 'selectRequirementSession', 'openRequirement', 'requestReview', 'setScenarioStructureCheck']) {
+  for (const command of ['saveRequirement', 'resolveRequirementConflict', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'confirmRequirement', 'startRequirementRevision', 'retryRequirementSave', 'newRequirementSession', 'selectRequirementSession', 'openRequirement', 'requestReview', 'setScenarioStructureCheck']) {
     assert.ok(workspaceSource.includes(`action: '${command}'`), `RequirementWorkspace missing ${command}`)
   }
   assert.ok(workspaceSource.includes('metadataForm.current.validate()') || workspaceSource.includes('metadataForm.current?.validate()'), 'flush must validate business fields first')

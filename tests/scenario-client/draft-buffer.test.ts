@@ -114,3 +114,65 @@ test('acknowledges Host newline normalization without resaving the same input fo
   assert.equal(buffer.getSnapshot().body, '第一行\n第二行')
   assert.equal(buffer.getSnapshot().dirty, false)
 })
+
+test('preparing an explicit write cancels the debounce without saving the new input', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let calls = 0
+  const buffer = new DraftBuffer(draft(), async input => { calls++; return draft(input.body, 'hash-1') })
+  t.after(() => buffer.dispose())
+  buffer.edit({ body: '由确认动作保存', metadata })
+  await buffer.prepareWrite()
+  t.mock.timers.tick(1000)
+  assert.equal(calls, 0)
+  assert.equal(buffer.getSnapshot().body, '由确认动作保存')
+  assert.equal(buffer.getSnapshot().dirty, true)
+})
+
+test('an explicit write can proceed after the in-flight automatic save failed', async t => {
+  let fail: ((error: Error) => void) | undefined
+  const buffer = new DraftBuffer(draft(), async () => new Promise((_resolve, reject) => { fail = reject }))
+  t.after(() => buffer.dispose())
+  buffer.edit({ body: '异常后仍保留的输入', metadata })
+  const saving = buffer.flush()
+  let prepared = false
+  const explicit = buffer.prepareWrite().then(() => { prepared = true })
+  await Promise.resolve()
+  assert.equal(prepared, false)
+  fail!(new Error('网络异常'))
+  assert.equal(await saving, false)
+  await explicit
+  assert.equal(prepared, true)
+  assert.equal(buffer.getSnapshot().body, '异常后仍保留的输入')
+  assert.equal(buffer.getSnapshot().sha256, 'hash-0')
+})
+
+test('an explicit write acknowledgement preserves later input and an independent external projection', t => {
+  const buffer = new DraftBuffer(draft(), async input => draft(input.body, 'unused'))
+  t.after(() => buffer.dispose())
+  const submitted = { body: '明确提交的正文', metadata }
+  buffer.edit(submitted)
+  buffer.edit({ body: '在途的新输入', metadata: { ...metadata, title: '新标题' } })
+  buffer.receive(draft('另一个编辑器的正文', 'external-hash'))
+  buffer.acknowledge(draft(submitted.body, 'submitted-hash'), submitted)
+  assert.equal(buffer.getSnapshot().body, '在途的新输入')
+  assert.equal(buffer.getSnapshot().metadata.title, '新标题')
+  assert.equal(buffer.getSnapshot().sha256, 'submitted-hash')
+  assert.equal(buffer.getSnapshot().dirty, true)
+  assert.equal(buffer.getSnapshot().conflict?.sha256, 'external-hash')
+})
+
+test('restored recovery input keeps the actual file hash and never schedules a save', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let saves = 0
+  const actual = draft('磁盘实际内容', 'actual-file-hash')
+  const buffer = new DraftBuffer(actual, async input => { saves++; return draft(input.body, 'unused') })
+  t.after(() => buffer.dispose())
+  buffer.restoreInput({ body: '持久保存操作中的未写入正文', metadata }, actual)
+  assert.equal(buffer.getSnapshot().body, '持久保存操作中的未写入正文')
+  assert.equal(buffer.getSnapshot().sha256, 'actual-file-hash')
+  assert.equal(buffer.getSnapshot().dirty, true)
+  assert.equal(buffer.getSnapshot().conflict?.body, actual.body)
+  t.mock.timers.tick(1000)
+  await Promise.resolve()
+  assert.equal(saves, 0)
+})

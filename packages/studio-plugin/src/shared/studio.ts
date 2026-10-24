@@ -37,7 +37,13 @@ export interface TaskCleanup {
   archive?: string; head?: string; branch?: string; message?: string;
 }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding }
+/** A confirmed material's prototype startup, independently recoverable from its confirmation. */
+export interface PrototypeStartup {
+  id: string; confirmationId: string; fixed: FixedReference;
+  status: 'pending' | 'opening' | 'sending' | 'sent' | 'unknown' | 'blocked'; message?: string;
+  task?: Pick<TaskView, 'projectId' | 'entityId' | 'sessionId' | 'purpose' | 'inputHash' | 'worktree'>;
+}
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding; prototypeStart?: PrototypeStartup }
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
@@ -71,6 +77,7 @@ export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWo
   | { action: 'startSession'; entityId: string; purpose: 'material' | 'prototype' | 'handoff' }
   | { action: 'restoreSession'; sessionId: string }
   | ({ action: 'confirmMaterial'; entityId: string; expectedHash: string } & ConfirmationChoice)
+  | ({ action: 'confirmRequirement'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata } & ConfirmationChoice)
   | { action: 'requestReview'; entityId: string; purpose: 'material' | 'prototype' }
   | ({ action: 'confirmPrototype'; entityId: string } & ConfirmationChoice)
   | { action: 'selectCandidate'; candidateId: string; expectedInputHash: string }

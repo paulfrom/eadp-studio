@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import type { ConsistencyComparisonView, ConsistencyContextView, IntegrationView, MaterialMetadata, ProjectState, SubmitConsistencyComparisonRequest } from '../../packages/contracts/src/index.ts'
+import { isMaterialIntegrationRequest, type ConsistencyComparisonView, type ConsistencyContextView, type IntegrationView, type MaterialIntegrationRequest, type MaterialMetadata, type ProjectState, type SubmitConsistencyComparisonRequest } from '../../packages/contracts/src/index.ts'
 import type { StudioReply, StudioState, TaskView } from '../../packages/studio-plugin/src/shared/studio.ts'
 import type { ConsistencyModelInput } from '../../packages/studio-plugin/src/shared/consistency.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
@@ -35,9 +35,14 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }, automa
   local.tasks.push(task)
   const candidateSha = 'c'.repeat(40)
   const remote = { project: { id: 'project', name: '项目', gitlabProjectId: 1, repositoryUrl: 'https://example.test/project.git', stableBranch: 'main', recognizedHead: candidateSha, revision: 2, initializationStatus: 'ready' }, entities: [{ id: 'scene', kind: 'scenario', title: '审批', generation: 1, materialVersion: 1, revision: 2, current: { confirmationId: 'accepted-confirmation', version: 1, fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 }, metadata, confirmedBy: 1, confirmedAt: '' } }], integrations: [], baselines: [] } as unknown as ProjectState
-  const integration: IntegrationView = { id: 'integration', entityId: 'scene', ownerId: 1, status: 'accepted', stage: 'material', confirmationIds: ['accepted-confirmation'], candidateSha, sourceSha: 'a'.repeat(40), expectedHead: 'a'.repeat(40), createdAt: '' }
-  const operation: PendingOperation = { id: 'confirmation-operation', projectId: 'project', entityId: 'scene', phase: 'prepared', candidateSha, expectedHead: 'a'.repeat(40), fixedPath: draft.path, sha256: draft.sha256, integrationId: integration.id,
-    prepare: { confirmations: [{ entityId: 'scene', fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 } }] }, token: {} }
+  const token = { occupationId: 'design-occupation', generation: 1, taskId: path.basename(task.worktree), clientId: local.clientId, expectedRevision: 1 }
+  const prepare: MaterialIntegrationRequest = { idempotencyKey: 'confirmation-operation', entityId: task.entityId, token, sourceSha: candidateSha, expectedHead: 'a'.repeat(40), candidateSha,
+    stage: 'material', allowedPaths: [draft.path], checks: { candidateSha, passed: true, checks: [{ name: 'materials', passed: true, evidenceHash: draft.sha256 }] },
+    confirmations: [{ entityId: task.entityId, expectedRevision: token.expectedRevision, fixed: { commitSha: candidateSha, path: draft.path, sha256: draft.sha256 }, readHash: draft.sha256, authorConfirmed: true, confirmationMethod: 'direct' }] }
+  assert.ok(isMaterialIntegrationRequest(prepare))
+  const integration: IntegrationView = { id: 'integration', entityId: 'scene', ownerId: 1, status: 'accepted', stage: prepare.stage, confirmationIds: ['accepted-confirmation'], candidateSha, sourceSha: prepare.sourceSha, expectedHead: prepare.expectedHead, createdAt: '' }
+  const operation: PendingOperation = { id: prepare.idempotencyKey, accountId: 1, projectId: 'project', entityId: 'scene', task: { ...task }, phase: 'prepared', candidateSha, expectedHead: prepare.expectedHead,
+    fixedPath: draft.path, sha256: draft.sha256, integrationId: integration.id, prepare, token }
   if (automatic) local.operations.push(operation)
   const context: ConsistencyContextView = { entity: { id: 'scene', kind: 'scenario', title: '审批', revision: 2, materialVersion: 1, confirmationStatus: 'confirmed', occupied: false }, sources: [], requirements: [], prerequisites: [] }
   const apiCalls: Array<{ method: string; route: string; body?: SubmitConsistencyComparisonRequest }> = [], inputs: ConsistencyModelInput[] = [], capabilities: string[] = []

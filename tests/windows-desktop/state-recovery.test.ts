@@ -11,7 +11,7 @@ import test from 'node:test'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 
 /** A record as this version writes it: every collection and the check flag present. */
-const currentRecord = { clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [], consistencyComparisons: [] }
+const currentRecord = { formatVersion: 1, clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [], consistencyComparisons: [] }
 /** A record an earlier version wrote: later collections are absent. */
 const previousRecord = { clientId: 'client-previous', projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [] }
 
@@ -35,6 +35,20 @@ test('a current-version record is read as it is and nothing is preserved', async
   assert.equal(state.scenarioStructureCheck, true)
   assert.deepEqual(await files(directory), ['studio-state.json'])
   assert.equal(store.preservedRecord, undefined)
+})
+
+test('a complete pre-confirmation-format record preserves its exact bytes instead of reinterpreting an old confirmation', async t => {
+  const { store, directory } = await harness(t)
+  const previous = structuredClone(currentRecord) as Record<string, unknown>
+  delete previous.formatVersion
+  previous.scenarios = [{ projectId: 'project', entityId: 'requirement', sources: [], sourcePaths: {}, requirementConfirmation: { operationId: 'old-intent', choice: { method: 'direct' } } }]
+  const original = JSON.stringify(previous)
+  await writeFile(path.join(directory, 'studio-state.json'), original)
+  const state = await store.read()
+  assert.equal(state.formatVersion, 1); assert.equal(state.clientId, currentRecord.clientId)
+  assert.deepEqual(state.scenarios, []); assert.deepEqual(state.operations, [])
+  assert.ok(store.preservedRecord)
+  assert.equal(await readFile(store.preservedRecord.preservedPath, 'utf8'), original)
 })
 
 test('a previous-version record is preserved beside the record and rebuilt for this version', async t => {
