@@ -14,6 +14,7 @@ import { ScenarioWorkspaces } from '../../packages/studio-plugin/src/host/applic
 import { ScenarioRepairs } from '../../packages/studio-plugin/src/host/application/scenario-repairs.ts'
 import { ScenarioTemplates } from '../../packages/studio-plugin/src/host/application/scenario-templates.ts'
 import { BackgroundLane } from '../../packages/studio-plugin/src/host/application/background-lane.ts'
+import { parseWriteProposal } from '../../packages/studio-plugin/src/host/application/scenario-write-proposals.ts'
 
 const templateBody = '## 范围\n## 规则\n', templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: digest(templateBody) }
 function metadata(): MaterialMetadata { return { entityId: 'scene', kind: 'scenario', title: '审批', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [{ blocking: true, limitation: '异常审批规则待补充', excludedScope: '异常审批' }], referencedAssets: [] } }
@@ -170,6 +171,52 @@ test('scenario sessions use explicit whole-body write proposals after summarizin
   assert.match(context, /回答规则：先用可读中文归纳本轮明确结论/)
   assert.match(context, /eadp-write-proposal/)
   assert.match(context, /整篇新正文/)
+  const example = /代码块：(\{[^\n]+\})。块内/.exec(context)?.[1]
+  assert.ok(example, 'the runtime prompt supplies a complete proposal example')
+  const response = `是否写入？\n\`\`\`eadp-write-proposal\n${example}\n\`\`\``
+  const parsed = parseWriteProposal(response, f.draft, ['evidence'])
+  assert.equal(parsed.conclusions[0]!.id, 'C1')
+  assert.deepEqual(parsed.evidenceIds, [])
+  assert.equal(await f.workspaces.accept(f.task.sessionId, '是否写入？'), false)
+  assert.equal(f.record.writeProposal, undefined, 'plain conversation never creates an actionable write')
+  assert.equal(await f.workspaces.accept(f.task.sessionId, response), true)
+  assert.equal(f.record.writeProposal?.status, 'pending')
+  assert.equal(f.record.writeProposal?.body, parsed.body)
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, f.draft.sha256, 'a proposal does not write the material')
+})
+
+for (const failure of ['format', 'unread-evidence', 'expired-context'] as const) test(`a ${failure} proposal exposes its failure and replaces the old actionable card`, async t => {
+  const f = await fixture(t)
+  await f.workspaces.open(f.entity.id)
+  await f.workspaces.context(f.task)
+  const value = { entityId: f.entity.id, conclusions: [{ id: 'C1', text: '审批失败后允许重新提交' }], evidenceIds: ['evidence'], body: '审批失败后可重新提交。' }
+  const response = (input: unknown) => `是否写入？\n\`\`\`eadp-write-proposal\n${JSON.stringify(input)}\n\`\`\``
+  await f.workspaces.accept(f.task.sessionId, response(value))
+  const previousId = f.record.writeProposal?.id
+  assert.ok(previousId)
+  assert.equal(f.record.writeProposal?.status, 'pending')
+
+  const invalidValue = failure === 'format' ? { ...value, authorization: true }
+    : failure === 'unread-evidence' ? { ...value, evidenceIds: ['unread-source'] } : value
+  if (failure === 'expired-context') await saveMaterial(f.root, metadata(), '作者刚刚修改的正文')
+  const before = await readMaterial(f.root, 'scenario', 'scene')
+  assert.equal(await f.workspaces.accept(f.task.sessionId, response(invalidValue)), true)
+  const snapshot = await f.workspaces.snapshot(f.remote)
+  const reason = failure === 'format' ? /字段无效/ : failure === 'unread-evidence' ? /未实际读取的资料/ : /正文已变化/
+  assert.match(snapshot?.writeProposalError ?? '', reason)
+  assert.equal(snapshot?.writeProposal, undefined)
+  assert.equal(f.record.writeProposalOccupationKey, undefined)
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, before.sha256)
+  const saved = JSON.parse(await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8'))
+  assert.equal(saved.scenarios[0].writeProposalError, snapshot?.writeProposalError, 'failure survives a restart')
+  assert.equal(saved.scenarios[0].writeProposal, undefined)
+
+  await f.workspaces.context(f.task)
+  await f.workspaces.accept(f.task.sessionId, response(value))
+  const recovered = await f.workspaces.snapshot(f.remote)
+  assert.equal(recovered?.writeProposalError, undefined)
+  assert.equal(recovered?.writeProposal?.status, 'pending')
+  assert.notEqual(recovered?.writeProposal?.id, previousId)
 })
 
 test('an accepted context proposal writes only the project root snapshot and binds the new hash to the scenario package', async t => {

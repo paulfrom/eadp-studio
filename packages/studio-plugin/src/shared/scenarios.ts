@@ -37,6 +37,8 @@ export interface ScenarioWorkspace {
   template: { id: string; name: string; fixed: FixedReference; body: string };
   structureCheck: boolean; gates: ScenarioGate[]; sources: ScenarioSource[];
   writeProposal?: ScenarioWriteProposalView;
+  /** Reason the latest proposed write could not be offered for confirmation. */
+  writeProposalError?: string;
   writeReceipt?: ScenarioWriteReceiptView;
   requirementSave?: RequirementSaveView;
   /** A confirmation keeps its user intent while the author resolves an exception. */

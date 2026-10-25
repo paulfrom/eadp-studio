@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Candidate, EntityView, StudioReply, TaskView } from '../../shared/studio.ts'
 import type { ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
-import { ScenarioWriteProposalCard } from './ScenarioWriteProposalCard.tsx'
+import { ScenarioWriteProposalCard, ScenarioWriteProposalError } from './ScenarioWriteProposalCard.tsx'
 import { ScenarioWriteReceiptCard } from './ScenarioWriteReceiptCard.tsx'
 import { RequirementCandidatePanel } from '../requirements/RequirementCandidatePanel.tsx'
 import css from '../studio.module.css'
@@ -69,6 +69,7 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, material, s
     </section>}
     <div className={css.chatDock}>
       {task?.error && <div className={css.notice}>{task.error}</div>}
+      {workspace.writeProposalError && <ScenarioWriteProposalError message={workspace.writeProposalError} />}
       {workspace.writeProposal && <ScenarioWriteProposalCard proposal={workspace.writeProposal} disabled={locked || workspace.readOnly || material.dirty} onResolve={actions.resolveWriteProposal} />}
       {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly || material.dirty} onUndo={actions.undoWrite} />}
       {workspace.readOnly && <section className={css.dockCard} aria-label="需求拆分">

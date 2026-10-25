@@ -5,7 +5,7 @@ import type { StudioProps } from '../studio/StudioPanel.tsx'
 import { MaterialConversation } from '../components/MaterialConversation.tsx'
 import { ConsistencyPanel } from '../components/ConsistencyPanel.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
-import { ScenarioWriteProposalCard } from '../scenarios/ScenarioWriteProposalCard.tsx'
+import { ScenarioWriteProposalCard, ScenarioWriteProposalError } from '../scenarios/ScenarioWriteProposalCard.tsx'
 import { ScenarioWriteReceiptCard } from '../scenarios/ScenarioWriteReceiptCard.tsx'
 import { useDraftBuffer } from '../scenarios/useDraftBuffer.ts'
 import { sameDraftInput, type DraftInput } from '../scenarios/DraftBuffer.ts'
@@ -236,6 +236,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
             </div>
           </>}
         </section>}
+        {workspace.writeProposalError && <ScenarioWriteProposalError message={workspace.writeProposalError} />}
         {workspace.writeProposal && <ScenarioWriteProposalCard materialLabel="需求" proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
         {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly} onUndo={actions.undoWrite} />}
         <ReviewPanel review={review} purpose="material" busy={busy || confirming} onRequest={actions.requestReview} onConfirm={actions.confirm} />

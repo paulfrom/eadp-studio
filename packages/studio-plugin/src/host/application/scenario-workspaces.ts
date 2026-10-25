@@ -35,6 +35,8 @@ const occupationKey = (token: OccupationToken): string => `${token.occupationId}
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
 export interface ScenarioRecord {
   projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; writeProposalOccupationKey?: string; requestContexts?: Record<string, DesignRequestContext>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  /** Explains why the latest model proposal could not become an actionable write. */
+  writeProposalError?: string;
   requirementSaves?: RequirementSaveOperation[];
   /** Exact confirmation requests and their accepted progress, retained across recovery choices. */
   materialConfirmations?: MaterialConfirmationOperation[];
@@ -160,6 +162,7 @@ export class ScenarioWorkspaces {
           : { status: 'settled', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), ...(cleanup ? { cleanup } : {}) }
     return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly && !recoveringRequirement ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
       ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
+      ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
       ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, message: confirmation.message ?? requirementSave?.message ?? '请按选择恢复保存并继续确认', ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
@@ -232,7 +235,7 @@ export class ScenarioWorkspaces {
       if (context.entity.kind !== binding.kind || occupationKey(await this.deps.owned(context.entity)) !== occupationKey(request.token) || context.entity.templateId !== request.templateId || !context.entity.templateRef || !sameTemplate(context.entity.templateRef, request.templateRef)) throw new Error('后台材料绑定已变化，请核对原模板操作')
       await this.documents.bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, expectedHash: application.expectedHash, operationId: application.operationId })
       binding.status = 'applied'; delete binding.message
-      delete record.writeProposal; delete record.writeProposalOccupationKey; delete record.requestContexts; delete record.writeReceipt; delete record.conflict
+      delete record.writeProposal; delete record.writeProposalOccupationKey; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt; delete record.conflict
       await this.store.save()
     } catch (error) {
       binding.message = error instanceof Error ? error.message : '模板绑定结果待核对'
@@ -401,7 +404,7 @@ export class ScenarioWorkspaces {
       ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
       : `当前${entity.kind === 'scenario' ? '场景' : '需求'} ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认，禁止引用未读取资料。
 回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
-当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后追加唯一 eadp-write-proposal 代码块：{"entityId":"${task.entityId}","conclusions":[{"id":"结论ID","text":"本轮结论"}],"evidenceIds":["实际已读资料ID"],"body":"整篇新正文"}。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
+当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后追加唯一 eadp-write-proposal 代码块：{"entityId":"${task.entityId}","conclusions":[{"id":"C1","text":"本轮结论"}],"evidenceIds":[],"body":"整篇新正文"}。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
     return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n${await this.sources.context(task)}`
   }
   async accept(sessionId: string, content: string): Promise<boolean> {
@@ -427,9 +430,13 @@ export class ScenarioWorkspaces {
         record.writeProposal = { id: randomUUID(), entityId: task.entityId, baseHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, createdAt: new Date().toISOString(), status: 'pending' }
       }
       record.writeProposalOccupationKey = input.occupationKey
+      delete record.writeProposalError
       await this.store.save(); return true
     } catch (error) {
-      // An unverifiable proposal never becomes actionable; the answer remains chat only.
+      // A failed replacement cannot leave a previous pending proposal actionable.
+      if (record.writeProposal?.status === 'pending') { delete record.writeProposal; delete record.writeProposalOccupationKey }
+      record.writeProposalError = error instanceof Error ? error.message : '提议无法校验'
+      await this.store.save()
       return true
     }
   }

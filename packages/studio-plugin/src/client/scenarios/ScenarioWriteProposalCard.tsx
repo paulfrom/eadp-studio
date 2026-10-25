@@ -1,6 +1,15 @@
 import type { ScenarioWriteProposalView } from '../../shared/scenarios.ts'
 import css from '../studio.module.css'
 
+/** Explains why the latest answer could not create an actionable write proposal. */
+export function ScenarioWriteProposalError({ message }: { message: string }) {
+  return <section className={css.dockCard} role="alert" aria-label="写入提议未生成">
+    <header className={css.cardHead}><strong>写入提议未生成</strong></header>
+    <p>{message}</p>
+    <p className={css.muted}>请让 AI 基于当前材料重新提出写入提议，生成后会显示对应的写入按钮。</p>
+  </section>
+}
+
 /** The only user gesture that authorizes a whole-body write; chat replies never do. */
 export function ScenarioWriteProposalCard({ proposal, disabled, onResolve, materialLabel = '场景' }: { proposal: ScenarioWriteProposalView; disabled: boolean; onResolve(decision: 'write' | 'reject'): void; materialLabel?: string }) {
   const failed = proposal.status === 'pending' && !!proposal.error

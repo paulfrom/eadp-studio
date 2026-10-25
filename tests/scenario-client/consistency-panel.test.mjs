@@ -240,6 +240,22 @@ function chatPanel(props = {}) {
   }))
 }
 
+test('the scenario explains a missing write button and shows actionable buttons after a corrected proposal', () => {
+  const decisions = []
+  const actions = { refresh() {}, newSession() {}, selectSession() {}, openTemplates() {}, resolveWriteProposal: decision => decisions.push(decision), undoWrite() {} }
+  const view = chatPanel({ workspace: { readOnly: false, writeProposalError: '写入提议 ID 无效' }, actions })
+  assert.match(view.getByRole('alert', { name: '写入提议未生成' }).textContent, /写入提议 ID 无效/)
+  assert.match(view.getByRole('alert').textContent, /请让 AI 基于当前材料重新提出写入提议/)
+  assert.equal(view.queryByRole('button', { name: '写入整篇正文' }), null)
+  view.unmount()
+
+  const corrected = chatPanel({ workspace: { readOnly: false, writeProposal: { id: 'proposal', status: 'pending', conclusions: ['仅允许审批人退回'], evidenceCount: 1 } }, actions })
+  assert.equal(corrected.queryByRole('alert'), null)
+  fireEvent.click(corrected.getByRole('button', { name: '写入整篇正文' }))
+  fireEvent.click(corrected.getByRole('button', { name: '不写入' }))
+  assert.deepEqual(decisions, ['write', 'reject'])
+})
+
 test('the scenario dock lists related requirements with confirmation status and opens them through the callback', () => {
   const opened = []
   const view = chatPanel({ relatedRequirements: [entities[1], entities[2]], onOpenRequirement: id => opened.push(id) })
