@@ -56,6 +56,20 @@ export function listItemCount(markdown: string): number {
   return count
 }
 
+/** Returns the first readable line of a section for its collapsed summary. */
+export function sectionSummary(markdown: string): string {
+  let fence: string | undefined
+  for (const line of markdown.split('\n')) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1]
+    if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; continue }
+    if (fence || !line.trim() || /^\s*(?:#{1,6}\s|\|?[\s:|-]+\|\s*$|---+$)/.test(line)) continue
+    const text = line.trim().replace(/^\s*(?:[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+|>\s*)/, '')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`~]/g, '').replace(/\s*\|\s*/g, ' · ').replace(/^ · | · $/g, '').trim()
+    if (text) return text.length > 72 ? `${text.slice(0, 72)}…` : text
+  }
+  return '展开查看章节内容'
+}
+
 export function exportMarkdown(title: string, body: string): void {
   const url = URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }))
   const link = document.createElement('a')

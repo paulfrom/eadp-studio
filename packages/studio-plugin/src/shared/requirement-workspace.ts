@@ -22,7 +22,7 @@ export type RequirementWorkspaceCommand =
   | { action: 'saveRequirement'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'resolveRequirementConflict'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'retryRequirementSave'; entityId: string; operationId: string }
-  | { action: 'resolveRequirementWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string }
+  | { action: 'resolveRequirementWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string; selectedChangeIds?: string[] }
   | { action: 'undoRequirementWrite'; entityId: string; operationId: string; expectedHash: string }
   | { action: 'newRequirementSession'; entityId: string }
   | { action: 'selectRequirementSession'; entityId: string; sessionId: string }

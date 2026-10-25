@@ -12,6 +12,9 @@ import { sameDraftInput, type DraftInput } from '../scenarios/DraftBuffer.ts'
 import { RequirementGates } from './RequirementGates.tsx'
 import { RequirementSpecPanel } from './RequirementSpecPanel.tsx'
 import type { RequirementMetadataFormHandle } from './RequirementMetadataForm.tsx'
+import { MaterialDiscussionSummary } from '../components/MaterialDiscussionSummary.tsx'
+import { MaterialWorkspaceHeader, MaterialWorkspaceSheet, MaterialWorkspaceStatus, useMaterialDocumentFocus } from '../components/MaterialWorkspaceChrome.tsx'
+import layout from '../components/materialWorkspace.module.css'
 import css from '../studio.module.css'
 
 interface WorkspaceProps {
@@ -28,7 +31,12 @@ interface WorkspaceProps {
  */
 export function RequirementWorkspace({ workspace, entity, state, faces, busy, call, registerFlush, onOpenScenario, onOpenMaterial }: WorkspaceProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const [naturalConfirmation, setNaturalConfirmation] = useState('')
+  const documentFocus = useMaterialDocumentFocus(collapsed)
+  const [confirmationOpen, setConfirmationOpen] = useState(false)
+  const [consistencyOpen, setConsistencyOpen] = useState(false)
+  const [consistencyStatus, setConsistencyStatus] = useState('读取中')
+  const [reviewRequested, setReviewRequested] = useState(0)
+  useEffect(() => { if (workspace.readOnly) setConfirmationOpen(false) }, [workspace.readOnly])
   const [confirmationChoice, setConfirmationChoice] = useState<ConfirmationChoice>()
   const [confirming, setConfirming] = useState(false)
   const [recoveryError, setRecoveryError] = useState('')
@@ -99,7 +107,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   }, [buffer, entity.id])
   const confirm = useCallback(async (choice: ConfirmationChoice) => {
     setConfirmationChoice(choice); setRecoveryDeferred(false); setRecoveryError('')
-    if (metadataForm.current && !metadataForm.current.validate()) { setRecoveryError('请修正业务字段后继续确认。'); setEditRequested(value => value + 1); return }
+    if (metadataForm.current && !metadataForm.current.validate()) { setRecoveryError('请修正业务字段后继续确认。'); setConfirmationOpen(false); setEditRequested(value => value + 1); return }
     setConfirming(true)
     try {
       await buffer.prepareWrite()
@@ -174,9 +182,9 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
     importSource: async (name: string, base64: string) => { const result = await execute({ action: 'importScenarioSource', entityId: entity.id, name, base64, operationId: crypto.randomUUID() }); if (!result?.ok) throw new Error('资料未能导入，请查看错误并重试。') },
     retrySource: (sourceId: string) => { void execute({ action: 'retryScenarioSource', entityId: entity.id, sourceId }) },
     selectSource: (source: ScenarioSource, selected: boolean, formal: boolean) => { void execute({ action: 'selectScenarioSource', entityId: entity.id, sourceId: source.id, selected, formal }) },
-    resolveWriteProposal: (decision: 'write' | 'reject') => {
+    resolveWriteProposal: (decision: 'write' | 'reject', selectedChangeIds?: string[]) => {
       const proposal = workspace.writeProposal
-      if (proposal) void execute(hash => ({ action: 'resolveRequirementWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, expectedHash: hash }))
+      if (proposal) void execute(hash => ({ action: 'resolveRequirementWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, ...(selectedChangeIds ? { selectedChangeIds } : {}), expectedHash: hash }))
     },
     undoWrite: () => {
       const receipt = workspace.writeReceipt
@@ -197,26 +205,9 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   deferredInputPreserved.current = recoveryDeferred && (workspace.requirementSave?.input
     ? sameDraftInput(snapshot, workspace.requirementSave.input)
     : !!workspace.confirmationRecovery && !snapshot.dirty || !!workspace.requirementSave?.documentSaved && !snapshot.dirty)
-  return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
+  return <div className={layout.frame}><div ref={documentFocus.panes} className={`${css.scenarioWorkspace} ${layout.panes} ${collapsed ? css.scenarioCollapsed : ''}`}>
     <section className={css.chatPanel} aria-label="需求对话">
-      <header className={css.panelBar}>
-        <div className={css.panelIdentity}>
-          <span className={css.codeChip}>{entity.code ?? entity.id}</span>
-          <strong>{entity.title}</strong>
-        </div>
-        <div className={css.panelActions}>
-          <button onClick={actions.refresh} disabled={busy || confirming} title="重新读取需求材料">刷新</button>
-          <label className={css.inlineField}>历史会话<select disabled={locked} value={task?.sessionId ?? ''} onChange={event => { if (event.target.value) actions.selectSession(event.target.value) }}><option value="" disabled>选择需求会话</option>{sessions.map((session, index) => <option key={session.sessionId} value={session.sessionId}>会话 {index + 1} · {session.sessionId.slice(0, 8)}</option>)}</select></label>
-          <button onClick={actions.newSession} disabled={locked}>新会话</button>
-          <button onClick={actions.openTemplates}>需求模板</button>
-          {collapsed && <button className={css.primary} onClick={() => setCollapsed(false)}>展开说明</button>}
-        </div>
-      </header>
-      <div className={css.contextStrip}>
-        <span>{hasRecovery ? workspace.requirementSave?.input ? '保留的未保存输入' : '本地草稿 · 保存待恢复' : workspace.readOnly ? `确认版本 v${entity.materialVersion}` : '本地草稿'}</span>
-        <span>{entity.occupation ? `当前编辑人 #${entity.occupation.ownerId}` : '无设计占用'}</span>
-        <span>创建人 {entity.creator?.name ?? `#${entity.authorId}`}</span>
-      </div>
+      <MaterialWorkspaceHeader entity={entity} sessions={sessions} activeSessionId={task?.sessionId} locked={locked} readOnly={workspace.readOnly} reviewCount={workspace.writeProposal?.status === 'pending' ? workspace.writeProposal.changes.length : 0} onReview={() => setReviewRequested(value => value + 1)} onConfirm={() => setConfirmationOpen(true)} onRefresh={actions.refresh} onNewSession={actions.newSession} onSelectSession={actions.selectSession} onTemplates={actions.openTemplates} />
       {workspace.readOnly && <div className={css.panelNotice}>
         <span>确认人 #{workspace.confirmedBy ?? entity.current?.confirmedBy} · {workspace.confirmedAt ?? entity.current?.confirmedAt}</span>
         <button disabled={busy || confirming} onClick={actions.startRevision}>开始修订需求</button>
@@ -236,14 +227,10 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
             </div>
           </>}
         </section>}
+        <MaterialDiscussionSummary questions={snapshot.metadata.openQuestions} sources={materialSources?.sources ?? []} onQuestions={() => setConfirmationOpen(true)} />
         {workspace.writeProposalError && <ScenarioWriteProposalError message={workspace.writeProposalError} />}
-        {workspace.writeProposal && <ScenarioWriteProposalCard materialLabel="需求" proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
+        {workspace.writeProposal && <ScenarioWriteProposalCard hideReviewAction reviewRequested={reviewRequested} materialLabel="需求" proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
         {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly} onUndo={actions.undoWrite} />}
-        <ReviewPanel review={review} purpose="material" busy={busy || confirming} onRequest={actions.requestReview} onConfirm={actions.confirm} />
-        {!workspace.readOnly && <>
-          <div className={css.confirmBar}><div><strong>作者确认当前材料</strong><small>保存当前内容并确认；遇到异常时可选择恢复方案继续</small></div><button className={css.primary} disabled={busy || confirming} onClick={() => actions.confirm({ method: 'direct' })}>确认材料</button></div>
-          <form className={css.naturalConfirm} onSubmit={event => { event.preventDefault(); if (/^(确认|确认当前材料)[。！!]?$/u.test(naturalConfirmation.trim())) { actions.confirm({ method: 'direct' }); setNaturalConfirmation('') } }}><input aria-label="自然语言确认当前材料" value={naturalConfirmation} onChange={event => setNaturalConfirmation(event.target.value)} placeholder="也可以输入：确认当前材料" /><button disabled={busy || confirming}>发送确认</button></form>
-        </>}
       </div>
       <MaterialConversation sessionId={task?.sessionId} faces={faces} attachments={{
         sources: materialSources?.sources ?? [], disabled: locked || !materialSources, readOnly: materialSources?.readOnly ?? true,
@@ -251,10 +238,19 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
       }}>
         <span>✦</span><h3>{workspace.readOnly ? '已确认固定需求' : '与 AI 整理业务需求'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建需求会话，继承当前 Markdown、固定模板和当前选定资料。明确同意写入后，才会更新正文。'}</p>
       </MaterialConversation>
+      <p className={layout.composerHint}>Enter 发送 · Shift + Enter 换行 · 助手建议经审阅后写入正文</p>
     </section>
     <RequirementSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.requirements} entities={entities} projectId={state.project!.id} candidates={state.candidates} busy={busy || confirming} call={call} metadataForm={metadataForm} onFlush={flush} onCollapse={() => setCollapsed(true)} onResolve={resolve} onOpenScenario={onOpenScenario} confirming={confirming} continueConfirmation={continuingConfirmation} editRequested={editRequested}>
-      <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} />
-      <RequirementGates workspace={workspace} disabled={busy || confirming} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={() => actions.confirm({ method: 'direct' })} onStructureCheck={actions.structureCheck} />
     </RequirementSpecPanel>
+    {collapsed && <aside className={layout.restore}><button ref={documentFocus.restore} aria-label="展开需求文档" onClick={() => setCollapsed(false)}>‹ 文档预览</button></aside>}
+  </div>
+  <MaterialWorkspaceStatus entity={entity} workspace={workspace} snapshot={snapshot} task={task} consistency={consistencyStatus} onConfirmation={() => setConfirmationOpen(true)} onConsistency={() => setConsistencyOpen(true)} />
+  <MaterialWorkspaceSheet open={consistencyOpen} title="一致性对比" subtitle="查看对比结论、覆盖范围与历史记录" drawer onClose={() => setConsistencyOpen(false)}>
+      <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} onStatusChange={setConsistencyStatus} />
+  </MaterialWorkspaceSheet>
+  <MaterialWorkspaceSheet open={confirmationOpen} title="确认需求" subtitle="保存当前输入后重新检查，接受后形成固定版本" onClose={() => setConfirmationOpen(false)}>
+      <RequirementGates workspace={workspace} disabled={busy || confirming} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={() => actions.confirm({ method: 'direct' })} onStructureCheck={actions.structureCheck} />
+      <div className={layout.reviewBlock}><ReviewPanel review={review} purpose="material" busy={busy || confirming} onRequest={actions.requestReview} onConfirm={actions.confirm} /></div>
+  </MaterialWorkspaceSheet>
   </div>
 }

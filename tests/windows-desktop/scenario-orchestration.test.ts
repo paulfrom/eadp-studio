@@ -209,7 +209,7 @@ test('the proposal, its write and its undo stay local when the collaboration ser
   const proposal = f.record.writeProposal!
   assert.equal(proposal.status, 'pending', 'an unreachable backend cannot discard the proposal')
   const before = await readMaterial(f.root, 'scenario', 'scene')
-  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: before.sha256 })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: before.sha256 })
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).body, value.body)
   await f.workspaces.undoWrite({ action: 'undoScenarioWrite', entityId: 'scene', operationId: proposal.id, expectedHash: f.record.writeReceipt!.afterHash })
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).body, before.body)
@@ -284,7 +284,7 @@ test('an accepted context proposal writes only the project root snapshot and bin
   const proposal = f.record.writeProposal!
   assert.equal(proposal.target, 'context')
   assert.equal(proposal.baseHash, digest('旧上下文'))
-  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: 'ignored-for-context' })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: 'ignored-for-context' })
   assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), body)
   assert.equal(f.record.writeProposal!.status, 'consumed')
   const draft = await readMaterial(f.root, 'scenario', 'scene')
@@ -301,7 +301,7 @@ test('a context write touches only the worktree; the accepted-version comparison
   await f.workspaces.context(f.task)
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
-  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: '' })
   assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), '本地新上下文')
   assert.equal(f.record.writeProposal!.status, 'consumed')
 })
@@ -315,7 +315,7 @@ test('a context proposal expires when the worktree file changes after the questi
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
   await writeFile(path.join(f.root, 'CONTEXT.md'), '作者刚刚修改的上下文')
-  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /CONTEXT\.md 已变化/)
+  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: '' }), /CONTEXT\.md 已变化/)
   assert.equal(f.record.writeProposal!.status, 'pending')
   assert.match(f.record.writeProposal!.error ?? '', /CONTEXT\.md 已变化/)
 })

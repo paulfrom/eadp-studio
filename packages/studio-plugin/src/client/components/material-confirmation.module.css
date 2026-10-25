@@ -1,0 +1,49 @@
+.checks { display: grid; gap: 14px; min-width: 0; }
+.heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; }
+.heading > span { color: var(--text-3); font-size: 11px; }
+.gateList { border-top: 1px solid var(--border); }
+.gateRow { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.gateIcon { display: grid; place-items: center; flex: 0 0 22px; height: 22px; margin-top: 1px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-3); font: 600 12px/1 var(--mono); }
+.gateRow[data-state='passed'] .gateIcon { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); background: var(--ok-soft); }
+.gateRow[data-state='blocked'] .gateIcon { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); background: var(--danger-soft); }
+.gateMain { flex: 1; min-width: 0; }
+.gateTitle { font-size: 12px; }
+.gateTitle > span { color: var(--text-3); font-size: 10.5px; }
+.gateRow[data-state='blocked'] .gateTitle > span { color: var(--danger); }
+.gateRow[data-state='passed'] .gateTitle > span { color: var(--ok); }
+.gateMain p { margin: 3px 0 0; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.gateRow > button { flex-shrink: 0; padding: 2px 0; border: 0; background: transparent; color: var(--accent-text); font-size: 11px; }
+.structureToggle, .declarations label, .questionBlocking { display: flex; flex-direction: row; align-items: center; gap: 7px; color: var(--text-2); font-size: 11.5px; }
+.structureToggle { flex-shrink: 0; font-size: 10.5px; }
+.checks input[type='checkbox'] { flex: 0 0 auto; width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
+.declarations { display: grid; gap: 9px; padding: 12px; border-radius: 7px; background: var(--surface-2); }
+.questions { color: var(--text-2); font-size: 11.5px; }
+.questions > summary { cursor: pointer; }
+.questions > summary > span { margin-left: 8px; color: var(--text-3); font-size: 10.5px; }
+.questions fieldset { display: grid; gap: 8px; min-width: 0; margin: 12px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; }
+.questions legend { color: var(--text); font-size: 11px; }
+.questions fieldset > label:not(.questionBlocking) { display: grid; gap: 4px; color: var(--text-3); font-size: 10.5px; }
+.questions fieldset input:not([type='checkbox']) { min-width: 0; width: 100%; padding: 5px 8px; font-size: 12px; }
+.questions fieldset button { justify-self: start; }
+.confirmNote, .pending { margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.8; }
+.pending { padding: 8px 10px; border-radius: 6px; color: var(--warn); background: var(--warn-soft); }
+.footer { display: grid; gap: 14px; padding: 14px 16px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.diagnostics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--text-3); font-size: 10.5px; }
+.diagnostics summary { cursor: pointer; }
+.diagnostics small { display: block; margin-top: 5px; font-family: var(--mono); font-size: 10px; }
+.settlement { color: var(--text-3); font-size: 10.5px; }
+.settlement[data-state='sync-pending'], .settlement[data-state='cleanup-pending'] { color: var(--warn); }
+.repair { padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 11.5px; }
+.repair summary { cursor: pointer; color: var(--text); }
+.repair p { margin: 8px 0; color: var(--text-2); }
+.repair form { display: grid; gap: 8px; margin-top: 12px; }
+.repair label { display: grid; gap: 5px; }
+.repair textarea { min-height: 72px; }
+.repair form small { color: var(--text-3); }
+.repair > button { margin-top: 8px; }
+@media (max-width: 540px) {
+  .gateRow { flex-wrap: wrap; }
+  .gateMain { flex-basis: calc(100% - 32px); }
+  .gateRow > button, .structureToggle { margin-left: 32px; }
+}

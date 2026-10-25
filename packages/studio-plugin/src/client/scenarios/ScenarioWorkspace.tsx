@@ -8,6 +8,8 @@ import { ScenarioChatPanel, type ScenarioCandidateFace, type ScenarioChatActions
 import { ScenarioGates } from './ScenarioGates.tsx'
 import { ScenarioSpecPanel } from './ScenarioSpecPanel.tsx'
 import { useDraftBuffer } from './useDraftBuffer.ts'
+import { MaterialWorkspaceSheet, MaterialWorkspaceStatus, useMaterialDocumentFocus } from '../components/MaterialWorkspaceChrome.tsx'
+import layout from '../components/materialWorkspace.module.css'
 import css from '../studio.module.css'
 
 interface WorkspaceProps {
@@ -23,6 +25,12 @@ interface WorkspaceProps {
  */
 export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call, registerFlush, onOpenRequirement, onOpenMaterial }: WorkspaceProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const documentFocus = useMaterialDocumentFocus(collapsed)
+  const [confirmationOpen, setConfirmationOpen] = useState(false)
+  const [consistencyOpen, setConsistencyOpen] = useState(false)
+  const [consistencyStatus, setConsistencyStatus] = useState('读取中')
+  const [reviewRequested, setReviewRequested] = useState(0)
+  useEffect(() => { if (workspace.readOnly) setConfirmationOpen(false) }, [workspace.readOnly])
   const [showImpact, setShowImpact] = useState(false)
   const [splitLater, setSplitLater] = useState(false)
   const operations = useRef(new Map<string, { fingerprint: string; id: string }>())
@@ -75,9 +83,9 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     newSession: () => { void execute({ action: 'newScenarioSession', entityId: entity.id }) },
     selectSession: sessionId => { void execute({ action: 'selectScenarioSession', entityId: entity.id, sessionId }) },
     openTemplates: () => faces.openSettings('studio-scenario-templates'),
-    resolveWriteProposal: decision => {
+    resolveWriteProposal: (decision, selectedChangeIds) => {
       const proposal = workspace.writeProposal
-      if (proposal) void execute(hash => ({ action: 'resolveScenarioWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, expectedHash: hash })).then(result => { if (!result?.ok) void call({ action: 'state' }) })
+      if (proposal) void execute(hash => ({ action: 'resolveScenarioWriteProposal', entityId: entity.id, proposalId: proposal.id, decision, ...(selectedChangeIds ? { selectedChangeIds } : {}), expectedHash: hash })).then(result => { if (!result?.ok) void call({ action: 'state' }) })
     },
     undoWrite: () => {
       const receipt = workspace.writeReceipt
@@ -101,15 +109,22 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     items: candidates,
     create: candidateId => { const candidate = candidates.find(value => value.id === candidateId); return candidate ? execute({ action: 'selectCandidate', candidateId, expectedInputHash: candidate.inputHash }) : Promise.resolve(undefined) },
   }
-  return <div className={`${css.scenarioWorkspace} ${collapsed ? css.scenarioCollapsed : ''}`}>
-    <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} material={{ hash: snapshot.sha256, dirty: snapshot.dirty }} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} relatedRequirements={relatedRequirements} onOpenRequirement={onOpenRequirement} expandSpec={collapsed ? () => setCollapsed(false) : undefined}>
+  return <div className={layout.frame}><div ref={documentFocus.panes} className={`${css.scenarioWorkspace} ${layout.panes} ${collapsed ? css.scenarioCollapsed : ''}`}>
+    <ScenarioChatPanel entity={entity} workspace={workspace} busy={busy} locked={locked} sessions={sessions} activeSessionId={activeSessionId} actions={chat} revision={revision} split={split} candidates={candidateFace} relatedRequirements={relatedRequirements} onOpenRequirement={onOpenRequirement} questions={snapshot.metadata.openQuestions} reviewRequested={reviewRequested} onReview={() => setReviewRequested(value => value + 1)} onConfirm={() => setConfirmationOpen(true)}>
       <MaterialConversation sessionId={activeSessionId} faces={faces} attachments={{ sources: workspace.sources, disabled: locked, readOnly: workspace.readOnly, onImport: actions.importSource, onRetry: actions.retrySource, onSelect: actions.selectSource }}>
         <span>✦</span><h3>{workspace.readOnly ? '已确认固定场景' : '与 AI 整理业务场景'}</h3><p>{workspace.readOnly ? '开始修订后可继续编辑与对话。' : '新建场景会话，继承当前 Markdown、固定模板和当前选定资料。明确同意写入后，才会更新正文。'}</p>
       </MaterialConversation>
     </ScenarioChatPanel>
     <ScenarioSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.scenarios} busy={busy} onCollapse={() => setCollapsed(true)} onBindTemplate={actions.bindTemplate} onResolve={resolve}>
-      <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} />
-      <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
     </ScenarioSpecPanel>
+    {collapsed && <aside className={layout.restore}><button ref={documentFocus.restore} aria-label="展开场景文档" onClick={() => setCollapsed(false)}>‹ 文档预览</button></aside>}
+  </div>
+  <MaterialWorkspaceStatus entity={entity} workspace={workspace} snapshot={snapshot} task={activeTask} consistency={consistencyStatus} onConfirmation={() => setConfirmationOpen(true)} onConsistency={() => setConsistencyOpen(true)} />
+  <MaterialWorkspaceSheet open={consistencyOpen} title="一致性对比" subtitle="查看对比结论、覆盖范围与历史记录" drawer onClose={() => setConsistencyOpen(false)}>
+      <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} onStatusChange={setConsistencyStatus} />
+  </MaterialWorkspaceSheet>
+  <MaterialWorkspaceSheet open={confirmationOpen} title="确认场景" subtitle="保存当前输入后重新检查，接受后形成固定版本" onClose={() => setConfirmationOpen(false)}>
+      <ScenarioGates workspace={workspace} disabled={busy || !!snapshot.conflict} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
+  </MaterialWorkspaceSheet>
   </div>
 }

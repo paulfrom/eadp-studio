@@ -11,9 +11,11 @@ const reactRequire = createRequire(buildRequire.resolve('@testing-library/react'
 const ts = buildRequire('typescript')
 const { JSDOM } = buildRequire('jsdom')
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' })
-for (const name of ['window', 'document', 'HTMLElement', 'Event', 'MouseEvent']) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
+for (const name of ['window', 'document', 'HTMLElement', 'HTMLDialogElement', 'Event', 'MouseEvent']) Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator })
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+HTMLDialogElement.prototype.showModal = function () { this.open = true }
+HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new Event('close')) }
 
 const React = reactRequire('react')
 const { render, fireEvent, within, waitFor, cleanup } = buildRequire('@testing-library/react')
@@ -227,17 +229,21 @@ test('refreshing a newly shared result retains already paged history and the sel
 })
 
 function chatPanel(props = {}) {
-  return render(h(ScenarioChatPanel, {
+  function Harness() {
+    const [reviewRequested, setReviewRequested] = React.useState(0)
+    return h(ScenarioChatPanel, {
     entity: { id: 'scene-1', kind: 'scenario', code: 'SC-0001', title: '订单审批', authorId: 1 },
-    workspace: { readOnly: false }, busy: false, locked: false,
-    material: { hash: 'h', dirty: false }, sessions: [], activeSessionId: undefined,
+    workspace: { readOnly: false, sources: [] }, questions: [], busy: false, locked: false,
+    sessions: [], activeSessionId: undefined,
     actions: { refresh() {}, newSession() {}, selectSession() {}, openTemplates() {}, resolveWriteProposal() {}, undoWrite() {} },
     revision: { shown: false, inspect() {}, start() {}, dismiss() {} },
     split: { offered: false, deferred: false, split() {}, defer() {} },
     candidates: { items: [], create() {} },
-    relatedRequirements: [], onOpenRequirement() {}, expandSpec: undefined, children: null,
-    ...props,
-  }))
+    relatedRequirements: [], onOpenRequirement() {}, reviewRequested, onReview: () => setReviewRequested(value => value + 1), onConfirm() {}, children: null,
+    ...props, workspace: { readOnly: false, sources: [], ...props.workspace },
+    })
+  }
+  return render(h(Harness))
 }
 
 test('the scenario explains a missing write button and shows actionable buttons after a corrected proposal', () => {
@@ -245,20 +251,25 @@ test('the scenario explains a missing write button and shows actionable buttons 
   const actions = { refresh() {}, newSession() {}, selectSession() {}, openTemplates() {}, resolveWriteProposal: decision => decisions.push(decision), undoWrite() {} }
   const view = chatPanel({ workspace: { readOnly: false, writeProposalError: '写入提议 ID 无效' }, actions })
   assert.match(view.getByRole('alert', { name: '写入提议未生成' }).textContent, /写入提议 ID 无效/)
-  assert.match(view.getByRole('alert').textContent, /请让 AI 用 eadp-write-proposal 代码块基于当前材料重新提出写入提议/)
-  assert.equal(view.queryByRole('button', { name: '写入整篇正文' }), null)
+  assert.match(view.getByRole('alert').textContent, /请让 AI 重新整理本轮结论并提出写入提议/)
+  assert.equal(view.queryByRole('button', { name: /写入所选/ }), null)
   view.unmount()
 
-  const corrected = chatPanel({ workspace: { readOnly: false, writeProposal: { id: 'proposal', status: 'pending', conclusions: ['仅允许审批人退回'], evidenceCount: 1 } }, actions })
+  const corrected = chatPanel({ workspace: { readOnly: false, writeProposal: { id: 'proposal', status: 'pending', conclusions: ['仅允许审批人退回'], evidenceCount: 1,
+    changes: [{ id: 'rules', title: '退回规则', before: '允许退回', after: '仅允许审批人退回', kind: 'changed', addedLines: 1, removedLines: 1 }],
+  } }, actions })
   assert.equal(corrected.queryByRole('alert'), null)
-  fireEvent.click(corrected.getByRole('button', { name: '写入整篇正文' }))
-  fireEvent.click(corrected.getByRole('button', { name: '不写入' }))
+  fireEvent.click(corrected.getAllByRole('button', { name: '审阅 1 处变更' })[0])
+  fireEvent.click(within(corrected.getByRole('dialog', { name: '审阅写入变更' })).getByRole('button', { name: '写入所选的 1 处' }))
+  fireEvent.click(corrected.getAllByRole('button', { name: '审阅 1 处变更' })[0])
+  fireEvent.click(within(corrected.getByRole('dialog', { name: '审阅写入变更' })).getByRole('button', { name: '不写入' }))
   assert.deepEqual(decisions, ['write', 'reject'])
 })
 
 test('the scenario dock lists related requirements with confirmation status and opens them through the callback', () => {
   const opened = []
   const view = chatPanel({ relatedRequirements: [entities[1], entities[2]], onOpenRequirement: id => opened.push(id) })
+  fireEvent.click(view.getByText('关联需求 · 2 项'))
   const dock = view.getByRole('region', { name: '关联需求' })
   assert.match(dock.textContent, /关联需求.*2 项/)
   assert.ok(within(dock).getByText('REQ-0001 · 审批规则'))
@@ -269,15 +280,16 @@ test('the scenario dock lists related requirements with confirmation status and 
   assert.deepEqual(opened, ['req-1'])
   view.unmount()
   const empty = chatPanel()
+  fireEvent.click(empty.getByText('关联需求 · 0 项'))
   assert.match(empty.getByRole('region', { name: '关联需求' }).textContent, /尚无正式关联的需求/)
 })
 
 test('both workspaces mount the consistency panel and StudioPanel routes the requirement jump', () => {
   const requirementSource = readFileSync(path.join(client, 'requirements/RequirementWorkspace.tsx'), 'utf8')
-  assert.match(requirementSource, /<ConsistencyPanel entityId=\{entity\.id\} entities=\{entities\} tasks=\{state\.consistencyTasks \?\? \[\]\} busy=\{busy\} call=\{call\} onOpenMaterial=\{onOpenMaterial\} \/>/)
+  assert.match(requirementSource, /<ConsistencyPanel entityId=\{entity\.id\} entities=\{entities\} tasks=\{state\.consistencyTasks \?\? \[\]\} busy=\{busy\} call=\{call\} onOpenMaterial=\{onOpenMaterial\} onStatusChange=\{setConsistencyStatus\} \/>/)
   assert.ok(requirementSource.indexOf('<ConsistencyPanel') < requirementSource.indexOf('<RequirementGates'), '对比面板在门禁区之前，门禁不含对比内容')
   const scenarioSource = readFileSync(path.join(client, 'scenarios/ScenarioWorkspace.tsx'), 'utf8')
-  assert.match(scenarioSource, /<ConsistencyPanel entityId=\{entity\.id\} entities=\{entities\} tasks=\{state\.consistencyTasks \?\? \[\]\} busy=\{busy\} call=\{call\} onOpenMaterial=\{onOpenMaterial\} \/>/)
+  assert.match(scenarioSource, /<ConsistencyPanel entityId=\{entity\.id\} entities=\{entities\} tasks=\{state\.consistencyTasks \?\? \[\]\} busy=\{busy\} call=\{call\} onOpenMaterial=\{onOpenMaterial\} onStatusChange=\{setConsistencyStatus\} \/>/)
   assert.ok(scenarioSource.indexOf('<ConsistencyPanel') < scenarioSource.indexOf('<ScenarioGates'), '对比面板在门禁区之前')
   assert.match(scenarioSource, /entities\.filter\(value => value\.kind === 'requirement' && value\.scenarioIds\.includes\(entity\.id\)\)/)
   assert.match(scenarioSource, /relatedRequirements=\{relatedRequirements\} onOpenRequirement=\{onOpenRequirement\}/)

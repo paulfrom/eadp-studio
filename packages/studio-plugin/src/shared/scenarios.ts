@@ -5,18 +5,20 @@ import type { RequirementSaveView } from './requirement-workspace.ts'
 export interface ScenarioSource { id: string; name: string; format: string; sha256: string; status: 'reading' | 'read' | 'partial' | 'failed'; ranges: string[]; text: string; error?: string; selected: boolean; formal: boolean }
 export interface ScenarioGate { id: 'business' | 'evidence' | 'version' | 'template'; label: string; status: 'passed' | 'blocked' | 'disabled'; messages: string[] }
 export interface ScenarioConflict { expectedHash: string; actual: MaterialDraft; localBody: string; localMetadata: MaterialMetadata; savedPath: string }
+/** Exact chapter change offered for explicit review before a local write. */
+export interface ScenarioWriteChange { id: string; title: string; kind: 'added' | 'changed' | 'removed'; before: string; after: string; addedLines: number; removedLines: number }
 /** Host-created proposal; the model may only supply conclusions, evidence IDs and the full body. */
 export interface ScenarioWriteProposal {
   id: string; entityId: string; baseHash: string; templateRef: FixedReference; contextHash: string;
   /** Local task worktree the proposal was asked in; the write never leaves it. */
   taskId: string;
-  evidenceIds: string[]; conclusions: Array<{ id: string; text: string }>; body: string; createdAt: string;
+  evidenceIds: string[]; conclusions: Array<{ id: string; text: string }>; body: string; changes: ScenarioWriteChange[]; createdAt: string;
   /** Absent targets the scenario body; `context` targets only the project-root CONTEXT.md. */
   target?: 'context';
   status: 'pending' | 'consumed' | 'rejected'; operationId?: string; error?: string;
 }
-/** What the chat card needs: no body, no hashes, no authorization fields. */
-export interface ScenarioWriteProposalView { id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceCount: number; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
+/** Review data contains chapter text; write authorization remains Host-owned. */
+export interface ScenarioWriteProposalView { id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceCount: number; changes: ScenarioWriteChange[]; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
 /** Chapters, evidence and remaining business answers reported after one whole-body write. */
 export interface ScenarioWriteSummary { added: string[]; removed: string[]; changed: string[]; evidence: string[]; unanswered: string[] }
 /** The latest whole-body write, kept locally so undo can restore its exact previous body. */
@@ -57,7 +59,7 @@ export type ScenarioCommand =
   | { action: 'scenarioRevisionImpact'; entityId: string }
   | { action: 'startScenarioRevision'; entityId: string; expectedRevision: number }
   | { action: 'saveScenario'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
-  | { action: 'resolveScenarioWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string }
+  | { action: 'resolveScenarioWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string; selectedChangeIds?: string[] }
   | { action: 'undoScenarioWrite'; entityId: string; operationId: string; expectedHash: string }
   | { action: 'resolveScenarioConflict'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'newScenarioSession'; entityId: string }

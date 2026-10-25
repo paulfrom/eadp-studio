@@ -15,6 +15,7 @@ import { ScenarioDocumentService, sameTemplate } from './scenario-documents.ts'
 import { MaterialConfirmationChecks, type MaterialConfirmationOperation } from './material-confirmations.ts'
 import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite, type ProposalCurrent } from './scenario-write-proposals.ts'
 import { MaterialSources } from './material-sources.ts'
+import { applyWriteChanges, describeWriteChanges } from './material-write-changes.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
 import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
@@ -176,7 +177,7 @@ export class ScenarioWorkspaces {
           ? { status: 'cleanup-pending', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), cleanup }
           : { status: 'settled', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), ...(cleanup ? { cleanup } : {}) }
     return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly && !recoveringRequirement ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
-      ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
+      ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
       ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
@@ -310,7 +311,11 @@ export class ScenarioWorkspaces {
     const task = await this.liveTask(proposal.entityId, record.projectId)
     if (path.basename(task.worktree) !== proposal.taskId) throw new Error('材料任务已变化，写入提议已作废，请重新提问')
     // A context proposal binds only the project-root file; it never rewrites the scenario body.
-    if (proposal.target === 'context') return this.resolveContextProposal(task, proposal)
+    if (proposal.target === 'context') {
+      const evidenceIds = this.readEvidenceIds(record)
+      if (!evidenceIds.every(id => proposal.evidenceIds.includes(id)) || evidenceIds.length !== proposal.evidenceIds.length) throw new Error('依据集合已变化，写入提议已作废，请重新提问')
+      return this.resolveContextProposal(task, proposal, command.selectedChangeIds)
+    }
     if (record.conflict) throw new Error('请先解决文件冲突')
     const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
@@ -321,16 +326,17 @@ export class ScenarioWorkspaces {
     if (command.expectedHash !== draft.sha256) throw new Error('当前正文不是用户确认的版本，请刷新后重新提问')
     const invalid = proposalInvalidReason(proposal, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: (await this.projectContext(task.worktree)).hash, evidenceIds: this.readEvidenceIds(record) })
     if (invalid) throw new Error(invalid)
+    const body = applyWriteChanges(draft.body, proposal.body, command.selectedChangeIds)
     const evidence = record.sources.filter(source => proposal.evidenceIds.includes(source.id)).map(source => source.name)
     const metadata = await syncProjectContext(task.worktree, draft.metadata)
     record.writeReceipt = {
       operationId: proposal.id, createdAt: new Date().toISOString(), beforeBody: draft.body, beforeHash: draft.sha256,
-      afterHash: digest(materialText(metadata, proposal.body)),
-      summary: summarizeWrite(draft.body, proposal.body, evidence, draft.metadata.openQuestions.filter(question => question.blocking).map(question => question.limitation)),
+      afterHash: digest(materialText(metadata, body)),
+      summary: summarizeWrite(draft.body, body, evidence, draft.metadata.openQuestions.filter(question => question.blocking).map(question => question.limitation)),
     }
     await this.store.save()
     try {
-      await this.documents.save({ root: task.worktree, metadata, body: proposal.body, expectedHash: draft.sha256, operationId: proposal.id })
+      await this.documents.save({ root: task.worktree, metadata, body, expectedHash: draft.sha256, operationId: proposal.id })
     } catch (error) {
       delete record.writeReceipt
       if (error && typeof error === 'object' && 'conflict' in error && error.conflict) { record.conflict = error.conflict as ScenarioConflict; await this.store.save(); return }
@@ -344,11 +350,12 @@ export class ScenarioWorkspaces {
    * project moved forward is decided when the material is confirmed, which is
    * the first step that reads remote state.
    */
-  private async resolveContextProposal(task: TaskView, proposal: ScenarioWriteProposal): Promise<void> {
+  private async resolveContextProposal(task: TaskView, proposal: ScenarioWriteProposal, selectedChangeIds: readonly string[] | undefined): Promise<void> {
     const current = await this.projectContext(task.worktree)
     if (current.hash !== proposal.baseHash) throw new Error('CONTEXT.md 已变化，写入提议已作废，请重新提问')
+    const body = applyWriteChanges(current.bytes?.toString('utf8') ?? '', proposal.body, selectedChangeIds)
     const target = await containedFile(task.worktree, 'CONTEXT.md', true)
-    await atomicWriteFile(target, proposal.body)
+    await atomicWriteFile(target, body)
     try {
       // The confirmation package must carry the new hash; writing it here avoids a manual save step.
       const draft = await this.localMaterial(task)
@@ -451,7 +458,7 @@ export class ScenarioWorkspaces {
       if (parsed.conclusions.map(conclusionKey).some(key => record.rejectedConclusions?.includes(key))) throw new Error('同一结论已被拒绝，出现新结论后再提问')
       if (parsed.target === 'context' && context.bytes?.toString('utf8') === parsed.body) throw new Error('写入提议与当前项目上下文相同')
       // Host owns the ID, the task binding and every bound hash; the answer only supplied content.
-      record.writeProposal = { id: randomUUID(), entityId: task.entityId, taskId: path.basename(task.worktree), baseHash: parsed.target === 'context' ? context.hash : draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, createdAt: new Date().toISOString(), status: 'pending', ...(parsed.target === 'context' ? { target: 'context' as const } : {}) }
+      record.writeProposal = { id: randomUUID(), entityId: task.entityId, taskId: path.basename(task.worktree), baseHash: parsed.target === 'context' ? context.hash : draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, changes: describeWriteChanges(parsed.target === 'context' ? context.bytes?.toString('utf8') ?? '' : draft.body, parsed.body), createdAt: new Date().toISOString(), status: 'pending', ...(parsed.target === 'context' ? { target: 'context' as const } : {}) }
       delete record.writeProposalError
       await this.store.save(); return true
     } catch (error) {

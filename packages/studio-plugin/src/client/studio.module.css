@@ -90,7 +90,7 @@
 
 .studio * { box-sizing: border-box; }
 .studio :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
-.studio button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
+:where(.studio) button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
 .studio :disabled { cursor: not-allowed; }
 .studio ::selection { background: var(--accent-soft); color: var(--text); }
 .studio * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
@@ -508,7 +508,8 @@
 .chatPanel > .nativeConversation, .chatPanel > .conversationEmpty { flex: 1; min-height: 180px; }
 /* The native conversation only sticks its composer to the scrollport floor while the transcript overflows; an empty transcript would keep the input at the top. */
 .chatPanel [data-composer-seat] { margin-top: auto; }
-.chatDock { display: flex; flex: 0 1 auto; flex-direction: column; gap: 10px; max-height: 42%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.chatDock { display: flex; flex: 0 1 auto; flex-direction: column; gap: 10px; max-height: 57%; overflow-y: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.chatDock:empty { display: none; }
 .chatDock > * { flex: 0 0 auto; }
 .chatDock > .notice { margin: 0; }
 .dockCard, .revisionImpact { min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
@@ -550,47 +551,13 @@
 .scenarioMeta input { padding: 3px 7px; font-size: 11.5px; }
 .templateBinding { display: grid; gap: 6px; color: var(--text-2); font-size: 11px; }
 .templateBinding > summary { font-weight: 600; }
-.confirmChecklist { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-2); font-size: 10.5px; }
-.confirmChecklist > summary { font-weight: 600; color: var(--text-2); }
-.confirmChecklist fieldset { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
 .checkbox { display: flex; flex-direction: row; align-items: center; gap: 7px; }
-.specSections { display: flex; flex-direction: column; gap: 12px; }
 .specSection { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .sectionHead { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 9px; padding-bottom: 9px; border-bottom: 1px solid var(--border); }
 .sectionHead h3 { font-size: 13px; font-weight: 600; }
 .sectionHead small { margin-left: auto; color: var(--text-3); font-size: 10.5px; }
-.sectionIndex { display: inline-grid; flex: 0 0 auto; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); font: 600 10px var(--mono); }
-.sectionBody { font-size: 12px; line-height: 1.85; overflow-wrap: anywhere; }
-.templateSections { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-.templateSections > li { padding: 3px 9px; border: 1px dashed var(--border-strong); border-radius: 999px; color: var(--text-2); font-size: 11px; }
 
-.specFooter { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
 .specPanel > .dockCard { flex-shrink: 0; max-height: 45%; overflow-y: auto; margin: 0 12px 10px; }
-.gateStrip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 10.5px; color: var(--text-2); }
-.gateChip { display: inline-flex; align-items: center; gap: 5px; }
-.gateChip i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.gateChip[data-state='blocked'] { color: var(--danger); }
-.gateChip[data-state='blocked'] i { background: var(--danger); }
-.gateChip[data-state='passed'] { color: var(--ok); }
-.gateChip[data-state='disabled'] { color: var(--text-3); }
-.gateChip[data-state='disabled'] i { background: var(--text-3); }
-.gateReasons { color: var(--text-2); font-size: 10.5px; }
-.gateReasons > summary { color: var(--danger); cursor: pointer; }
-.gateReasons article { padding: 6px 0; }
-.gateReasons p { margin: 3px 0 0; }
-.footerBar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.gitDiagnostics { color: var(--text-3); font-size: 10.5px; }
-.gitDiagnostics > summary { cursor: pointer; }
-.gitState { display: block; margin-top: 4px; color: var(--text-3); font-size: 10.5px; }
-.settlementState { margin-left: auto; padding: 2px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 10.5px; }
-.settlementState[data-state='sync-pending'], .settlementState[data-state='cleanup-pending'] { background: var(--warn-soft); color: var(--warn); }
-.settlementState[data-state='settled'] { background: var(--accent-soft); color: var(--accent-text); }
-.footerActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.studio .footerActions button { font-size: 11px; }
-.repairPanel { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-2); font-size: 11px; }
-.repairPanel[open] { display: flex; flex-direction: column; gap: 8px; }
-.repairPanel > summary { font-weight: 600; color: var(--text-2); }
-.repairPanel form { display: flex; flex-direction: column; gap: 8px; }
 .conflictPanel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); border-radius: 8px; background: var(--warn-soft); font-size: 11.5px; }
 .conflictPanel strong { color: var(--warn); }
 .conflictCopies { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }

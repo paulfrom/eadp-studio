@@ -15,10 +15,11 @@ const formatTime = (value: string) => value.replace('T', ' ').slice(0, 19)
  * Conflicts carry no processing state, and a failed or cancelled comparison
  * never reads as consistent.
  */
-export function ConsistencyPanel({ entityId, entities, tasks, busy, call, onOpenMaterial }: {
+export function ConsistencyPanel({ entityId, entities, tasks, busy, call, onOpenMaterial, onStatusChange }: {
   entityId?: string; entities: EntityView[]; tasks: ConsistencyTaskView[]; busy: boolean;
   call(command: StudioCommand): Promise<StudioReply | undefined>;
   onOpenMaterial?: ((entity: EntityView) => void) | undefined;
+  onStatusChange?: ((status: string) => void) | undefined;
 }) {
   const [history, setHistory] = useState<ConsistencyComparisonView[]>([])
   const [offset, setOffset] = useState(0)
@@ -56,6 +57,8 @@ export function ConsistencyPanel({ entityId, entities, tasks, busy, call, onOpen
   const stale = own.findLast(task => task.freshness === 'stale')
   const messages = useMemo(() => [...new Set(own.map(task => task.message).filter((message): message is string => !!message))], [own])
   const latest = history[0]
+  const status = running ? '进行中' : pendingSync ? '待同步' : stale ? '已过期' : readError ? '读取失败' : loading && !latest ? '读取中' : !latest ? '未发起' : latest.result === 'failed' ? '失败' : latest.result === 'cancelled' ? '已取消' : latest.coverage === 'partial' ? '范围不足' : latest.conflictCount ? `${latest.conflictCount} 项冲突` : '未发现冲突'
+  useEffect(() => { onStatusChange?.(status) }, [status, onStatusChange])
   const selected = history.find(item => item.id === selectedId) ?? latest
   const materialLabel = (id: string) => {
     const entity = entities.find(value => value.id === id)

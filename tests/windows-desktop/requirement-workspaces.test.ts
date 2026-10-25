@@ -69,7 +69,7 @@ test('only an explicit write decision consumes a requirement proposal, and a rep
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '')
   await f.workspaces.accept(f.task.sessionId, '好的')
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '')
-  const command = { action: 'resolveRequirementWriteProposal' as const, entityId: f.entity.id, proposalId: proposal.id, decision: 'write' as const, expectedHash: f.draft.sha256 }
+  const command = { action: 'resolveRequirementWriteProposal' as const, entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write' as const, expectedHash: f.draft.sha256 }
   await f.workspaces.resolveWriteProposal(command)
   const written = await readMaterial(f.root, 'requirement', f.entity.id)
   assert.equal(written.body, '审批人可以同意申请。')
@@ -92,7 +92,7 @@ test('rejecting a requirement proposal preserves the body and prevents the same 
 
 test('undoing a requirement whole-body write uses a distinct receipt and repeated undo does not write twice', async t => {
   const f = await fixture(t), proposal = await f.propose()
-  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: f.draft.sha256 })
   const written = await readMaterial(f.root, 'requirement', f.entity.id)
   const command = { action: 'undoRequirementWrite' as const, entityId: f.entity.id, operationId: proposal.id, expectedHash: written.sha256 }
   await f.workspaces.undoWrite(command)
@@ -117,7 +117,7 @@ for (const change of ['body', 'evidence', 'context'] as const) test(`a requireme
   if (change === 'evidence') f.record.sources[0]!.selected = false
   if (change === 'context') await writeFile(path.join(f.root, 'CONTEXT.md'), '新的项目上下文')
   const current = await readMaterial(f.root, 'requirement', f.entity.id)
-  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: current.sha256 }), /已变化|已作废/)
+  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: current.sha256 }), /已变化|已作废/)
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, current.body)
 })
 
@@ -125,7 +125,7 @@ test('a requirement proposal is written locally while the collaboration service 
   const f = await fixture(t), proposal = await f.propose()
   f.workspaces.deps.entity = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
   f.workspaces.deps.owned = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
-  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: f.draft.sha256 })
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '审批人可以同意申请。')
   await f.workspaces.undoWrite({ action: 'undoRequirementWrite', entityId: f.entity.id, operationId: proposal.id, expectedHash: f.record.writeReceipt!.afterHash })
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, f.draft.body)
@@ -146,7 +146,7 @@ test('a backend template rebind stops the next question while the local write ke
   f.entity.templateId = 'another-template'
   f.entity.templateRef = { ...templateRef, path: '.template/another-template.md' }
   await assert.rejects(f.workspaces.context(f.task), /模板绑定与后台不一致/)
-  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: f.draft.sha256 })
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '审批人可以同意申请。')
 })
 
@@ -169,9 +169,48 @@ test('an accepted requirement context write records the same project file hash o
   const content = '```eadp-write-proposal\n' + JSON.stringify({ entityId: f.entity.id, target: 'context', conclusions: [{ id: 'C2', text: '术语已明确' }], evidenceIds: ['read-source'], body }) + '\n```'
   await f.workspaces.accept(f.task.sessionId, content)
   const proposal = f.record.writeProposal!
-  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: proposal.changes.map(change => change.id), decision: 'write', expectedHash: f.draft.sha256 })
   assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), body)
   const draft = await readMaterial(f.root, 'requirement', f.entity.id)
   assert.equal(draft.body, '')
   assert.equal(draft.metadata.files?.find(value => value.path === 'CONTEXT.md')?.sha256, digest(body))
+})
+
+
+test('reviewed requirement chapters write only selected changes and can be undone', async t => {
+  const f = await fixture(t)
+  const beforeBody = '## 业务规则\n原规则\n\n## 验收条件\n原条件'
+  const before = await saveMaterial(f.root, f.draft.metadata, beforeBody)
+  await f.workspaces.context(f.task)
+  await f.workspaces.accept(f.task.sessionId, f.response('## 业务规则\n新规则\n\n## 验收条件\n新条件'))
+  const proposal = f.record.writeProposal!
+  const command = { action: 'resolveRequirementWriteProposal' as const, entityId: f.entity.id, proposalId: proposal.id, decision: 'write' as const, expectedHash: before.sha256 }
+  await assert.rejects(f.workspaces.resolveWriteProposal(command), /至少选择/)
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, beforeBody)
+  const selected = proposal.changes.find(change => change.title === '业务规则')!
+  await f.workspaces.resolveWriteProposal({ ...command, selectedChangeIds: [selected.id] })
+  const written = await readMaterial(f.root, 'requirement', f.entity.id)
+  assert.equal(written.body, beforeBody.replace('原规则', '新规则'))
+  assert.deepEqual(f.record.writeReceipt?.summary.changed, ['业务规则'])
+  await f.workspaces.undoWrite({ action: 'undoRequirementWrite', entityId: f.entity.id, operationId: proposal.id, expectedHash: written.sha256 })
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, beforeBody)
+})
+
+test('context review writes selected chapters and rejects changed evidence before touching the file', async t => {
+  const f = await fixture(t), before = '## 术语\n旧术语\n\n## 边界\n旧边界'
+  await writeFile(path.join(f.root, 'CONTEXT.md'), before)
+  await f.workspaces.context(f.task)
+  const response = '```eadp-write-proposal\n' + JSON.stringify({ entityId: f.entity.id, target: 'context', conclusions: [{ id: 'C2', text: '术语已明确' }], evidenceIds: ['read-source'], body: before.replace('旧术语', '新术语').replace('旧边界', '新边界') }) + '\n```'
+  await f.workspaces.accept(f.task.sessionId, response)
+  const proposal = f.record.writeProposal!, selected = proposal.changes.find(change => change.title === '术语')!
+  const command = { action: 'resolveRequirementWriteProposal' as const, entityId: f.entity.id, proposalId: proposal.id, selectedChangeIds: [selected.id], decision: 'write' as const, expectedHash: f.draft.sha256 }
+  f.record.sources[0]!.selected = false
+  await assert.rejects(f.workspaces.resolveWriteProposal(command), /依据集合已变化/)
+  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), before)
+  f.record.sources[0]!.selected = true
+  await f.workspaces.resolveWriteProposal(command)
+  const after = before.replace('旧术语', '新术语')
+  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), after)
+  const draft = await readMaterial(f.root, 'requirement', f.entity.id)
+  assert.equal(draft.metadata.files?.find(file => file.path === 'CONTEXT.md')?.sha256, digest(after))
 })

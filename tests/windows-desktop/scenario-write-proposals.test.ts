@@ -6,6 +6,7 @@ import test from 'node:test'
 import type { MaterialMetadata } from '../../packages/contracts/src/index.ts'
 import { readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { ScenarioDocumentService } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
+import { applyWriteChanges, describeWriteChanges } from '../../packages/studio-plugin/src/host/application/material-write-changes.ts'
 import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite } from '../../packages/studio-plugin/src/host/application/scenario-write-proposals.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
@@ -112,4 +113,43 @@ test('consuming the same proposal twice writes once and returns the original res
   assert.deepEqual(first, repeated)
   assert.deepEqual(await service.save(input), first)
   assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, '新正文')
+})
+
+
+test('chapter selection preserves omitted changes, deletions and duplicate headings exactly', () => {
+  const before = '# 业务\n\n## 规则\n旧规则\n\n## 规则\n保留规则\n\n## 退出\n原始退出'
+  const after = '# 业务\n\n## 规则\n新规则\n\n## 规则\n保留规则\n\n## 新增\n新增内容'
+  const changes = describeWriteChanges(before, after)
+  assert.equal(changes.length, 3)
+  const rule = changes.find(change => change.title === '规则')!
+  assert.equal(applyWriteChanges(before, after, [rule.id]), before.replace('旧规则', '新规则'))
+  const removed = changes.find(change => change.kind === 'removed')!
+  assert.equal(applyWriteChanges(before, after, [removed.id]), '# 业务\n\n## 规则\n旧规则\n\n## 规则\n保留规则\n\n')
+  assert.equal(applyWriteChanges(before, after, changes.map(change => change.id)), after)
+  assert.throws(() => applyWriteChanges(before, after, []), /至少选择/)
+  assert.throws(() => applyWriteChanges(before, after, ['forged']), /不一致/)
+  assert.throws(() => applyWriteChanges(before, after, [rule.id, rule.id]), /不一致/)
+})
+
+test('fenced headings stay inside their chapter and reordered chapters require one complete review', () => {
+  const before = '## 规则\n```md\n## 示例\n```\n旧规则\n## 验收\n通过'
+  const after = before.replace('旧规则', '新规则')
+  assert.deepEqual(describeWriteChanges(before, after).map(change => change.title), ['规则'])
+  const reordered = '## 验收\n通过\n## 规则\n新规则'
+  const changes = describeWriteChanges(before, reordered)
+  assert.equal(changes.length, 1)
+  assert.match(changes[0]!.title, /顺序调整/)
+  assert.equal(applyWriteChanges(before, reordered, [changes[0]!.id]), reordered)
+})
+
+
+test('line statistics exclude unchanged lines between separate edits in one chapter', () => {
+  const before = '## 规则\n旧规则甲\n保持一\n保持二\n旧规则乙\n结尾'
+  const after = '## 规则\n新规则甲\n保持一\n保持二\n新规则乙\n结尾'
+  const [change] = describeWriteChanges(before, after)
+  assert.equal(change!.addedLines, 2)
+  assert.equal(change!.removedLines, 2)
+  const [inserted] = describeWriteChanges(before, before.replace('保持二', '新增行\n保持二'))
+  assert.equal(inserted!.addedLines, 1)
+  assert.equal(inserted!.removedLines, 0)
 })

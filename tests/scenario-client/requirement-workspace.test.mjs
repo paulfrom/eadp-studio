@@ -46,6 +46,7 @@ const { RequirementGates } = loadClient('requirements/RequirementGates.tsx')
 const { RequirementSourcePanel } = loadClient('requirements/RequirementSourcePanel.tsx')
 const { RequirementMetadataForm } = loadClient('requirements/RequirementMetadataForm.tsx')
 const { RequirementSpecPanel } = loadClient('requirements/RequirementSpecPanel.tsx')
+const { DocumentSections } = loadClient('components/MaterialDocument.tsx')
 const h = React.createElement
 
 function metadata(overrides = {}) {
@@ -219,6 +220,41 @@ test('spec panel offers preview/source, export and hides saving for the confirme
   assert.match(fixed.container.textContent, /固定版本 v3/)
   fireEvent.click(fixed.getByRole('button', { name: '源码' }))
   assert.equal(fixed.getByLabelText('需求 Markdown 正文').readOnly, true)
+})
+
+test('document sections keep summaries visible and expand the flow and unanswered questions first', () => {
+  const view = render(h(DocumentSections, {
+    body: '## 目标\n\n完成采购审批。\n\n## 业务流程\n\n1. 提交申请\n2. 复核金额\n\n## 业务规则\n\n- 必须留痕\n\n## 待澄清\n\n- 谁负责复核？',
+    templateBody: '', materialLabel: '需求',
+  }))
+  const sections = [...view.container.querySelectorAll('details')]
+  assert.equal(sections.length, 4)
+  assert.deepEqual(sections.map(section => section.open), [false, true, false, true])
+  assert.match(sections[0].querySelector('summary').textContent, /01目标完成采购审批。/)
+  assert.match(sections[1].querySelector('summary').textContent, /2 条/)
+  fireEvent.click(sections[0].querySelector('summary'))
+  assert.equal(sections[0].open, true)
+})
+
+test('collapsed requirement fields keep validation mounted and open when correction is requested', () => {
+  const snap = snapshot({ body: '## 目标\n采购审批' })
+  const ref = React.createRef()
+  const props = {
+    entity: entity(), draft: { ...snap, entityId: 'requirement-id', path: '需求/rq-0003.md' },
+    buffer: { edit() {}, getSnapshot: () => snap }, snapshot: snap, workspace: workspace(),
+    entities, projectId: 'project', candidates: [], busy: false, metadataForm: ref,
+    onFlush: async () => true, onCollapse() {}, onResolve() {}, onOpenScenario() {},
+  }
+  const view = render(h(RequirementSpecPanel, props))
+  const fields = view.getByText('需求信息、业务依据与关系').closest('details')
+  assert.equal(fields.open, false)
+  assert.ok(ref.current)
+  let valid
+  act(() => { valid = ref.current.validate() })
+  assert.equal(valid, true)
+  view.rerender(h(RequirementSpecPanel, { ...props, editRequested: 1 }))
+  assert.equal(fields.open, true)
+  assert.equal(view.getByRole('button', { name: '源码' }).getAttribute('aria-pressed'), 'true')
 })
 
 test('requirement workspace wires the requirement commands and StudioPanel routes the stage to it', () => {

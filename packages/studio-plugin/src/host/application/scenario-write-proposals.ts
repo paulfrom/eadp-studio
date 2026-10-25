@@ -2,6 +2,7 @@ import type { FixedReference } from '@eadp/contracts'
 import type { MaterialDraft } from '../../shared/studio.ts'
 import type { ScenarioWriteSummary } from '../../shared/scenarios.ts'
 import { digest } from '../adapters/assets/materials.ts'
+import { describeWriteChanges } from './material-write-changes.ts'
 
 export interface ParsedWriteProposal { conclusions: Array<{ id: string; text: string }>; evidenceIds: string[]; body: string; target?: 'context' }
 export interface ProposalState { baseHash: string; templateRef: FixedReference; contextHash: string; evidenceIds: readonly string[]; target?: 'context' }
@@ -101,37 +102,18 @@ export function proposalInvalidReason(proposal: ProposalState, current: Proposal
   return undefined
 }
 
-/** Splits a markdown body into `##` chapters, keeping fenced code out of heading detection. */
-function chapters(markdown: string): Map<string, string> {
-  const result = new Map<string, string>()
-  let fence: string | undefined, title = '', lines: string[] = []
-  const flush = (): void => {
-    const key = title || '正文开头', content = lines.join('\n').trim()
-    result.set(key, result.has(key) ? `${result.get(key)}\n${content}` : content)
-    lines = []
-  }
-  for (const line of markdown.split('\n')) {
-    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1]
-    if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined }
-    const heading = fence ? undefined : /^ {0,3}##[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line)?.[1]?.trim()
-    if (heading) { flush(); title = heading; continue }
-    lines.push(line)
-  }
-  flush()
-  return result
-}
-
 /**
  * Describes what one whole-body write changed, which read evidence it used and
  * which blocking business answers remain. Evidence and questions come from Host
  * state, never from the model's prose.
  */
 export function summarizeWrite(before: string, after: string, evidence: readonly string[], unanswered: readonly string[]): ScenarioWriteSummary {
-  const previous = chapters(before), next = chapters(after)
-  const added = [...next.keys()].filter(title => !previous.has(title))
-  const removed = [...previous.keys()].filter(title => !next.has(title))
-  let changed = [...next.keys()].filter(title => previous.has(title) && previous.get(title) !== next.get(title))
-  if (!added.length && !removed.length && !changed.length && before !== after) changed = ['全文']
-  return { added, removed, changed, evidence: [...evidence], unanswered: [...unanswered] }
+  const changes = describeWriteChanges(before, after)
+  return {
+    added: changes.filter(change => change.kind === 'added').map(change => change.title),
+    removed: changes.filter(change => change.kind === 'removed').map(change => change.title),
+    changed: changes.filter(change => change.kind === 'changed').map(change => change.title),
+    evidence: [...evidence], unanswered: [...unanswered],
+  }
 }
 
