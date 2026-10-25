@@ -1,0 +1,1330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EADP Studio · 需求 AI 协作（优化稿）</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#101114;
+    --surface:#17181c;
+    --surface-2:#1c1e23;
+    --surface-3:#23262c;
+    --line:#282b32;
+    --line-2:#3a3e47;
+    --tx:#e8e9ee;
+    --tx-2:#b4b7c0;
+    --tx-3:#8b8f9a;
+    --accent:#7da2ff;
+    --accent-solid:#3d6be0;
+    --accent-soft:rgba(93,138,255,.13);
+    --ok:#4ecb94;
+    --warn:#edb35b;
+    --danger:#ff7373;
+    --mono:"Cascadia Code","JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",-apple-system,"PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei",sans-serif;
+    --shadow:0 18px 48px rgba(0,0,0,.42);
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.6 var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow:hidden}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(680px 320px at 26% -8%,rgba(93,138,255,.10),transparent 65%),radial-gradient(520px 260px at 96% 4%,rgba(78,203,148,.04),transparent 70%)}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  input,textarea{font:inherit;color:inherit}
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  .ico{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+  .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+  /* layout */
+  .app{position:relative;display:grid;grid-template-columns:248px minmax(0,1fr);height:100vh;min-height:0}
+  .workspace{display:grid;grid-template-rows:44px minmax(0,1fr) 38px;min-width:0;min-height:0}
+
+  /* rail */
+  .rail{display:flex;flex-direction:column;min-height:0;padding:14px 12px 12px;border-right:1px solid var(--line);background:linear-gradient(180deg,#14151a,#111216)}
+  .brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px;color:var(--tx-3);font-size:11.5px}
+  .brand b{color:var(--tx);font-weight:600}
+  .logo{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;background:linear-gradient(145deg,#7da2ff,#3d6be0);color:#0b0d12;font:700 10px var(--mono)}
+  .project{padding:10px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.015)}
+  .project b{display:block;font-size:12.5px;font-weight:600;color:var(--tx)}
+  .project span{display:inline-flex;align-items:center;gap:5px;font:11px var(--mono);color:var(--tx-3);margin-top:3px}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .nav{margin-top:16px;display:flex;flex-direction:column;gap:1px}
+  .nav-label{padding:0 8px 6px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#7e828c}
+  .nav-item{display:flex;align-items:center;gap:9px;height:33px;padding:0 8px;border-radius:7px;color:var(--tx-2);font-size:12.5px;transition:background .14s,color .14s}
+  .nav-item .ico{color:var(--tx-3)}
+  .nav-item:hover{background:rgba(255,255,255,.045);color:var(--tx)}
+  .nav-item[aria-current="true"]{background:var(--accent-soft);color:#dde6ff;box-shadow:inset 0 0 0 1px rgba(125,162,255,.18)}
+  .nav-item[aria-current="true"] .ico{color:var(--accent)}
+  .nav-count{margin-left:auto;font:10.5px var(--mono);color:var(--tx-3);padding:0 5px;border:1px solid var(--line);border-radius:5px}
+  .nav-sub{margin:2px 0 6px 26px;display:flex;flex-direction:column;gap:1px;border-left:1px solid var(--line);padding-left:10px}
+  .nav-sub a{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;font:11px var(--mono);color:var(--tx-3)}
+  .nav-sub a:hover{background:rgba(255,255,255,.04);color:var(--tx-2)}
+  .nav-sub a[aria-current="true"]{color:var(--accent)}
+  .rail-foot{margin-top:auto;display:flex;align-items:center;gap:9px;padding:12px 6px 2px;border-top:1px solid var(--line)}
+  .avatar{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#2a2d34;color:var(--tx-2);font:600 10.5px var(--mono)}
+  .rail-foot b{display:block;font-size:11.5px;font-weight:500;color:var(--tx-2)}
+  .rail-foot span{display:block;font:10.5px var(--mono);color:var(--tx-3)}
+
+  /* topbar */
+  .topbar{display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:rgba(16,17,20,.7)}
+  .back{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px 0 6px;border-radius:6px;font-size:12px;color:var(--tx-3)}
+  .back:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+  .proj-chip{display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border:1px solid rgba(237,179,91,.28);border-radius:5px;background:rgba(237,179,91,.07);font-size:11.5px;color:#e7c78f}
+  .proj-chip small{font-family:var(--mono);font-size:10.5px;color:#c9a970}
+  .topbar .spacer{flex:1}
+  .presence{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--tx-3)}
+  .icon-btn{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--tx-3)}
+  .icon-btn:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+
+  .cta{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:7px;background:var(--accent-solid);color:#fff;font-size:12.5px;font-weight:500;white-space:nowrap;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 1px 2px rgba(0,0,0,.4);transition:filter .15s,transform .15s}
+  .cta:hover{filter:brightness(1.08)}
+  .cta:active{transform:translateY(1px)}
+  .cta:disabled{background:#2b2e35;color:#7c818b;box-shadow:none;cursor:not-allowed;filter:none;transform:none}
+  .cta[hidden]{display:none}
+  .btn-soft:disabled,.btn-ghost:disabled{opacity:.45;cursor:not-allowed}
+
+  /* grid */
+  .grid{display:grid;grid-template-columns:minmax(0,46fr) minmax(0,54fr);gap:12px;padding:12px;min-height:0}
+  .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .panel-head{display:flex;align-items:center;gap:9px;height:46px;padding:0 10px 0 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);flex:0 0 auto}
+  .panel-head .spacer{flex:1;min-width:8px}
+  .panel-head .cta{flex:0 0 auto}
+  .code-chip{padding:2px 6px;border:1px solid rgba(125,162,255,.3);border-radius:4px;background:var(--accent-soft);color:#b9caff;font:600 10px var(--mono)}
+  .panel-title{font-size:13px;font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .session{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--line);border-radius:6px;font:11.5px var(--mono);color:var(--tx-3);background:var(--surface-2)}
+
+  /* transcript */
+  .transcript{flex:1;min-height:0;overflow:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:14px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .transcript::-webkit-scrollbar{width:10px}
+  .transcript::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .past{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;font-size:11.5px;color:var(--tx-3);background:rgba(255,255,255,.02);border:1px solid transparent;width:max-content;max-width:100%}
+  .past:hover{background:rgba(255,255,255,.04);color:var(--tx-2)}
+  .past .ico{width:12px;height:12px}
+  .turn{display:flex;flex-direction:column;gap:10px;max-width:620px}
+  .turn-meta{display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:11px}
+  .ai-mark{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;background:linear-gradient(145deg,#3d6be0,#7da2ff);color:#0b0d12;font:700 9px var(--mono)}
+  .turn-meta time,.turn-meta .model{font-family:var(--mono);font-size:10.5px}
+  .lead{margin:0;font-size:13.5px;line-height:1.75;color:#dfe1e8;max-width:44em}
+  .lead strong{color:#fff;font-weight:600}
+  .lead .quiet{color:var(--tx-3)}
+  .decide{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden}
+  .decide-head{display:flex;align-items:center;gap:7px;padding:8px 11px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--tx-3)}
+  .decide-head b{font-size:12px;font-weight:600;color:var(--tx)}
+  .decide-head .pill{margin-left:auto;padding:1px 6px;border-radius:99px;background:rgba(237,179,91,.10);border:1px solid rgba(237,179,91,.28);color:#e8c48c;font:10px var(--mono)}
+  .decision{padding:10px 11px}
+  .decision + .decision{border-top:1px solid var(--line)}
+  .decision-q{margin:0 0 2px;font-size:12.5px;color:var(--tx)}
+  .decision-meta{margin:0 0 8px;font-size:11px;color:var(--tx-3)}
+  .choices{display:flex;flex-wrap:wrap;gap:7px}
+  .choice{height:27px;padding:0 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:var(--tx-2);font-size:11.5px;transition:border-color .14s,color .14s,background .14s}
+  .choice:hover{border-color:var(--accent);color:var(--tx)}
+  .choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:#dde6ff}
+  .choice[disabled]{opacity:.42;cursor:not-allowed}
+  .choice.is-answered::after{content:" ✓";color:var(--ok)}
+  .evidence{font-size:11.5px;color:var(--tx-3)}
+  .evidence summary{display:flex;align-items:center;gap:5px;width:max-content;list-style:none;cursor:pointer;padding:3px 0;border-radius:5px}
+  .evidence summary::-webkit-details-marker{display:none}
+  .evidence summary:hover{color:var(--tx-2)}
+  .evidence summary .ico{width:12px;height:12px;transition:transform .16s}
+  .evidence[open] summary .ico{transform:rotate(180deg)}
+  .evidence ul{list-style:none;margin:6px 0 0;padding:0 0 0 2px;display:grid;gap:5px}
+  .evidence li{display:flex;gap:7px;align-items:baseline;color:var(--tx-2);font-size:11.5px}
+  .evidence li::before{content:"";width:4px;height:4px;border-radius:1px;background:var(--line-2);flex:0 0 auto;transform:translateY(-2px)}
+  .proposal{border:1px solid rgba(125,162,255,.26);border-radius:10px;background:linear-gradient(180deg,rgba(93,138,255,.085),rgba(93,138,255,.02));padding:11px 12px}
+  .proposal-top{display:flex;align-items:center;gap:8px}
+  .proposal-top .ico{width:13px;height:13px;color:var(--accent)}
+  .proposal-title{font-size:12.5px;font-weight:600;color:var(--tx)}
+  .proposal-title small{margin-left:6px;font:10.5px var(--mono);font-weight:400;color:var(--tx-3)}
+  .proposal-stats{display:flex;align-items:center;gap:12px;margin-top:6px;font:11px var(--mono);color:var(--tx-3)}
+  .proposal-stats b{font-weight:600;color:var(--tx-2)}
+  .proposal-stats .add{color:#96e0b9}
+  .proposal-stats .del{color:#ffadad}
+  .proposal-foot{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .proposal-foot .hint{margin-right:auto;font-size:10.5px;color:var(--tx-3)}
+  .btn-ghost{height:27px;padding:0 10px;border:1px solid var(--line-2);border-radius:6px;font-size:11.5px;color:var(--tx-2);background:transparent}
+  .btn-ghost:hover{color:var(--tx);border-color:#4a4f59}
+  .btn-soft{height:27px;padding:0 11px;border:1px solid rgba(125,162,255,.34);border-radius:6px;font-size:11.5px;color:#cfdcff;background:var(--accent-soft)}
+  .btn-soft:hover{background:rgba(93,138,255,.2)}
+
+  /* composer */
+  .composer{padding:10px 14px 11px;border-top:1px solid var(--line);background:linear-gradient(180deg,transparent,var(--surface))}
+  .composer-box{border:1px solid var(--line-2);border-radius:11px;background:var(--surface-2);padding:9px 9px 7px;transition:border-color .16s,box-shadow .16s}
+  .composer-box:focus-within{border-color:rgba(125,162,255,.7);box-shadow:0 0 0 3px rgba(93,138,255,.10)}
+  .composer textarea{display:block;width:100%;min-height:38px;max-height:120px;resize:none;border:0;background:none;outline:none;font-size:12.5px;line-height:1.6;color:var(--tx)}
+  .composer textarea::placeholder{color:#7e828c}
+  .composer-tools{display:flex;align-items:center;gap:4px;margin-top:5px}
+  .tool{display:inline-flex;align-items:center;gap:5px;height:25px;padding:0 7px;border-radius:6px;font-size:11px;color:var(--tx-3)}
+  .tool:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+  .tool .ico{width:13px;height:13px}
+  .model{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font:10.5px var(--mono);color:var(--tx-3);padding:0 6px}
+  .send{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;background:var(--accent-solid);color:#fff}
+  .send:disabled{opacity:.35;cursor:not-allowed}
+  .composer-hint{margin:6px 2px 0;font-size:10.5px;color:#7e828c;font-family:var(--mono)}
+  .composer.is-locked{opacity:.8}
+  .composer.is-locked textarea{cursor:not-allowed}
+
+  /* doc */
+  .doc-head{display:flex;align-items:center;gap:8px;height:46px;padding:0 10px 0 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);flex:0 0 auto}
+  .file-badge{padding:3px 4px;border:1px solid rgba(125,162,255,.3);border-radius:4px;background:var(--accent-soft);color:#b9caff;font:600 9px var(--mono);letter-spacing:.04em}
+  .doc-name{font:11.5px var(--mono);color:var(--tx-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .save{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+  .save .dot{width:5px;height:5px;background:var(--ok)}
+  .seg{display:flex;padding:2px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2)}
+  .seg button{padding:2px 8px;border-radius:4px;font-size:10.5px;color:var(--tx-3)}
+  .seg button[aria-pressed="true"]{background:var(--surface-3);color:var(--tx);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .doc-body{flex:1;min-height:0;overflow:auto;padding:14px 16px 28px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .doc-body::-webkit-scrollbar{width:10px}
+  .doc-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .doc-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line);font:10.5px var(--mono);color:var(--tx-3)}
+  .doc-meta span + span::before{content:"·";margin-right:8px;color:#4a4e57}
+  .sections{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+  .section{border:1px solid var(--line);border-radius:9px;background:var(--surface-2);overflow:hidden}
+  .section[open]{border-color:var(--line-2)}
+  .section > summary{display:flex;align-items:center;gap:9px;padding:10px 11px;list-style:none;cursor:pointer}
+  .section > summary::-webkit-details-marker{display:none}
+  .section > summary:hover{background:rgba(255,255,255,.02)}
+  .sec-num{padding:2px 5px;border:1px solid rgba(125,162,255,.2);border-radius:4px;background:rgba(125,162,255,.08);color:#a9bfff;font:600 9.5px var(--mono)}
+  .sec-title{font-size:12.5px;color:var(--tx);white-space:nowrap}
+  .sec-sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--tx-3)}
+  .sec-count{font:10px var(--mono);color:#7e828c}
+  .section summary .ico{width:12px;height:12px;color:#7e828c;transition:transform .16s}
+  .section[open] summary .ico{transform:rotate(180deg)}
+  .section-body{padding:1px 12px 12px;border-top:1px solid var(--line)}
+  .section-body p{margin:10px 0;max-width:44em;color:var(--tx-2);font-size:12px;line-height:1.8}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .tag{padding:1px 6px;border:1px solid var(--line);border-radius:4px;background:rgba(255,255,255,.02);font:10px var(--mono);color:var(--tx-3)}
+  .tag.warn{border-color:rgba(237,179,91,.28);background:rgba(237,179,91,.07);color:#e5c18a}
+  .flow{list-style:none;margin:4px 0 0;padding:0;counter-reset:s}
+  .flow li{position:relative;padding:7px 0 7px 30px;border-top:1px dashed #2c2f36;font-size:12px;color:var(--tx-2)}
+  .flow li:first-child{border-top:0}
+  .flow li::before{counter-increment:s;content:counter(s,decimal-leading-zero);position:absolute;left:0;top:8px;font:9.5px var(--mono);color:#7e828c;width:20px;text-align:center;border:1px solid var(--line);border-radius:4px;padding:1px 0}
+  .flow li b{color:var(--tx);font-weight:500}
+  .check-list{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:6px}
+  .check-list li{position:relative;padding-left:14px;font-size:12px;line-height:1.75;color:var(--tx-2)}
+  .check-list li::before{content:"";position:absolute;left:0;top:.65em;width:4px;height:4px;border-radius:1px;background:var(--line-2)}
+  .source-list{list-style:none;margin:4px 0 0;padding:0}
+  .source-list li{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12px;color:var(--tx-2)}
+  .source-list li:first-child{border-top:0}
+  .source-list .tag{margin-left:auto}
+  .rel-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12px;color:var(--tx-2)}
+  .rel-row:first-child{border-top:0}
+  .rel-row .tag{margin-left:auto}
+  .rel-row .quiet,.note{color:var(--tx-3);font-size:11px}
+  .note{margin:8px 0 0;line-height:1.7}
+  .md-source{margin:0;padding:0 0 20px;font:11.5px/1.85 var(--mono);color:var(--tx-2);white-space:pre-wrap}
+
+  /* clarify */
+  .clarify-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px}
+  .clarify-head strong{font-size:12.5px;font-weight:600}
+  .clarify-head span{font:10.5px var(--mono);color:var(--tx-3)}
+  .bar{height:3px;border-radius:99px;background:#2b2e35;overflow:hidden;margin-bottom:10px}
+  .bar i{display:block;height:100%;width:37.5%;border-radius:99px;background:linear-gradient(90deg,#3d6be0,#7da2ff);transition:width .3s ease}
+  .clarify-list{list-style:none;margin:0;padding:0}
+  .clarify-list li{display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:11.5px;color:var(--tx-2)}
+  .clarify-list li:first-child{border-top:0}
+  .clarify-list li.is-done{color:var(--tx-3)}
+  .clarify-list li.is-done .q{text-decoration:line-through;text-decoration-color:#4a4e57}
+  .sev{flex:0 0 auto;margin-top:1px;padding:0 4px;border-radius:3px;font:9px var(--mono);line-height:15px}
+  .sev.block{border:1px solid rgba(255,115,115,.25);background:rgba(255,115,115,.09);color:#ff9c9c}
+  .sev.norm{border:1px solid var(--line);background:rgba(255,255,255,.03);color:#7e828c}
+  .clarify-list .q{flex:1;min-width:0}
+  .link{padding:0;border:0;background:none;color:var(--accent);font-size:11px;white-space:nowrap}
+  .link:hover{text-decoration:underline}
+  .more-clarify{margin-top:8px;font-size:11px}
+
+  /* confirmed */
+  .confirmed-bar{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 11px;border:1px solid rgba(78,203,148,.25);border-radius:8px;background:rgba(78,203,148,.07);font-size:11.5px;color:#a9e3c4}
+  .confirmed-bar[hidden]{display:none}
+  .confirmed-bar .ico{width:13px;height:13px}
+  .confirmed-bar time{font-family:var(--mono);font-size:10.5px;color:#7fbfa0}
+  .confirmed-bar .link{margin-left:auto}
+
+  /* status */
+  .status{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;border-top:1px solid var(--line);background:#141519;font-size:11px;color:var(--tx-3)}
+  .status-left{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .st{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .st.danger{color:#ff9a9a}
+  .st.danger .ico{width:12px;height:12px}
+  .st b{font:10.5px var(--mono);font-weight:600;color:var(--tx-2)}
+  .sep{width:1px;height:11px;background:var(--line-2)}
+  .status-right{display:flex;align-items:center;gap:8px}
+  button.st{border:0;background:none;padding:0;cursor:pointer;font:inherit;color:inherit}
+  button.st:hover{color:var(--tx-2)}
+
+  /* gate sheet */
+  .gate-list{display:flex;flex-direction:column;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .gate-row{display:flex;align-items:flex-start;gap:10px;padding:11px 2px;border-bottom:1px solid var(--line)}
+  .gate-row:last-child{border-bottom:0}
+  .gate-ico{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;margin-top:1px;font:700 10px var(--mono);border:1px solid var(--line-2);color:var(--tx-3)}
+  .gate-ico[data-state="passed"]{border-color:rgba(78,203,148,.4);background:rgba(78,203,148,.12);color:var(--ok)}
+  .gate-ico[data-state="blocked"]{border-color:rgba(255,115,115,.4);background:rgba(255,115,115,.1);color:#ff9c9c}
+  .gate-ico[data-state="disabled"]{border-style:dashed}
+  .gate-main{flex:1;min-width:0}
+  .gate-title{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx)}
+  .gate-state{font:10px var(--mono);padding:0 5px;border-radius:3px;border:1px solid var(--line);color:var(--tx-3);line-height:15px}
+  .gate-row[data-state="blocked"] .gate-state{border-color:rgba(255,115,115,.28);background:rgba(255,115,115,.08);color:#ff9c9c}
+  .gate-row[data-state="passed"] .gate-state{border-color:rgba(78,203,148,.26);background:rgba(78,203,148,.07);color:#8fe0b6}
+  .gate-msg{margin:3px 0 0;font-size:11.5px;line-height:1.6;color:var(--tx-3)}
+  .gate-action{align-self:center;flex:0 0 auto}
+  .declare{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+  .declare label{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:var(--tx-2);cursor:pointer}
+  .declare .hint{margin:6px 0 0;font-size:10.5px;color:var(--tx-3)}
+  .confirm-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--tx-3)}
+  .confirm-status{font:11px var(--mono);color:var(--tx-3)}
+  .confirm-status[data-tone="ok"]{color:#8fe0b6}
+  .confirm-status[data-tone="bad"]{color:#ff9c9c}
+
+  /* diff dialog */
+  dialog.sheet{width:min(880px,calc(100vw - 40px));max-height:min(680px,calc(100vh - 56px));padding:0;border:1px solid var(--line-2);border-radius:14px;background:#17191d;color:var(--tx);box-shadow:0 40px 100px rgba(0,0,0,.6);overflow:hidden}
+  dialog.sheet::backdrop{background:rgba(6,7,9,.64)}
+  dialog.sheet[open]{display:flex;flex-direction:column;animation:sheetIn .18s ease-out}
+  @keyframes sheetIn{from{opacity:0;transform:translateY(8px) scale(.995)}to{opacity:1;transform:none}}
+  .sheet-head{display:flex;align-items:flex-start;gap:10px;padding:15px 18px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .sheet-title{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .sheet-title .num{padding:1px 6px;border-radius:99px;background:var(--accent-soft);border:1px solid rgba(125,162,255,.3);color:#cfdcff;font:10px var(--mono)}
+  .sheet-sub{margin-top:3px;font:10.5px var(--mono);color:var(--tx-3)}
+  .sheet-head .spacer{flex:1}
+  .sheet-tools{display:flex;align-items:center;gap:10px;padding:8px 18px;border-bottom:1px solid var(--line);background:var(--surface);font-size:11px;color:var(--tx-3);flex:0 0 auto}
+  .sheet-tools label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+  .sheet-tools .stat{font-family:var(--mono)}
+  input[type="checkbox"]{width:13px;height:13px;accent-color:var(--accent);cursor:pointer;margin:0}
+  .diff-body{flex:1;min-height:0;overflow:auto;padding:6px 14px 10px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .diff-body::-webkit-scrollbar{width:10px}
+  .diff-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .diff-block{padding:8px 4px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .diff-block:last-child{border-bottom:0}
+  .diff-block-head{display:flex;align-items:center;gap:9px;padding:4px 2px 7px;font-size:12px;color:var(--tx)}
+  .diff-block-head label{display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0}
+  .diff-block-head .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dstat{margin-left:auto;font:10px var(--mono);white-space:nowrap}
+  .dstat .a{color:#96e0b9}
+  .dstat .d{color:#ffadad}
+  pre.diff{margin:0;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#121316;font:11px/1.75 var(--mono);color:var(--tx-2);overflow:auto;white-space:pre}
+  pre.diff .a{display:block;background:rgba(78,203,148,.09);color:#a7e8c4}
+  pre.diff .d{display:block;background:rgba(255,115,115,.08);color:#ffb6b6}
+  .sheet-foot{display:flex;align-items:center;gap:10px;padding:11px 18px;border-top:1px solid var(--line);background:#141519;flex:0 0 auto}
+  .sheet-foot .meta{font:10.5px var(--mono);color:var(--tx-3)}
+  .sheet-foot .spacer{flex:1}
+
+  /* toast */
+  .toast{position:fixed;right:20px;bottom:54px;z-index:60;display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;background:#1d1f24;box-shadow:var(--shadow);font-size:11.5px;animation:toastIn .2s ease-out}
+  .toast[hidden]{display:none}
+  .toast .ok{color:var(--ok);display:grid;place-items:center}
+  .toast .ok .ico{width:14px;height:14px}
+  .toast b{font-weight:500;color:var(--tx)}
+  .toast button{font-size:11.5px;color:var(--accent);padding:1px 3px}
+  .toast button:hover{text-decoration:underline}
+  @keyframes toastIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .flash{animation:flash 1.8s ease-out}
+  @keyframes flash{0%{box-shadow:0 0 0 1px rgba(78,203,148,.55),0 0 22px rgba(78,203,148,.16)}100%{box-shadow:none}}
+
+  /* consistency drawer */
+  .drawer-backdrop{position:fixed;inset:0;background:rgba(6,7,9,.45);z-index:39;animation:fadeIn .16s ease-out}
+  .drawer-backdrop[hidden]{display:none}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  .drawer{position:fixed;top:56px;right:16px;bottom:48px;width:min(470px,calc(100vw - 32px));display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:12px;background:#17191d;box-shadow:0 30px 90px rgba(0,0,0,.55);z-index:40;overflow:hidden;animation:drawerIn .2s ease-out}
+  .drawer[hidden]{display:none}
+  @keyframes drawerIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+  .drawer-head{display:flex;align-items:flex-start;gap:10px;padding:14px 14px 11px;border-bottom:1px solid var(--line)}
+  .drawer-head .spacer{flex:1}
+  .drawer-title{font-size:14px;font-weight:600}
+  .drawer-sub{margin-top:2px;font-size:10.5px;color:var(--tx-3)}
+  .drawer-body{flex:1;min-height:0;overflow:auto;padding:13px 14px 18px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .drawer-body::-webkit-scrollbar{width:10px}
+  .drawer-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .drawer-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:#141519}
+  .drawer-foot .meta{margin-right:auto;font-size:10.5px;color:var(--tx-3)}
+  .cons-empty{padding:26px 6px;text-align:center;color:var(--tx-3);font-size:12px;line-height:1.9}
+  .cons-running{display:flex;align-items:center;gap:9px;padding:22px 6px;font-size:12px;color:var(--tx-2)}
+  .cons-running[hidden]{display:none}
+  .spinner{width:13px;height:13px;border-radius:50%;border:2px solid rgba(125,162,255,.25);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .cons-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+  .cons-facts > div{padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2)}
+  .cons-facts dt{font-size:10px;color:var(--tx-3)}
+  .cons-facts dd{margin:2px 0 0;font:12px var(--mono);color:var(--tx)}
+  .cons-conclusion{margin:12px 0;font-size:12px;line-height:1.75;color:var(--tx-2)}
+  .cons-group{margin-top:12px}
+  .cons-group h4{margin:0 0 6px;font-size:11px;font-weight:500;color:var(--tx-3)}
+  .conflict{padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+  .conflict + .conflict{margin-top:8px}
+  .conflict-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--tx-3)}
+  .src{font:10px var(--mono);padding:1px 5px;border:1px solid var(--line-2);border-radius:4px;color:var(--tx-2)}
+  .rel{font:9.5px var(--mono);padding:0 4px;border-radius:3px;border:1px solid rgba(237,179,91,.25);background:rgba(237,179,91,.07);color:#e5c18a}
+  .rel[data-kind="potential"]{border-color:rgba(125,162,255,.28);background:rgba(125,162,255,.08);color:#b9caff}
+  .conflict p{margin:7px 0 0;font-size:11.5px;line-height:1.7;color:var(--tx-2)}
+  .conflict small{display:block;margin-top:5px;font-size:10.5px;color:var(--tx-3)}
+  .conflict-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .conflict-actions button{height:24px;padding:0 8px;border:1px solid var(--line-2);border-radius:5px;font-size:10.5px;color:var(--tx-2);background:var(--surface)}
+  .conflict-actions button:hover{border-color:var(--accent);color:var(--tx)}
+  .cons-note{margin:14px 0 0;padding-top:10px;border-top:1px solid var(--line);font-size:10.5px;line-height:1.7;color:var(--tx-3)}
+  details.cons-history{margin-top:12px;font-size:11px;color:var(--tx-3)}
+  details.cons-history summary{cursor:pointer;width:max-content}
+  .cons-history-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line);font:10.5px var(--mono)}
+
+  /* collapsible doc */
+  .grid.doc-collapsed{grid-template-columns:minmax(0,1fr) 42px}
+  .grid.doc-collapsed #docPanel{display:none}
+  .doc-restore{display:flex;flex-direction:column;align-items:center;gap:12px;padding:10px 0;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+  .doc-restore[hidden]{display:none}
+  .doc-restore .label{writing-mode:vertical-rl;font:10.5px var(--mono);letter-spacing:.14em;color:var(--tx-3)}
+  .doc-restore .ico{transform:rotate(180deg)}
+
+  @media (max-width:1280px){
+    .grid{grid-template-columns:minmax(0,1fr);overflow:auto}
+    .grid > .panel{min-height:420px}
+    .workspace{grid-template-rows:44px minmax(0,1fr) 38px}
+  }
+  @media (max-width:1024px){
+    .app{grid-template-columns:1fr}
+    .rail{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><span class="logo">E</span><span><b>EADP Studio</b> · 需求工作台</span></div>
+    <div class="project"><b>测试002</b><span><i class="dot"></i>main · 已同步</span></div>
+    <nav class="nav" aria-label="工作台导航">
+      <div class="nav-label">Navigation</div>
+      <a class="nav-item" href="项目场景列表.html"><svg class="ico"><use href="#i-grid"/></svg>项目场景</a>
+      <a class="nav-item" href="需求协同列表.html" aria-current="true"><svg class="ico"><use href="#i-file"/></svg>需求协同<span class="nav-count">3</span></a>
+      <div class="nav-sub">
+        <a href="#" aria-current="true">REQ-0009 · 售后退款与换货</a>
+        <a href="#">REQ-0007 · 售后审核</a>
+      </div>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-play"/></svg>原型展示</a>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-flag"/></svg>基线确认</a>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-inbox"/></svg>交接清单</a>
+    </nav>
+    <div class="rail-foot">
+      <span class="avatar">测</span>
+      <div><b>测试管理员</b><span>@songlin.liu</span></div>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <a class="back" href="需求协同列表.html"><svg class="ico"><use href="#i-arrow-left"/></svg>返回需求协同列表</a>
+      <span class="proj-chip">项目 <small>training-demo</small></span>
+      <div class="spacer"></div>
+      <span class="presence"><i class="dot"></i>协同工作台已登录</span>
+      <button class="icon-btn" type="button" id="reloadBtn" aria-label="重新读取草稿" title="重新读取草稿"><svg class="ico"><use href="#i-undo"/></svg></button>
+    </header>
+
+    <main class="grid">
+      <section class="panel" aria-label="需求对话">
+        <div class="panel-head">
+          <span class="code-chip">REQ-0009</span>
+          <span class="panel-title">售后退款与换货</span>
+          <div class="spacer"></div>
+          <span class="session" title="当前会话">会话 4</span>
+          <button class="cta" id="stageCta" type="button">审阅 6 处变更<svg class="ico"><use href="#i-chev-right"/></svg></button>
+        </div>
+
+        <div class="transcript">
+          <button class="past" type="button"><svg class="ico"><use href="#i-chev-right"/></svg>第 6 轮 · 已依据 2 个固定版本场景与需求模板收敛业务规则 <span style="margin-left:4px;font-family:var(--mono)">14:02</span></button>
+
+          <article class="turn">
+            <div class="turn-meta"><span class="ai-mark">AI</span>需求设计助手<time>14:18</time><span class="model">MiniMax-M2.7</span></div>
+
+            <p class="lead">本轮已收敛<strong>业务规则、验收条件与资料依据</strong>，整篇写入后共有 6 个章节会变化。</p>
+            <p class="lead">还有两处业务口径需要你拍板：<span class="quiet">答复只影响写入内容，不影响现在审阅。</span></p>
+
+            <section class="decide" aria-label="需要你决定">
+              <div class="decide-head"><b>需要你决定</b><span>影响 03 / 04 / 06 章节</span><span class="pill" id="decideCount">2 项</span></div>
+              <div class="decision" data-key="refund">
+                <p class="decision-q">退款单是否独立于退货申请入口？</p>
+                <p class="decision-meta">来自第 5 轮讨论 · 影响业务规则与退款金额口径</p>
+                <div class="choices">
+                  <button class="choice" type="button" aria-pressed="false">独立申请入口</button>
+                  <button class="choice" type="button" aria-pressed="false">复用退货申请</button>
+                </div>
+              </div>
+              <div class="decision" data-key="goods">
+                <p class="decision-q">换货是否复用 Goods 商品列表？</p>
+                <p class="decision-meta">来自第 6 轮讨论 · 影响验收条件与选品交互</p>
+                <div class="choices">
+                  <button class="choice" type="button" aria-pressed="false">复用 Goods</button>
+                  <button class="choice" type="button" aria-pressed="false">独立维护</button>
+                </div>
+              </div>
+            </section>
+
+            <details class="evidence">
+              <summary><svg class="ico"><use href="#i-chev"/></svg>依据 3 份资料</summary>
+              <ul>
+                <li>退款政策 v2 · §3 退款金额</li>
+                <li>主系统接口文档 · §2 售后同步</li>
+                <li>SC-0002 测试场景 · 固定版本 v4</li>
+              </ul>
+            </details>
+
+            <section class="proposal" aria-label="写入提议">
+              <div class="proposal-top"><svg class="ico"><use href="#i-spark"/></svg><span class="proposal-title">写入提议<small>v2 → v3</small></span></div>
+              <div class="proposal-stats"><span><b>6</b> 个章节</span><span class="add">+14</span><span class="del">−5</span><span style="margin-left:auto">需求/REQ-0009.md</span></div>
+              <div class="proposal-foot">
+                <span class="hint">写入前可逐段核对</span>
+                <button class="btn-ghost" type="button" id="laterBtn">稍后</button>
+              </div>
+            </section>
+          </article>
+        </div>
+
+        <form class="composer" id="composer">
+          <div class="composer-box">
+            <label class="sr" for="msg">消息</label>
+            <textarea id="msg" rows="1" placeholder="补充业务口径，或让 AI 解释某一处变更…"></textarea>
+            <div class="composer-tools">
+              <button class="tool" type="button" id="materialsBtn"><svg class="ico"><use href="#i-plus"/></svg>资料</button>
+              <button class="tool" type="button" id="templateBtn"><svg class="ico"><use href="#i-file"/></svg>模板</button>
+              <span class="model">MiniMax-M2.7</span>
+              <button class="send" type="submit" id="sendBtn" aria-label="发送"><svg class="ico"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+          <div class="composer-hint">Enter 发送 · Shift + Enter 换行 · 助手只提建议，不直接改正文</div>
+        </form>
+      </section>
+
+      <section class="panel" id="docPanel" aria-label="需求文档">
+        <div class="doc-head">
+          <span class="file-badge">MD</span>
+          <span class="doc-name">需求/REQ-0009.md</span>
+          <span class="save"><i class="dot"></i>已保存</span>
+          <div class="spacer" style="flex:1"></div>
+          <div class="seg" role="group" aria-label="文档视图">
+            <button type="button" data-tab="preview" aria-pressed="true">预览</button>
+            <button type="button" data-tab="source" aria-pressed="false">源码</button>
+          </div>
+          <button class="icon-btn" type="button" id="docCollapse" aria-controls="docPanel" aria-expanded="true" aria-label="收起文档预览" title="收起文档预览"><svg class="ico"><use href="#i-chev-right"/></svg></button>
+        </div>
+
+        <div class="doc-body">
+          <div id="docBody">
+            <div class="confirmed-bar" id="confirmedBar" hidden>
+              <svg class="ico"><use href="#i-check"/></svg>
+              <span>已确认为固定版本 v3</span>
+              <time>2026-10-25 15:20</time>
+              <button class="link" type="button" id="reviseBtn">开始修订</button>
+            </div>
+            <div class="doc-meta">
+              <span id="docVersion">v2</span><span>1,240 字</span><span>14:20 更新</span><span>作者 测试管理员</span>
+            </div>
+
+            <ol class="sections">
+              <li>
+                <details class="section" data-sec="01">
+                  <summary><span class="sec-num">01</span><span class="sec-title">背景与目标</span><span class="sec-sum">退款与换货全链路可追溯</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <p>售后咨询分散在订单详情、客服工单与线下登记三处，退款与换货进度无法统一查看。本需求把两类售后收敛到同一张售后单，结果回写主系统。</p>
+                    <p>不包含：逆向物流、运费结算、赔付与客服绩效。</p>
+                    <div class="tags"><span class="tag">已确认 · 第 6 轮</span><span class="tag">来源 · 需求模板 v2</span></div>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="02">
+                  <summary><span class="sec-num">02</span><span class="sec-title">用户与使用场景</span><span class="sec-sum">售后专员、财务、仓库三类角色</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <p>售后专员发起并跟踪售后单；财务核对退款金额；仓库确认换货出库。三类角色只读取与自己相关的状态，不互相覆盖。</p>
+                    <div class="tags"><span class="tag">来源 · SC-0002 固定 v4</span><span class="tag">角色边界已确认</span></div>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="03" open>
+                  <summary><span class="sec-num">03</span><span class="sec-title">业务规则</span><span class="sec-sum">3 条规则 · 1 条待口径确认</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <ol class="flow">
+                      <li><b>R1 退款金额</b>：无部分退款入口时，退款金额恒等于订单实付金额；存在部分退款时按可退数量计算。</li>
+                      <li><b>R2 换货选品</b>：换货商品复用 Goods 列表，按可换数量校验库存，库存不足时不允许提交。</li>
+                      <li><b>R3 同步幂等</b>：售后结果回写以售后单号为幂等键，重复推送不重复扣减。</li>
+                    </ol>
+                    <div class="tags"><span class="tag">来源 · 退款政策 v2 §3</span><span class="tag warn">待澄清 · 部分退款</span></div>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="04">
+                  <summary><span class="sec-num">04</span><span class="sec-title">验收条件</span><span class="sec-sum">3 条可客观判断</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <ul class="check-list">
+                      <li>全额退款：提交后 3 个工作日内退款到账，金额等于订单实付。</li>
+                      <li>换货：库存不足时不允许提交，并给出当前可换数量。</li>
+                      <li>重复回写：同一售后单重复推送只产生一条结果记录。</li>
+                    </ul>
+                    <p class="note">验收条件只描述可观察结果，不约束实现方式。</p>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="05">
+                  <summary><span class="sec-num">05</span><span class="sec-title">资料与依据</span><span class="sec-sum">2 份正式依据 + 1 个固定场景</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <ul class="source-list">
+                      <li><span>退款政策 v2 · §3 退款金额</span><span class="tag">固定版本</span></li>
+                      <li><span>主系统接口文档 · §2 售后同步</span><span class="tag">固定版本</span></li>
+                      <li><span>SC-0002 测试场景 · v4</span><span class="tag">已确认场景</span></li>
+                    </ul>
+                    <div class="tags"><span class="tag warn">2 份依据尚未归档</span></div>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="06">
+                  <summary><span class="sec-num">06</span><span class="sec-title">关联场景与前置</span><span class="sec-sum">SC-0002 v4 固定 · 前置 REQ-0007</span><span class="sec-count">2 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <div class="rel-row"><b>SC-0002 · 测试场景</b><span class="tag">固定 v4</span><span class="quiet">退款与换货主流程</span></div>
+                    <div class="rel-row"><b>REQ-0007 · 售后审核</b><span class="tag">前置 · 已确认</span><span class="quiet">生产顺序</span></div>
+                    <p class="note">关联场景只提示可能影响，不随本需求确认被冻结或自动确认；前置关系不阻止确认。</p>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="07">
+                  <summary><span class="sec-num">07</span><span class="sec-title">一致性</span><span class="sec-sum">2 项冲突 · 不影响确认</span><span class="sec-count">2 项</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <p>最近一次对比 10-25 15:21：正式关系 1 项、潜在关联 1 项。结论只保存在协同后台，不写入正文。</p>
+                    <button class="link" type="button" id="openCompare">打开对比</button>
+                  </div>
+                </details>
+              </li>
+              <li>
+                <details class="section" data-sec="08" open>
+                  <summary><span class="sec-num">08</span><span class="sec-title">待澄清清单</span><span class="sec-sum">3/8 已澄清，2 项阻塞确认</span><span class="sec-count">8 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                  <div class="section-body">
+                    <div class="clarify-head"><strong>待澄清清单</strong><span id="clarifyProgress">3 / 8</span></div>
+                    <div class="bar"><i id="clarifyBar" style="width:37.5%"></i></div>
+                    <p class="note" id="clarifySummary">3/8 已澄清，2 项阻塞确认</p>
+                    <ul class="clarify-list" id="clarifyList">
+                      <li data-key="refund"><span class="sev block">阻塞</span><span class="q">退款单是否需要独立申请入口？</span><button class="link" type="button">在对话中回答</button></li>
+                      <li data-key="goods"><span class="sev block">阻塞</span><span class="q">换货是否复用 Goods 商品列表？</span><button class="link" type="button">在对话中回答</button></li>
+                      <li data-key="idem"><span class="sev norm">普通</span><span class="q">主系统接口幂等键落在哪一层？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                      <li data-key="partial"><span class="sev norm">普通</span><span class="q">部分退款、部分完成的中间状态如何处理？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                      <li data-key="mq"><span class="sev norm">普通</span><span class="q">是否存在 MQ 等非 Feign 通道参与售后同步？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                    </ul>
+                    <button class="link more-clarify" type="button" id="showDone">展开已澄清的 3 条</button>
+                  </div>
+                </details>
+              </li>
+            </ol>
+          </div>
+          <pre class="md-source" id="docSource" hidden># 售后退款与换货需求
+
+## 01 背景与目标
+售后咨询分散在订单详情、客服工单与线下登记三处，退款与换货进度无法统一查看。
+
+## 03 业务规则
+- R1 退款金额：无部分退款入口时，退款金额恒等于订单实付金额。
+- R2 换货选品：换货商品复用 Goods 列表，按可换数量校验库存。
+- R3 同步幂等：售后结果回写以售后单号为幂等键。
+
+## 08 待澄清清单
+- [ ] 退款单是否需要独立申请入口？
+- [ ] 换货是否复用 Goods 商品列表？</pre>
+        </div>
+      </section>
+
+      <aside class="doc-restore" id="docRestore" aria-label="文档预览" hidden>
+        <button class="icon-btn" type="button" id="docExpand" aria-controls="docPanel" aria-expanded="false" aria-label="展开文档预览" title="展开文档预览"><svg class="ico"><use href="#i-chev-right"/></svg></button>
+        <span class="label">需求文档</span>
+      </aside>
+    </main>
+
+    <footer class="status">
+      <div class="status-left">
+        <button class="st danger" type="button" id="gateStatusBtn" aria-haspopup="dialog"><svg class="ico"><use href="#i-alert"/></svg><span id="gateStatusText">门禁 <b>2</b> 项阻断</span></button>
+        <span class="sep"></span>
+        <span class="st">待澄清 <b id="statusClarify">3/8</b></span>
+        <span class="sep"></span>
+        <button class="st" type="button" id="consistencyBtn" aria-haspopup="dialog">一致性 <b id="consistencyState">未发起</b></button>
+      </div>
+      <div class="status-right"><span>自动保存 · 本机</span><span class="sep"></span><span>只确认本需求</span></div>
+    </footer>
+  </div>
+</div>
+
+<dialog class="sheet" id="diffSheet" aria-labelledby="diffTitle">
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="diffTitle">审阅变更 <span class="num">v2 → v3</span></div>
+      <div class="sheet-sub">需求/REQ-0009.md · 6 个章节 · 取消勾选的章节保持现状</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" type="button" id="closeSheet" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-tools">
+    <label><input type="checkbox" id="allBox" checked>全选</label>
+    <span class="stat">已选 <b id="selCount">6</b> / 6 处</span>
+    <span style="margin-left:auto">写入后仍可撤销</span>
+  </div>
+  <div class="diff-body" id="diffBody">
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">01 背景与目标</span></label><span class="dstat"><span class="a">+3</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">− 退款与换货分散在三个入口，售后进度需要人工汇总。</span><span class="a">+ 退款与换货统一从售后单发起，结果自动回写主系统。</span></pre>
+    </div>
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">02 用户与使用场景</span></label><span class="dstat"><span class="a">+4</span></span></div>
+      <pre class="diff"><span class="a">+ 售后专员发起并跟踪售后单；财务核对退款金额；仓库确认换货出库。</span><span class="a">+ 三类角色只读取与自己相关的状态，不互相覆盖。</span></pre>
+    </div>
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">03 业务规则</span></label><span class="dstat"><span class="a">+3</span> <span class="d">−2</span></span></div>
+      <pre class="diff"><span class="d">− 退款金额按订单金额计算。</span><span class="a">+ R1 无部分退款入口时，退款金额恒等于订单实付金额。</span><span class="a">+ R2 换货商品复用 Goods 列表，按可换数量校验库存。</span></pre>
+    </div>
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">04 验收条件</span></label><span class="dstat"><span class="a">+3</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">− 退款及时到账。</span><span class="a">+ 全额退款：提交后 3 个工作日内到账，金额等于实付。</span><span class="a">+ 换货：库存不足时不允许提交，并给出可换数量。</span></pre>
+    </div>
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">05 资料与依据</span></label><span class="dstat"><span class="a">+1</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">− 退款政策与接口文档（未标版本）。</span><span class="a">+ 退款政策 v2 §3、主系统接口文档 §2，均为固定版本。</span></pre>
+    </div>
+    <div class="diff-block">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="ttl">06 关联场景与前置</span></label><span class="dstat"><span class="a">+2</span></span></div>
+      <pre class="diff"><span class="a">+ SC-0002 测试场景固定 v4，只提示可能影响。</span><span class="a">+ 前置 REQ-0007 售后审核，不阻止本需求确认。</span></pre>
+    </div>
+  </div>
+  <div class="sheet-foot">
+    <span class="meta">取消勾选的章节保持现状</span>
+    <div class="spacer"></div>
+    <button class="btn-ghost" type="button" id="cancelSheet">取消</button>
+    <button class="cta" type="button" id="acceptBtn">写入所选的 6 处</button>
+  </div>
+</dialog>
+
+<dialog class="sheet" id="confirmSheet" aria-labelledby="confirmTitle" style="width:min(640px,calc(100vw - 40px))">
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="confirmTitle">确认需求<span class="num">v3</span></div>
+      <div class="sheet-sub">确认后本需求固定为 v3，由协同后台接受；接受前可调整</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="link" type="button" id="repairBtn" title="授权 AI 按门禁修复，最多 3 轮，缺业务答案会暂停">由 AI 修复并确认</button>
+    <button class="icon-btn" type="button" id="closeConfirm" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="diff-body" style="padding:12px 18px 16px">
+    <div class="gate-list">
+      <div class="gate-row" data-gate="business" data-state="blocked">
+        <span class="gate-ico" data-state="blocked">!</span>
+        <div class="gate-main">
+          <div class="gate-title">业务内容 <span class="gate-state" id="gateBusinessState">阻断</span></div>
+          <p class="gate-msg" id="gateBusinessMsg">2 条待澄清被标记为阻断</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateBusinessAction">去回答</button>
+      </div>
+      <div class="gate-row" data-gate="evidence" data-state="blocked">
+        <span class="gate-ico" data-state="blocked">!</span>
+        <div class="gate-main">
+          <div class="gate-title">资料与依据 <span class="gate-state" id="gateEvidenceState">阻断</span></div>
+          <p class="gate-msg" id="gateEvidenceMsg">尚未归档正式业务依据</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateEvidenceAction">去归档</button>
+      </div>
+      <div class="gate-row" data-gate="version" data-state="passed">
+        <span class="gate-ico" data-state="passed">✓</span>
+        <div class="gate-main">
+          <div class="gate-title">版本与占用 <span class="gate-state" id="gateVersionState">通过</span></div>
+          <p class="gate-msg" id="gateVersionMsg">当前编辑人 #1 · 无冲突 · 文件未被外部修改</p>
+        </div>
+      </div>
+      <div class="gate-row" data-gate="template" data-state="disabled">
+        <span class="gate-ico" data-state="disabled">—</span>
+        <div class="gate-main">
+          <div class="gate-title">模板结构 <span class="gate-state" id="gateTemplateState">关闭</span></div>
+          <p class="gate-msg" id="gateTemplateMsg">仅影响本机检查，不影响后台接受</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateTemplateAction">开启</button>
+      </div>
+    </div>
+
+    <div class="declare">
+      <label><input type="checkbox" id="declCore" checked>核心业务规则已由依据明确</label>
+      <label><input type="checkbox" id="declAccept" checked>验收条件可以客观判断</label>
+      <p class="hint">这是你的声明；「由 AI 修复并确认」会代你补全，但仍由你确认。</p>
+    </div>
+
+    <p class="confirm-note">确认只针对本需求：不冻结或自动确认关联场景，也不改变前置关系。确认后材料只读，需要修改请走「开始修订」，系统会列出受影响的场景。一致性对比独立运行，差异或失败都不撤销确认。</p>
+  </div>
+  <div class="sheet-foot">
+    <span class="confirm-status" id="confirmStatus">门禁通过，可以确认</span>
+    <div class="spacer"></div>
+    <button class="btn-ghost" type="button" id="cancelConfirm">取消</button>
+    <button class="cta" type="button" id="confirmBtn">确认当前版本 v3</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+  <span class="ok"><svg class="ico"><use href="#i-check"/></svg></span>
+  <b id="toastText">已写入 6 处变更</b>
+  <button type="button" id="toastView">查看</button>
+  <button type="button" id="toastUndo">撤销</button>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+<aside class="drawer" id="consistencyDrawer" role="dialog" aria-modal="true" aria-labelledby="consTitle" hidden>
+  <header class="drawer-head">
+    <div>
+      <div class="drawer-title" id="consTitle">一致性对比</div>
+      <div class="drawer-sub">独立检查 · 不影响确认 · 冲突不写回材料</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" type="button" id="closeDrawer" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="drawer-body">
+    <div class="cons-empty" id="consEmpty">还没有对比记录。<br>确认后会自动发起一次，也可以现在手动发起。</div>
+
+    <div class="cons-running" id="consRunning" hidden>
+      <span class="spinner"></span>正在读取 2 个关联场景与 2 份依据…
+      <button class="link" type="button" id="cancelCompare" style="margin-left:auto">取消</button>
+    </div>
+
+    <div id="consResult" hidden>
+      <dl class="cons-facts">
+        <div><dt>结果</dt><dd>对比完成</dd></div>
+        <div><dt>范围</dt><dd>完整 · 2 份关联场景</dd></div>
+        <div><dt>冲突</dt><dd>2 项</dd></div>
+        <div><dt>时间</dt><dd>10-25 15:21</dd></div>
+      </dl>
+      <p class="cons-conclusion">2 项冲突：1 项与正式关联场景不一致，1 项为本地发现的潜在关联。冲突不阻断确认，修改另走写入与修订流程。</p>
+
+      <section class="cons-group">
+        <h4>正式关系</h4>
+        <article class="conflict">
+          <div class="conflict-head"><span class="src">需求 §03</span><span>↔</span><span class="src">SC-0002 §04</span><span class="rel">正式关系</span></div>
+          <p>退款口径：需求要求保留部分退款入口；场景按「全额退款」处理。</p>
+          <small>依据：退款政策 v2 §3 · 场景固定版本 v4</small>
+          <div class="conflict-actions">
+            <button type="button" data-act="talk">在对话中讨论</button>
+            <button type="button" data-act="revise">修订本文</button>
+            <button type="button" data-act="open">打开 SC-0002</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="cons-group">
+        <h4>潜在关联</h4>
+        <article class="conflict">
+          <div class="conflict-head"><span class="src">需求 §02</span><span>↔</span><span class="src">SC-0005 §02</span><span class="rel" data-kind="potential">潜在关联</span></div>
+          <p>换货选品：需求要求复用 Goods 列表；场景描述为独立选品页。</p>
+          <small>依据：本地材料发现，尚未建立正式关系</small>
+          <div class="conflict-actions">
+            <button type="button" data-act="talk">在对话中讨论</button>
+            <button type="button" data-act="revise">修订本文</button>
+            <button type="button" data-act="open">打开 SC-0005</button>
+          </div>
+        </article>
+      </section>
+
+      <details class="cons-history">
+        <summary>历史对比 · 1 次</summary>
+        <div class="cons-history-row"><span>10-25 15:21</span><span>完成 · 冲突 2</span><span>本次</span></div>
+      </details>
+
+      <p class="cons-note">每次对比都是独立快照，下次会重新判定，不沿用本次结论；也没有「已处理」状态。修改冲突后请重新对比。</p>
+    </div>
+  </div>
+  <footer class="drawer-foot">
+    <span class="meta">结论只保存在协同后台，不写入正文</span>
+    <button class="btn-soft" type="button" id="runCompare">发起对比</button>
+  </footer>
+</aside>
+
+<script>
+(function () {
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  const sheet = $('#diffSheet');
+  const confirmSheet = $('#confirmSheet');
+  const stageCta = $('#stageCta');
+  const statusClarify = $('#statusClarify');
+  const clarifyProgress = $('#clarifyProgress');
+  const clarifyBar = $('#clarifyBar');
+  const clarifySummary = $('#clarifySummary');
+  const toast = $('#toast');
+  const toastText = $('#toastText');
+  const acceptBtn = $('#acceptBtn');
+  const selCount = $('#selCount');
+  const allBox = $('#allBox');
+  const confirmBtn = $('#confirmBtn');
+  const confirmStatus = $('#confirmStatus');
+  const cancelConfirm = $('#cancelConfirm');
+  const closeConfirm = $('#closeConfirm');
+  const gateStatusBtn = $('#gateStatusBtn');
+  const gateStatusText = $('#gateStatusText');
+  const consistencyBtn = $('#consistencyBtn');
+  const consistencyState = $('#consistencyState');
+  const confirmedBar = $('#confirmedBar');
+  const composer = $('#composer');
+  const msgField = $('#msg');
+  const sendBtn = $('#sendBtn');
+  const drawer = $('#consistencyDrawer');
+  const backdrop = $('#drawerBackdrop');
+  const consEmpty = $('#consEmpty');
+  const consRunning = $('#consRunning');
+  const consResult = $('#consResult');
+  const runCompareBtn = $('#runCompare');
+  const grid = $('.grid');
+  const docPanel = $('#docPanel');
+  const docRestore = $('#docRestore');
+  const docBody = $('#docBody');
+  const docSource = $('#docSource');
+  const boxes = () => $$('#diffBody input[type=checkbox]');
+
+  let answered = 3;
+  let written = false;
+  let confirmed = false;
+  let submitting = false;
+  let consistency = 'none';
+  const decisions = new Set();
+  const declared = { core: true, acceptance: true };
+  let evidenceFixed = false;
+  let structure = false;
+  let toastTimer = 0;
+  let compareTimer = 0;
+
+  function blockingOpen() { return Math.max(0, 2 - decisions.size); }
+  function businessBlocked() { return blockingOpen() > 0 || !declared.core || !declared.acceptance; }
+  function evidenceBlocked() { return !evidenceFixed; }
+  function blockedGates() { return (businessBlocked() ? 1 : 0) + (evidenceBlocked() ? 1 : 0); }
+
+  function renderClarify() {
+    statusClarify.textContent = answered + '/8';
+    clarifyProgress.textContent = answered + ' / 8';
+    clarifyBar.style.width = (answered / 8) * 100 + '%';
+    clarifySummary.textContent = answered + '/8 已澄清，' + blockingOpen() + ' 项阻塞确认';
+    const summary = $('.section[data-sec="08"] .sec-sum');
+    if (summary) summary.textContent = answered + '/8 已澄清，' + blockingOpen() + ' 项阻塞确认';
+  }
+
+  function paintGate(row, ok, message, stateLabel) {
+    row.dataset.state = ok ? 'passed' : 'blocked';
+    const icon = $('.gate-ico', row);
+    icon.dataset.state = ok ? 'passed' : 'blocked';
+    icon.textContent = ok ? '✓' : '!';
+    $('.gate-state', row).textContent = stateLabel;
+    $('.gate-msg', row).textContent = message;
+  }
+
+  function renderGates() {
+    const business = businessBlocked();
+    const evidence = evidenceBlocked();
+    const blockers = blockedGates();
+    gateStatusText.innerHTML = blockers ? '门禁 <b>' + blockers + '</b> 项阻断' : '门禁 <b>通过</b>';
+    gateStatusBtn.classList.toggle('danger', blockers > 0);
+
+    paintGate($('.gate-row[data-gate="business"]'), !business,
+      !declared.core ? '核心业务规则尚未声明完整'
+        : !declared.acceptance ? '验收条件尚未声明完整'
+          : blockingOpen() > 0 ? blockingOpen() + ' 条待澄清被标记为阻断'
+            : '核心规则、验收条件与阻断项均已处理',
+      business ? '阻断' : '通过');
+    const businessAction = $('#gateBusinessAction');
+    businessAction.hidden = blockingOpen() === 0;
+    businessAction.textContent = '去回答';
+
+    paintGate($('.gate-row[data-gate="evidence"]'), !evidence,
+      evidence ? '尚未归档正式业务依据' : '2 份依据已归档，来源固定版本可读',
+      evidence ? '阻断' : '通过');
+    $('#gateEvidenceAction').hidden = !evidence;
+
+    $('#gateVersionState').textContent = '通过';
+    const templateRow = $('.gate-row[data-gate="template"]');
+    const templateState = structure ? 'passed' : 'disabled';
+    templateRow.dataset.state = templateState;
+    const templateIcon = $('.gate-ico', templateRow);
+    templateIcon.dataset.state = templateState;
+    templateIcon.textContent = structure ? '✓' : '—';
+    $('#gateTemplateState').textContent = structure ? '通过' : '关闭';
+    $('#gateTemplateMsg').textContent = structure ? '6 个模板章节齐全（仅本机）' : '仅影响本机检查，不影响后台接受';
+    $('#gateTemplateAction').textContent = structure ? '关闭' : '开启';
+  }
+
+  function syncConfirm() {
+    if (submitting) return;
+    const blockers = blockedGates();
+    const ready = written && blockers === 0 && !confirmed;
+    confirmBtn.disabled = !ready;
+    confirmBtn.textContent = confirmed ? '已确认 v3' : '确认当前版本 v3';
+    let text = '门禁通过，可以确认';
+    let tone = 'ok';
+    if (!written) { text = '请先审阅并写入本轮变更'; tone = 'bad'; }
+    else if (confirmed) { text = '已确认为固定版本 v3'; tone = 'ok'; }
+    else if (blockers) { text = blockers + ' 项门禁阻断，处理后才能确认'; tone = 'bad'; }
+    confirmStatus.textContent = text;
+    confirmStatus.dataset.tone = tone;
+  }
+
+  function refreshFlow() {
+    const blockers = blockedGates();
+    stageCta.hidden = confirmed;
+    if (!confirmed) {
+      if (!written) stageCta.textContent = '审阅 6 处变更';
+      else if (blockers) stageCta.textContent = '处理 ' + blockers + ' 项阻断';
+      else stageCta.textContent = '确认当前版本 v3';
+    }
+    renderGates();
+    renderClarify();
+    syncConfirm();
+  }
+
+  function renderConsistency() {
+    consEmpty.hidden = consistency !== 'none';
+    consRunning.hidden = consistency !== 'running';
+    consResult.hidden = consistency !== 'done';
+    consistencyState.textContent = consistency === 'running' ? '对比中…' : consistency === 'done' ? '冲突 2' : '未发起';
+    runCompareBtn.disabled = consistency === 'running';
+    runCompareBtn.textContent = consistency === 'done' ? '重新对比' : '发起对比';
+  }
+
+  function showDialog(dialog) {
+    if (typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
+    else dialog.setAttribute('open', '');
+  }
+  function hideDialog(dialog) {
+    if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
+  function openDrawer() {
+    drawer.hidden = false;
+    backdrop.hidden = false;
+    $('#closeDrawer').focus({ preventScroll: true });
+  }
+  function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
+
+  function runConsistency(auto) {
+    clearTimeout(compareTimer);
+    consistency = 'running';
+    renderConsistency();
+    openDrawer();
+    compareTimer = setTimeout(() => {
+      consistency = 'done';
+      renderConsistency();
+      if (auto) showToast('一致性对比完成：2 项冲突，不影响确认');
+    }, 1700);
+  }
+
+  function showToast(text) {
+    toastText.textContent = text;
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 8000);
+  }
+
+  function syncSelection() {
+    const list = boxes();
+    const n = list.filter(box => box.checked).length;
+    selCount.textContent = n;
+    acceptBtn.textContent = '写入所选的 ' + n + ' 处';
+    acceptBtn.disabled = n === 0;
+    allBox.checked = n === list.length;
+    allBox.indeterminate = n > 0 && n < list.length;
+  }
+
+  function openSheet() { syncSelection(); showDialog(sheet); }
+  function closeSheet() { hideDialog(sheet); }
+
+  function accept() {
+    const n = boxes().filter(box => box.checked).length;
+    if (!n) return;
+    written = true;
+    closeSheet();
+    const version = $('#docVersion');
+    if (version) version.textContent = 'v3';
+    const proposal = $('.proposal');
+    if (proposal) {
+      proposal.innerHTML = '<div class="proposal-top"><svg class="ico"><use href="#i-check"/></svg><span class="proposal-title">已写入 ' + n + ' 处<small>v3 · 刚刚</small></span></div>' +
+        '<div class="proposal-stats"><span>可撤销</span><span style="margin-left:auto">需求/REQ-0009.md</span></div>' +
+        '<div class="proposal-foot"><span class="hint">已保留 6 处中的 ' + n + ' 处</span><button class="btn-ghost" type="button" id="undoInline">撤销</button><button class="btn-soft" type="button" id="viewInline">查看差异</button></div>';
+      $('#undoInline').addEventListener('click', undo);
+      $('#viewInline').addEventListener('click', openSheet);
+    }
+    const section = $('.section[data-sec="03"]');
+    if (section) {
+      section.open = true;
+      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      section.classList.add('flash');
+      setTimeout(() => section.classList.remove('flash'), 2000);
+    }
+    refreshFlow();
+    showToast('已写入 ' + n + ' 处变更');
+  }
+
+  function undo() {
+    if (confirmed) return;
+    written = false;
+    consistency = 'none';
+    closeDrawer();
+    renderConsistency();
+    const version = $('#docVersion');
+    if (version) version.textContent = 'v2';
+    const proposal = $('.proposal');
+    if (proposal) {
+      proposal.innerHTML = '<div class="proposal-top"><svg class="ico"><use href="#i-spark"/></svg><span class="proposal-title">写入提议<small>v2 → v3</small></span></div>' +
+        '<div class="proposal-stats"><span><b>6</b> 个章节</span><span class="add">+14</span><span class="del">−5</span><span style="margin-left:auto">需求/REQ-0009.md</span></div>' +
+        '<div class="proposal-foot"><span class="hint">写入前可逐段核对</span><button class="btn-ghost" type="button" id="laterBtn">稍后</button></div>';
+      $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
+    }
+    toast.hidden = true;
+    refreshFlow();
+    showToast('已撤销，材料回到 v2');
+  }
+
+  function openConfirm() { renderGates(); syncConfirm(); showDialog(confirmSheet); }
+
+  function confirmNow() {
+    if (confirmBtn.disabled || submitting || confirmed) return;
+    submitting = true;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '提交中…';
+    cancelConfirm.disabled = true;
+    closeConfirm.disabled = true;
+    confirmStatus.textContent = '正在提交固定版本…';
+    delete confirmStatus.dataset.tone;
+    setTimeout(() => {
+      confirmStatus.textContent = '已提交，等待协同后台接受…';
+      setTimeout(finishConfirm, 1500);
+    }, 900);
+  }
+
+  function finishConfirm() {
+    submitting = false;
+    confirmed = true;
+    hideDialog(confirmSheet);
+    confirmBtn.textContent = '已确认 v3';
+    cancelConfirm.disabled = false;
+    closeConfirm.disabled = false;
+    confirmedBar.hidden = false;
+    const version = $('#docVersion');
+    if (version) version.textContent = 'v3';
+    const save = $('.save');
+    if (save) save.innerHTML = '<i class="dot"></i>已确认';
+    composer.classList.add('is-locked');
+    msgField.disabled = true;
+    msgField.placeholder = '已确认；开始修订后可继续对话';
+    sendBtn.disabled = true;
+    const proposal = $('.proposal');
+    if (proposal) proposal.hidden = true;
+    refreshFlow();
+    $('#toastUndo').hidden = true;
+    showToast('已确认为固定版本 v3');
+    setTimeout(() => runConsistency(true), 600);
+  }
+
+  function markClarified(key) {
+    const item = $('#clarifyList li[data-key="' + key + '"]');
+    if (!item || item.classList.contains('is-done')) return false;
+    item.classList.add('is-done');
+    const severity = $('.sev', item);
+    if (severity) { severity.textContent = '已答'; severity.className = 'sev norm'; }
+    const link = $('.link', item);
+    if (link) link.remove();
+    answered = Math.min(8, answered + 1);
+    renderClarify();
+    return true;
+  }
+
+  stageCta.addEventListener('click', () => {
+    if (!written) { openSheet(); return; }
+    openConfirm();
+  });
+  gateStatusBtn.addEventListener('click', openConfirm);
+  consistencyBtn.addEventListener('click', () => { openDrawer(); renderConsistency(); });
+  $('#reviseBtn').addEventListener('click', () => showToast('修订：将先列出受影响的 2 个场景（演示）'));
+  $('#openCompare').addEventListener('click', () => { openDrawer(); renderConsistency(); });
+  $('#reloadBtn').addEventListener('click', () => showToast('已重新读取 v2 草稿'));
+  $('#materialsBtn').addEventListener('click', () => showToast('已附加 2 份资料，仅当前会话可读'));
+  $('#templateBtn').addEventListener('click', () => showToast('需求模板 v2 已固定'));
+
+  closeConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
+  cancelConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
+  confirmSheet.addEventListener('click', event => { if (event.target === confirmSheet && !submitting) hideDialog(confirmSheet); });
+  confirmSheet.addEventListener('cancel', event => { if (submitting) event.preventDefault(); });
+  confirmBtn.addEventListener('click', confirmNow);
+  $('#repairBtn').addEventListener('click', () => showToast('已创建授权修复任务：最多 3 轮，缺答案会暂停（演示）'));
+  $('#declCore').addEventListener('change', event => { declared.core = event.target.checked; refreshFlow(); });
+  $('#declAccept').addEventListener('change', event => { declared.acceptance = event.target.checked; refreshFlow(); });
+  $('#gateEvidenceAction').addEventListener('click', () => {
+    evidenceFixed = true;
+    refreshFlow();
+    showToast('已归档 2 份正式依据');
+  });
+  $('#gateTemplateAction').addEventListener('click', () => { structure = !structure; refreshFlow(); });
+  $('#gateBusinessAction').addEventListener('click', () => {
+    if (!blockingOpen()) return;
+    if (confirmSheet.open) hideDialog(confirmSheet);
+    const section = $('.section[data-sec="08"]');
+    if (section) {
+      section.open = true;
+      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      section.classList.add('flash');
+      setTimeout(() => section.classList.remove('flash'), 2000);
+    }
+    const choice = $('.decision[data-key="refund"] .choice');
+    if (choice) choice.focus({ preventScroll: true });
+  });
+
+  $$('.decision').forEach(decision => {
+    const key = decision.dataset.key;
+    $$('.choice', decision).forEach(choice => {
+      choice.addEventListener('click', () => {
+        if (choice.disabled) return;
+        $$('.choice', decision).forEach(other => {
+          other.setAttribute('aria-pressed', String(other === choice));
+          other.disabled = other !== choice;
+        });
+        choice.classList.add('is-answered');
+        if (!decisions.has(key)) {
+          decisions.add(key);
+          markClarified(key);
+        }
+        const remaining = $$('.decision').filter(item => !$('.choice[aria-pressed="true"]', item)).length;
+        $('#decideCount').textContent = remaining ? remaining + ' 项' : '已答复';
+        refreshFlow();
+      });
+    });
+  });
+
+  $$('#clarifyList .link').forEach(link => {
+    link.addEventListener('click', () => {
+      const item = link.closest('li');
+      const decision = $('.decision[data-key="' + item.dataset.key + '"]');
+      if (decision) {
+        decision.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const first = $('.choice', decision);
+        if (first) first.focus({ preventScroll: true });
+      }
+    });
+  });
+
+  $('#showDone').addEventListener('click', event => {
+    const button = event.currentTarget;
+    const list = $('#clarifyList');
+    const done = ['目标与范围已确认', '退款金额口径已确认', '前置需求 REQ-0007 已确认'];
+    if (button.dataset.open === '1') {
+      $$('.clarify-list li.is-clarified', list).forEach(item => item.remove());
+      button.dataset.open = '0';
+      button.textContent = '展开已澄清的 3 条';
+      return;
+    }
+    done.forEach(text => {
+      const item = document.createElement('li');
+      item.className = 'is-done is-clarified';
+      item.innerHTML = '<span class="sev norm">已答</span><span class="q">' + text + '</span>';
+      list.appendChild(item);
+    });
+    button.dataset.open = '1';
+    button.textContent = '收起已澄清的 3 条';
+  });
+
+  $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
+  $('#closeSheet').addEventListener('click', closeSheet);
+  $('#cancelSheet').addEventListener('click', closeSheet);
+  sheet.addEventListener('click', event => { if (event.target === sheet) closeSheet(); });
+  $$('#diffBody input[type=checkbox]').forEach(box => box.addEventListener('change', syncSelection));
+  allBox.addEventListener('change', () => { boxes().forEach(box => { box.checked = allBox.checked; }); syncSelection(); });
+  acceptBtn.addEventListener('click', accept);
+
+  $('#closeDrawer').addEventListener('click', closeDrawer);
+  backdrop.addEventListener('click', closeDrawer);
+  runCompareBtn.addEventListener('click', () => { if (consistency !== 'running') runConsistency(false); });
+  $('#cancelCompare').addEventListener('click', () => {
+    clearTimeout(compareTimer);
+    consistency = 'none';
+    renderConsistency();
+    showToast('已取消本次对比');
+  });
+  $$('.conflict-actions button').forEach(button => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.act;
+      if (action === 'talk') {
+        closeDrawer();
+        if (confirmed) showToast('已确认；开始修订后可继续讨论这条冲突');
+        else { msgField.focus(); showToast('把这条冲突带入对话讨论'); }
+      }
+      if (action === 'revise') {
+        closeDrawer();
+        showToast(confirmed ? '修订前会先列出受影响的 2 个场景（演示）' : '请先完成确认，再开始修订');
+      }
+      if (action === 'open') showToast('打开关联场景查看（演示）');
+    });
+  });
+
+  function collapseDoc() {
+    grid.classList.add('doc-collapsed');
+    docPanel.setAttribute('aria-hidden', 'true');
+    docRestore.hidden = false;
+    $('#docCollapse').setAttribute('aria-expanded', 'false');
+    $('#docExpand').focus({ preventScroll: true });
+    showToast('已收起需求文档');
+  }
+  function expandDoc() {
+    grid.classList.remove('doc-collapsed');
+    docPanel.removeAttribute('aria-hidden');
+    docRestore.hidden = true;
+    $('#docCollapse').setAttribute('aria-expanded', 'true');
+    $('#docCollapse').focus({ preventScroll: true });
+  }
+  $('#docCollapse').addEventListener('click', collapseDoc);
+  $('#docExpand').addEventListener('click', expandDoc);
+
+  $$('.seg button').forEach(button => button.addEventListener('click', () => {
+    const tab = button.dataset.tab;
+    $$('.seg button').forEach(other => other.setAttribute('aria-pressed', String(other === button)));
+    docBody.hidden = tab !== 'preview';
+    docSource.hidden = tab !== 'source';
+  }));
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !drawer.hidden) closeDrawer();
+  });
+
+  $('#toastView').addEventListener('click', openSheet);
+  $('#toastUndo').addEventListener('click', undo);
+
+  $('#composer').addEventListener('submit', event => {
+    event.preventDefault();
+    if (confirmed) return;
+    const text = msgField.value.trim();
+    if (!text) return;
+    const turn = document.createElement('div');
+    turn.className = 'turn';
+    turn.innerHTML = '<div class="turn-meta"><span class="avatar" style="width:18px;height:18px;font-size:9px">测</span>我<time>现在</time></div><p class="lead"></p>';
+    $('.lead', turn).textContent = text;
+    $('.transcript').appendChild(turn);
+    msgField.value = '';
+    turn.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  });
+
+  refreshFlow();
+  renderConsistency();
+})();
+</script>
+</body>
+</html>

@@ -48,7 +48,7 @@
 
   /* layout */
   .app{position:relative;display:grid;grid-template-columns:248px minmax(0,1fr);height:100vh;min-height:0}
-  .workspace{display:grid;grid-template-rows:44px auto minmax(0,1fr) 38px;min-width:0;min-height:0}
+  .workspace{display:grid;grid-template-rows:44px minmax(0,1fr) 38px;min-width:0;min-height:0}
 
   /* rail */
   .rail{display:flex;flex-direction:column;min-height:0;padding:14px 12px 12px;border-right:1px solid var(--line);background:linear-gradient(180deg,#14151a,#111216)}
@@ -87,24 +87,11 @@
   .icon-btn{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--tx-3)}
   .icon-btn:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
 
-  /* stage rail */
-  .stage{display:flex;align-items:center;gap:18px;padding:10px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
-  .steps{display:flex;align-items:center;list-style:none;margin:0;padding:0;min-width:0;flex:1}
-  .step{position:relative;display:flex;align-items:center;gap:8px;padding-right:30px;color:var(--tx-3);font-size:12px;white-space:nowrap}
-  .step::after{content:"";position:absolute;right:8px;top:50%;width:14px;height:1px;background:var(--line-2)}
-  .step:last-child{padding-right:0}
-  .step:last-child::after{display:none}
-  .step .num{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line-2);background:var(--surface);font:600 9.5px var(--mono);color:var(--tx-3)}
-  .step small{margin-left:2px;font:10.5px var(--mono);color:var(--tx-3)}
-  .step.is-done{color:var(--tx-2)}
-  .step.is-done .num{border-color:rgba(78,203,148,.38);background:rgba(78,203,148,.10);color:var(--ok)}
-  .step.is-current{color:var(--tx)}
-  .step.is-current .num{border-color:var(--accent);background:var(--accent-soft);color:#dbe4ff;box-shadow:0 0 0 3px rgba(93,138,255,.08)}
-  .step.is-current small{color:var(--accent)}
-  .cta{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:7px;background:var(--accent-solid);color:#fff;font-size:12.5px;font-weight:500;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 1px 2px rgba(0,0,0,.4);transition:filter .15s,transform .15s}
+  .cta{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:7px;background:var(--accent-solid);color:#fff;font-size:12.5px;font-weight:500;white-space:nowrap;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 1px 2px rgba(0,0,0,.4);transition:filter .15s,transform .15s}
   .cta:hover{filter:brightness(1.08)}
   .cta:active{transform:translateY(1px)}
   .cta:disabled{background:#2b2e35;color:#7c818b;box-shadow:none;cursor:not-allowed;filter:none;transform:none}
+  .cta[hidden]{display:none}
   .btn-soft:disabled,.btn-ghost:disabled{opacity:.45;cursor:not-allowed}
 
   /* workspace grid */
@@ -112,6 +99,7 @@
   .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .panel-head{display:flex;align-items:center;gap:9px;height:46px;padding:0 10px 0 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);flex:0 0 auto}
   .panel-head .spacer{flex:1;min-width:8px}
+  .panel-head .cta{flex:0 0 auto}
   .code-chip{padding:2px 6px;border:1px solid rgba(125,162,255,.3);border-radius:4px;background:var(--accent-soft);color:#b9caff;font:600 10px var(--mono)}
   .panel-title{font-size:13px;font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .panel-sub{font:10.5px var(--mono);color:var(--tx-3);white-space:nowrap}
@@ -394,12 +382,11 @@
   @media (max-width:1280px){
     .grid{grid-template-columns:minmax(0,1fr);overflow:auto}
     .grid > .panel{min-height:420px}
-    .workspace{grid-template-rows:44px auto minmax(0,1fr) 38px}
+    .workspace{grid-template-rows:44px minmax(0,1fr) 38px}
   }
   @media (max-width:1024px){
     .app{grid-template-columns:1fr}
     .rail{display:none}
-    .step small{display:none}
   }
 
   /* collapsible document panel */
@@ -422,9 +409,7 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
-  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
-  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></symbol>
   <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
@@ -459,24 +444,12 @@
 
   <div class="workspace">
     <header class="topbar">
-      <button class="back" type="button"><svg class="ico"><use href="#i-arrow-left"/></svg>返回项目场景列表</button>
+      <a class="back" href="项目场景列表.html"><svg class="ico"><use href="#i-arrow-left"/></svg>返回项目场景列表</a>
       <span class="proj-chip">项目 <small>training-demo</small></span>
       <div class="spacer"></div>
       <span class="presence"><i class="dot"></i>协同工作台已登录</span>
-      <button class="icon-btn" type="button" aria-label="刷新场景"><svg class="ico"><use href="#i-undo"/></svg></button>
-      <button class="icon-btn" type="button" aria-label="更多操作"><svg class="ico"><use href="#i-more"/></svg></button>
+      <button class="icon-btn" type="button" id="reloadBtn" aria-label="重新读取草稿" title="重新读取草稿"><svg class="ico"><use href="#i-undo"/></svg></button>
     </header>
-
-    <section class="stage" aria-label="工作流阶段">
-      <ol class="steps">
-        <li class="step is-done"><span class="num"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"/></svg></span>讨论</li>
-        <li class="step is-done"><span class="num"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"/></svg></span>澄清<small id="stageClarify">3/8</small></li>
-        <li class="step is-current" id="stepWrite"><span class="num">3</span>写入<small>9 处</small></li>
-        <li class="step" id="stepGate"><span class="num">4</span>门禁<small>2 项</small></li>
-        <li class="step" id="stepConfirm"><span class="num">5</span>确认</li>
-      </ol>
-      <button class="cta" id="stageCta" type="button">审阅 9 处变更<svg class="ico"><use href="#i-chev-right"/></svg></button>
-    </section>
 
     <main class="grid">
       <section class="panel" aria-label="场景对话">
@@ -484,8 +457,8 @@
           <span class="code-chip">SC-0002</span>
           <span class="panel-title">测试场景</span>
           <div class="spacer"></div>
-          <button class="session" type="button">会话 3<svg class="ico"><use href="#i-chev"/></svg></button>
-          <button class="icon-btn" type="button" aria-label="会话操作"><svg class="ico"><use href="#i-more"/></svg></button>
+          <span class="session">会话 3</span>
+          <button class="cta" id="stageCta" type="button">审阅 9 处变更<svg class="ico"><use href="#i-chev-right"/></svg></button>
         </div>
 
         <div class="transcript">
@@ -532,7 +505,6 @@
               <div class="proposal-foot">
                 <span class="hint">写入前可逐段核对</span>
                 <button class="btn-ghost" type="button" id="laterBtn">稍后</button>
-                <button class="btn-soft" type="button" id="reviewBtn">审阅变更</button>
               </div>
             </section>
           </article>
@@ -565,7 +537,6 @@
             <button type="button" aria-pressed="false">源码</button>
           </div>
           <button class="icon-btn" type="button" id="docCollapse" aria-controls="docPanel" aria-expanded="true" aria-label="收起文档预览" title="收起文档预览"><svg class="ico"><use href="#i-chev-right"/></svg></button>
-          <button class="icon-btn" type="button" aria-label="更多文档操作"><svg class="ico"><use href="#i-more"/></svg></button>
         </div>
 
         <div class="doc-body">
@@ -893,9 +864,6 @@
 
   const sheet = $('#diffSheet');
   const stageCta = $('#stageCta');
-  const stepWrite = $('#stepWrite');
-  const stepGate = $('#stepGate');
-  const stageClarify = $('#stageClarify');
   const statusClarify = $('#statusClarify');
   const clarifyProgress = $('#clarifyProgress');
   const clarifyBar = $('#clarifyBar');
@@ -931,7 +899,6 @@
   let written = false;
   let confirmed = false;
   let submitting = false;
-  let writtenCount = 9;
   let consistency = 'none';
   const decisions = new Set();
   const declared = { core: true, acceptance: true };
@@ -940,15 +907,7 @@
   let toastTimer = 0;
   let compareTimer = 0;
 
-  function setStage(n) {
-    $$('.step').forEach((el, i) => {
-      el.classList.toggle('is-done', i + 1 < n);
-      el.classList.toggle('is-current', i + 1 === n);
-    });
-  }
-
   function renderClarify() {
-    stageClarify.textContent = answered + '/8';
     statusClarify.textContent = answered + '/8';
     clarifyProgress.textContent = answered + ' / 8';
     clarifyBar.style.width = (answered / 8) * 100 + '%';
@@ -1007,7 +966,6 @@
     const n = boxes().filter(b => b.checked).length;
     if (!n) return;
     written = true;
-    writtenCount = n;
     closeSheet();
     refreshFlow();
     const ver = $('#docVersion');
@@ -1029,7 +987,6 @@
     if (confirmed) return;
     written = false;
     confirmed = false;
-    writtenCount = 9;
     consistency = 'none';
     closeDrawer();
     renderConsistency();
@@ -1040,8 +997,7 @@
     if (proposal) {
       proposal.innerHTML = '<div class="proposal-top"><svg class="ico"><use href="#i-spark"/></svg><span class="proposal-title">写入提议<small>v3 → v4</small></span></div>' +
         '<div class="proposal-stats"><span><b>9</b> 个章节</span><span class="add">+23</span><span class="del">−9</span><span style="margin-left:auto">场景/测试场景.md</span></div>' +
-        '<div class="proposal-foot"><span class="hint">写入前可逐段核对</span><button class="btn-ghost" type="button" id="laterBtn">稍后</button><button class="btn-soft" type="button" id="reviewBtn">审阅变更</button></div>';
-      $('#reviewBtn').addEventListener('click', openSheet);
+        '<div class="proposal-foot"><span class="hint">写入前可逐段核对</span><button class="btn-ghost" type="button" id="laterBtn">稍后</button></div>';
       $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
     }
     toast.hidden = true;
@@ -1113,14 +1069,12 @@
 
   function refreshFlow() {
     const blockers = blockedGates();
-    if (confirmed) { setStage(6); stageCta.textContent = '开始修订'; }
-    else if (!written) { setStage(3); stageCta.textContent = '审阅 9 处变更'; }
-    else if (blockers) { setStage(4); stageCta.textContent = '处理 ' + blockers + ' 项阻断'; }
-    else { setStage(5); stageCta.textContent = '确认当前版本 v4'; }
-    const gateSmall = $('#stepGate small');
-    if (gateSmall) gateSmall.textContent = confirmed || !blockers ? '通过' : blockers + ' 项';
-    const writeSmall = $('#stepWrite small');
-    if (writeSmall) writeSmall.textContent = writtenCount + ' 处';
+    stageCta.hidden = confirmed;
+    if (!confirmed) {
+      if (!written) stageCta.textContent = '审阅 9 处变更';
+      else if (blockers) stageCta.textContent = '处理 ' + blockers + ' 项阻断';
+      else stageCta.textContent = '确认当前版本 v4';
+    }
     renderGates();
     renderClarify();
     syncConfirm();
@@ -1193,18 +1147,19 @@
     const proposal = $('.proposal');
     if (proposal) proposal.hidden = true;
     refreshFlow();
+    $('#toastUndo').hidden = true;
     showToast('已确认为固定版本 v4');
     setTimeout(() => runConsistency(true), 600);
   }
 
   stageCta.addEventListener('click', () => {
-    if (confirmed) { showToast('修订会先列出受影响的需求（演示）'); return; }
     if (!written) { openSheet(); return; }
     openConfirm();
   });
   gateStatusBtn.addEventListener('click', openConfirm);
   consistencyBtn.addEventListener('click', () => { openDrawer(); renderConsistency(); });
   $('#reviseBtn').addEventListener('click', () => showToast('修订：将先列出受影响的 2 个需求（演示）'));
+  $('#reloadBtn').addEventListener('click', () => showToast('已重新读取 v3 草稿'));
   closeConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
   cancelConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
   confirmSheet.addEventListener('click', event => { if (event.target === confirmSheet && !submitting) hideDialog(confirmSheet); });
@@ -1283,7 +1238,6 @@
     if (event.key === 'Escape' && !drawer.hidden) closeDrawer();
   });
 
-  $('#reviewBtn').addEventListener('click', openSheet);
   $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
   $('#closeSheet').addEventListener('click', closeSheet);
   $('#cancelSheet').addEventListener('click', closeSheet);
