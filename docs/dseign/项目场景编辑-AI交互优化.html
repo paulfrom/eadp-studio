@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EADP Studio · 场景 AI 协作（优化稿）</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#101114;
+    --surface:#17181c;
+    --surface-2:#1c1e23;
+    --surface-3:#23262c;
+    --line:#282b32;
+    --line-2:#3a3e47;
+    --tx:#e8e9ee;
+    --tx-2:#b4b7c0;
+    --tx-3:#8b8f9a;
+    --accent:#7da2ff;
+    --accent-solid:#3d6be0;
+    --accent-soft:rgba(93,138,255,.13);
+    --ok:#4ecb94;
+    --warn:#edb35b;
+    --danger:#ff7373;
+    --mono:"Cascadia Code","JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",-apple-system,"PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei",sans-serif;
+    --shadow:0 18px 48px rgba(0,0,0,.42);
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--tx);
+    font:13px/1.6 var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    overflow:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;
+    background:
+      radial-gradient(680px 320px at 26% -8%,rgba(93,138,255,.10),transparent 65%),
+      radial-gradient(520px 260px at 96% 4%,rgba(78,203,148,.04),transparent 70%);
+  }
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  input,textarea{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+  .ico{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+  .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+  /* layout */
+  .app{position:relative;display:grid;grid-template-columns:248px minmax(0,1fr);height:100vh;min-height:0}
+  .workspace{display:grid;grid-template-rows:44px auto minmax(0,1fr) 38px;min-width:0;min-height:0}
+
+  /* rail */
+  .rail{display:flex;flex-direction:column;min-height:0;padding:14px 12px 12px;border-right:1px solid var(--line);background:linear-gradient(180deg,#14151a,#111216)}
+  .brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px;color:var(--tx-3);font-size:11.5px}
+  .brand b{color:var(--tx);font-weight:600;letter-spacing:.01em}
+  .logo{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;background:linear-gradient(145deg,#7da2ff,#3d6be0);color:#0b0d12;font:700 10px var(--mono)}
+  .project{padding:10px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.015)}
+  .project b{display:block;font-size:12.5px;font-weight:600;color:var(--tx)}
+  .project span{display:inline-flex;align-items:center;gap:5px;font:11px var(--mono);color:var(--tx-3);margin-top:3px}
+  .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .nav{margin-top:16px;display:flex;flex-direction:column;gap:1px}
+  .nav-label{padding:0 8px 6px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#7e828c}
+  .nav-item{display:flex;align-items:center;gap:9px;height:33px;padding:0 8px;border-radius:7px;color:var(--tx-2);font-size:12.5px;transition:background .14s,color .14s}
+  .nav-item .ico{color:var(--tx-3)}
+  .nav-item:hover{background:rgba(255,255,255,.045);color:var(--tx)}
+  .nav-item[aria-current="true"]{background:var(--accent-soft);color:#dde6ff;box-shadow:inset 0 0 0 1px rgba(125,162,255,.18)}
+  .nav-item[aria-current="true"] .ico{color:var(--accent)}
+  .nav-count{margin-left:auto;font:10.5px var(--mono);color:var(--tx-3);padding:0 5px;border:1px solid var(--line);border-radius:5px}
+  .nav-sub{margin:2px 0 6px 26px;display:flex;flex-direction:column;gap:1px;border-left:1px solid var(--line);padding-left:10px}
+  .nav-sub a{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:5px;font:11px var(--mono);color:var(--tx-3);text-decoration:none}
+  .nav-sub a:hover{background:rgba(255,255,255,.04);color:var(--tx-2)}
+  .nav-sub a[aria-current="true"]{color:var(--accent)}
+  .rail-foot{margin-top:auto;display:flex;align-items:center;gap:9px;padding:12px 6px 2px;border-top:1px solid var(--line)}
+  .avatar{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#2a2d34;color:var(--tx-2);font:600 10.5px var(--mono)}
+  .rail-foot b{display:block;font-size:11.5px;font-weight:500;color:var(--tx-2)}
+  .rail-foot span{display:block;font:10.5px var(--mono);color:var(--tx-3)}
+
+  /* topbar */
+  .topbar{display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:rgba(16,17,20,.7)}
+  .back{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px 0 6px;border-radius:6px;font-size:12px;color:var(--tx-3)}
+  .back:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+  .proj-chip{display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border:1px solid rgba(237,179,91,.28);border-radius:5px;background:rgba(237,179,91,.07);font-size:11.5px;color:#e7c78f}
+  .proj-chip small{font-family:var(--mono);font-size:10.5px;color:#c9a970}
+  .topbar .spacer{flex:1}
+  .presence{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--tx-3)}
+  .icon-btn{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;color:var(--tx-3)}
+  .icon-btn:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+
+  /* stage rail */
+  .stage{display:flex;align-items:center;gap:18px;padding:10px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
+  .steps{display:flex;align-items:center;list-style:none;margin:0;padding:0;min-width:0;flex:1}
+  .step{position:relative;display:flex;align-items:center;gap:8px;padding-right:30px;color:var(--tx-3);font-size:12px;white-space:nowrap}
+  .step::after{content:"";position:absolute;right:8px;top:50%;width:14px;height:1px;background:var(--line-2)}
+  .step:last-child{padding-right:0}
+  .step:last-child::after{display:none}
+  .step .num{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line-2);background:var(--surface);font:600 9.5px var(--mono);color:var(--tx-3)}
+  .step small{margin-left:2px;font:10.5px var(--mono);color:var(--tx-3)}
+  .step.is-done{color:var(--tx-2)}
+  .step.is-done .num{border-color:rgba(78,203,148,.38);background:rgba(78,203,148,.10);color:var(--ok)}
+  .step.is-current{color:var(--tx)}
+  .step.is-current .num{border-color:var(--accent);background:var(--accent-soft);color:#dbe4ff;box-shadow:0 0 0 3px rgba(93,138,255,.08)}
+  .step.is-current small{color:var(--accent)}
+  .cta{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:7px;background:var(--accent-solid);color:#fff;font-size:12.5px;font-weight:500;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 1px 2px rgba(0,0,0,.4);transition:filter .15s,transform .15s}
+  .cta:hover{filter:brightness(1.08)}
+  .cta:active{transform:translateY(1px)}
+
+  /* workspace grid */
+  .grid{display:grid;grid-template-columns:minmax(0,46fr) minmax(0,54fr);gap:12px;padding:12px;min-height:0}
+  .panel{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .panel-head{display:flex;align-items:center;gap:9px;height:46px;padding:0 10px 0 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);flex:0 0 auto}
+  .panel-head .spacer{flex:1;min-width:8px}
+  .code-chip{padding:2px 6px;border:1px solid rgba(125,162,255,.3);border-radius:4px;background:var(--accent-soft);color:#b9caff;font:600 10px var(--mono)}
+  .panel-title{font-size:13px;font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .panel-sub{font:10.5px var(--mono);color:var(--tx-3);white-space:nowrap}
+  .session{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--line);border-radius:6px;font-size:11.5px;color:var(--tx-2);background:var(--surface-2)}
+  .session:hover{border-color:var(--line-2);color:var(--tx)}
+  .session .ico{width:12px;height:12px;color:var(--tx-3)}
+
+  /* transcript */
+  .transcript{flex:1;min-height:0;overflow:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:14px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .transcript::-webkit-scrollbar{width:10px}
+  .transcript::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .past{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;font-size:11.5px;color:var(--tx-3);background:rgba(255,255,255,.02);border:1px solid transparent;width:max-content;max-width:100%}
+  .past:hover{background:rgba(255,255,255,.04);color:var(--tx-2)}
+  .past .ico{width:12px;height:12px}
+  .turn{display:flex;flex-direction:column;gap:10px;max-width:620px}
+  .turn-meta{display:flex;align-items:center;gap:8px;color:var(--tx-3);font-size:11px}
+  .ai-mark{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;background:linear-gradient(145deg,#3d6be0,#7da2ff);color:#0b0d12;font:700 9px var(--mono)}
+  .turn-meta time{font-family:var(--mono)}
+  .turn-meta .model{font-family:var(--mono);font-size:10.5px}
+  .lead{margin:0;font-size:13.5px;line-height:1.75;color:#dfe1e8;max-width:44em}
+  .lead strong{color:#fff;font-weight:600}
+  .lead .quiet{color:var(--tx-3)}
+
+  .decide{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden}
+  .decide-head{display:flex;align-items:center;gap:7px;padding:8px 11px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--tx-3)}
+  .decide-head b{font-size:12px;font-weight:600;color:var(--tx)}
+  .decide-head .pill{margin-left:auto;padding:1px 6px;border-radius:99px;background:rgba(237,179,91,.10);border:1px solid rgba(237,179,91,.28);color:#e8c48c;font:10px var(--mono)}
+  .decision{padding:10px 11px}
+  .decision + .decision{border-top:1px solid var(--line)}
+  .decision-q{margin:0 0 2px;font-size:12.5px;color:var(--tx)}
+  .decision-meta{margin:0 0 8px;font-size:11px;color:var(--tx-3)}
+  .choices{display:flex;flex-wrap:wrap;gap:7px}
+  .choice{height:27px;padding:0 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:var(--tx-2);font-size:11.5px;transition:border-color .14s,color .14s,background .14s}
+  .choice:hover{border-color:var(--accent);color:var(--tx)}
+  .choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:#dde6ff}
+  .choice[disabled]{opacity:.42;cursor:not-allowed}
+  .choice.is-answered::after{content:" ✓";color:var(--ok)}
+
+  .evidence{font-size:11.5px;color:var(--tx-3)}
+  .evidence summary{display:flex;align-items:center;gap:5px;width:max-content;list-style:none;cursor:pointer;padding:3px 0;border-radius:5px}
+  .evidence summary::-webkit-details-marker{display:none}
+  .evidence summary:hover{color:var(--tx-2)}
+  .evidence summary .ico{width:12px;height:12px;transition:transform .16s}
+  .evidence[open] summary .ico{transform:rotate(180deg)}
+  .evidence ul{list-style:none;margin:6px 0 0;padding:0 0 0 2px;display:grid;gap:5px}
+  .evidence li{display:flex;gap:7px;align-items:baseline;color:var(--tx-2);font-size:11.5px}
+  .evidence li::before{content:"";width:4px;height:4px;border-radius:1px;background:var(--line-2);flex:0 0 auto;transform:translateY(-2px)}
+
+  .proposal{border:1px solid rgba(125,162,255,.26);border-radius:10px;background:linear-gradient(180deg,rgba(93,138,255,.085),rgba(93,138,255,.02));padding:11px 12px}
+  .proposal-top{display:flex;align-items:center;gap:8px}
+  .proposal-top .ico{width:13px;height:13px;color:var(--accent)}
+  .proposal-title{font-size:12.5px;font-weight:600;color:var(--tx)}
+  .proposal-title small{margin-left:6px;font:10.5px var(--mono);font-weight:400;color:var(--tx-3)}
+  .proposal-stats{display:flex;align-items:center;gap:12px;margin-top:6px;font:11px var(--mono);color:var(--tx-3)}
+  .proposal-stats b{font-weight:600;color:var(--tx-2)}
+  .proposal-stats .add{color:#96e0b9}
+  .proposal-stats .del{color:#ffadad}
+  .proposal-foot{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .proposal-foot .hint{margin-right:auto;font-size:10.5px;color:var(--tx-3)}
+  .btn-ghost{height:27px;padding:0 10px;border:1px solid var(--line-2);border-radius:6px;font-size:11.5px;color:var(--tx-2);background:transparent}
+  .btn-ghost:hover{color:var(--tx);border-color:#4a4f59}
+  .btn-soft{height:27px;padding:0 11px;border:1px solid rgba(125,162,255,.34);border-radius:6px;font-size:11.5px;color:#cfdcff;background:var(--accent-soft)}
+  .btn-soft:hover{background:rgba(93,138,255,.2)}
+
+  /* composer */
+  .composer{padding:10px 14px 11px;border-top:1px solid var(--line);background:linear-gradient(180deg,transparent,var(--surface))}
+  .composer-box{border:1px solid var(--line-2);border-radius:11px;background:var(--surface-2);padding:9px 9px 7px;transition:border-color .16s,box-shadow .16s}
+  .composer-box:focus-within{border-color:rgba(125,162,255,.7);box-shadow:0 0 0 3px rgba(93,138,255,.10)}
+  .composer textarea{display:block;width:100%;min-height:38px;max-height:120px;resize:none;border:0;background:none;outline:none;font-size:12.5px;line-height:1.6;color:var(--tx)}
+  .composer textarea::placeholder{color:#7e828c}
+  .composer-tools{display:flex;align-items:center;gap:4px;margin-top:5px}
+  .tool{display:inline-flex;align-items:center;gap:5px;height:25px;padding:0 7px;border-radius:6px;font-size:11px;color:var(--tx-3)}
+  .tool:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+  .tool .ico{width:13px;height:13px}
+  .model{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font:10.5px var(--mono);color:var(--tx-3);padding:0 6px}
+  .send{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;background:var(--accent-solid);color:#fff}
+  .send:disabled{opacity:.35;cursor:not-allowed}
+  .composer-hint{margin:6px 2px 0;font-size:10.5px;color:#7e828c;font-family:var(--mono)}
+
+  /* doc */
+  .doc-head{display:flex;align-items:center;gap:8px;height:46px;padding:0 10px 0 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);flex:0 0 auto}
+  .file-badge{padding:3px 4px;border:1px solid rgba(125,162,255,.3);border-radius:4px;background:var(--accent-soft);color:#b9caff;font:600 9px var(--mono);letter-spacing:.04em}
+  .doc-name{font:11.5px var(--mono);color:var(--tx-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .save{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+  .save .dot{width:5px;height:5px;background:var(--ok)}
+  .seg{display:flex;padding:2px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2)}
+  .seg button{padding:2px 8px;border-radius:4px;font-size:10.5px;color:var(--tx-3)}
+  .seg button[aria-pressed="true"]{background:var(--surface-3);color:var(--tx);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .doc-body{flex:1;min-height:0;overflow:auto;padding:14px 16px 28px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .doc-body::-webkit-scrollbar{width:10px}
+  .doc-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .doc-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:12px;border-bottom:1px solid var(--line);font:10.5px var(--mono);color:var(--tx-3)}
+  .doc-meta span + span::before{content:"·";margin-right:8px;color:#4a4e57}
+  .sections{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+  .section{border:1px solid var(--line);border-radius:9px;background:var(--surface-2);overflow:hidden}
+  .section[open]{border-color:var(--line-2)}
+  .section > summary{display:flex;align-items:center;gap:9px;padding:10px 11px;list-style:none;cursor:pointer}
+  .section > summary::-webkit-details-marker{display:none}
+  .section > summary:hover{background:rgba(255,255,255,.02)}
+  .sec-num{padding:2px 5px;border:1px solid rgba(125,162,255,.2);border-radius:4px;background:rgba(125,162,255,.08);color:#a9bfff;font:600 9.5px var(--mono)}
+  .sec-title{font-size:12.5px;color:var(--tx);white-space:nowrap}
+  .sec-sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--tx-3)}
+  .sec-count{font:10px var(--mono);color:#7e828c}
+  .section summary .ico{width:12px;height:12px;color:#7e828c;transition:transform .16s}
+  .section[open] summary .ico{transform:rotate(180deg)}
+  .section-body{padding:1px 12px 12px;border-top:1px solid var(--line)}
+  .section-body p{margin:10px 0;max-width:44em;color:var(--tx-2);font-size:12px;line-height:1.8}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .tag{padding:1px 6px;border:1px solid var(--line);border-radius:4px;background:rgba(255,255,255,.02);font:10px var(--mono);color:var(--tx-3)}
+  .tag.warn{border-color:rgba(237,179,91,.28);background:rgba(237,179,91,.07);color:#e5c18a}
+
+  .flow{list-style:none;margin:4px 0 0;padding:0;counter-reset:s}
+  .flow li{position:relative;padding:7px 0 7px 30px;border-top:1px dashed #2c2f36;font-size:12px;color:var(--tx-2)}
+  .flow li:first-child{border-top:0}
+  .flow li::before{counter-increment:s;content:counter(s,decimal-leading-zero);position:absolute;left:0;top:8px;font:9.5px var(--mono);color:#7e828c;width:20px;text-align:center;border:1px solid var(--line);border-radius:4px;padding:1px 0}
+  .flow li b{color:var(--tx);font-weight:500}
+
+  /* clarify */
+  .clarify-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px}
+  .clarify-head strong{font-size:12.5px;font-weight:600}
+  .clarify-head span{font:10.5px var(--mono);color:var(--tx-3)}
+  .bar{height:3px;border-radius:99px;background:#2b2e35;overflow:hidden;margin-bottom:10px}
+  .bar i{display:block;height:100%;width:37.5%;border-radius:99px;background:linear-gradient(90deg,#3d6be0,#7da2ff);transition:width .3s ease}
+  .clarify-list{list-style:none;margin:0;padding:0}
+  .clarify-list li{display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:11.5px;color:var(--tx-2)}
+  .clarify-list li:first-child{border-top:0}
+  .clarify-list li.is-done{color:var(--tx-3)}
+  .clarify-list li.is-done .q{text-decoration:line-through;text-decoration-color:#4a4e57}
+  .sev{flex:0 0 auto;margin-top:1px;padding:0 4px;border-radius:3px;font:9px var(--mono);line-height:15px}
+  .sev.block{border:1px solid rgba(255,115,115,.25);background:rgba(255,115,115,.09);color:#ff9c9c}
+  .sev.norm{border:1px solid var(--line);background:rgba(255,255,255,.03);color:#7e828c}
+  .clarify-list .q{flex:1;min-width:0}
+  .link{padding:0;border:0;background:none;color:var(--accent);font-size:11px;white-space:nowrap}
+  .link:hover{text-decoration:underline}
+  .more-clarify{margin-top:8px;font-size:11px}
+
+  /* status bar */
+  .status{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;border-top:1px solid var(--line);background:#141519;font-size:11px;color:var(--tx-3)}
+  .status-left{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .st{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+  .st.danger{color:#ff9a9a}
+  .st.danger .ico{width:12px;height:12px}
+  .st b{font:10.5px var(--mono);font-weight:600;color:var(--tx-2)}
+  .sep{width:1px;height:11px;background:var(--line-2)}
+  .status-right{display:flex;align-items:center;gap:8px}
+  .run-toggle{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:5px;font-size:11px;color:var(--tx-3)}
+  .run-toggle:hover{background:rgba(255,255,255,.05);color:var(--tx-2)}
+  .run-toggle .ico{width:11px;height:11px;transition:transform .16s}
+  .run-toggle[aria-expanded="true"] .ico{transform:rotate(180deg)}
+  .run-detail{position:absolute;right:12px;bottom:38px;width:318px;padding:11px 12px;display:grid;gap:7px;border:1px solid var(--line-2);border-radius:10px;background:#1b1d22;box-shadow:var(--shadow);z-index:30}
+  .run-detail[hidden]{display:none}
+  .run-row{display:flex;justify-content:space-between;gap:10px;font:10.5px var(--mono);color:var(--tx-2)}
+  .run-row span:first-child{color:var(--tx-3)}
+  .run-row .bad{color:#ff9a9a}
+
+  /* diff dialog */
+  dialog.sheet{width:min(880px,calc(100vw - 40px));max-height:min(680px,calc(100vh - 56px));padding:0;border:1px solid var(--line-2);border-radius:14px;background:#17191d;color:var(--tx);box-shadow:0 40px 100px rgba(0,0,0,.6);overflow:hidden}
+  dialog.sheet::backdrop{background:rgba(6,7,9,.64)}
+  dialog.sheet[open]{display:flex;flex-direction:column;animation:sheetIn .18s ease-out}
+  @keyframes sheetIn{from{opacity:0;transform:translateY(8px) scale(.995)}to{opacity:1;transform:none}}
+  .sheet-head{display:flex;align-items:flex-start;gap:10px;padding:15px 18px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .sheet-title{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .sheet-title .num{padding:1px 6px;border-radius:99px;background:var(--accent-soft);border:1px solid rgba(125,162,255,.3);color:#cfdcff;font:10px var(--mono)}
+  .sheet-sub{margin-top:3px;font:10.5px var(--mono);color:var(--tx-3)}
+  .sheet-head .spacer{flex:1}
+  .sheet-tools{display:flex;align-items:center;gap:10px;padding:8px 18px;border-bottom:1px solid var(--line);background:var(--surface);font-size:11px;color:var(--tx-3);flex:0 0 auto}
+  .sheet-tools label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+  .sheet-tools .stat{font-family:var(--mono)}
+  input[type="checkbox"]{width:13px;height:13px;accent-color:var(--accent);cursor:pointer;margin:0}
+  .diff-body{flex:1;min-height:0;overflow:auto;padding:6px 14px 10px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .diff-body::-webkit-scrollbar{width:10px}
+  .diff-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .diff-block{padding:8px 4px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  .diff-block:last-child{border-bottom:0}
+  .diff-block-head{display:flex;align-items:center;gap:9px;padding:4px 2px 7px;font-size:12px;color:var(--tx)}
+  .diff-block-head label{display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0}
+  .diff-block-head .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dstat{margin-left:auto;font:10px var(--mono);white-space:nowrap}
+  .dstat .a{color:#96e0b9}
+  .dstat .d{color:#ffadad}
+  pre.diff{margin:0;padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#121316;font:11px/1.75 var(--mono);color:var(--tx-2);overflow:auto;white-space:pre}
+  pre.diff .a{display:block;background:rgba(78,203,148,.09);color:#a7e8c4}
+  pre.diff .d{display:block;background:rgba(255,115,115,.08);color:#ffb6b6}
+  pre.diff .c{display:block;color:#8f939d}
+  .sheet-foot{display:flex;align-items:center;gap:10px;padding:11px 18px;border-top:1px solid var(--line);background:#141519;flex:0 0 auto}
+  .sheet-foot .meta{font:10.5px var(--mono);color:var(--tx-3)}
+  .sheet-foot .spacer{flex:1}
+
+  /* toast */
+  .toast{position:fixed;right:20px;bottom:54px;z-index:60;display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line-2);border-radius:9px;background:#1d1f24;box-shadow:var(--shadow);font-size:11.5px;animation:toastIn .2s ease-out}
+  .toast[hidden]{display:none}
+  .toast .ok{color:var(--ok);display:grid;place-items:center}
+  .toast .ok .ico{width:14px;height:14px}
+  .toast b{font-weight:500;color:var(--tx)}
+  .toast button{font-size:11.5px;color:var(--accent);padding:1px 3px}
+  .toast button:hover{text-decoration:underline}
+  @keyframes toastIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .flash{animation:flash 1.8s ease-out}
+  @keyframes flash{0%{box-shadow:0 0 0 1px rgba(78,203,148,.55),0 0 22px rgba(78,203,148,.16)}100%{box-shadow:none}}
+
+  @media (max-width:1280px){
+    .grid{grid-template-columns:minmax(0,1fr);overflow:auto}
+    .grid > .panel{min-height:420px}
+    .workspace{grid-template-rows:44px auto minmax(0,1fr) 38px}
+  }
+  @media (max-width:1024px){
+    .app{grid-template-columns:1fr}
+    .rail{display:none}
+    .step small{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><span class="logo">E</span><span><b>EADP Studio</b> · 场景工作台</span></div>
+    <div class="project"><b>测试002</b><span><i class="dot"></i>main · 已同步</span></div>
+    <nav class="nav" aria-label="工作台导航">
+      <div class="nav-label">Navigation</div>
+      <a class="nav-item" href="#" aria-current="true"><svg class="ico"><use href="#i-grid"/></svg>项目场景</a>
+      <div class="nav-sub">
+        <a href="#" aria-current="true">SC-0002 · 测试场景</a>
+      </div>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-file"/></svg>需求协同<span class="nav-count">3</span></a>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-play"/></svg>原型展示</a>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-flag"/></svg>基线确认</a>
+      <a class="nav-item" href="#"><svg class="ico"><use href="#i-inbox"/></svg>交接清单</a>
+    </nav>
+    <div class="rail-foot">
+      <span class="avatar">测</span>
+      <div><b>测试管理员</b><span>@songlin.liu</span></div>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <button class="back" type="button"><svg class="ico"><use href="#i-arrow-left"/></svg>返回项目场景列表</button>
+      <span class="proj-chip">项目 <small>training-demo</small></span>
+      <div class="spacer"></div>
+      <span class="presence"><i class="dot"></i>协同工作台已登录</span>
+      <button class="icon-btn" type="button" aria-label="刷新场景"><svg class="ico"><use href="#i-undo"/></svg></button>
+      <button class="icon-btn" type="button" aria-label="更多操作"><svg class="ico"><use href="#i-more"/></svg></button>
+    </header>
+
+    <section class="stage" aria-label="工作流阶段">
+      <ol class="steps">
+        <li class="step is-done"><span class="num"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"/></svg></span>讨论</li>
+        <li class="step is-done"><span class="num"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"/></svg></span>澄清<small id="stageClarify">3/8</small></li>
+        <li class="step is-current" id="stepWrite"><span class="num">3</span>写入<small>9 处</small></li>
+        <li class="step" id="stepGate"><span class="num">4</span>门禁<small>2 项</small></li>
+        <li class="step" id="stepConfirm"><span class="num">5</span>确认</li>
+      </ol>
+      <button class="cta" id="stageCta" type="button">审阅 9 处变更<svg class="ico"><use href="#i-chev-right"/></svg></button>
+    </section>
+
+    <main class="grid">
+      <section class="panel" aria-label="场景对话">
+        <div class="panel-head">
+          <span class="code-chip">SC-0002</span>
+          <span class="panel-title">测试场景</span>
+          <div class="spacer"></div>
+          <button class="session" type="button">会话 3<svg class="ico"><use href="#i-chev"/></svg></button>
+          <button class="icon-btn" type="button" aria-label="会话操作"><svg class="ico"><use href="#i-more"/></svg></button>
+        </div>
+
+        <div class="transcript">
+          <button class="past" type="button"><svg class="ico"><use href="#i-chev-right"/></svg>第 9 轮 · 已依据 3 份资料收敛目标与角色 <span style="margin-left:4px;font-family:var(--mono)">14:06</span></button>
+
+          <article class="turn">
+            <div class="turn-meta"><span class="ai-mark">AI</span>场景设计助手<time>14:12</time><span class="model">MiniMax-M2.7</span></div>
+
+            <p class="lead">本轮已收敛<strong>目标、角色与主流程</strong>，整篇写入后共有 9 个章节会变化。</p>
+            <p class="lead">还有两处业务口径需要你拍板：<span class="quiet">答复只影响写入内容，不影响现在审阅。</span></p>
+
+            <section class="decide" aria-label="需要你决定">
+              <div class="decide-head"><b>需要你决定</b><span>影响 02 / 04 / 06 章节</span><span class="pill" id="decideCount">2 项</span></div>
+              <div class="decision" data-key="refund">
+                <p class="decision-q">退款单是否独立于退货申请入口？</p>
+                <p class="decision-meta">来自第 8 轮讨论 · 影响角色划分与退款规则</p>
+                <div class="choices">
+                  <button class="choice" type="button" aria-pressed="false">独立申请入口</button>
+                  <button class="choice" type="button" aria-pressed="false">复用退货申请</button>
+                </div>
+              </div>
+              <div class="decision" data-key="goods">
+                <p class="decision-q">换货是否复用 Goods 商品列表？</p>
+                <p class="decision-meta">来自第 9 轮讨论 · 影响验收条件与选品交互</p>
+                <div class="choices">
+                  <button class="choice" type="button" aria-pressed="false">复用 Goods</button>
+                  <button class="choice" type="button" aria-pressed="false">独立维护</button>
+                </div>
+              </div>
+            </section>
+
+            <details class="evidence">
+              <summary><svg class="ico"><use href="#i-chev"/></svg>依据 3 份资料</summary>
+              <ul>
+                <li>建议稿 v3 · 第 4–7 页</li>
+                <li>会话第 6–9 轮 · 已确认结论</li>
+                <li>主系统接口文档 · §2 契约细节</li>
+              </ul>
+            </details>
+
+            <section class="proposal" aria-label="写入提议">
+              <div class="proposal-top"><svg class="ico"><use href="#i-spark"/></svg><span class="proposal-title">写入提议<small>v3 → v4</small></span></div>
+              <div class="proposal-stats"><span><b>9</b> 个章节</span><span class="add">+23</span><span class="del">−9</span><span style="margin-left:auto">场景/测试场景.md</span></div>
+              <div class="proposal-foot">
+                <span class="hint">写入前可逐段核对</span>
+                <button class="btn-ghost" type="button" id="laterBtn">稍后</button>
+                <button class="btn-soft" type="button" id="reviewBtn">审阅变更</button>
+              </div>
+            </section>
+          </article>
+        </div>
+
+        <form class="composer" id="composer">
+          <div class="composer-box">
+            <label class="sr" for="msg">消息</label>
+            <textarea id="msg" rows="1" placeholder="补充业务口径，或让 AI 解释某一处变更…"></textarea>
+            <div class="composer-tools">
+              <button class="tool" type="button"><svg class="ico"><use href="#i-plus"/></svg></button>
+              <span class="tool">工作区内修改</span>
+              <button class="tool" type="button"><svg class="ico"><use href="#i-clip"/></svg>附件</button>
+              <span class="model">MiniMax-M2.7</span>
+              <button class="send" type="submit" aria-label="发送"><svg class="ico"><use href="#i-send"/></svg></button>
+            </div>
+          </div>
+          <div class="composer-hint">Enter 发送 · Shift + Enter 换行</div>
+        </form>
+      </section>
+
+      <section class="panel" aria-label="场景契约">
+        <div class="doc-head">
+          <span class="file-badge">MD</span>
+          <span class="doc-name">场景/测试场景.md</span>
+          <span class="save"><i class="dot"></i>已保存</span>
+          <div class="spacer" style="flex:1"></div>
+          <div class="seg" role="group" aria-label="文档视图">
+            <button type="button" aria-pressed="true">预览</button>
+            <button type="button" aria-pressed="false">源码</button>
+          </div>
+          <button class="icon-btn" type="button" aria-label="更多文档操作"><svg class="ico"><use href="#i-more"/></svg></button>
+        </div>
+
+        <div class="doc-body">
+          <div class="doc-meta">
+            <span id="docVersion">v3</span><span>656 字</span><span>14:12 更新</span><span>作者 测试管理员</span>
+          </div>
+
+          <ol class="sections">
+            <li>
+              <details class="section" data-sec="01">
+                <summary><span class="sec-num">01</span><span class="sec-title">目标与范围</span><span class="sec-sum">退货与换货全链路可追溯</span><span class="sec-count">3 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <p>覆盖售后主流程：发起、审核、换货或退款、结果回写。不含逆向物流、运费结算与赔付。</p>
+                  <div class="tags"><span class="tag">已确认 · 第 6 轮</span><span class="tag">来源 · 建议稿 v3</span></div>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="02">
+                <summary><span class="sec-num">02</span><span class="sec-title">角色与权限</span><span class="sec-sum">4 个角色，操作项权限待细化</span><span class="sec-count">4 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <p>售后专员负责受理；财务审核负责退款；仓库负责换货出库；客户只发起与查询。权限按操作项而非页面归属。</p>
+                  <div class="tags"><span class="tag warn">待细化 · 1 项</span></div>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="03" open>
+                <summary><span class="sec-num">03</span><span class="sec-title">业务流程</span><span class="sec-sum">4 步主流程，第 3 步幂等键待确认</span><span class="sec-count">4 步</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <ol class="flow">
+                    <li><b>选择售后类型</b>：退货或换货，校验订单可售后状态。</li>
+                    <li><b>校验金额与库存</b>：按实付金额计算可退，换货校验目标 SKU。</li>
+                    <li><b>生成售后单并推送主系统</b>：以订单号 + 类型作幂等键。<span class="tag warn" style="margin-left:6px">待确认</span></li>
+                    <li><b>回调结果</b>：更新状态并释放设计占用。</li>
+                  </ol>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="04">
+                <summary><span class="sec-num">04</span><span class="sec-title">业务规则</span><span class="sec-sum">GIVEN / WHEN / THEN 共 6 条</span><span class="sec-count">6 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <p>已签收且未过售后期限才可发起；无部分退款入口时，退款金额恒等于全额。</p>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="05">
+                <summary><span class="sec-num">05</span><span class="sec-title">异常与边界</span><span class="sec-sum">部分退款、重复回调、超时重试</span><span class="sec-count">5 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <p>回调超时 30s 转人工；重复回调按幂等键去重；部分完成状态未定义。</p>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="06">
+                <summary><span class="sec-num">06</span><span class="sec-title">验收条件</span><span class="sec-sum">主流程 3 条，异常 2 条</span><span class="sec-count">5 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <p>主流程可走通；重复回调不产生第二条售后单；换货必须校验库存与差价。</p>
+                </div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="07">
+                <summary><span class="sec-num">07</span><span class="sec-title">来源</span><span class="sec-sum">建议稿 v3 · 主系统接口文档</span><span class="sec-count">2 份</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body"><p>建议稿 v3（第 4–7 页）、主系统接口文档 §2。会话记录不写入正文。</p></div>
+              </details>
+            </li>
+            <li>
+              <details class="section" data-sec="08" open>
+                <summary><span class="sec-num">08</span><span class="sec-title">待澄清</span><span class="sec-sum"><span id="clarifySummary">3/8 已澄清，3 项阻塞确认</span></span><span class="sec-count" id="clarifyCount">8 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <div class="section-body">
+                  <div class="clarify-head"><strong>澄清进度</strong><span id="clarifyProgress">3 / 8</span></div>
+                  <div class="bar"><i id="clarifyBar" style="width:37.5%"></i></div>
+                  <ul class="clarify-list" id="clarifyList">
+                    <li data-key="refund"><span class="sev block">阻塞</span><span class="q">退款单是否需要独立申请入口？</span><button class="link" type="button">在对话中回答</button></li>
+                    <li data-key="goods"><span class="sev block">阻塞</span><span class="q">换货是否复用 Goods 商品列表？</span><button class="link" type="button">在对话中回答</button></li>
+                    <li data-key="idem"><span class="sev block">阻塞</span><span class="q">主系统接口幂等键落在哪一层？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                    <li data-key="partial"><span class="sev norm">普通</span><span class="q">部分退款、部分完成的中间状态如何处理？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                    <li data-key="mq"><span class="sev norm">普通</span><span class="q">是否存在 MQ 等非 Feign 通道参与售后同步？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                  </ul>
+                  <button class="link more-clarify" type="button" id="showDone">展开已澄清的 3 条</button>
+                </div>
+              </details>
+            </li>
+          </ol>
+        </div>
+      </section>
+    </main>
+
+    <footer class="status">
+      <div class="status-left">
+        <span class="st danger"><svg class="ico"><use href="#i-alert"/></svg>门禁 <b>2</b> 项阻断</span>
+        <span class="sep"></span>
+        <span class="st">待澄清 <b id="statusClarify">3/8</b></span>
+        <span class="sep"></span>
+        <span class="st">一致性 <b>未发起</b></span>
+      </div>
+      <div class="status-right">
+        <button class="run-toggle" type="button" id="runToggle" aria-expanded="false" aria-controls="runDetail">运行详情<svg class="ico"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="run-detail" id="runDetail" hidden>
+        <div class="run-row"><span>模型</span><span>MiniMax-M2.7 · high</span></div>
+        <div class="run-row"><span>本轮</span><span>10 轮 · 15 步 · 149 tok/s</span></div>
+        <div class="run-row"><span>用量</span><span>220k tok · 缓存 60%</span></div>
+        <div class="run-row"><span>Git</span><span>main · 工作区干净</span></div>
+        <div class="run-row"><span>门禁</span><span class="bad">业务内容 · 资料与引用 阻断</span></div>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<dialog class="sheet" id="diffSheet" aria-labelledby="diffTitle">
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="diffTitle">审阅写入<span class="num">9 处</span></div>
+      <div class="sheet-sub">场景/测试场景.md · v3 → v4 · 取消勾选的章节保持现状</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" type="button" id="closeSheet" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="sheet-tools">
+    <label><input type="checkbox" id="allBox" checked>全选 9 处</label>
+    <span class="stat" style="margin-left:auto">已选 <b id="selCount">9</b> / 9 · <span class="dstat"><span class="a">+23</span> <span class="d">−9</span></span></span>
+  </div>
+  <div class="diff-body" id="diffBody">
+    <div class="diff-block" data-sec="t">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">—</span><span class="ttl">正文开头</span></label><span class="dstat"><span class="a">+1</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">- # 测试场景</span><span class="a">+ # 退货与换货 · 售后场景</span><span class="c">  修复：标题与场景编码 SC-0002 对齐</span></pre>
+    </div>
+    <div class="diff-block" data-sec="01">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">01</span><span class="ttl">目标与范围</span></label><span class="dstat"><span class="a">+2</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">- 范围：覆盖退货、换货与退款</span><span class="a">+ 范围：覆盖退货、换货；退款只到申请入口</span><span class="a">+ 不含：逆向物流、赔付与运费结算</span><span class="c">  目标：退货与换货全链路可追溯</span></pre>
+    </div>
+    <div class="diff-block" data-sec="02">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">02</span><span class="ttl">角色与权限</span></label><span class="dstat"><span class="a">+2</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="d">- 权限按页面归属，未细化到操作项</span><span class="a">+ 权限按操作项：发起 / 审批 / 冲正</span><span class="a">+ 新增角色：退款审核员（只审退款，不发起退货）</span><span class="c">  角色：售后专员、财务审核、仓库、客户</span></pre>
+    </div>
+    <div class="diff-block" data-sec="03">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">03</span><span class="ttl">业务流程</span></label><span class="dstat"><span class="a">+3</span> <span class="d">−2</span></span></div>
+      <pre class="diff"><span class="d">- 3 生成售后单，推送主系统</span><span class="a">+ 3 生成售后单，以订单号 + 售后类型作幂等键推送主系统</span><span class="a">+ 3.1 推送失败按 1 / 5 / 15 分钟重试，最多 3 次</span><span class="d">- 4 主系统回调结果，更新状态</span><span class="a">+ 4 主系统回调结果，更新状态并释放占用</span></pre>
+    </div>
+    <div class="diff-block" data-sec="04">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">04</span><span class="ttl">业务规则</span></label><span class="dstat"><span class="a">+4</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="a">+ GIVEN 已签收 WHEN 发起退货 THEN 可退金额 = 实付 − 已退</span><span class="a">+ GIVEN 换货 WHEN 选择新商品 THEN 仅允许同价或补差价</span><span class="a">+ GIVEN 无部分退款入口 THEN 退款金额恒等于全额</span><span class="d">- 退款金额与退款入口未约束</span></pre>
+    </div>
+    <div class="diff-block" data-sec="05">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">05</span><span class="ttl">异常与边界</span></label><span class="dstat"><span class="a">+2</span> <span class="d">−2</span></span></div>
+      <pre class="diff"><span class="d">- 异常：回调超时</span><span class="a">+ 异常：回调超时 30s，转人工复核</span><span class="d">- 边界：部分退款未定义</span><span class="a">+ 边界：部分退款、部分完成先按全额处理并留待澄清</span></pre>
+    </div>
+    <div class="diff-block" data-sec="06">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">06</span><span class="ttl">验收条件</span></label><span class="dstat"><span class="a">+3</span> <span class="d">−1</span></span></div>
+      <pre class="diff"><span class="a">+ 验收：退货主流程 3 条，异常 2 条</span><span class="d">- 验收：主流程可走通</span><span class="a">+ 验收：换货必须验证库存与差价</span><span class="a">+ 验收：重复回调不产生第二条售后单</span></pre>
+    </div>
+    <div class="diff-block" data-sec="07">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">07</span><span class="ttl">来源</span></label><span class="dstat"><span class="a">+1</span> <span class="d">−0</span></span></div>
+      <pre class="diff"><span class="d">- 来源：会话记录</span><span class="a">+ 来源：建议稿 v3、主系统接口文档 §2</span></pre>
+    </div>
+    <div class="diff-block" data-sec="08">
+      <div class="diff-block-head"><label><input type="checkbox" checked><span class="sec-num">08</span><span class="ttl">待澄清</span></label><span class="dstat"><span class="a">+5</span> <span class="d">−0</span></span></div>
+      <pre class="diff"><span class="a">+ 退款单是否需要独立申请入口？</span><span class="a">+ 换货是否复用 Goods 商品列表？</span><span class="a">+ 主系统接口幂等键落在哪一层？</span><span class="a">+ 部分退款、部分完成的中间状态如何处理？</span><span class="a">+ 是否存在 MQ 等非 Feign 通道参与售后同步？</span></pre>
+    </div>
+  </div>
+  <div class="sheet-foot">
+    <span class="meta">写入后可撤销 · 不会自动提交确认</span>
+    <div class="spacer"></div>
+    <button class="btn-ghost" type="button" id="cancelSheet">取消</button>
+    <button class="cta" type="button" id="acceptBtn">写入所选的 9 处</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+  <span class="ok"><svg class="ico"><use href="#i-check"/></svg></span>
+  <b id="toastText">已写入 9 处变更</b>
+  <button type="button" id="toastView">查看</button>
+  <button type="button" id="toastUndo">撤销</button>
+</div>
+
+<script>
+(function () {
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  const sheet = $('#diffSheet');
+  const stageCta = $('#stageCta');
+  const stepWrite = $('#stepWrite');
+  const stepGate = $('#stepGate');
+  const stageClarify = $('#stageClarify');
+  const statusClarify = $('#statusClarify');
+  const clarifyProgress = $('#clarifyProgress');
+  const clarifyBar = $('#clarifyBar');
+  const clarifySummary = $('#clarifySummary');
+  const toast = $('#toast');
+  const toastText = $('#toastText');
+  const acceptBtn = $('#acceptBtn');
+  const selCount = $('#selCount');
+  const allBox = $('#allBox');
+  const boxes = () => $$('#diffBody input[type=checkbox]');
+
+  let answered = 3;
+  let written = false;
+  let toastTimer = 0;
+
+  function setStage(n) {
+    $$('.step').forEach((el, i) => {
+      el.classList.toggle('is-done', i + 1 < n);
+      el.classList.toggle('is-current', i + 1 === n);
+    });
+  }
+
+  function renderClarify() {
+    stageClarify.textContent = answered + '/8';
+    statusClarify.textContent = answered + '/8';
+    clarifyProgress.textContent = answered + ' / 8';
+    clarifyBar.style.width = (answered / 8) * 100 + '%';
+    clarifySummary.textContent = answered + '/8 已澄清，' + Math.max(0, 3 - (answered - 3)) + ' 项阻塞确认';
+  }
+
+  function markClarified(key) {
+    const li = $('#clarifyList li[data-key="' + key + '"]');
+    if (!li || li.classList.contains('is-done')) return false;
+    li.classList.add('is-done');
+    const sev = $('.sev', li);
+    if (sev) { sev.textContent = '已答'; sev.className = 'sev norm'; }
+    const link = $('.link', li);
+    if (link) link.remove();
+    answered = Math.min(8, answered + 1);
+    renderClarify();
+    return true;
+  }
+
+  function syncSelection() {
+    const list = boxes();
+    const n = list.filter(b => b.checked).length;
+    selCount.textContent = n;
+    acceptBtn.textContent = '写入所选的 ' + n + ' 处';
+    acceptBtn.disabled = n === 0;
+    allBox.checked = n === list.length;
+    allBox.indeterminate = n > 0 && n < list.length;
+  }
+
+  function openSheet() {
+    syncSelection();
+    if (typeof sheet.showModal === 'function') sheet.showModal();
+    else sheet.setAttribute('open', '');
+  }
+
+  function closeSheet() {
+    if (sheet.open) sheet.close();
+    else sheet.removeAttribute('open');
+  }
+
+  function showToast(text) {
+    toastText.textContent = text;
+    toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; }, 8000);
+  }
+
+  function accept() {
+    const n = boxes().filter(b => b.checked).length;
+    if (!n) return;
+    written = true;
+    closeSheet();
+    setStage(4);
+    stageCta.textContent = '处理 2 项阻断';
+    stepWrite.classList.add('is-done');
+    stepWrite.classList.remove('is-current');
+    const writeCount = $('#stepWrite small');
+    if (writeCount) writeCount.textContent = n + ' 处';
+    stepGate.classList.add('is-current');
+    const ver = $('#docVersion');
+    if (ver) ver.textContent = 'v4';
+    const proposal = $('.proposal');
+    if (proposal) {
+      proposal.innerHTML = '<div class="proposal-top"><svg class="ico"><use href="#i-check"/></svg><span class="proposal-title">已写入 ' + n + ' 处<small>v4 · 刚刚</small></span></div>' +
+        '<div class="proposal-stats"><span>可撤销</span><span style="margin-left:auto">场景/测试场景.md</span></div>' +
+        '<div class="proposal-foot"><span class="hint">已保留 9 处中的 ' + n + ' 处</span><button class="btn-ghost" type="button" id="undoInline">撤销</button><button class="btn-soft" type="button" id="viewInline">查看差异</button></div>';
+      $('#undoInline').addEventListener('click', undo);
+      $('#viewInline').addEventListener('click', openSheet);
+    }
+    const sec = $('.section[data-sec="03"]');
+    if (sec) { sec.open = true; sec.classList.add('flash'); setTimeout(() => sec.classList.remove('flash'), 2000); }
+    showToast('已写入 ' + n + ' 处变更');
+  }
+
+  function undo() {
+    written = false;
+    setStage(3);
+    stageCta.textContent = '审阅 9 处变更';
+    stepGate.classList.remove('is-current');
+    stepWrite.classList.add('is-current');
+    stepWrite.classList.remove('is-done');
+    const ver = $('#docVersion');
+    if (ver) ver.textContent = 'v3';
+    const proposal = $('.proposal');
+    if (proposal) {
+      proposal.innerHTML = '<div class="proposal-top"><svg class="ico"><use href="#i-spark"/></svg><span class="proposal-title">写入提议<small>v3 → v4</small></span></div>' +
+        '<div class="proposal-stats"><span><b>9</b> 个章节</span><span class="add">+23</span><span class="del">−9</span><span style="margin-left:auto">场景/测试场景.md</span></div>' +
+        '<div class="proposal-foot"><span class="hint">写入前可逐段核对</span><button class="btn-ghost" type="button" id="laterBtn">稍后</button><button class="btn-soft" type="button" id="reviewBtn">审阅变更</button></div>';
+      $('#reviewBtn').addEventListener('click', openSheet);
+      $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
+    }
+    toast.hidden = true;
+    showToast('已撤销，材料回到 v3');
+  }
+
+  stageCta.addEventListener('click', () => {
+    if (written) { $('#runToggle').click(); return; }
+    openSheet();
+  });
+
+  $('#reviewBtn').addEventListener('click', openSheet);
+  $('#laterBtn').addEventListener('click', () => showToast('已保留提议，可稍后审阅'));
+  $('#closeSheet').addEventListener('click', closeSheet);
+  $('#cancelSheet').addEventListener('click', closeSheet);
+
+  sheet.addEventListener('click', event => {
+    if (event.target === sheet) closeSheet();
+  });
+
+  $$('#diffBody input[type=checkbox]').forEach(box => box.addEventListener('change', syncSelection));
+  allBox.addEventListener('change', () => {
+    boxes().forEach(box => { box.checked = allBox.checked; });
+    syncSelection();
+  });
+  acceptBtn.addEventListener('click', accept);
+
+  $('#toastView').addEventListener('click', openSheet);
+  $('#toastUndo').addEventListener('click', undo);
+
+  $$('.decision').forEach(decision => {
+    const key = decision.dataset.key;
+    $$('.choice', decision).forEach(choice => {
+      choice.addEventListener('click', () => {
+        $$('.choice', decision).forEach(other => {
+          other.setAttribute('aria-pressed', String(other === choice));
+          other.disabled = other !== choice;
+        });
+        choice.classList.add('is-answered');
+        markClarified(key);
+        const remaining = $$('.decision').filter(d => !$('.choice[aria-pressed="true"]', d)).length;
+        $('#decideCount').textContent = remaining ? remaining + ' 项' : '已答复';
+      });
+    });
+  });
+
+  $$('#clarifyList .link').forEach(link => {
+    link.addEventListener('click', () => {
+      const li = link.closest('li');
+      const decision = $('.decision[data-key="' + li.dataset.key + '"]');
+      if (decision) {
+        decision.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const first = $('.choice', decision);
+        if (first) first.focus({ preventScroll: true });
+      }
+    });
+  });
+
+  $('#showDone').addEventListener('click', event => {
+    const btn = event.currentTarget;
+    const list = $('#clarifyList');
+    const done = ['目标与范围已确认', '退款入口已按建议稿收敛', '换货不涉及跨仓调拨'];
+    if (btn.dataset.open === '1') {
+      $$('.clarify-list li.is-clarified', list).forEach(li => li.remove());
+      btn.dataset.open = '0';
+      btn.textContent = '展开已澄清的 3 条';
+      return;
+    }
+    done.forEach((text, i) => {
+      const li = document.createElement('li');
+      li.className = 'is-done is-clarified';
+      li.innerHTML = '<span class="sev norm">已答</span><span class="q">' + text + '</span>';
+      list.appendChild(li);
+    });
+    btn.dataset.open = '1';
+    btn.textContent = '收起已澄清的 3 条';
+  });
+
+  const runToggle = $('#runToggle');
+  const runDetail = $('#runDetail');
+  function closeRun() {
+    runDetail.hidden = true;
+    runToggle.setAttribute('aria-expanded', 'false');
+  }
+  runToggle.addEventListener('click', () => {
+    const open = runToggle.getAttribute('aria-expanded') === 'true';
+    if (open) { closeRun(); return; }
+    runDetail.hidden = false;
+    runToggle.setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('click', event => {
+    if (runDetail.hidden) return;
+    if (!runDetail.contains(event.target) && !runToggle.contains(event.target) && !stageCta.contains(event.target)) closeRun();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !runDetail.hidden) closeRun();
+  });
+
+  $('#composer').addEventListener('submit', event => {
+    event.preventDefault();
+    const field = $('#msg');
+    const text = field.value.trim();
+    if (!text) return;
+    const turn = document.createElement('div');
+    turn.className = 'turn';
+    turn.innerHTML = '<div class="turn-meta"><span class="avatar" style="width:18px;height:18px;font-size:9px">测</span>我<time>现在</time></div><p class="lead"></p>';
+    $('.lead', turn).textContent = text;
+    $('.transcript').appendChild(turn);
+    field.value = '';
+    turn.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  });
+
+  renderClarify();
+  setStage(3);
+})();
+</script>
+</body>
+</html>
