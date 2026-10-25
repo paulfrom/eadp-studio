@@ -10,6 +10,8 @@ type Compare = { compare_timeout?: boolean; compare_same_ref?: boolean; diffs: D
 export interface ProjectTemplates { defaultTemplateId?: string; templates: Array<{ id: string; name: string; fixed: FixedReference }> }
 /** The only project-root file that a material or configuration integration may change. */
 const PROJECT_CONTEXT_PATH = 'CONTEXT.md';
+/** Projections of accepted content are bounded by count, not age: their source never changes. */
+const projectionEntries = 5000;
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 function utf8(bytes: Uint8Array, code: string): string {
   requireCondition(!(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) && !bytes.includes(13), code, 'Text must use UTF-8 without BOM and LF line endings', 422);
@@ -18,7 +20,20 @@ function utf8(bytes: Uint8Array, code: string): string {
 }
 
 export class GitLabContent {
+  /**
+   * Accepted material at a fixed commit is immutable, so a projection that only
+   * displays it remembers what verification already proved. Acceptance paths call
+   * `verify` directly and still read GitLab; only the display copy is reused.
+   */
+  private readonly materials = new Map<string, MaterialMetadata>();
+  private readonly builtins = new Map<string, BuiltinScenarioMetadata>();
+  /** A project catalog belongs to one accepted commit, so it is read once per commit. */
+  private readonly catalogs = new Map<string, { scenarios: ProjectTemplates; requirements: ProjectTemplates }>();
   constructor(private readonly gitlab: GitLab) {}
+  private static remember<T>(cache: Map<string, T>, key: string, value: T): void {
+    if (cache.size >= projectionEntries) cache.delete(cache.keys().next().value!);
+    cache.set(key, structuredClone(value));
+  }
   private async file(gitlabProjectId: number, commitSha: string, path: string): Promise<Uint8Array> {
     repositoryPath(path);
     requireCondition(/^[a-f0-9]{40}$/.test(commitSha), 'INVALID_COMMIT', 'Content reads require a fixed commit SHA', 422);
@@ -32,6 +47,8 @@ export class GitLabContent {
     return parseProjectManifest(utf8(await this.file(gitlabProjectId, commitSha, 'project.assets.json'), 'INVALID_MANIFEST_ENCODING'));
   }
   async loadProjectTemplates(actor: Reader, gitlabProjectId: number, commitSha: string): Promise<{ scenarios: ProjectTemplates; requirements: ProjectTemplates }> {
+    const key = `${gitlabProjectId}:${commitSha}`, remembered = this.catalogs.get(key);
+    if (remembered) return structuredClone(remembered);
     await this.gitlab.authorize(actor, gitlabProjectId);
     const manifest = await this.manifest(gitlabProjectId, commitSha);
     requireCondition(manifest.gitlabProjectId === gitlabProjectId, 'PROJECT_MANIFEST_IDENTITY_MISMATCH', 'Template manifest must belong to its GitLab project', 422);
@@ -47,23 +64,34 @@ export class GitLabContent {
       }
       return { defaultTemplateId: catalog.defaultTemplateId, templates };
     };
-    return { scenarios: await load(manifest.scenarioTemplates), requirements: await load(manifest.requirementTemplates) };
+    const catalogs = { scenarios: await load(manifest.scenarioTemplates), requirements: await load(manifest.requirementTemplates) };
+    GitLabContent.remember(this.catalogs, key, catalogs); return catalogs;
   }
   async verifyTemplate(actor: Reader, gitlabProjectId: number, kind: 'scenario' | 'requirement', fixed: FixedReference, templateId?: string): Promise<void> {
     const catalogs = await this.loadProjectTemplates(actor, gitlabProjectId, fixed.commitSha);
     const catalog = kind === 'scenario' ? catalogs.scenarios : catalogs.requirements;
     requireCondition(catalog.templates.some(t => (!templateId || t.id === templateId) && canonical(t.fixed) === canonical(fixed)), 'TEMPLATE_REFERENCE_MISMATCH', 'Template reference must match a fixed project catalog entry', 422);
   }
-  /** Reads business metadata only from the immutable material; callers may hydrate API views with it. */
+  /**
+   * Business metadata of an accepted material for display. The fixed reference
+   * includes its hash, so a remembered answer still applies to the same content;
+   * a reference that is not accepted yet must go through `verify` instead.
+   */
   async loadMaterial(actor: Reader, gitlabProjectId: number, fixed: FixedReference): Promise<MaterialMetadata> {
-    return this.verify(actor, gitlabProjectId, fixed);
+    const key = `${gitlabProjectId}:${canonical(fixed)}`, remembered = this.materials.get(key);
+    if (remembered) return structuredClone(remembered);
+    const metadata = await this.verify(actor, gitlabProjectId, fixed);
+    GitLabContent.remember(this.materials, key, metadata); return metadata;
   }
   /** Strict provisioned-content read; selected by persisted acceptance kind, never as a parse fallback. */
   async readBuiltinScenario(actor: Reader, gitlabProjectId: number, fixed: FixedReference, entityId: string): Promise<BuiltinScenarioMetadata> {
+    const key = `${gitlabProjectId}:${entityId}:${canonical(fixed)}`, remembered = this.builtins.get(key);
+    if (remembered) return structuredClone(remembered);
     await this.gitlab.authorize(actor, gitlabProjectId);
     const bytes = await this.file(gitlabProjectId, fixed.commitSha, fixed.path);
     requireCondition(digest(bytes) === fixed.sha256, 'CONTENT_HASH_MISMATCH', 'Fixed Git material does not match the confirmed SHA-256', 422);
-    return parseBuiltinScenario(utf8(bytes, 'INVALID_MATERIAL_ENCODING'), entityId);
+    const metadata = parseBuiltinScenario(utf8(bytes, 'INVALID_MATERIAL_ENCODING'), entityId);
+    GitLabContent.remember(this.builtins, key, metadata); return metadata;
   }
   async verify(actor: Reader, gitlabProjectId: number, fixed: FixedReference, identity?: { entityId: string; kind: EntityKind }): Promise<MaterialMetadata> {
     await this.gitlab.authorize(actor, gitlabProjectId);
@@ -85,8 +113,8 @@ export class GitLabContent {
     if (metadata.kind === 'scenario' || metadata.kind === 'requirement') {
       await this.verifyTemplate(actor, gitlabProjectId, metadata.kind, metadata.templateRef, metadata.templateId);
       if (metadata.templateRef.commitSha !== fixed.commitSha) {
-        const ancestor = await this.gitlab.json<{ id: string }>(`/projects/${gitlabProjectId}/repository/merge_base?refs[]=${metadata.templateRef.commitSha}&refs[]=${fixed.commitSha}`);
-        requireCondition(ancestor.id === metadata.templateRef.commitSha, 'TEMPLATE_HISTORY_MISMATCH', 'Bound template must belong to the fixed material history', 422);
+        const ancestor = await this.gitlab.mergeBase(gitlabProjectId, metadata.templateRef.commitSha, fixed.commitSha);
+        requireCondition(ancestor === metadata.templateRef.commitSha, 'TEMPLATE_HISTORY_MISMATCH', 'Bound template must belong to the fixed material history', 422);
       }
     }
     return metadata;
@@ -189,8 +217,8 @@ export class GitLabContent {
     const commit = await this.gitlab.json<{ parent_ids: string[] }>(`${prefix}/commits/${correctedHead}`);
     requireCondition(commit.parent_ids.length > 0, 'CORRECTION_REQUIRED', 'Correction must be a traceable commit');
     requireCondition(expectedHead !== correctedHead, 'CORRECTION_REQUIRED', 'Correction requires a new traceable commit');
-    const ancestor = await this.gitlab.json<{ id: string }>(`${prefix}/merge_base?refs[]=${expectedHead}&refs[]=${correctedHead}`);
-    requireCondition(ancestor.id === expectedHead, 'CORRECTION_ANCESTRY_MISMATCH', 'Correction must preserve recognized commit history without rewriting it');
+    const ancestor = await this.gitlab.mergeBase(gitlabProjectId, expectedHead, correctedHead);
+    requireCondition(ancestor === expectedHead, 'CORRECTION_ANCESTRY_MISMATCH', 'Correction must preserve recognized commit history without rewriting it');
     const comparison = await this.gitlab.json<{ compare_timeout?: boolean; diffs: unknown[] }>(`${prefix}/compare?from=${expectedHead}&to=${correctedHead}&straight=true`);
     requireCondition(!comparison.compare_timeout && comparison.diffs.length === 0, 'CORRECTION_TREE_MISMATCH', 'Corrected branch must contain exactly the previously recognized tree');
   }

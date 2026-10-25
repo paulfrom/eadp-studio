@@ -245,7 +245,7 @@ test('the scenario explains a missing write button and shows actionable buttons 
   const actions = { refresh() {}, newSession() {}, selectSession() {}, openTemplates() {}, resolveWriteProposal: decision => decisions.push(decision), undoWrite() {} }
   const view = chatPanel({ workspace: { readOnly: false, writeProposalError: '写入提议 ID 无效' }, actions })
   assert.match(view.getByRole('alert', { name: '写入提议未生成' }).textContent, /写入提议 ID 无效/)
-  assert.match(view.getByRole('alert').textContent, /请让 AI 基于当前材料重新提出写入提议/)
+  assert.match(view.getByRole('alert').textContent, /请让 AI 用 eadp-write-proposal 代码块基于当前材料重新提出写入提议/)
   assert.equal(view.queryByRole('button', { name: '写入整篇正文' }), null)
   view.unmount()
 

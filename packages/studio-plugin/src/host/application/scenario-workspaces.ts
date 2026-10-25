@@ -13,13 +13,12 @@ import type { StudioStore } from './state.ts'
 import type { ProjectWorkspaces } from './projects.ts'
 import { ScenarioDocumentService, sameTemplate } from './scenario-documents.ts'
 import { MaterialConfirmationChecks, type MaterialConfirmationOperation } from './material-confirmations.ts'
-import { conclusionKey, parseWriteProposal, proposalInvalidReason, summarizeWrite, type ProposalCurrent } from './scenario-write-proposals.ts'
+import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite, type ProposalCurrent } from './scenario-write-proposals.ts'
 import { MaterialSources } from './material-sources.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
 import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
 
-interface DesignRequestContext extends ProposalCurrent { occupationKey: string }
 /** Retains one exact backend request while a local template rebind is being reconciled. */
 export interface MaterialTemplateBinding {
   projectId: string; kind: 'scenario'; expectedHash: string; request: BindTemplateRequest;
@@ -34,7 +33,7 @@ type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | '
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
 export interface ScenarioRecord {
-  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; writeProposalOccupationKey?: string; requestContexts?: Record<string, DesignRequestContext>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
   /** Explains why the latest model proposal could not become an actionable write. */
   writeProposalError?: string;
   requirementSaves?: RequirementSaveOperation[];
@@ -99,6 +98,22 @@ export class ScenarioWorkspaces {
     let value = local.scenarios.find(v => v.projectId === projectId && v.entityId === entityId)
     if (!value) { value = { projectId, entityId, sources: [], sourcePaths: {} }; local.scenarios.push(value); await this.store.save() }
     return value
+  }
+  /**
+   * The live local material task of one entity. The write path resolves it
+   * without backend state so an unreachable collaboration service never blocks
+   * writing the local draft.
+   */
+  private async liveTask(entityId: string, projectId?: string): Promise<TaskView> {
+    const local = await this.store.read(), id = projectId ?? local.selectedProjectId
+    const task = local.tasks.findLast(value => value.projectId === id && value.entityId === entityId && value.purpose === 'material' && !value.cleanup)
+    if (!task) throw new Error('本地材料任务不存在，请重新打开材料')
+    return task
+  }
+  /** Draft of one local task; the material kind comes from the files present in its worktree. */
+  private async localMaterial(task: TaskView): Promise<MaterialDraft> {
+    for (const kind of ['scenario', 'requirement'] as const) if (await findMaterialFile(task.worktree, kind, task.entityId)) return readMaterial(task.worktree, kind, task.entityId)
+    throw new Error('本地材料文件不存在，请重新打开材料')
   }
   async editable(entityId: string, projectId?: string) {
     const context = await this.sources.editable(entityId, projectId)
@@ -235,7 +250,7 @@ export class ScenarioWorkspaces {
       if (context.entity.kind !== binding.kind || occupationKey(await this.deps.owned(context.entity)) !== occupationKey(request.token) || context.entity.templateId !== request.templateId || !context.entity.templateRef || !sameTemplate(context.entity.templateRef, request.templateRef)) throw new Error('后台材料绑定已变化，请核对原模板操作')
       await this.documents.bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, expectedHash: application.expectedHash, operationId: application.operationId })
       binding.status = 'applied'; delete binding.message
-      delete record.writeProposal; delete record.writeProposalOccupationKey; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt; delete record.conflict
+      delete record.writeProposal; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt; delete record.conflict
       await this.store.save()
     } catch (error) {
       binding.message = error instanceof Error ? error.message : '模板绑定结果待核对'
@@ -243,14 +258,20 @@ export class ScenarioWorkspaces {
       await this.store.save(); throw error
     }
   }
+  /**
+   * A scenario draft save writes only its local file. The backend entity takes
+   * title, summary and relations from the confirmed material, so this path
+   * never touches backend state and keeps working while collaboration is down.
+   */
   async save(command: SaveCommand): Promise<void> {
     if (command.action === 'saveRequirement' || command.action === 'resolveRequirementConflict') return this.requirementSaves.save(command)
-    const { task, entity, remote } = await this.editable(command.entityId), record = await this.record(entity.id)
-    if (command.metadata.kind !== entity.kind || command.metadata.entityId !== entity.id || !matchesTemplate(command.metadata, entity)) throw new Error('材料身份与模板绑定不能通过编辑改变')
+    const task = await this.liveTask(command.entityId), record = await this.record(command.entityId), draft = await this.localMaterial(task)
+    if (command.metadata.kind !== draft.metadata.kind || command.metadata.entityId !== draft.entityId) throw new Error('材料身份不能通过编辑改变')
+    if (command.metadata.templateId !== draft.metadata.templateId || !command.metadata.templateRef || !draft.metadata.templateRef || !sameTemplate(command.metadata.templateRef, draft.metadata.templateRef)) throw new Error('材料模板绑定不能通过编辑改变')
     if (record.conflict && command.action !== 'resolveScenarioConflict') throw new Error('请先解决外部修改冲突')
+    this.observe(task, draft.path)
     try {
       await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, expectedHash: command.expectedHash, operationId: command.operationId })
-      if (command.metadata.title !== entity.title || command.metadata.summary !== entity.summary) await this.api.request('PUT', `/v1/projects/${remote.project.id}/entities/${entity.id}`, { idempotencyKey: `${command.operationId}-directory`, token: await this.deps.owned(entity), title: command.metadata.title, ...(command.metadata.summary !== undefined ? { summary: command.metadata.summary } : {}) })
       delete record.conflict; await this.store.save()
     } catch (error) {
       if (error && typeof error === 'object' && 'conflict' in error && error.conflict) { record.conflict = error.conflict as ScenarioConflict; await this.store.save(); return }
@@ -276,8 +297,8 @@ export class ScenarioWorkspaces {
     }
   }
   private async consumeWriteProposal(command: ResolveWriteCommand): Promise<void> {
-    const { task, entity } = await this.editable(command.entityId), record = await this.record(entity.id), proposal = record.writeProposal
-    if (!proposal || proposal.id !== command.proposalId || proposal.entityId !== entity.id) throw new Error('写入提议不存在或已被替换，请重新提问')
+    const record = await this.record(command.entityId), proposal = record.writeProposal
+    if (!proposal || proposal.id !== command.proposalId || proposal.entityId !== command.entityId) throw new Error('写入提议不存在或已被替换，请重新提问')
     if (proposal.status === 'consumed') return
     if (proposal.status === 'rejected') { if (command.decision === 'reject') return; throw new Error('写入提议已拒绝，请重新讨论后再提问') }
     if (command.decision === 'reject') {
@@ -285,13 +306,14 @@ export class ScenarioWorkspaces {
       record.rejectedConclusions = [...new Set([...(record.rejectedConclusions ?? []), ...keys])].slice(-200)
       proposal.status = 'rejected'; await this.store.save(); return
     }
-    if (record.writeProposalOccupationKey !== occupationKey(await this.deps.owned(entity))) throw new Error('材料占用已变化，写入提议已作废，请重新提问')
+    // A write only ever touches the draft worktree it was asked in.
+    const task = await this.liveTask(proposal.entityId, record.projectId)
+    if (path.basename(task.worktree) !== proposal.taskId) throw new Error('材料任务已变化，写入提议已作废，请重新提问')
     // A context proposal binds only the project-root file; it never rewrites the scenario body.
     if (proposal.target === 'context') return this.resolveContextProposal(task, proposal)
     if (record.conflict) throw new Error('请先解决文件冲突')
-    const draft = await readMaterial(task.worktree, entity.kind, entity.id)
+    const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
-    if (!matchesTemplate(draft.metadata, entity)) throw new Error('材料模板绑定与后台不一致，请先核对模板绑定操作')
     // A process may stop after the file was replaced and before the record said so.
     if (record.writeReceipt?.operationId === proposal.id && draft.sha256 === record.writeReceipt.afterHash) {
       proposal.status = 'consumed'; proposal.operationId = proposal.id; await this.store.save(); return
@@ -318,25 +340,18 @@ export class ScenarioWorkspaces {
   }
   /**
    * Saves an explicitly accepted project-context conclusion inside the task
-   * worktree without committing. The task baseline, this worktree and the
-   * latest accepted version are compared first; a concurrent accepted change
-   * returns to the conversation instead of overwriting it.
+   * worktree without committing. Only this worktree is compared; whether the
+   * project moved forward is decided when the material is confirmed, which is
+   * the first step that reads remote state.
    */
   private async resolveContextProposal(task: TaskView, proposal: ScenarioWriteProposal): Promise<void> {
     const current = await this.projectContext(task.worktree)
     if (current.hash !== proposal.baseHash) throw new Error('CONTEXT.md 已变化，写入提议已作废，请重新提问')
-    const { remote } = await this.deps.entity(task.entityId, task.projectId)
-    const head = (await this.ports.git.state(task.worktree)).head
-    const base = await this.ports.git.readOptionalBlob(task.worktree, head, 'CONTEXT.md')
-    const accepted = await this.ports.git.readOptionalBlob(task.worktree, remote.project.recognizedHead!, 'CONTEXT.md')
-    const sameBytes = (left?: Buffer, right?: Buffer): boolean => left === undefined ? right === undefined : right !== undefined && left.equals(right)
-    if (!sameBytes(accepted, base) && !sameBytes(current.bytes, accepted)) throw new Error('项目上下文已被其他已确认版本修改，请在对话中核对差异后重新提问')
     const target = await containedFile(task.worktree, 'CONTEXT.md', true)
     await atomicWriteFile(target, proposal.body)
     try {
       // The confirmation package must carry the new hash; writing it here avoids a manual save step.
-      const { entity } = await this.deps.entity(task.entityId, task.projectId)
-      const draft = await readMaterial(task.worktree, entity.kind, task.entityId)
+      const draft = await this.localMaterial(task)
       const metadata = await syncProjectContext(task.worktree, draft.metadata)
       if (digest(materialText(metadata, draft.body)) !== draft.sha256) await this.documents.save({ root: task.worktree, metadata, body: draft.body, expectedHash: draft.sha256, operationId: `${proposal.id}-context` })
     } catch (error) {
@@ -349,13 +364,12 @@ export class ScenarioWorkspaces {
   }
   /** Restores the body saved before the latest whole-body write; the current hash must still be that write's result. */
   async undoWrite(command: UndoWriteCommand): Promise<void> {
-    const { task, entity } = await this.editable(command.entityId), record = await this.record(entity.id), receipt = record.writeReceipt
+    const task = await this.liveTask(command.entityId), record = await this.record(command.entityId), receipt = record.writeReceipt
     if (!receipt || receipt.operationId !== command.operationId) throw new Error('没有可撤销的整篇写入')
     if (receipt.undone) return
     if (record.conflict) throw new Error('请先解决文件冲突')
-    const draft = await readMaterial(task.worktree, entity.kind, entity.id)
+    const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
-    if (!matchesTemplate(draft.metadata, entity)) throw new Error('材料模板绑定与后台不一致，请先核对模板绑定操作')
     if (draft.sha256 !== receipt.afterHash || command.expectedHash !== draft.sha256) throw new Error('正文已变化，无法撤销本次写入，请先处理当前编辑')
     try {
       await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, expectedHash: draft.sha256, operationId: `${receipt.operationId}-undo` })
@@ -388,53 +402,61 @@ export class ScenarioWorkspaces {
     const draft = await readMaterial(currentTask.worktree, entity.kind, task.entityId)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement' || draft.metadata.kind !== entity.kind) throw new Error('材料上下文无效')
     if (!matchesTemplate(draft.metadata, entity)) throw new Error('材料模板绑定与后台不一致，请先核对模板绑定操作')
-    return { entity, token, task: currentTask, draft }
+    return { entity, task: currentTask, draft }
   }
   async context(task: TaskView): Promise<string> {
     const local = await this.store.read(); if (!local.tasks.some(t => t.sessionId === task.sessionId && t.projectId === task.projectId) && !local.scenarioRepairs.some(r => r.task.sessionId === task.sessionId && r.projectId === task.projectId)) throw new Error('会话不属于当前登录用户')
-    const { entity, token, task: currentTask, draft } = await this.currentInput(task)
+    const { entity, task: currentTask, draft } = await this.currentInput(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料上下文无效')
     const ref = draft.metadata.templateRef, bytes = await this.projects.readFixed(task.projectId, ref.commitSha, ref.path, ref.sha256)
     if (digest(bytes) !== ref.sha256) throw new Error('模板 hash 不符')
     const record = await this.record(entity.id, task.projectId)
     record.requestContexts ??= {}
-    record.requestContexts[task.sessionId] = { draftHash: draft.sha256, templateRef: { ...ref }, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record), occupationKey: occupationKey(token) }
+    record.requestContexts[task.sessionId] = { draftHash: draft.sha256, templateRef: { ...ref }, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record) }
+    // The coming answer replaces the previous answer's failure explanation.
+    delete record.writeProposalError
     await this.store.save()
     const protocol = task.scenarioRepair
       ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
       : `当前${entity.kind === 'scenario' ? '场景' : '需求'} ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认，禁止引用未读取资料。
 回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
-当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后追加唯一 eadp-write-proposal 代码块：{"entityId":"${task.entityId}","conclusions":[{"id":"C1","text":"本轮结论"}],"evidenceIds":[],"body":"整篇新正文"}。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
+当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后输出唯一一个围栏代码块，起始行逐字为三个反引号加 eadp-write-proposal，结束行逐字为三个反引号，块内是下面这行 JSON 的格式（正文换成真实内容）：
+\`\`\`eadp-write-proposal
+{"entityId":"${task.entityId}","conclusions":[{"id":"C1","text":"本轮结论"}],"evidenceIds":[],"body":"整篇新正文"}
+\`\`\`
+不要用 <eadp-write-proposal> 之类的标签代替围栏，围栏之后不要再写任何文字。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
     return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n${await this.sources.context(task)}`
   }
+  /**
+   * Turns one answer into a pending proposal from local state only: the draft,
+   * its hashes and the read evidence are read here, so an unreachable
+   * collaboration service cannot discard a proposal the user is waiting for.
+   */
   async accept(sessionId: string, content: string): Promise<boolean> {
-    const local = await this.store.read(), task = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'material')
-    if (!task) return false
-    if (!content.includes('```eadp-write-proposal')) return false
-    const record = await this.record(task.entityId, task.projectId)
+    const local = await this.store.read(), sessionTask = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'material')
+    if (!sessionTask) return false
+    if (!hasWriteProposal(content)) return false
+    const record = await this.record(sessionTask.entityId, sessionTask.projectId)
     try {
-      const { draft, task: currentTask, token } = await this.currentInput(task)
+      // A resumed historical conversation still proposes against the live revision worktree.
+      const task = await this.liveTask(sessionTask.entityId, sessionTask.projectId)
+      const draft = await this.localMaterial(task)
       if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
       const input = record.requestContexts?.[sessionId]
-      if (!input || input.occupationKey !== occupationKey(token)) throw new Error('会话材料占用上下文已失效')
-      const invalid = proposalInvalidReason({ baseHash: input.draftHash, templateRef: input.templateRef, contextHash: input.contextHash, evidenceIds: input.evidenceIds }, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record) })
+      if (!input) throw new Error('会话材料上下文已失效，请重新提问')
+      const context = await this.projectContext(task.worktree)
+      const invalid = proposalInvalidReason({ baseHash: input.draftHash, templateRef: input.templateRef, contextHash: input.contextHash, evidenceIds: input.evidenceIds }, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record) })
       if (invalid) throw new Error(invalid)
       const parsed = parseWriteProposal(content, draft, this.readEvidenceIds(record))
       if (parsed.conclusions.map(conclusionKey).some(key => record.rejectedConclusions?.includes(key))) throw new Error('同一结论已被拒绝，出现新结论后再提问')
-      // Host owns the ID and every bound hash; the answer only supplied content.
-      if (parsed.target === 'context') {
-        const context = await this.projectContext(currentTask.worktree)
-        if (context.bytes?.toString('utf8') === parsed.body) throw new Error('写入提议与当前项目上下文相同')
-        record.writeProposal = { id: randomUUID(), entityId: task.entityId, target: 'context', baseHash: context.hash, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, createdAt: new Date().toISOString(), status: 'pending' }
-      } else {
-        record.writeProposal = { id: randomUUID(), entityId: task.entityId, baseHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, createdAt: new Date().toISOString(), status: 'pending' }
-      }
-      record.writeProposalOccupationKey = input.occupationKey
+      if (parsed.target === 'context' && context.bytes?.toString('utf8') === parsed.body) throw new Error('写入提议与当前项目上下文相同')
+      // Host owns the ID, the task binding and every bound hash; the answer only supplied content.
+      record.writeProposal = { id: randomUUID(), entityId: task.entityId, taskId: path.basename(task.worktree), baseHash: parsed.target === 'context' ? context.hash : draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, createdAt: new Date().toISOString(), status: 'pending', ...(parsed.target === 'context' ? { target: 'context' as const } : {}) }
       delete record.writeProposalError
       await this.store.save(); return true
     } catch (error) {
       // A failed replacement cannot leave a previous pending proposal actionable.
-      if (record.writeProposal?.status === 'pending') { delete record.writeProposal; delete record.writeProposalOccupationKey }
+      if (record.writeProposal?.status === 'pending') delete record.writeProposal
       record.writeProposalError = error instanceof Error ? error.message : '提议无法校验'
       await this.store.save()
       return true

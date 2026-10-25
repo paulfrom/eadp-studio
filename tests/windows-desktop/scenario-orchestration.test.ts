@@ -171,18 +171,74 @@ test('scenario sessions use explicit whole-body write proposals after summarizin
   assert.match(context, /回答规则：先用可读中文归纳本轮明确结论/)
   assert.match(context, /eadp-write-proposal/)
   assert.match(context, /整篇新正文/)
-  const example = /代码块：(\{[^\n]+\})。块内/.exec(context)?.[1]
+  const example = /```eadp-write-proposal\n(\{[^\n]+\})\n```/.exec(context)?.[1]
   assert.ok(example, 'the runtime prompt supplies a complete proposal example')
+  assert.match(context, /不要用 <eadp-write-proposal> 之类的标签代替围栏/)
   const response = `是否写入？\n\`\`\`eadp-write-proposal\n${example}\n\`\`\``
   const parsed = parseWriteProposal(response, f.draft, ['evidence'])
   assert.equal(parsed.conclusions[0]!.id, 'C1')
   assert.deepEqual(parsed.evidenceIds, [])
   assert.equal(await f.workspaces.accept(f.task.sessionId, '是否写入？'), false)
+  assert.equal(await f.workspaces.accept(f.task.sessionId, '上一条回复末尾的 `eadp-write-proposal` 代码块即提议内容'), false, 'naming the block in prose is not an attempt')
   assert.equal(f.record.writeProposal, undefined, 'plain conversation never creates an actionable write')
+  assert.equal(f.record.writeProposalError, undefined)
   assert.equal(await f.workspaces.accept(f.task.sessionId, response), true)
   assert.equal(f.record.writeProposal?.status, 'pending')
   assert.equal(f.record.writeProposal?.body, parsed.body)
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, f.draft.sha256, 'a proposal does not write the material')
+})
+
+test('a proposal closed with a matching tag still becomes an actionable card', async t => {
+  const f = await fixture(t)
+  await f.workspaces.context(f.task)
+  const value = { entityId: f.entity.id, conclusions: [{ id: 'C1', text: '退货单只做申请' }], evidenceIds: ['evidence'], body: '## 范围\n退货单只做申请。\n## 规则\n待补充' }
+  const response = `是否写入？\n<eadp-write-proposal>\n${JSON.stringify(value)}\n</eadp-write-proposal>`
+  assert.equal(await f.workspaces.accept(f.task.sessionId, response), true)
+  assert.equal(f.record.writeProposal?.status, 'pending')
+  assert.deepEqual(f.record.writeProposal?.conclusions, [{ id: 'C1', text: '退货单只做申请' }])
+})
+
+test('the proposal, its write and its undo stay local when the collaboration service is unreachable', async t => {
+  const f = await fixture(t)
+  await f.workspaces.context(f.task)
+  const value = { entityId: f.entity.id, conclusions: [{ id: 'C1', text: '退货单只做申请' }], evidenceIds: ['evidence'], body: '## 范围\n退货单只做申请。\n## 规则\n待补充' }
+  const content = `是否写入？\n\`\`\`eadp-write-proposal\n${JSON.stringify(value)}\n\`\`\``
+  f.workspaces.deps.entity = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
+  f.workspaces.deps.owned = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
+  assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
+  const proposal = f.record.writeProposal!
+  assert.equal(proposal.status, 'pending', 'an unreachable backend cannot discard the proposal')
+  const before = await readMaterial(f.root, 'scenario', 'scene')
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: before.sha256 })
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).body, value.body)
+  await f.workspaces.undoWrite({ action: 'undoScenarioWrite', entityId: 'scene', operationId: proposal.id, expectedHash: f.record.writeReceipt!.afterHash })
+  assert.equal((await readMaterial(f.root, 'scenario', 'scene')).body, before.body)
+})
+
+test('a scenario draft save writes the local file without touching the backend entity', async t => {
+  const f = await fixture(t)
+  const draft = await readMaterial(f.root, 'scenario', 'scene')
+  f.workspaces.deps.entity = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
+  await f.workspaces.save({ action: 'saveScenario', entityId: 'scene', metadata: { ...draft.metadata, title: '改名后的场景' }, body: '## 范围\n改名后的正文\n## 规则\n待补充', expectedHash: draft.sha256, operationId: 'draft-save' })
+  const saved = await readMaterial(f.root, 'scenario', 'scene')
+  assert.equal(saved.body, '## 范围\n改名后的正文\n## 规则\n待补充')
+  assert.equal(saved.metadata.title, '改名后的场景')
+  assert.equal(saved.path, '场景/改名后的场景.md')
+})
+
+test('an unusable proposal reports why no button appeared, and the next request clears it', async t => {
+  const f = await fixture(t)
+  await f.workspaces.open(f.entity.id)
+  await f.workspaces.context(f.task)
+  const value = { entityId: f.entity.id, conclusions: [{ id: 'C1', text: '退货单只做申请' }], evidenceIds: ['evidence'], body: '## 范围\n退货单只做申请。\n## 规则\n待补充' }
+  assert.equal(await f.workspaces.accept(f.task.sessionId, `是否写入？\n\`\`\`eadp-write-proposal\n${JSON.stringify(value)}`), true)
+  assert.equal(f.record.writeProposal, undefined)
+  assert.match(f.record.writeProposalError ?? '', /需要且仅允许一个/)
+  assert.equal((await f.workspaces.snapshot(f.remote))?.writeProposalError, f.record.writeProposalError, 'the failure reaches the card')
+  await f.workspaces.context(f.task)
+  assert.equal(f.record.writeProposalError, undefined, 'a new answer replaces the previous explanation')
+  assert.equal(await f.workspaces.accept(f.task.sessionId, `是否写入？\n\`\`\`eadp-write-proposal\n${JSON.stringify(value)}\n\`\`\``), true)
+  assert.equal(f.record.writeProposal?.status, 'pending')
 })
 
 for (const failure of ['format', 'unread-evidence', 'expired-context'] as const) test(`a ${failure} proposal exposes its failure and replaces the old actionable card`, async t => {
@@ -205,7 +261,6 @@ for (const failure of ['format', 'unread-evidence', 'expired-context'] as const)
   const reason = failure === 'format' ? /字段无效/ : failure === 'unread-evidence' ? /未实际读取的资料/ : /正文已变化/
   assert.match(snapshot?.writeProposalError ?? '', reason)
   assert.equal(snapshot?.writeProposal, undefined)
-  assert.equal(f.record.writeProposalOccupationKey, undefined)
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, before.sha256)
   const saved = JSON.parse(await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8'))
   assert.equal(saved.scenarios[0].writeProposalError, snapshot?.writeProposalError, 'failure survives a restart')
@@ -236,7 +291,7 @@ test('an accepted context proposal writes only the project root snapshot and bin
   assert.equal(draft.metadata.files?.find(file => file.path === 'CONTEXT.md')?.sha256, digest(body), 'the confirmation package carries the new context hash')
 })
 
-test('a concurrently accepted context returns to the conversation instead of overwriting it', async t => {
+test('a context write touches only the worktree; the accepted-version comparison belongs to confirmation', async t => {
   const f = await fixture(t), head = 'c'.repeat(40), acceptedHead = 'd'.repeat(40)
   await writeFile(path.join(f.root, 'CONTEXT.md'), '旧上下文')
   f.contexts.set(`${head}:CONTEXT.md`, Buffer.from('旧上下文'))
@@ -246,10 +301,9 @@ test('a concurrently accepted context returns to the conversation instead of ove
   await f.workspaces.context(f.task)
   assert.equal(await f.workspaces.accept(f.task.sessionId, content), true)
   const proposal = f.record.writeProposal!
-  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' }), /其他已确认版本/)
-  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), '旧上下文')
-  assert.equal(f.record.writeProposal!.status, 'pending')
-  assert.match(f.record.writeProposal!.error ?? '', /其他已确认版本/)
+  await f.workspaces.resolveWriteProposal({ action: 'resolveScenarioWriteProposal', entityId: 'scene', proposalId: proposal.id, decision: 'write', expectedHash: '' })
+  assert.equal(await readFile(path.join(f.root, 'CONTEXT.md'), 'utf8'), '本地新上下文')
+  assert.equal(f.record.writeProposal!.status, 'consumed')
 })
 
 test('a context proposal expires when the worktree file changes after the question', async t => {

@@ -111,15 +111,24 @@ test('a late requirement answer cannot become a proposal against a newer body or
   assert.equal(f.record.writeProposal, undefined, 'the answer was generated against older material bytes')
 })
 
-for (const change of ['body', 'evidence', 'context', 'occupation'] as const) test(`a requirement proposal expires after its ${change} input changes`, async t => {
+for (const change of ['body', 'evidence', 'context'] as const) test(`a requirement proposal expires after its ${change} input changes`, async t => {
   const f = await fixture(t), proposal = await f.propose()
   if (change === 'body') await saveMaterial(f.root, f.draft.metadata, '用户修改')
   if (change === 'evidence') f.record.sources[0]!.selected = false
   if (change === 'context') await writeFile(path.join(f.root, 'CONTEXT.md'), '新的项目上下文')
-  if (change === 'occupation') f.entity.occupation = { ...f.entity.occupation!, occupationId: 'another-occupation', generation: 2 }
   const current = await readMaterial(f.root, 'requirement', f.entity.id)
   await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: current.sha256 }), /已变化|已作废/)
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, current.body)
+})
+
+test('a requirement proposal is written locally while the collaboration service is unreachable', async t => {
+  const f = await fixture(t), proposal = await f.propose()
+  f.workspaces.deps.entity = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
+  f.workspaces.deps.owned = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '审批人可以同意申请。')
+  await f.workspaces.undoWrite({ action: 'undoRequirementWrite', entityId: f.entity.id, operationId: proposal.id, expectedHash: f.record.writeReceipt!.afterHash })
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, f.draft.body)
 })
 
 test('requirement editing keeps its original template and proposal when a switch is rejected', async t => {
@@ -132,13 +141,13 @@ test('requirement editing keeps its original template and proposal when a switch
   assert.equal(f.record.writeProposal?.status, 'pending')
 })
 
-test('a local requirement template reference cannot override the binding accepted by the backend', async t => {
+test('a backend template rebind stops the next question while the local write keeps its own binding', async t => {
   const f = await fixture(t), proposal = await f.propose()
   f.entity.templateId = 'another-template'
   f.entity.templateRef = { ...templateRef, path: '.template/another-template.md' }
   await assert.rejects(f.workspaces.context(f.task), /模板绑定与后台不一致/)
-  await assert.rejects(f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 }), /模板绑定与后台不一致/)
-  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, f.draft.body)
+  await f.workspaces.resolveWriteProposal({ action: 'resolveRequirementWriteProposal', entityId: f.entity.id, proposalId: proposal.id, decision: 'write', expectedHash: f.draft.sha256 })
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '审批人可以同意申请。')
 })
 
 test('requirement saves preserve conflicting external and unsaved input and accept an explicit resolution at the current hash', async t => {

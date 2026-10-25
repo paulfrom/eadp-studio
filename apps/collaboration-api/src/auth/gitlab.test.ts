@@ -272,6 +272,33 @@ test('the backend management credential is required and Studio publication IDs a
   await assert.rejects(new GitLab(local).json('/user'), code('GITLAB_NOT_CONFIGURED')); assert.equal(requested, false);
 });
 
+test('a read without a response is retried once while writes and a consumed timeout are not', async () => {
+  let reads = 0;
+  fixture(() => { reads++; if (reads === 1) throw new Error('socket hang up'); return json(user); });
+  assert.deepEqual(await gitlab.user(42), { id: 42, username: 'bound-user', state: 'active', email: 'songlin.liu@changhong.com' });
+  assert.equal(reads, 2, 'a failed read is repeated once');
+
+  mock.restoreAll(); let gateway = 0;
+  fixture(() => { gateway++; return gateway === 1 ? json({}, 503) : json(user); });
+  assert.equal((await gitlab.user(42)).id, 42);
+  assert.equal(gateway, 2, 'a retryable gateway status is repeated once');
+
+  mock.restoreAll(); let failures = 0;
+  fixture(() => { failures++; throw new Error('fetch failed'); });
+  await assert.rejects(gitlab.json('/user'), error => code('GITLAB_UNAVAILABLE')(error) && /can be retried/.test((error as Error).message));
+  assert.equal(failures, 2);
+
+  mock.restoreAll(); let timeouts = 0;
+  fixture(() => { timeouts++; throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); });
+  await assert.rejects(gitlab.json('/user'), code('GITLAB_UNAVAILABLE'));
+  assert.equal(timeouts, 1, 'a consumed timeout leaves no budget for a second attempt');
+
+  mock.restoreAll(); let writes = 0;
+  fixture(() => { writes++; throw new Error('fetch failed'); });
+  await assert.rejects(gitlab.json('/projects', 'POST', { name: 'New project' }), error => code('GITLAB_UNAVAILABLE')(error) && /result may be unknown/.test((error as Error).message));
+  assert.equal(writes, 1, 'writes are never repeated');
+});
+
 test('the local cache serves repeated GitLab reads while creation authority and writes stay live', async () => {
   const calls = fixture(path => {
     if (path === '/users/42') return json(user);
@@ -280,6 +307,7 @@ test('the local cache serves repeated GitLab reads while creation authority and 
     if (path === '/groups/1') return json(namespaceGroup(1, 'developer'));
     if (path === '/projects/7/members/all/42') return json(member(40));
     if (path === '/projects/7') return json(project);
+    if (path === '/projects/7/repository/branches/main') return json({ commit: { id: 'c'.repeat(40) } });
     throw new Error(`Unexpected path ${path}`);
   });
   const values = new Map<string, string>(), ttls: Array<[string, number]> = [];
@@ -295,16 +323,28 @@ test('the local cache serves repeated GitLab reads while creation authority and 
   assert.equal(calls.length, discovered, 'a cached namespace list must not reach GitLab again');
   assert.ok(ttls.some(([key, ttl]) => key.includes('namespaces:42') && ttl === 60));
 
-  await cached.authorize(actor, 7);
-  await cached.authorize(actor, 7);
   const membershipReads = () => calls.filter(call => call.path === '/projects/7/members/all/42').length;
   const projectReads = () => calls.filter(call => call.path === '/projects/7').length;
+  const userReads = () => calls.filter(call => call.path === '/users/42').length;
+  const usersBefore = userReads();
+  await cached.authorize(actor, 7);
+  await cached.authorize(actor, 7);
   assert.equal(membershipReads(), 1);
   assert.equal(projectReads(), 1);
+  assert.equal(userReads(), usersBefore);
+  assert.ok(ttls.some(([key, ttl]) => key.includes('member:projects:7:42:all') && ttl === 300));
 
   await cached.authorize(actor, 7, true);
-  assert.equal(membershipReads(), 2);
-  assert.equal(projectReads(), 2);
+  assert.equal(membershipReads(), 2, 'a write always checks membership live');
+  assert.equal(projectReads(), 1, 'a write reuses the remembered immutable project metadata');
+  assert.equal(userReads(), usersBefore, 'a write reuses the remembered user state');
+
+  await cached.authorize(actor, 7);
+  assert.equal(membershipReads(), 2, 'a write remembers its live membership for the reads that follow');
+
+  const beforeBranch = calls.length;
+  assert.equal(await cached.branchHead(7, 'main'), 'c'.repeat(40));
+  assert.deepEqual(calls.slice(beforeBranch).map(call => call.path), ['/projects/7/repository/branches/main'], 'a branch head read does not repeat the authorization');
 
   const beforeNamespace = calls.length;
   assert.deepEqual(await cached.namespace(actor, 1), expected[0]);

@@ -8,7 +8,7 @@ const directories = ['场景', '需求', '交接', '原型代码'];
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, project: ProjectView, commitSha: string): Promise<{ generalFixed: FixedReference }> {
   await gitlab.authorize(actor, project.gitlabProjectId, true);
-  requireCondition(await gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch has not reached the exact initialization commit', 409);
+  requireCondition(await gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch has not reached the exact initialization commit', 409);
   const prefix = `/projects/${project.gitlabProjectId}/repository`;
   const commit = await gitlab.json<unknown>(`${prefix}/commits/${commitSha}`);
   requireCondition(record(commit) && commit.id === commitSha && Array.isArray(commit.parent_ids) && commit.parent_ids.length === 0, 'INITIALIZATION_ROOT_COMMIT_REQUIRED', 'Initialization requires the first root commit of the empty project', 422);
@@ -43,6 +43,6 @@ export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, 
   requireCondition(project.generalScenario, 'GENERAL_SCENARIO_UNRESERVED', 'The project has no reserved general scenario identity', 409);
   const generalText = new TextDecoder('utf-8', { fatal: true }).decode(generalBytes);
   requireCondition(generalText === generalScenarioDocument(project.generalScenario.entityId), 'GENERAL_SCENARIO_MISMATCH', 'General scenario content does not match the reserved identity and provisioned document', 422);
-  requireCondition(await gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch changed during initialization verification', 409);
+  requireCondition(await gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === commitSha, 'INITIALIZATION_HEAD_MISMATCH', 'The stable branch changed during initialization verification', 409);
   return { generalFixed: { commitSha, path: '场景/通用场景.md', sha256: createHash('sha256').update(generalBytes).digest('hex') } };
 }

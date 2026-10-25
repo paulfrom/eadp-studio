@@ -224,13 +224,15 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
     assert.equal(skipped.json<{ error: { code: string } }>().error.code, 'CONFLICT_ORDINAL_SEQUENCE')
   })
 
-  await t.test('comparison writes require edit membership and reads require read membership', async () => {
+  await t.test('comparison writes require edit membership while reads stay a session-scoped projection', async () => {
     remote.memberLevel = 20
     const reporter = await send('POST', comparisonsUrl, comparison())
     assert.equal(reporter.statusCode, 403, reporter.body)
     remote.memberLevel = 0
+    const before = gitlab.paths.length
     const list = await send('GET', comparisonsUrl)
-    assert.equal(list.statusCode, 403, list.body)
+    assert.equal(list.statusCode, 200, list.body)
+    assert.equal(gitlab.paths.length, before, 'a read must not consult GitLab')
     remote.memberLevel = 40
     const restored = await send('GET', comparisonsUrl)
     assert.equal(restored.statusCode, 200, restored.body)

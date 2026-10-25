@@ -6,7 +6,7 @@ export function ScenarioWriteProposalError({ message }: { message: string }) {
   return <section className={css.dockCard} role="alert" aria-label="写入提议未生成">
     <header className={css.cardHead}><strong>写入提议未生成</strong></header>
     <p>{message}</p>
-    <p className={css.muted}>请让 AI 基于当前材料重新提出写入提议，生成后会显示对应的写入按钮。</p>
+    <p className={css.muted}>请让 AI 用 eadp-write-proposal 代码块基于当前材料重新提出写入提议，生成后会显示对应的写入按钮。</p>
   </section>
 }
 

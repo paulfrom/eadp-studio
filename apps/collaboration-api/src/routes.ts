@@ -54,11 +54,9 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   write('POST', `${base}/adoptions`, contract.AdoptSchema, (a, p, b) => service.adopt(a, p.projectId!, b));
   write('POST', `${base}/adoptions/:adoptionId/success`, contract.AdoptionSuccessSchema, (a, p, b) => service.adoptionSuccess(a, p.projectId!, p.adoptionId!, b));
   write('POST', `${base}/entities/:entityId/receipts`, contract.HandoffReceiptSchema, (a, p, b) => service.receipt(a, p.projectId!, p.entityId!, b));
-  read(`${base}/entities/:entityId/receipts`, async (a, p) => {
-    await service.authorize(a, p.projectId!);
-    return (await service.database.query('SELECT id,confirmation_id AS "confirmationId",creator_id::integer AS "actorId",note,created_date AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 ORDER BY created_date', [p.projectId!, p.entityId!])).rows;
-  });
-  read(`${base}/deployment`, async (a, p) => (await service.authorize(a, p.projectId!)).deployment ?? null);
+  read(`${base}/entities/:entityId/receipts`, async (_a, p) =>
+    (await service.database.query('SELECT id,confirmation_id AS "confirmationId",creator_id::integer AS "actorId",note,created_date AS "receivedAt" FROM studio_handoff_receipts WHERE project_id=$1 AND entity_id=$2 ORDER BY created_date', [p.projectId!, p.entityId!])).rows);
+  read(`${base}/deployment`, async (a, p) => (await service.project(a, p.projectId!)).deployment ?? null);
   write('POST', `${base}/publication-authorizations`, contract.PublicationAuthorizationSchema, (a, p, b) => service.publicationAuthorization(a, p.projectId!, b));
   app.get<{ Params: { projectId: string } }>(`${base}/publication-current`, request => service.publicationCurrent(request.headers.authorization, request.params.projectId));
   write('POST', `${base}/deployment`, contract.DeploymentSchema, (a, p, b) => service.deployment(a, p.projectId!, b));

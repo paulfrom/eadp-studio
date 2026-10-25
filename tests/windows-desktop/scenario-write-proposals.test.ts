@@ -6,7 +6,7 @@ import test from 'node:test'
 import type { MaterialMetadata } from '../../packages/contracts/src/index.ts'
 import { readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { ScenarioDocumentService } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
-import { conclusionKey, parseWriteProposal, proposalInvalidReason, summarizeWrite } from '../../packages/studio-plugin/src/host/application/scenario-write-proposals.ts'
+import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite } from '../../packages/studio-plugin/src/host/application/scenario-write-proposals.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
 function metadata(): MaterialMetadata { return { entityId: 'scenario-one', kind: 'scenario', title: '退回申请', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [] } }
@@ -35,6 +35,24 @@ test('a proposal cannot cite evidence the user has not had read, or another scen
   assert.throws(() => parseWriteProposal(`${response(proposal(draft))}\n${response(proposal(draft))}`, draft, ['source-one']), /需要且仅允许一个/)
   // A stream cut before the closing fence never yields a writable proposal.
   assert.throws(() => parseWriteProposal('```eadp-write-proposal\n' + JSON.stringify(proposal(draft)), draft, ['source-one']), /需要且仅允许一个/)
+})
+
+test('the block is read from anywhere in the answer, after trailing text, CRLF and tag delimiters', async t => {
+  const { draft } = await fixture(t)
+  const expected = { conclusions: [{ id: 'C1', text: '仅允许已审批的退回申请' }], evidenceIds: ['source-one'], body: '新正文' }
+  assert.deepEqual(parseWriteProposal(`${response(proposal(draft))}\n\n点击「写入」后才会生效。`, draft, ['source-one']), expected)
+  assert.deepEqual(parseWriteProposal(response(proposal(draft)).replace(/\n/g, '\r\n'), draft, ['source-one']), expected)
+  const tagged = `已整理。\n<eadp-write-proposal>\n${JSON.stringify(proposal(draft))}\n</eadp-write-proposal>`
+  assert.deepEqual(parseWriteProposal(tagged, draft, ['source-one']), expected)
+})
+
+test('a payload that is not JSON fails with a retryable message instead of a parser trace', async t => {
+  const { draft } = await fixture(t)
+  assert.throws(() => parseWriteProposal('```eadp-write-proposal\n{"entityId":\n```', draft, ['source-one']), /不是合法 JSON/)
+  assert.equal(hasWriteProposal('是否写入？'), false)
+  assert.equal(hasWriteProposal('上一条回复末尾的 `eadp-write-proposal` 代码块即提议'), false)
+  assert.equal(hasWriteProposal('<eadp-write-proposal>\n{}'), true)
+  assert.equal(hasWriteProposal('```eadp-write-proposal\n{}'), true)
 })
 
 test('body, template, CONTEXT.md or evidence changing voids the proposal instead of rebinding it', async t => {

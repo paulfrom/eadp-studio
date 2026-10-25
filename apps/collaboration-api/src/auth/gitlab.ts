@@ -9,6 +9,15 @@ export interface GitLabProject { id: number; name: string; path: string; path_wi
 interface Member { id: number; state: string; access_level: number; expires_at: string | null; membership_state?: string }
 interface Group { id: number; name: string; full_path: string; project_creation_level: string; marked_for_deletion_on?: string | null; marked_for_deletion_at?: string | null }
 const sha = /^[a-f0-9]{40}$/;
+/** Reads may be repeated without changing GitLab state; writes may not. */
+const repeatableStatus = new Set([502, 503, 504]);
+const retryDelayMilliseconds = 250;
+const requestTimeoutMilliseconds = 15_000;
+/** A permission or repository answer may be reused this long; a write always checks membership live. */
+const memberReadSeconds = 300;
+const projectReadSeconds = 300;
+const userReadSeconds = 60;
+const pause = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function valid(condition: unknown): asserts condition { requireCondition(condition, 'GITLAB_INVALID_RESPONSE', 'GitLab returned an invalid response', 502); }
 function numericId(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
@@ -32,12 +41,27 @@ export class GitLab {
     const bytes = new Uint8Array(size); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; } return bytes;
   }
+  /**
+   * Bounds one GitLab call. A read that failed without a response, or received a
+   * retryable gateway status, is repeated once; a consumed timeout is not,
+   * because the caller's remaining budget for chained GitLab calls is unknown.
+   */
   private async response(path: string, method = 'GET', body?: unknown): Promise<Response> {
     requireCondition(this.config.gitlabToken && !/[\r\n]/.test(this.config.gitlabToken), 'GITLAB_NOT_CONFIGURED', 'The backend GitLab management credential is not configured', 503);
     requireCondition(path.startsWith('/') && !path.startsWith('//') && !path.includes('\\'), 'INVALID_GITLAB_PATH', 'Invalid GitLab API path', 500);
-    let response: Response;
-    try { response = await fetch(`${this.config.gitlabUrl}/api/v4${path}`, { method, headers: { 'PRIVATE-TOKEN': this.config.gitlabToken, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(15000) }); }
-    catch { throw new DomainError('GITLAB_UNAVAILABLE', 'GitLab request failed or timed out; its result may be unknown', 502); }
+    const repeatable = method === 'GET';
+    let response!: Response;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        response = await fetch(`${this.config.gitlabUrl}/api/v4${path}`, { method, headers: { 'PRIVATE-TOKEN': this.config.gitlabToken, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(requestTimeoutMilliseconds) });
+      } catch (error) {
+        const timedOut = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+        if (repeatable && attempt === 1 && !timedOut) { await pause(retryDelayMilliseconds); continue; }
+        throw new DomainError('GITLAB_UNAVAILABLE', repeatable ? 'GitLab did not answer the read; the same request can be retried' : 'GitLab request failed or timed out; its result may be unknown', 502);
+      }
+      if (repeatable && attempt === 1 && repeatableStatus.has(response.status)) { await response.body?.cancel().catch(() => undefined); await pause(retryDelayMilliseconds); continue; }
+      break;
+    }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
       if (response.status === 404) throw new DomainError('GITLAB_NOT_FOUND', 'GitLab did not resolve the requested resource', 404);
@@ -45,11 +69,20 @@ export class GitLab {
       if (response.status === 403) throw new DomainError('GITLAB_RESOURCE_DENIED', 'GitLab did not authorize the requested resource operation', 503);
       if (response.status === 429) throw new DomainError('GITLAB_RATE_LIMITED', 'GitLab temporarily limited requests', 503);
       if (response.status === 400 || response.status === 409 || response.status === 422) throw new DomainError('GITLAB_REQUEST_REJECTED', 'GitLab rejected the requested operation; verify its recorded result before retrying', 409);
-      throw new DomainError('GITLAB_UNAVAILABLE', 'GitLab could not complete the operation; its result may be unknown', 502);
+      throw new DomainError('GITLAB_UNAVAILABLE', repeatable ? 'GitLab could not answer the read; the same request can be retried' : 'GitLab could not complete the operation; its result may be unknown', 502);
     }
     return response;
   }
+  /**
+   * Raw bytes of one Git object. Callers verify or parse them; a projection that
+   * only displays accepted content reads it through `GitLabContent` instead.
+   */
   async bytes(path: string, maximum = 2 * 1024 * 1024): Promise<Uint8Array> { return this.read(await this.response(path), maximum); }
+  /** The merge base of two fixed commits is a historical fact, not current state. */
+  async mergeBase(projectId: number, from: string, to: string): Promise<string> {
+    const value = await this.json<{ id?: unknown }>(`/projects/${projectId}/repository/merge_base?refs[]=${from}&refs[]=${to}`);
+    valid(record(value) && typeof value.id === 'string' && sha.test(value.id)); return value.id;
+  }
   private parse<T>(bytes: Uint8Array): T {
     try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as T; }
     catch { throw new DomainError('GITLAB_INVALID_RESPONSE', 'GitLab returned an invalid response', 502); }
@@ -79,7 +112,7 @@ export class GitLab {
   }
   async user(id: number): Promise<GitLabUser> {
     requireCondition(numericId(id), 'GITLAB_BINDING_REQUIRED', 'A verified numeric GitLab user binding is required', 403);
-    const raw = await this.cache.load(this.key(`user:${id}`), 60, () => this.json<unknown>(`/users/${id}`)), user = this.checkedUser(raw);
+    const raw = await this.cache.load(this.key(`user:${id}`), userReadSeconds, () => this.json<unknown>(`/users/${id}`)), user = this.checkedUser(raw);
     valid(user.id === id); return user;
   }
   private async liveUser(id: number): Promise<GitLabUser> {
@@ -117,21 +150,23 @@ export class GitLab {
     repositoryPath(fullPath);
     try { return await this.project(fullPath); } catch (error) { if (error instanceof DomainError && error.code === 'GITLAB_NOT_FOUND') return null; throw error; }
   }
+  /**
+   * Confirms the bound GitLab user may act on the project. A read reuses the
+   * remembered membership for a short window; a write rechecks membership live
+   * and remembers that answer, so the rest of that request stays on the cache.
+   */
   async authorize(actor: Pick<Actor, 'gitlabUserId'>, projectId: number, edit = false): Promise<GitLabProject> {
-    if (edit) {
-      await this.liveUser(actor.gitlabUserId);
-      const membership = await this.member('projects', projectId, actor.gitlabUserId);
-      requireCondition(this.active(membership, 30), 'PROJECT_EDIT_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
-      const project = await this.project(projectId);
-      valid(project.id === projectId);
-      requireCondition(project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
-      return project;
-    }
     await this.user(actor.gitlabUserId);
-    const membership = await this.cache.load(this.memberKey('projects', projectId, actor.gitlabUserId, true), 30, () => this.member('projects', projectId, actor.gitlabUserId));
-    requireCondition(this.active(membership, 20), 'GITLAB_READ_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
-    const project = await this.cache.load(this.key(`project:${projectId}`), 30, () => this.project(projectId));
+    const key = this.memberKey('projects', projectId, actor.gitlabUserId, true), minimum = edit ? 30 : 20;
+    let membership: Member | null;
+    if (edit) {
+      membership = await this.member('projects', projectId, actor.gitlabUserId);
+      await this.cache.remember(key, membership, memberReadSeconds);
+    } else membership = await this.cache.load(key, memberReadSeconds, () => this.member('projects', projectId, actor.gitlabUserId));
+    requireCondition(this.active(membership, minimum), edit ? 'PROJECT_EDIT_DENIED' : 'GITLAB_READ_DENIED', 'The bound GitLab user has no active repository membership for this operation', 403);
+    const project = await this.cache.load(this.key(`project:${projectId}`), projectReadSeconds, () => this.project(projectId));
     valid(project.id === projectId);
+    requireCondition(!edit || project.archived !== true, 'PROJECT_EDIT_DENIED', 'The GitLab project is archived', 403);
     return project;
   }
   private groupPolicy(raw: unknown, id: number, accessLevel: number): NamespaceView | null {
@@ -189,8 +224,8 @@ export class GitLab {
     }
     await this.cache.invalidate(this.memberKey('projects', projectId, actor.gitlabUserId, true));
   }
-  async branchHead(actor: Actor, projectId: number, branch: string): Promise<string> {
-    await this.authorize(actor, projectId);
+  /** Reads a branch head; callers authorize the actor for this project first. */
+  async branchHead(projectId: number, branch: string): Promise<string> {
     const value = await this.json<{ commit?: { id?: string } } | null>(`/projects/${projectId}/repository/branches/${encodeURIComponent(branch)}`);
     valid(value && typeof value.commit?.id === 'string' && sha.test(value.commit.id)); return value.commit.id;
   }

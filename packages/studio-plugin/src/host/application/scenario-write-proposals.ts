@@ -10,6 +10,25 @@ export interface ProposalCurrent { draftHash: string; templateRef: FixedReferenc
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/
 const evidenceLimit = 100
 const conclusionLimit = 50
+const fenceOpen = '```eadp-write-proposal'
+const fenceClose = '```'
+
+/**
+ * Reads the single proposal block. The protocol asks for a fenced
+ * `eadp-write-proposal` block; models also close the same JSON with a matching
+ * tag, so tag lines become fence lines and one parser validates both spellings.
+ * Text after the block stays part of the answer and never voids the proposal.
+ */
+function proposalBlockSource(response: string): string {
+  return response.replace(/\r\n/g, '\n')
+    .replace(/^<eadp-write-proposal>[ \t]*$/gm, fenceOpen)
+    .replace(/^<\/eadp-write-proposal>[ \t]*$/gm, fenceClose)
+}
+
+/** True when the answer carried a proposal; an unusable one must be reported instead of ignored. */
+export function hasWriteProposal(response: string): boolean {
+  return /^```[^\n]*eadp-write-proposal/m.test(proposalBlockSource(response)) || response.includes('<eadp-write-proposal')
+}
 
 function object(value: unknown, keys: string[], optional: readonly string[] = []): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key)) || keys.some(key => !optional.includes(key) && !(key in value))) throw new Error('写入提议字段无效')
@@ -17,6 +36,10 @@ function object(value: unknown, keys: string[], optional: readonly string[] = []
 }
 function id(value: unknown): asserts value is string { if (typeof value !== 'string' || !idPattern.test(value)) throw new Error('写入提议 ID 无效') }
 function text(value: unknown, maximum: number): asserts value is string { if (typeof value !== 'string' || !value.trim() || value.length > maximum) throw new Error('写入提议文本无效或过大') }
+/** Model-authored JSON reaches the user as a failure message, never as a parser trace. */
+function json(source: string): unknown {
+  try { return JSON.parse(source) } catch { throw new Error('写入提议代码块不是合法 JSON，请让 AI 重新给出这段代码块') }
+}
 
 /**
  * Parses the model's propose-only block. The model supplies conclusions, the
@@ -26,10 +49,11 @@ function text(value: unknown, maximum: number): asserts value is string { if (ty
  */
 export function parseWriteProposal(response: string, draft: MaterialDraft, readEvidenceIds: readonly string[]): ParsedWriteProposal {
   if (response.length > 2_000_000) throw new Error('写入提议过大')
-  if ([...response.matchAll(/^```eadp-write-proposal(?:\s|$)/gm)].length !== 1) throw new Error('需要且仅允许一个 eadp-write-proposal JSON 块')
-  const blocks = [...response.matchAll(/^```eadp-write-proposal\n([^]*?)\n```\s*$/gm)]
-  if (blocks.length !== 1) throw new Error('需要且仅允许一个 eadp-write-proposal JSON 块')
-  const value = object(JSON.parse(blocks[0]![1]!), ['entityId', 'conclusions', 'evidenceIds', 'body', 'target'], ['target'])
+  const block = proposalBlockSource(response)
+  if ([...block.matchAll(/^```eadp-write-proposal[ \t]*$/gm)].length !== 1) throw new Error('需要且仅允许一个 eadp-write-proposal JSON 块')
+  const payload = /^```eadp-write-proposal[ \t]*\n([^]*?)^```[ \t]*$/m.exec(block)
+  if (!payload) throw new Error('需要且仅允许一个 eadp-write-proposal JSON 块')
+  const value = object(json(payload[1]!), ['entityId', 'conclusions', 'evidenceIds', 'body', 'target'], ['target'])
   id(value.entityId)
   if (value.entityId !== draft.entityId) throw new Error('写入提议材料身份不一致')
   if (value.target !== undefined && value.target !== 'context') throw new Error('写入提议目标无效')

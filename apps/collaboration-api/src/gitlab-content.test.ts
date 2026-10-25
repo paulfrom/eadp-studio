@@ -81,6 +81,31 @@ test('a normal prototype candidate verifies unchanged accepted requirement bytes
   assert.ok(!f.input.allowedPaths.includes(f.materialPath), 'accepted input must not be added to the prototype write scope');
 });
 
+test('a display projection reads accepted material once while acceptance keeps reading it', async () => {
+  const f = fixture('material'), confirmation = f.input.confirmations[0]!;
+  const reads = f.reads.length;
+  const projected = await f.content.loadMaterial(actor, 7, confirmation.fixed);
+  assert.equal(f.reads.length, reads + 1, 'the first projection reads the fixed material');
+  assert.deepEqual(projected, f.metadata);
+  projected.title = 'mutated after projection';
+  const repeated = await f.content.loadMaterial(actor, 7, confirmation.fixed);
+  assert.equal(f.reads.length, reads + 1, 'a repeated projection is served without another GitLab read');
+  assert.equal(repeated.title, f.metadata.title, 'a caller cannot mutate the remembered projection');
+  await f.content.verify(actor, 7, confirmation.fixed);
+  assert.equal(f.reads.length, reads + 2, 'acceptance still reads the exact bytes from GitLab');
+});
+
+test('a project catalog at one accepted commit is read once', async () => {
+  const f = fixture('material'), first = await f.content.loadProjectTemplates(actor, 7, fixedSha);
+  assert.deepEqual(first.scenarios.templates.map(template => template.id), ['default']);
+  f.controls.denied = true;
+  assert.deepEqual(await f.content.loadProjectTemplates(actor, 7, fixedSha), first, 'a repeated catalog read is served without touching GitLab');
+  await assert.rejects(f.content.loadProjectTemplates(actor, 7, head), code('GITLAB_READ_DENIED'));
+  f.controls.denied = false;
+  first.scenarios.templates.pop();
+  assert.equal((await f.content.loadProjectTemplates(actor, 7, fixedSha)).scenarios.templates.length, 1, 'a caller cannot mutate the remembered catalog');
+});
+
 test('material confirmations still require exact candidate paths and bytes', async () => {
   const f = fixture('material'); await f.verify();
   assert.deepEqual(f.reads, [{ path: f.materialPath, ref: candidate }]);

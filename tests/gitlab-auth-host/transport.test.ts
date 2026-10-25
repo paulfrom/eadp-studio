@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { createServer, type Server } from 'node:http'
 import { once } from 'node:events'
 import { CollaborationSession } from '../../packages/studio-plugin/src/host/adapters/collaboration/session.ts'
-import { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
+import { CollaborationClient, CollaborationError } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import { CollaborationTransport } from '../../packages/studio-plugin/src/host/adapters/collaboration/transport.ts'
 import type { SecretStore } from '../../packages/studio-plugin/src/host/adapters/platform/credentials.ts'
 
@@ -105,6 +105,21 @@ test('a failed direct connection never retries through the ambient proxy', async
   await assert.rejects(transport.request(`${origin}/v1/me`), /fetch failed/)
   assert.equal(proxyRequests, 0)
   assert.equal(getGlobalDispatcher(), proxy)
+})
+
+test('upstream GitLab failures show local diagnostics while other codes keep the backend message', async t => {
+  const privateText = 'PRIVATE_UPSTREAM_DIAGNOSTIC'
+  let code = 'GITLAB_UNAVAILABLE'
+  const backend = createServer((_request, response) => {
+    response.writeHead(502, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: { code, message: privateText } }))
+  })
+  const origin = await listen(backend), transport = new CollaborationTransport(origin)
+  const api = new CollaborationClient(origin, async () => token, undefined, transport.request)
+  t.after(async () => { await transport.dispose(); await close(backend) })
+  await assert.rejects(api.request('GET', '/v1/projects'), error => error instanceof CollaborationError && error.code === 'GITLAB_UNAVAILABLE' && /无法访问 GitLab/.test(error.message) && !error.message.includes(privateText))
+  code = 'PROJECT_REPOSITORY_CHANGED'
+  await assert.rejects(api.request('GET', '/v1/projects'), error => error instanceof CollaborationError && error.code === 'PROJECT_REPOSITORY_CHANGED' && error.message === privateText)
 })
 
 test('login HTTP diagnostics show only local messages, status and configured origin', async t => {

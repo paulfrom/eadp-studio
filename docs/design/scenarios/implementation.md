@@ -260,3 +260,25 @@
 - 清理项目投影、实体状态读取/保存中指向已删除 `studio_categories` 与 `studio_batch_freezes` 的 SQL；移除未由当前数据库结构支持的项目分类写入路由。
 - 后端生命周期集成在项目初始化接受时失败：schema 要求 `studio_project_initializations` 与系统预置通用场景的第一条固定确认共同存在，当前 `Projects.initialize` 尚未写入该预置。`backend-lifecycle.test.ts` 前 6 个子用例通过，初始化及后续依赖其成功的检查失败；`backend-scenarios.test.ts` 同样在初始化失败。按阶段二范围记录，不通过删除约束来迁就未完成实现。
 - contracts、asset-domain 与 collaboration-api 类型检查通过。
+
+## 写入提议的围栏识别与失败提示（2026-10-25）
+
+- 实机故障：场景会话连续三轮把提议 JSON 包在 `<eadp-write-proposal>` 标签里，而 Host 只按围栏行（三个反引号加 `eadp-write-proposal`）判断“是否有提议”，匹配不到就回落到纯聊天分支，于是界面既没有写入按钮也没有任何说明。原提示词只写“eadp-write-proposal 代码块”并给了一行 JSON 示例，从未给出围栏写法，模型按自己的习惯改用了标签。
+- 协议提示词改为给出逐字围栏示例（起始行为三个反引号加 `eadp-write-proposal`，结束行为三个反引号），并明确禁止用标签代替围栏、围栏之后不再写文字；模型侧仍只提供结论、依据与整篇正文，提议 ID、hash、授权保持 Host 所有。
+- `parseWriteProposal` 改为在回答任意位置定位唯一的代码块：允许块后继续有文字、允许 CRLF 换行；标签行在解析前规范成围栏，因此两种写法只有一条解析路径、同一套字段校验。JSON 无法解析时返回可重试的中文原因，不再把解析器原始报错抛给用户。
+- 会话结束处理按“是否试图携带提议”分流：回答出现围栏行或标签就执行校验，失败即写入 `writeProposalError` 并显示“写入提议未生成”卡片，说明具体原因；纯讨论只在正文提到该名称时仍保持静默。下一次请求开始时清空上一条失败说明，避免与新回答并存。
+- 代码：`host/application/scenario-write-proposals.ts`（块定位、JSON 失败提示、`hasWriteProposal`）、`host/application/scenario-workspaces.ts`（提示词、结束处理分流、清空旧说明）、`client/scenarios/ScenarioWriteProposalCard.tsx`（失败卡文案）。
+
+校验：装配树 Host/Client `tsc -b` 通过；`tests/windows-desktop/scenario-write-proposals.test.ts` 与 `scenario-orchestration.test.ts` 共 35 项通过；`tests/scenario-client` 98 项通过。用实际会话日志中触发故障的原始回答回放解析（9 条结论、3216 字符正文），得到状态为待回答的提议。完整 `tests/windows-desktop/*.test.ts` 的两次运行分别为 287 项中 285 通过、2 失败与 282 通过、5 失败，失败集中在 `asset-workflow.test.ts` 与 `task-recovery.test.ts`：图片资料读取转换在未改动的基线上同样失败，其余单项单独重跑 3 次均通过并伴随临时目录 `EPERM` 重命名，属并行负载下的既有不稳定项，与本改动无关。未做真实模型、界面视觉或安装包验收。
+
+## 写入只写本地，后台留在确认（2026-10-25）
+
+- 实机故障：提议生成与「写入」都要先读后台项目状态，GitLab 短暂不可达时后台返回 `GITLAB_UNAVAILABLE`，对话区只显示“协同后端暂时无法访问 GitLab，请稍后重试”，本地草稿并未写入。按用户决定，写入本地文件不应依赖后台，提交与远端口径留到确认。
+- 责任边界复核：后台不写项目仓库，GitLab 写操作只有创建仓库与分配成员两项；固定候选的提交在本机任务工作树完成、由 Host 推送并快进稳定分支（`GitIntegrations.publish`），后台只读 GitLab 校验提交、对比与文件后记录集成与确认（`modules/integration.ts`）。
+- 写入路径改为只用本地状态：`accept` 从会话所属材料的当前修订任务读取本地 Markdown 与 `CONTEXT.md`，用提问时记录的 `draftHash`、模板固定引用、上下文 hash 与依据集合判定过期；提议记录新增 `taskId`，只有该任务仍是本地当前任务时才允许写入。`resolveWriteProposal`、`undoWrite` 与 `CONTEXT.md` 目标写入不再调用后台实体、占用或认可头接口，仍以 `expectedHash` 作 CAS 整篇写本地文件，并保留写入回执、变更摘要与撤销。
+- 后台边界移到确认：设计占用、模板绑定、期望基线头、提交与推送、后台接受仍由材料确认执行；差异对比与主检出同步发生在确认之后。后台占用变化、模板重绑或项目上下文被其他已确认版本推进，因此不再在写入时拦截，而在确认时按对应错误返回，本地写入结果保留。
+- 删除随写入路径失效的 `writeProposalOccupationKey` 与请求上下文里的占用键；提问侧 `context()` 仍要求当前占用，保持“先取得编辑权才能继续设计”。
+- 场景草稿保存同样只写本地文件：不再为标题/摘要改动调用后台实体更新接口，后台实体的标题、摘要与关系在确认时从已提交材料取回（`modules/integration.ts` 的确认投影）。需求保存仍按原流水线写关系与目录，因为需求来源与前置关系是协同数据，由后台校验。
+- 代码：`host/application/scenario-workspaces.ts`（`liveTask`、`localMaterial`、`save`、`accept`、`consumeWriteProposal`、`resolveContextProposal`、`undoWrite`）、`shared/scenarios.ts`（提议记录增加 `taskId`）。
+
+校验：装配树 Host/Client `tsc -b` 通过；`scenario-write-proposals`、`scenario-orchestration` 与 `requirement-workspaces` 共 50 项通过；`tests/scenario-client` 98 项通过；完整 `tests/windows-desktop/*.test.ts` 289 项中 286 通过、3 失败，三项均为既有环境或并行负载不稳定项：`asset-workflow` 的图片资料读取转换在未改动的基线上同样失败，`requirement-confirmation` 的目录失败恢复与 `task-recovery` 的持久输出重放单独重跑均通过（后者连续 3 次通过），并伴随临时目录 `EPERM` 重命名。新增用例覆盖后台实体与占用接口不可用时仍生成提议、写入、撤销与场景草稿保存；需求侧把提议过期条件收敛为正文、依据与 `CONTEXT.md` 三项本地输入，原先“占用变化即作废”与“按后台模板绑定拒绝写入”的断言按新边界改写。界面状态仍依赖后台项目投影（列表、门禁、只读判定），同步失败时面板可能显示联动错误，但本地文件与提议状态已落盘，后台恢复后可见。未做真实模型、界面视觉或安装包验收。

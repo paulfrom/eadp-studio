@@ -1,6 +1,6 @@
 import type { LoginResponse, StudioIdentity } from '@eadp/contracts'
 import type { SecretStore } from '../platform/credentials.js'
-import { CollaborationError, collaborationJson, collaborationOrigin } from './client.ts'
+import { CollaborationError, collaborationFailureMessage, collaborationJson, collaborationOrigin } from './client.ts'
 
 interface SavedSession { origin: string; token: string; expiresAt: string; userId: number }
 const KEY = 'collaboration-session'
@@ -14,15 +14,6 @@ class LoginFailure extends Error {}
 const loginFailures: Readonly<Record<string, string>> = {
   ACCOUNT_NOT_INITIALIZED: '协同账号尚未初始化，请联系管理员。',
   ACCOUNT_INVALID: '协同账号配置异常，请联系管理员。',
-  GITLAB_BINDING_REQUIRED: '协同账号尚未完成 GitLab 身份绑定，请联系管理员。',
-  GITLAB_BINDING_UNRESOLVED: '协同账号的 GitLab 身份无法唯一确定，请联系管理员。',
-  GITLAB_NOT_CONFIGURED: '协同后端尚未配置 GitLab 访问凭据，请联系管理员。',
-  GITLAB_MANAGEMENT_DENIED: '协同后端的 GitLab 访问凭据无效，请联系管理员。',
-  GITLAB_RESOURCE_DENIED: '协同后端没有所需的 GitLab 访问权限，请联系管理员。',
-  GITLAB_UNAVAILABLE: '协同后端暂时无法访问 GitLab，请稍后重试。',
-  GITLAB_RATE_LIMITED: 'GitLab 请求受限，请稍后重试。',
-  GITLAB_INVALID_RESPONSE: 'GitLab 返回无效响应，请联系管理员。',
-  GITLAB_EMPTY_RESPONSE: 'GitLab 返回空响应，请联系管理员。',
   SERVICE_UNAVAILABLE: '协同后端暂时无法完成登录，请检查服务状态。',
 }
 async function loginHttpFailure(response: Response, origin: string): Promise<LoginFailure> {
@@ -31,8 +22,8 @@ async function loginHttpFailure(response: Response, origin: string): Promise<Log
   // Treat upstream bodies as untrusted: only known codes choose local messages.
   const value = await collaborationJson(response).catch(() => undefined) as { error?: { code?: unknown } } | undefined
   const code = value?.error?.code
-  const message = typeof code === 'string' && Object.hasOwn(loginFailures, code) ? loginFailures[code] : '协同登录失败，请检查服务地址和状态。'
-  return new LoginFailure(`${message}${context}`)
+  const known = typeof code === 'string' ? (Object.hasOwn(loginFailures, code) ? loginFailures[code] : collaborationFailureMessage(code, '')) : ''
+  return new LoginFailure(`${known || '协同登录失败，请检查服务地址和状态。'}${context}`)
 }
 function identity(value: unknown): StudioIdentity {
   if (!value || typeof value !== 'object') throw new Error('协同身份响应无效。')

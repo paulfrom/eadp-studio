@@ -19,6 +19,10 @@ pnpm --filter @eadp/collaboration-api start
 
 GitLab 当前实例按计划使用 `http://rddgit.changhong.com`，后端保留 `GITLAB_URL` 与显式的 `GITLAB_ALLOW_HTTP=true` 测试入口约束。管理端将 `SEI_GITLAB_TOKEN` 注入后端运行配置；它只供后端查询成员、建仓/分配现有账号及受权限门禁限制的内容读取，不发送桌面、API 响应、Agent、日志或业务数据库。未配置时相关 GitLab 能力返回 503，不表明管理端没有该凭据，不自动改走客户端 OAuth。真实 API 可用性须由实际后端运行配置验证。
 
+上游暂不可用按请求方法区别处理：GET 读取未收到响应（连接拒绝、DNS 失败等）或收到 502/503/504 时，等待 250ms 后重试一次；单次调用已耗尽 15 秒超时的请求不重试，避免同一次 API 请求里叠加多次超时；写入与其它非 GET 请求从不重试，结果未知时仍须先核对原操作。重试只吸收瞬时链路故障，失败时仍然阻断，不改变任何授权或确认结论。
+
+GitLab 只在需要它裁决或写入时被请求：建仓与成员分配、写操作的成员权限、接受 Git 结果时的远端分支头与内容校验、建仓群组目录、登录时的账号绑定。读取只使用数据库与进程内已验证的固定内容：项目列表、场景与需求卡片、历史版本、对比结论、已接受内容展示都不访问 GitLab，因此后台轮询不产生任何 GitLab 请求。已接受材料与项目模板按固定提交在进程内记忆，后端进程启动后首次展示某个项目时读取一次。
+
 Host 只配置 `collaborationUrl`，安全存储 `collaboration-session` 保存后端会话 token/expiresAt；桌面不配置 GitLab OAuth 应用、PKCE/回调或 GitHub Device Flow。用户本机 Git 凭据独立用于 canonical HTTP(S) remote 的 init/push/clone，经可信 system/global credential helper 取用；协同 token 和管理 token 都不注入 Git 授权头、remote 或 askpass。
 
 本工作站的测试服务使用本机 pg17、`0.0.0.0:6972` 及显式 GitLab 代理，服务配置以本文件和环境变量为准。需要代理时在后端 `.env` 设置 `HTTP_PROXY`、`HTTPS_PROXY` 和绕过本地服务的 `NO_PROXY`，并用支持原生环境代理的 Node 启动；当前验证版本为 Node 22.22.3：
@@ -38,7 +42,7 @@ node --use-env-proxy --env-file=.env --import=tsx src/bootstrap.ts
 
 `POST /v1/auth/login` 接收 `{username,password}`，返回 `LoginResponse`：`{user,gitlabOrigin,token,expiresAt}`。其中 `user` 为 `StudioUser`，含 `id`、`username`、`name`、账号资料 `email`、`admin`、`gitlabUserId`、`gitlabUsername` 和可选 `gitlabEmail`；协同 ID 与 GitLab 用户 ID 互不替代。opaque Bearer 会话默认 8 小时，数据库只保存会话哈希；`GET /v1/me` 返回 `{user,gitlabOrigin}`，`POST /v1/auth/logout` 无请求正文并撤销当前会话。
 
-后端目录、单项目及固定内容读取均按绑定用户的有效 GitLab 成员权限校验，包含继承、active 状态和到期：读取至少 Reporter（20），编辑至少 Developer（30）。公开仓库可读或管理 token 能读取不等于工作台有权限。管理员 `admin:true` 只授予明确的占用释放/集成纠正能力，不豁免仓库成员权限；不配置 `GITLAB_ADMIN_USER_IDS` 或 `STUDIO_ADMIN_USER_IDS`。发布权限单独使用 `STUDIO_PUBLISHER_USER_IDS` 的协同用户 ID（测试管理员需显式配置 `1`），不因 admin 标记自动授予。
+写入与接受按绑定用户的有效 GitLab 成员权限校验，包含继承、active 状态和到期：编辑至少 Developer（30）。读取归属由 Studio 会话决定（部署只有单一协同账号），项目目录、单项目投影、历史版本与对比结论不再逐次询问 GitLab；固定内容的实际字节在读取时仍先校验成员权限。公开仓库可读或管理 token 能读取不等于工作台有权限。管理员 `admin:true` 只授予明确的占用释放/集成纠正能力，不豁免仓库成员权限；不配置 `GITLAB_ADMIN_USER_IDS` 或 `STUDIO_ADMIN_USER_IDS`。发布权限单独使用 `STUDIO_PUBLISHER_USER_IDS` 的协同用户 ID（测试管理员需显式配置 `1`），不因 admin 标记自动授予。
 
 可建仓群组目录从完整分页列表取得策略，以最多 8 个并发请求核验绑定用户的有效成员权限，保持返回顺序。仅群组成员读取的 403/404 表示本次无法证明该组资格并排除；认证失败、限流、未知策略及其他上游错误仍阻断。实际创建重新读取目标成员和群组策略，不缓存或信任之前目录结果。
 
@@ -106,7 +110,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 
 ## API 与推进
 
-登录后的 `/v1` 业务路由使用 `Authorization: Bearer <Studio session token>`，每次核验有效协同会话和绑定成员权限；登录入口及既有专用短发布读取入口分别按其契约处理。客户端不能提交自填 userId、GitLab OAuth token 或管理 token 代替协同身份。
+登录后的 `/v1` 业务路由使用 `Authorization: Bearer <Studio session token>`，每次核验有效协同会话；写操作、接受操作与固定内容读取再核验绑定用户的 GitLab 成员权限，纯投影读取不访问 GitLab。登录入口及既有专用短发布读取入口分别按其契约处理。客户端不能提交自填 userId、GitLab OAuth token 或管理 token 代替协同身份。
 
 | 方法与路径（`P=/v1/projects/:projectId`） | 返回 |
 | --- | --- |
@@ -224,7 +228,7 @@ STUDIO_TEST_DATABASE_URL=postgresql://scenario_test:scenario_test@127.0.0.1:5433
 
 多阶段 `Dockerfile` 以仓库根为上下文构建（含 workspace 依赖、非 root 运行、入口幂等建 schema）。`compose.yml` 只构建并运行 api 一个服务，数据库与缓存使用本机已共用的 PostgreSQL 与 Redis 实例，编排内不再启动 postgres/redis 容器，也不重复拉取这两个镜像。api 服务不使用宿主机网络，而是由 Docker 把端口发布到宿主机（默认 `6972` → 容器 `3001`），因此外部机器按宿主机地址访问；宿主机防火墙只拦截本机绑定的套接字，Docker 发布的端口走转发路径，不受该规则影响。容器通过宿主机在 Docker 网桥上的地址（`172.17.0.1`）访问共用的数据库与缓存；该地址对容器和宿主机进程同时有效，`.env` 因此只需一个地址。企业形态仍是独立 PostgreSQL + 本镜像。
 
-可选 `REDIS_URL` 启用共用 Redis 缓存 GitLab 读：用户身份（60s）、仓库成员（30s）、项目元数据（30s）、群组建仓选项（60s）；每次建仓仍实时复核用户与群组，写操作（`edit=true`）不读缓存。缓存不可用时自动退回远端读取，不影响协同正确性。
+可选 `REDIS_URL` 启用共用 Redis 缓存 GitLab 读：用户身份（60s）、仓库成员与项目元数据（各 300s）、群组建仓选项（60s）。写操作（`edit=true`）实时复核成员权限，只复用用户与项目元数据，并把这次实时结果写入缓存供同一请求的后续读取使用；每次建仓仍实时复核用户与群组。已接受材料的业务元数据按（项目、固定提交、路径、hash）在进程内记忆，项目模板目录按（项目、固定提交）记忆，界面轮询与历史版本展示不再重复读取 GitLab；决定接受结果的读取（候选提交、初始化、模板发布）始终实时。缓存不可用时自动退回远端读取，不影响协同正确性。
 
 ```sh
 ./start-backend.sh            # 需要 docker 与 compose 插件；读取 apps/collaboration-api/.env

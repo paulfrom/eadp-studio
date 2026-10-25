@@ -122,7 +122,7 @@ export class Projects {
     const previous = await transaction(this.database, c => repository.previous(c, projectId, actor, 'project.initialize', input));
     if (previous.found) {
       requireCondition(project.initializationStatus === 'ready' && project.recognizedHead === input.commitSha, 'PROJECT_INITIALIZATION_CHANGED', 'The initialized project has advanced; query the current project state', 409);
-      requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'INITIALIZATION_HEAD_MISMATCH', 'The initialized stable branch head changed', 409); return project;
+      requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'INITIALIZATION_HEAD_MISMATCH', 'The initialized stable branch head changed', 409); return project;
     }
     requireCondition(project.initializationStatus === 'pending' && project.recognizedHead === null, 'PROJECT_ALREADY_INITIALIZED', 'The project is already initialized', 409);
     const { generalFixed } = await verifyProjectInitialization(this.gitlab, actor, project, input.commitSha);

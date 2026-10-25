@@ -19,6 +19,10 @@ export class ReadThrough {
     if (this.store) try { await this.store.set(key, JSON.stringify(value), ttlSeconds); } catch { /* The next read repopulates. */ }
     return value;
   }
+  /** Remember a value the caller just read live, so later reads in the same window reuse it. */
+  async remember(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    if (this.store) try { await this.store.set(key, JSON.stringify(value), ttlSeconds); } catch { /* The next read repopulates. */ }
+  }
   async invalidate(key: string): Promise<void> {
     if (this.store) try { await this.store.del(key); } catch { /* The TTL still bounds staleness. */ }
   }

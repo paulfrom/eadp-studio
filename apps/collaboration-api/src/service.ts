@@ -19,7 +19,11 @@ export class CollaborationService {
   readonly content: GitLabContent;
   readonly projects: Projects;
   constructor(readonly database: Database, readonly gitlab: GitLab, readonly publication: PublicationAuthorization, readonly auth: SessionAuth) { this.content = new GitLabContent(gitlab); this.projects = new Projects(database, gitlab); }
-  /** Give every persistence operation the authenticated audit identity and a Git-backed material reader. */
+  /**
+   * Give every persistence operation the authenticated audit identity and the
+   * display reader for accepted materials: one read per transaction, remembered
+   * across requests, while acceptance itself verifies live through `content.verify`.
+   */
   private async transact<T>(actor: StudioUser, action: (c: Transaction) => Promise<T>): Promise<T> {
     return transaction(this.database, c => {
       const materials = new Map<string, Promise<MaterialMetadata>>();
@@ -27,7 +31,7 @@ export class CollaborationService {
         const key = `${projectId}:${canonical(fixed)}`;
         let material = materials.get(key);
         if (!material) {
-          material = repository.project(c, projectId).then(project => this.content.verify(actor, project.gitlabProjectId, fixed));
+          material = repository.project(c, projectId).then(project => this.content.loadMaterial(actor, project.gitlabProjectId, fixed));
           materials.set(key, material);
         }
         return material;
@@ -59,20 +63,20 @@ export class CollaborationService {
   async replay(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }) {
     return this.transact(actor, c => repository.previous(c, projectId, actor, action, input));
   }
+  /**
+   * The workbench list is a database projection: a Studio session already proves
+   * the account, and GitLab is consulted only when an operation acts on it.
+   */
   async listProjects(actor: Actor) {
-    const projects = await this.transact(actor, c => repository.listProjects(c));
-    const visible: ProjectView[] = [];
-    for (const project of projects) {
-      try { const remote = await this.gitlab.authorize(actor, project.gitlabProjectId); this.boundRepository(project, remote); visible.push(project); }
-      catch (error) { if ((error as { code?: string }).code !== 'GITLAB_READ_DENIED') throw error; }
-    }
-    return visible;
+    return this.transact(actor, c => repository.listProjects(c));
+  }
+  /** A read projection of one bound project; GitLab is not consulted for it. */
+  async project(actor: Actor, projectId: string): Promise<ProjectView> {
+    return this.transact(actor, c => repository.project(c, projectId));
   }
   async createProject(actor: Actor, input: CreateProjectRequest) { return this.projects.create(actor, input); }
   async initializeProject(actor: Actor, projectId: string, input: InitializeProjectRequest) { return this.projects.initialize(actor, projectId, input); }
   async state(actor: Actor, projectId: string): Promise<ProjectState> {
-    const bound = await this.transact(actor, c => repository.project(c, projectId));
-    const remote = await this.gitlab.authorize(actor, bound.gitlabProjectId); this.boundRepository(bound, remote);
     return this.transact(actor, async c => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
@@ -119,7 +123,7 @@ export class CollaborationService {
   }
   async claim(actor: Actor, projectId: string, id: string, input: ClaimRequest) {
     const project = await this.authorize(actor, projectId, true);
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before claiming', 409);
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before claiming', 409);
     return this.mutate(actor, projectId, `occupation.claim:${id}`, input, (c, _p, all) => occupations.claim(c, projectId, all, id, actor, input));
   }
   async release(actor: Actor, projectId: string, id: string, input: ReleaseRequest, admin = false) {
@@ -146,7 +150,6 @@ export class CollaborationService {
     });
   }
   async revisionImpact(actor: Actor, projectId: string, id: string) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, async c => {
       const all = await repository.entities(c, projectId), scenario = repository.entity(all, id);
       requireCondition(scenario.kind === 'scenario' && scenario.materialVersion > 0, 'CONFIRMED_SCENARIO_REQUIRED', 'Revision impact requires an accepted scenario');
@@ -157,7 +160,7 @@ export class CollaborationService {
     });
   }
   async projectTemplates(actor: Actor, projectId: string) {
-    const project = await this.authorize(actor, projectId);
+    const project = await this.project(actor, projectId);
     return { acceptedHead: project.recognizedHead, ...await this.content.loadProjectTemplates(actor, project.gitlabProjectId, project.recognizedHead!) };
   }
   async bindTemplate(actor: Actor, projectId: string, id: string, input: BindTemplateRequest) {
@@ -186,7 +189,6 @@ export class CollaborationService {
     });
   }
   async getRepair(actor: Actor, projectId: string, id: string) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, async c => {
       const value = await repairs.task(c, projectId, id);
       requireCondition(value.createdBy === actor.id, 'REPAIR_NOT_FOUND', 'Repair authorization was not found', 404);
@@ -217,7 +219,7 @@ export class CollaborationService {
   async prepare(actor: Actor, projectId: string, input: PrepareIntegrationRequest) {
     const project = await this.authorize(actor, projectId, true), action = 'integration.prepare';
     const replay = await this.replay(actor, projectId, action, input); if (replay.found) return replay.result;
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before integration');
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Actual stable branch differs from the recognized head; reconcile before integration');
     const materials = await this.content.verifyCandidate(actor, project.gitlabProjectId, input);
     if (input.stage !== 'template') await this.verifySources(actor, projectId, input, materials);
     return this.mutate(actor, projectId, action, input, (c, p, all) => integration.prepare(c, p, all, actor, input, materials));
@@ -228,17 +230,16 @@ export class CollaborationService {
     const operation = await this.transact(actor, c => integration.getIntegration(c, projectId, id));
     requireCondition(operation.ownerId === actor.id, 'INTEGRATION_OWNER_REQUIRED', 'Complete the integration using its original authenticated user', 403);
     requireCondition(operation.request.stage === 'template' ? !input.token : canonical(input.token) === canonical(operation.request.token), 'STALE_OCCUPATION', 'Completion must use the original integration occupation');
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === operation.candidateSha, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch has not reached the exact prepared candidate');
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === operation.candidateSha, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch has not reached the exact prepared candidate');
     const materials = await this.content.verifyCandidate(actor, project.gitlabProjectId, operation.request);
     if (operation.request.stage !== 'template') await this.verifySources(actor, projectId, operation.request, materials);
     return this.mutate(actor, projectId, action, input, async (c, p, all) => integration.complete(c, p, all, actor, await integration.getIntegration(c, projectId, id), materials));
   }
-  async getIntegration(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return this.transact(actor, async c => integration.publicIntegration(await integration.getIntegration(c, projectId, id))); }
+  async getIntegration(actor: Actor, projectId: string, id: string) { return this.transact(actor, async c => integration.publicIntegration(await integration.getIntegration(c, projectId, id))); }
   async operation(actor: Actor, projectId: string, key: string) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, c => repository.operation(c, projectId, key, actor));
   }
-  async versions(actor: Actor, projectId: string, id: string) { await this.authorize(actor, projectId); return this.transact(actor, c => reuse.versions(c, projectId, id)); }
+  async versions(actor: Actor, projectId: string, id: string) { return this.transact(actor, c => reuse.versions(c, projectId, id)); }
   async eligibility(actor: Actor, projectId: string, id: string, input: EligibilityRequest) {
     await this.authorize(actor, projectId, true);
     return this.mutate(actor, projectId, `eligibility.write:${id}`, input, (c, _p, all) => reuse.eligibility(c, projectId, all, id, actor, input.version, input.enabled, input.reason));
@@ -250,7 +251,7 @@ export class CollaborationService {
     await this.content.verify(actor, sourceProject.gitlabProjectId, source.fixed, { entityId: input.source.entityId, kind: source.metadata.kind });
     return this.mutate(actor, projectId, action, input, (c, _p, all) => reuse.adopt(c, projectId, all, actor, input), [input.source.projectId]);
   }
-  async listAdoptions(actor: Actor, projectId: string) { await this.authorize(actor, projectId); return this.transact(actor, c => repository.listAdoptions(c, projectId)); }
+  async listAdoptions(actor: Actor, projectId: string) { return this.transact(actor, c => repository.listAdoptions(c, projectId)); }
   async adoptionSuccess(actor: Actor, projectId: string, id: string, input: AdoptionSuccessRequest) {
     await this.authorize(actor, projectId, true); return this.mutate(actor, projectId, `reuse.success:${id}`, input, c => reuse.adoptionSuccess(c, projectId, id, actor, input));
   }
@@ -258,7 +259,7 @@ export class CollaborationService {
     const project = await this.authorize(actor, projectId, true);
     requireCondition(actor.admin, 'ADMIN_REQUIRED', 'Backend administrator permission is required to recognize a correction', 403);
     const action = 'integration.reconcile', replay = await this.replay(actor, projectId, action, input); if (replay.found) return replay.result;
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === input.correctedHead, 'CORRECTION_HEAD_MISMATCH', 'Correction must be the actual stable branch head');
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === input.correctedHead, 'CORRECTION_HEAD_MISMATCH', 'Correction must be the actual stable branch head');
     await this.content.verifyCorrection(actor, project.gitlabProjectId, input.expectedHead, input.correctedHead);
     return this.mutate(actor, projectId, action, input, async (c, p) => {
       requireCondition(p.recognizedHead === input.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized integration head changed');
@@ -282,7 +283,7 @@ export class CollaborationService {
   async publicationAuthorization(actor: Actor, projectId: string, input: PublicationAuthorizationRequest) {
     this.publication.assertPublisher(actor.id);
     const project = await this.authorize(actor, projectId, true);
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
     return this.transact(actor, async c => {
       const current = await repository.project(c, projectId, true);
       repository.assertProjectReady(current);
@@ -320,22 +321,19 @@ export class CollaborationService {
     });
   }
   async listComparisons(actor: Actor, projectId: string, query: ConsistencyComparisonFilter) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, c => repository.listComparisons(c, projectId, query));
   }
   async getComparison(actor: Actor, projectId: string, id: string) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, c => repository.getComparison(c, projectId, id));
   }
   async consistencyContext(actor: Actor, projectId: string, entityId: string) {
-    await this.authorize(actor, projectId);
     return this.transact(actor, c => repository.consistencyContext(c, projectId, entityId));
   }
   async deployment(actor: Actor, projectId: string, input: DeploymentRequest) {
     this.publication.assertPublisher(actor.id);
     const project = await this.authorize(actor, projectId, true);
     const url = new URL(input.url); requireCondition(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password, 'INVALID_DEPLOYMENT_URL', 'Deployment URL must be an HTTP(S) URL without credentials', 422);
-    requireCondition(await this.gitlab.branchHead(actor, project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
     return this.mutate(actor, projectId, 'deployment.record', input, async (c, p) => {
       requireCondition(p.currentBaselineId === input.baselineId && p.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Only the current accepted prototype baseline can be published');
       requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');

@@ -8,6 +8,8 @@ export interface ScenarioConflict { expectedHash: string; actual: MaterialDraft;
 /** Host-created proposal; the model may only supply conclusions, evidence IDs and the full body. */
 export interface ScenarioWriteProposal {
   id: string; entityId: string; baseHash: string; templateRef: FixedReference; contextHash: string;
+  /** Local task worktree the proposal was asked in; the write never leaves it. */
+  taskId: string;
   evidenceIds: string[]; conclusions: Array<{ id: string; text: string }>; body: string; createdAt: string;
   /** Absent targets the scenario body; `context` targets only the project-root CONTEXT.md. */
   target?: 'context';
