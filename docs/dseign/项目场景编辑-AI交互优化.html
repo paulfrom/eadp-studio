@@ -104,6 +104,8 @@
   .cta{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:7px;background:var(--accent-solid);color:#fff;font-size:12.5px;font-weight:500;box-shadow:inset 0 0 0 1px rgba(255,255,255,.10),0 1px 2px rgba(0,0,0,.4);transition:filter .15s,transform .15s}
   .cta:hover{filter:brightness(1.08)}
   .cta:active{transform:translateY(1px)}
+  .cta:disabled{background:#2b2e35;color:#7c818b;box-shadow:none;cursor:not-allowed;filter:none;transform:none}
+  .btn-soft:disabled,.btn-ghost:disabled{opacity:.45;cursor:not-allowed}
 
   /* workspace grid */
   .grid{display:grid;grid-template-columns:minmax(0,46fr) minmax(0,54fr);gap:12px;padding:12px;min-height:0}
@@ -311,6 +313,84 @@
   .flash{animation:flash 1.8s ease-out}
   @keyframes flash{0%{box-shadow:0 0 0 1px rgba(78,203,148,.55),0 0 22px rgba(78,203,148,.16)}100%{box-shadow:none}}
 
+  /* confirm sheet */
+  button.st{border:0;background:none;padding:0;cursor:pointer;font:inherit;color:inherit}
+  button.st:hover{color:var(--tx-2)}
+  .gate-list{display:flex;flex-direction:column;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .gate-row{display:flex;align-items:flex-start;gap:10px;padding:11px 2px;border-bottom:1px solid var(--line)}
+  .gate-row:last-child{border-bottom:0}
+  .gate-ico{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;margin-top:1px;font:700 10px var(--mono);border:1px solid var(--line-2);color:var(--tx-3)}
+  .gate-ico[data-state="passed"]{border-color:rgba(78,203,148,.4);background:rgba(78,203,148,.12);color:var(--ok)}
+  .gate-ico[data-state="blocked"]{border-color:rgba(255,115,115,.4);background:rgba(255,115,115,.1);color:#ff9c9c}
+  .gate-ico[data-state="disabled"]{border-style:dashed}
+  .gate-main{flex:1;min-width:0}
+  .gate-title{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx)}
+  .gate-state{font:10px var(--mono);padding:0 5px;border-radius:3px;border:1px solid var(--line);color:var(--tx-3);line-height:15px}
+  .gate-row[data-state="blocked"] .gate-state{border-color:rgba(255,115,115,.28);background:rgba(255,115,115,.08);color:#ff9c9c}
+  .gate-row[data-state="passed"] .gate-state{border-color:rgba(78,203,148,.26);background:rgba(78,203,148,.07);color:#8fe0b6}
+  .gate-msg{margin:3px 0 0;font-size:11.5px;line-height:1.6;color:var(--tx-3)}
+  .gate-action{align-self:center;flex:0 0 auto}
+  .declare{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+  .declare label{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:var(--tx-2);cursor:pointer}
+  .declare .hint{margin:6px 0 0;font-size:10.5px;color:var(--tx-3)}
+  .confirm-note{margin:10px 0 0;font-size:11px;line-height:1.7;color:var(--tx-3)}
+  .confirm-status{font:11px var(--mono);color:var(--tx-3)}
+  .confirm-status[data-tone="ok"]{color:#8fe0b6}
+  .confirm-status[data-tone="bad"]{color:#ff9c9c}
+
+  /* confirmed state */
+  .confirmed-bar{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:9px 11px;border:1px solid rgba(78,203,148,.25);border-radius:8px;background:rgba(78,203,148,.07);font-size:11.5px;color:#a9e3c4}
+  .confirmed-bar[hidden]{display:none}
+  .confirmed-bar .ico{width:13px;height:13px}
+  .confirmed-bar time{font-family:var(--mono);font-size:10.5px;color:#7fbfa0}
+  .confirmed-bar .link{margin-left:auto}
+  .composer.is-locked{opacity:.8}
+  .composer.is-locked textarea{cursor:not-allowed}
+
+  /* consistency drawer */
+  .drawer-backdrop{position:fixed;inset:0;background:rgba(6,7,9,.45);z-index:39;animation:fadeIn .16s ease-out}
+  .drawer-backdrop[hidden]{display:none}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  .drawer{position:fixed;top:56px;right:16px;bottom:48px;width:min(470px,calc(100vw - 32px));display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:12px;background:#17191d;box-shadow:0 30px 90px rgba(0,0,0,.55);z-index:40;overflow:hidden;animation:drawerIn .2s ease-out}
+  .drawer[hidden]{display:none}
+  @keyframes drawerIn{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+  .drawer-head{display:flex;align-items:flex-start;gap:10px;padding:14px 14px 11px;border-bottom:1px solid var(--line)}
+  .drawer-head .spacer{flex:1}
+  .drawer-title{font-size:14px;font-weight:600}
+  .drawer-sub{margin-top:2px;font-size:10.5px;color:var(--tx-3)}
+  .drawer-body{flex:1;min-height:0;overflow:auto;padding:13px 14px 18px;scrollbar-width:thin;scrollbar-color:#33363d transparent}
+  .drawer-body::-webkit-scrollbar{width:10px}
+  .drawer-body::-webkit-scrollbar-thumb{background:#2c2f36;border-radius:8px;border:3px solid transparent;background-clip:content-box}
+  .drawer-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:#141519}
+  .drawer-foot .meta{margin-right:auto;font-size:10.5px;color:var(--tx-3)}
+  .cons-empty{padding:26px 6px;text-align:center;color:var(--tx-3);font-size:12px;line-height:1.9}
+  .cons-running{display:flex;align-items:center;gap:9px;padding:22px 6px;font-size:12px;color:var(--tx-2)}
+  .cons-running[hidden]{display:none}
+  .spinner{width:13px;height:13px;border-radius:50%;border:2px solid rgba(125,162,255,.25);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .cons-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+  .cons-facts > div{padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2)}
+  .cons-facts dt{font-size:10px;color:var(--tx-3)}
+  .cons-facts dd{margin:2px 0 0;font:12px var(--mono);color:var(--tx)}
+  .cons-conclusion{margin:12px 0;font-size:12px;line-height:1.75;color:var(--tx-2)}
+  .cons-group{margin-top:12px}
+  .cons-group h4{margin:0 0 6px;font-size:11px;font-weight:500;color:var(--tx-3)}
+  .conflict{padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+  .conflict + .conflict{margin-top:8px}
+  .conflict-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--tx-3)}
+  .src{font:10px var(--mono);padding:1px 5px;border:1px solid var(--line-2);border-radius:4px;color:var(--tx-2)}
+  .rel{font:9.5px var(--mono);padding:0 4px;border-radius:3px;border:1px solid rgba(237,179,91,.25);background:rgba(237,179,91,.07);color:#e5c18a}
+  .rel[data-kind="potential"]{border-color:rgba(125,162,255,.28);background:rgba(125,162,255,.08);color:#b9caff}
+  .conflict p{margin:7px 0 0;font-size:11.5px;line-height:1.7;color:var(--tx-2)}
+  .conflict small{display:block;margin-top:5px;font-size:10.5px;color:var(--tx-3)}
+  .conflict-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .conflict-actions button{height:24px;padding:0 8px;border:1px solid var(--line-2);border-radius:5px;font-size:10.5px;color:var(--tx-2);background:var(--surface)}
+  .conflict-actions button:hover{border-color:var(--accent);color:var(--tx)}
+  .cons-note{margin:14px 0 0;padding-top:10px;border-top:1px solid var(--line);font-size:10.5px;line-height:1.7;color:var(--tx-3)}
+  details.cons-history{margin-top:12px;font-size:11px;color:var(--tx-3)}
+  details.cons-history summary{cursor:pointer;width:max-content}
+  .cons-history-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line);font:10.5px var(--mono)}
+
   @media (max-width:1280px){
     .grid{grid-template-columns:minmax(0,1fr);overflow:auto}
     .grid > .panel{min-height:420px}
@@ -321,6 +401,15 @@
     .rail{display:none}
     .step small{display:none}
   }
+
+  /* collapsible document panel */
+  .grid.doc-collapsed{grid-template-columns:minmax(0,1fr) 42px}
+  .grid.doc-collapsed #docPanel{display:none}
+  .doc-restore{display:flex;flex-direction:column;align-items:center;gap:12px;padding:10px 0;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+  .doc-restore[hidden]{display:none}
+  .doc-restore .label{writing-mode:vertical-rl;font:10.5px var(--mono);letter-spacing:.14em;color:var(--tx-3)}
+  .doc-restore .ico{transform:rotate(180deg)}
+
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
   }
@@ -458,14 +547,14 @@
               <span class="tool">工作区内修改</span>
               <button class="tool" type="button"><svg class="ico"><use href="#i-clip"/></svg>附件</button>
               <span class="model">MiniMax-M2.7</span>
-              <button class="send" type="submit" aria-label="发送"><svg class="ico"><use href="#i-send"/></svg></button>
+              <button class="send" id="sendBtn" type="submit" aria-label="发送"><svg class="ico"><use href="#i-send"/></svg></button>
             </div>
           </div>
           <div class="composer-hint">Enter 发送 · Shift + Enter 换行</div>
         </form>
       </section>
 
-      <section class="panel" aria-label="场景契约">
+      <section class="panel" id="docPanel" aria-label="场景契约">
         <div class="doc-head">
           <span class="file-badge">MD</span>
           <span class="doc-name">场景/测试场景.md</span>
@@ -475,10 +564,17 @@
             <button type="button" aria-pressed="true">预览</button>
             <button type="button" aria-pressed="false">源码</button>
           </div>
+          <button class="icon-btn" type="button" id="docCollapse" aria-controls="docPanel" aria-expanded="true" aria-label="收起文档预览" title="收起文档预览"><svg class="ico"><use href="#i-chev-right"/></svg></button>
           <button class="icon-btn" type="button" aria-label="更多文档操作"><svg class="ico"><use href="#i-more"/></svg></button>
         </div>
 
         <div class="doc-body">
+          <div class="confirmed-bar" id="confirmedBar" hidden>
+            <svg class="ico"><use href="#i-check"/></svg>
+            <span>已确认为固定版本 v4</span>
+            <time>2026-10-25 14:32</time>
+            <button class="link" type="button" id="reviseBtn">开始修订</button>
+          </div>
           <div class="doc-meta">
             <span id="docVersion">v3</span><span>656 字</span><span>14:12 更新</span><span>作者 测试管理员</span>
           </div>
@@ -547,14 +643,14 @@
             </li>
             <li>
               <details class="section" data-sec="08" open>
-                <summary><span class="sec-num">08</span><span class="sec-title">待澄清</span><span class="sec-sum"><span id="clarifySummary">3/8 已澄清，3 项阻塞确认</span></span><span class="sec-count" id="clarifyCount">8 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
+                <summary><span class="sec-num">08</span><span class="sec-title">待澄清</span><span class="sec-sum"><span id="clarifySummary">3/8 已澄清，2 项阻塞确认</span></span><span class="sec-count" id="clarifyCount">8 条</span><svg class="ico"><use href="#i-chev"/></svg></summary>
                 <div class="section-body">
                   <div class="clarify-head"><strong>澄清进度</strong><span id="clarifyProgress">3 / 8</span></div>
                   <div class="bar"><i id="clarifyBar" style="width:37.5%"></i></div>
                   <ul class="clarify-list" id="clarifyList">
                     <li data-key="refund"><span class="sev block">阻塞</span><span class="q">退款单是否需要独立申请入口？</span><button class="link" type="button">在对话中回答</button></li>
                     <li data-key="goods"><span class="sev block">阻塞</span><span class="q">换货是否复用 Goods 商品列表？</span><button class="link" type="button">在对话中回答</button></li>
-                    <li data-key="idem"><span class="sev block">阻塞</span><span class="q">主系统接口幂等键落在哪一层？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
+                    <li data-key="idem"><span class="sev norm">普通</span><span class="q">主系统接口幂等键落在哪一层？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
                     <li data-key="partial"><span class="sev norm">普通</span><span class="q">部分退款、部分完成的中间状态如何处理？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
                     <li data-key="mq"><span class="sev norm">普通</span><span class="q">是否存在 MQ 等非 Feign 通道参与售后同步？</span><span class="q" style="flex:0;color:var(--tx-3)">待答</span></li>
                   </ul>
@@ -565,15 +661,20 @@
           </ol>
         </div>
       </section>
+
+      <aside class="doc-restore" id="docRestore" aria-label="文档预览" hidden>
+        <button class="icon-btn" type="button" id="docExpand" aria-controls="docPanel" aria-expanded="false" aria-label="展开文档预览" title="展开文档预览"><svg class="ico"><use href="#i-chev-right"/></svg></button>
+        <span class="label">文档预览</span>
+      </aside>
     </main>
 
     <footer class="status">
       <div class="status-left">
-        <span class="st danger"><svg class="ico"><use href="#i-alert"/></svg>门禁 <b>2</b> 项阻断</span>
+        <button class="st danger" type="button" id="gateStatusBtn" aria-haspopup="dialog"><svg class="ico"><use href="#i-alert"/></svg><span id="gateStatusText">门禁 <b>2</b> 项阻断</span></button>
         <span class="sep"></span>
         <span class="st">待澄清 <b id="statusClarify">3/8</b></span>
         <span class="sep"></span>
-        <span class="st">一致性 <b>未发起</b></span>
+        <button class="st" type="button" id="consistencyBtn" aria-haspopup="dialog">一致性 <b id="consistencyState">未发起</b></button>
       </div>
       <div class="status-right">
         <button class="run-toggle" type="button" id="runToggle" aria-expanded="false" aria-controls="runDetail">运行详情<svg class="ico"><use href="#i-chev"/></svg></button>
@@ -648,12 +749,142 @@
   </div>
 </dialog>
 
+<dialog class="sheet" id="confirmSheet" aria-labelledby="confirmTitle" style="width:min(640px,calc(100vw - 40px))">
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="confirmTitle">确认场景<span class="num">v4</span></div>
+      <div class="sheet-sub">确认后本材料固定为 v4，由协同后台接受；接受前可调整</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="link" type="button" id="repairBtn" title="授权 AI 按门禁修复，最多 3 轮，缺业务答案会暂停">由 AI 修复并确认</button>
+    <button class="icon-btn" type="button" id="closeConfirm" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="diff-body" style="padding:12px 18px 16px">
+    <div class="gate-list">
+      <div class="gate-row" data-gate="business" data-state="blocked">
+        <span class="gate-ico" data-state="blocked">!</span>
+        <div class="gate-main">
+          <div class="gate-title">业务内容 <span class="gate-state" id="gateBusinessState">阻断</span></div>
+          <p class="gate-msg" id="gateBusinessMsg">2 条待澄清被标记为阻断</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateBusinessAction">去回答</button>
+      </div>
+      <div class="gate-row" data-gate="evidence" data-state="blocked">
+        <span class="gate-ico" data-state="blocked">!</span>
+        <div class="gate-main">
+          <div class="gate-title">资料与引用 <span class="gate-state" id="gateEvidenceState">阻断</span></div>
+          <p class="gate-msg" id="gateEvidenceMsg">尚未归档正式业务依据</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateEvidenceAction">去归档</button>
+      </div>
+      <div class="gate-row" data-gate="version" data-state="passed">
+        <span class="gate-ico" data-state="passed">✓</span>
+        <div class="gate-main">
+          <div class="gate-title">版本与占用 <span class="gate-state" id="gateVersionState">通过</span></div>
+          <p class="gate-msg" id="gateVersionMsg">当前编辑人 #1 · 无冲突 · 文件未被外部修改</p>
+        </div>
+      </div>
+      <div class="gate-row" data-gate="template" data-state="disabled">
+        <span class="gate-ico" data-state="disabled">—</span>
+        <div class="gate-main">
+          <div class="gate-title">模板结构 <span class="gate-state" id="gateTemplateState">关闭</span></div>
+          <p class="gate-msg" id="gateTemplateMsg">仅影响本机检查，不影响后台接受</p>
+        </div>
+        <button class="link gate-action" type="button" id="gateTemplateAction">开启</button>
+      </div>
+    </div>
+
+    <div class="declare">
+      <label><input type="checkbox" id="declCore" checked>核心业务规则已由依据明确</label>
+      <label><input type="checkbox" id="declAccept" checked>验收条件可以客观判断</label>
+      <p class="hint">这是你的声明；「由 AI 修复并确认」会代你补全，但仍由你确认。</p>
+    </div>
+
+    <p class="confirm-note">确认后材料只读；需要修改请走「开始修订」，系统会列出受影响的需求。确认表示当前版本的核心规则、验收条件、正式依据与待澄清项已完整。</p>
+  </div>
+  <div class="sheet-foot">
+    <span class="confirm-status" id="confirmStatus">门禁通过，可以确认</span>
+    <div class="spacer"></div>
+    <button class="btn-ghost" type="button" id="cancelConfirm">取消</button>
+    <button class="cta" type="button" id="confirmBtn">确认当前版本 v4</button>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden>
   <span class="ok"><svg class="ico"><use href="#i-check"/></svg></span>
   <b id="toastText">已写入 9 处变更</b>
   <button type="button" id="toastView">查看</button>
   <button type="button" id="toastUndo">撤销</button>
 </div>
+
+<div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+<aside class="drawer" id="consistencyDrawer" role="dialog" aria-modal="true" aria-labelledby="consTitle" hidden>
+  <header class="drawer-head">
+    <div>
+      <div class="drawer-title" id="consTitle">一致性对比</div>
+      <div class="drawer-sub">独立检查 · 不影响确认 · 冲突不写回材料</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" type="button" id="closeDrawer" aria-label="关闭"><svg class="ico"><use href="#i-x"/></svg></button>
+  </header>
+  <div class="drawer-body">
+    <div class="cons-empty" id="consEmpty">还没有对比记录。<br>确认后会自动发起一次，也可以现在手动发起。</div>
+
+    <div class="cons-running" id="consRunning" hidden>
+      <span class="spinner"></span>正在读取 4 份关联材料…
+      <button class="link" type="button" id="cancelCompare" style="margin-left:auto">取消</button>
+    </div>
+
+    <div id="consResult" hidden>
+      <dl class="cons-facts">
+        <div><dt>结果</dt><dd>对比完成</dd></div>
+        <div><dt>范围</dt><dd>完整 · 4 份材料</dd></div>
+        <div><dt>冲突</dt><dd>2 项</dd></div>
+        <div><dt>时间</dt><dd>10-25 14:33</dd></div>
+      </dl>
+      <p class="cons-conclusion">2 项冲突：1 项与正式关联需求不一致，1 项为本地发现的潜在关联。冲突不阻断确认，修改另走写入与修订流程。</p>
+
+      <section class="cons-group">
+        <h4>正式关系</h4>
+        <article class="conflict">
+          <div class="conflict-head"><span class="src">SC-0002 §04</span><span>↔</span><span class="src">RQ-0012 §03</span><span class="rel">正式关系</span></div>
+          <p>退款口径：本文按「全额退款」处理；需求要求保留部分退款入口。</p>
+          <small>依据：需求引用的确认版本 · 主系统接口文档 §2 不含部分退款</small>
+          <div class="conflict-actions">
+            <button type="button" data-act="talk">在对话中讨论</button>
+            <button type="button" data-act="revise">修订本文</button>
+            <button type="button" data-act="open">打开 RQ-0012</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="cons-group">
+        <h4>潜在关联</h4>
+        <article class="conflict">
+          <div class="conflict-head"><span class="src">SC-0002 §02</span><span>↔</span><span class="src">RQ-0009 §02</span><span class="rel" data-kind="potential">潜在关联</span></div>
+          <p>换货选品：本文要求复用 Goods 列表；需求描述为独立选品页。</p>
+          <small>依据：本地材料发现，尚未建立正式关系</small>
+          <div class="conflict-actions">
+            <button type="button" data-act="talk">在对话中讨论</button>
+            <button type="button" data-act="revise">修订本文</button>
+            <button type="button" data-act="open">打开 RQ-0009</button>
+          </div>
+        </article>
+      </section>
+
+      <details class="cons-history">
+        <summary>历史对比 · 1 次</summary>
+        <div class="cons-history-row"><span>10-25 14:33</span><span>完成 · 冲突 2</span><span>本次</span></div>
+      </details>
+
+      <p class="cons-note">每次对比都是独立快照，下次会重新判定，不沿用本次结论；也没有「已处理」状态。修改冲突后请重新对比。</p>
+    </div>
+  </div>
+  <footer class="drawer-foot">
+    <span class="meta">结论只保存在协同后台，不写入正文</span>
+    <button class="btn-soft" type="button" id="runCompare">发起对比</button>
+  </footer>
+</aside>
 
 <script>
 (function () {
@@ -676,9 +907,38 @@
   const allBox = $('#allBox');
   const boxes = () => $$('#diffBody input[type=checkbox]');
 
+  const confirmSheet = $('#confirmSheet');
+  const confirmBtn = $('#confirmBtn');
+  const confirmStatus = $('#confirmStatus');
+  const cancelConfirm = $('#cancelConfirm');
+  const closeConfirm = $('#closeConfirm');
+  const gateStatusBtn = $('#gateStatusBtn');
+  const gateStatusText = $('#gateStatusText');
+  const consistencyBtn = $('#consistencyBtn');
+  const consistencyState = $('#consistencyState');
+  const confirmedBar = $('#confirmedBar');
+  const composer = $('#composer');
+  const msgField = $('#msg');
+  const sendBtn = $('#sendBtn');
+  const drawer = $('#consistencyDrawer');
+  const backdrop = $('#drawerBackdrop');
+  const consEmpty = $('#consEmpty');
+  const consRunning = $('#consRunning');
+  const consResult = $('#consResult');
+  const runCompareBtn = $('#runCompare');
+
   let answered = 3;
   let written = false;
+  let confirmed = false;
+  let submitting = false;
+  let writtenCount = 9;
+  let consistency = 'none';
+  const decisions = new Set();
+  const declared = { core: true, acceptance: true };
+  let evidenceFixed = false;
+  let structure = false;
   let toastTimer = 0;
+  let compareTimer = 0;
 
   function setStage(n) {
     $$('.step').forEach((el, i) => {
@@ -692,7 +952,7 @@
     statusClarify.textContent = answered + '/8';
     clarifyProgress.textContent = answered + ' / 8';
     clarifyBar.style.width = (answered / 8) * 100 + '%';
-    clarifySummary.textContent = answered + '/8 已澄清，' + Math.max(0, 3 - (answered - 3)) + ' 项阻塞确认';
+    clarifySummary.textContent = answered + '/8 已澄清，' + blockingOpen() + ' 项阻塞确认';
   }
 
   function markClarified(key) {
@@ -718,15 +978,22 @@
     allBox.indeterminate = n > 0 && n < list.length;
   }
 
+  function showDialog(dialog) {
+    if (typeof dialog.showModal === 'function') { if (!dialog.open) dialog.showModal(); }
+    else dialog.setAttribute('open', '');
+  }
+  function hideDialog(dialog) {
+    if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
   function openSheet() {
     syncSelection();
-    if (typeof sheet.showModal === 'function') sheet.showModal();
-    else sheet.setAttribute('open', '');
+    showDialog(sheet);
   }
 
   function closeSheet() {
-    if (sheet.open) sheet.close();
-    else sheet.removeAttribute('open');
+    hideDialog(sheet);
   }
 
   function showToast(text) {
@@ -740,14 +1007,9 @@
     const n = boxes().filter(b => b.checked).length;
     if (!n) return;
     written = true;
+    writtenCount = n;
     closeSheet();
-    setStage(4);
-    stageCta.textContent = '处理 2 项阻断';
-    stepWrite.classList.add('is-done');
-    stepWrite.classList.remove('is-current');
-    const writeCount = $('#stepWrite small');
-    if (writeCount) writeCount.textContent = n + ' 处';
-    stepGate.classList.add('is-current');
+    refreshFlow();
     const ver = $('#docVersion');
     if (ver) ver.textContent = 'v4';
     const proposal = $('.proposal');
@@ -764,12 +1026,14 @@
   }
 
   function undo() {
+    if (confirmed) return;
     written = false;
-    setStage(3);
-    stageCta.textContent = '审阅 9 处变更';
-    stepGate.classList.remove('is-current');
-    stepWrite.classList.add('is-current');
-    stepWrite.classList.remove('is-done');
+    confirmed = false;
+    writtenCount = 9;
+    consistency = 'none';
+    closeDrawer();
+    renderConsistency();
+    refreshFlow();
     const ver = $('#docVersion');
     if (ver) ver.textContent = 'v3';
     const proposal = $('.proposal');
@@ -784,9 +1048,239 @@
     showToast('已撤销，材料回到 v3');
   }
 
+  function blockingOpen() { return Math.max(0, 2 - decisions.size); }
+  function businessBlocked() { return blockingOpen() > 0 || !declared.core || !declared.acceptance; }
+  function evidenceBlocked() { return !evidenceFixed; }
+  function blockedGates() { return (businessBlocked() ? 1 : 0) + (evidenceBlocked() ? 1 : 0); }
+
+  function paintGate(row, ok, message, stateLabel) {
+    row.dataset.state = ok ? 'passed' : 'blocked';
+    const icon = $('.gate-ico', row);
+    icon.dataset.state = ok ? 'passed' : 'blocked';
+    icon.textContent = ok ? '✓' : '!';
+    $('.gate-state', row).textContent = stateLabel;
+    $('.gate-msg', row).textContent = message;
+  }
+
+  function renderGates() {
+    const business = businessBlocked();
+    const evidence = evidenceBlocked();
+    const blockers = blockedGates();
+    gateStatusText.innerHTML = blockers ? '门禁 <b>' + blockers + '</b> 项阻断' : '门禁 <b>通过</b>';
+    gateStatusBtn.classList.toggle('danger', blockers > 0);
+
+    paintGate($('.gate-row[data-gate="business"]'), !business,
+      !declared.core ? '核心业务规则尚未声明完整'
+        : !declared.acceptance ? '验收条件尚未声明完整'
+          : blockingOpen() > 0 ? blockingOpen() + ' 条待澄清被标记为阻断'
+            : '核心规则、验收条件与阻断项均已处理',
+      business ? '阻断' : '通过');
+    const businessAction = $('#gateBusinessAction');
+    businessAction.hidden = blockingOpen() === 0;
+    businessAction.textContent = '去回答';
+
+    paintGate($('.gate-row[data-gate="evidence"]'), !evidence,
+      evidence ? '尚未归档正式业务依据' : '3 份正式依据，引用文件可读',
+      evidence ? '阻断' : '通过');
+    $('#gateEvidenceAction').hidden = !evidence;
+
+    $('#gateVersionState').textContent = '通过';
+    const templateRow = $('.gate-row[data-gate="template"]');
+    const templateState = structure ? 'passed' : 'disabled';
+    templateRow.dataset.state = templateState;
+    const templateIcon = $('.gate-ico', templateRow);
+    templateIcon.dataset.state = templateState;
+    templateIcon.textContent = structure ? '✓' : '—';
+    $('#gateTemplateState').textContent = structure ? '通过' : '关闭';
+    $('#gateTemplateMsg').textContent = structure ? '8 个模板章节齐全（仅本机）' : '仅影响本机检查，不影响后台接受';
+    $('#gateTemplateAction').textContent = structure ? '关闭' : '开启';
+  }
+
+  function syncConfirm() {
+    if (submitting) return;
+    const blockers = blockedGates();
+    const ready = written && blockers === 0 && !confirmed;
+    confirmBtn.disabled = !ready;
+    confirmBtn.textContent = confirmed ? '已确认 v4' : '确认当前版本 v4';
+    let text = '门禁通过，可以确认';
+    let tone = 'ok';
+    if (!written) { text = '请先审阅并写入本轮变更'; tone = 'bad'; }
+    else if (confirmed) { text = '已确认为固定版本 v4'; tone = 'ok'; }
+    else if (blockers) { text = blockers + ' 项门禁阻断，处理后才能确认'; tone = 'bad'; }
+    confirmStatus.textContent = text;
+    confirmStatus.dataset.tone = tone;
+  }
+
+  function refreshFlow() {
+    const blockers = blockedGates();
+    if (confirmed) { setStage(6); stageCta.textContent = '开始修订'; }
+    else if (!written) { setStage(3); stageCta.textContent = '审阅 9 处变更'; }
+    else if (blockers) { setStage(4); stageCta.textContent = '处理 ' + blockers + ' 项阻断'; }
+    else { setStage(5); stageCta.textContent = '确认当前版本 v4'; }
+    const gateSmall = $('#stepGate small');
+    if (gateSmall) gateSmall.textContent = confirmed || !blockers ? '通过' : blockers + ' 项';
+    const writeSmall = $('#stepWrite small');
+    if (writeSmall) writeSmall.textContent = writtenCount + ' 处';
+    renderGates();
+    renderClarify();
+    syncConfirm();
+  }
+
+  function renderConsistency() {
+    consEmpty.hidden = consistency !== 'none';
+    consRunning.hidden = consistency !== 'running';
+    consResult.hidden = consistency !== 'done';
+    consistencyState.textContent = consistency === 'running' ? '对比中…' : consistency === 'done' ? '冲突 2' : '未发起';
+    runCompareBtn.disabled = consistency === 'running';
+    runCompareBtn.textContent = consistency === 'done' ? '重新对比' : '发起对比';
+  }
+  function openDrawer() {
+    drawer.hidden = false;
+    backdrop.hidden = false;
+    $('#closeDrawer').focus({ preventScroll: true });
+  }
+  function closeDrawer() { drawer.hidden = true; backdrop.hidden = true; }
+
+  function runConsistency(auto) {
+    clearTimeout(compareTimer);
+    consistency = 'running';
+    renderConsistency();
+    openDrawer();
+    compareTimer = setTimeout(() => {
+      consistency = 'done';
+      renderConsistency();
+      if (auto) showToast('一致性对比完成：2 项冲突，不影响确认');
+    }, 1700);
+  }
+
+  function openConfirm() {
+    renderGates();
+    syncConfirm();
+    showDialog(confirmSheet);
+  }
+
+  function confirmNow() {
+    if (confirmBtn.disabled || submitting || confirmed) return;
+    submitting = true;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '提交中…';
+    cancelConfirm.disabled = true;
+    closeConfirm.disabled = true;
+    confirmStatus.textContent = '正在提交固定版本…';
+    delete confirmStatus.dataset.tone;
+    setTimeout(() => {
+      confirmStatus.textContent = '已提交，等待协同后台接受…';
+      setTimeout(finishConfirm, 1500);
+    }, 900);
+  }
+
+  function finishConfirm() {
+    submitting = false;
+    confirmed = true;
+    hideDialog(confirmSheet);
+    confirmBtn.textContent = '已确认 v4';
+    cancelConfirm.disabled = false;
+    closeConfirm.disabled = false;
+    confirmedBar.hidden = false;
+    const version = $('#docVersion');
+    if (version) version.textContent = 'v4';
+    const save = $('.save');
+    if (save) save.innerHTML = '<i class="dot"></i>已确认';
+    composer.classList.add('is-locked');
+    msgField.disabled = true;
+    msgField.placeholder = '已确认；开始修订后可继续对话';
+    sendBtn.disabled = true;
+    const proposal = $('.proposal');
+    if (proposal) proposal.hidden = true;
+    refreshFlow();
+    showToast('已确认为固定版本 v4');
+    setTimeout(() => runConsistency(true), 600);
+  }
+
   stageCta.addEventListener('click', () => {
-    if (written) { $('#runToggle').click(); return; }
-    openSheet();
+    if (confirmed) { showToast('修订会先列出受影响的需求（演示）'); return; }
+    if (!written) { openSheet(); return; }
+    openConfirm();
+  });
+  gateStatusBtn.addEventListener('click', openConfirm);
+  consistencyBtn.addEventListener('click', () => { openDrawer(); renderConsistency(); });
+  $('#reviseBtn').addEventListener('click', () => showToast('修订：将先列出受影响的 2 个需求（演示）'));
+  closeConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
+  cancelConfirm.addEventListener('click', () => { if (!submitting) hideDialog(confirmSheet); });
+  confirmSheet.addEventListener('click', event => { if (event.target === confirmSheet && !submitting) hideDialog(confirmSheet); });
+  confirmSheet.addEventListener('cancel', event => { if (submitting) event.preventDefault(); });
+  confirmBtn.addEventListener('click', confirmNow);
+  $('#repairBtn').addEventListener('click', () => showToast('已创建授权修复任务：最多 3 轮，缺答案会暂停（演示）'));
+  $('#declCore').addEventListener('change', event => { declared.core = event.target.checked; refreshFlow(); });
+  $('#declAccept').addEventListener('change', event => { declared.acceptance = event.target.checked; refreshFlow(); });
+  $('#gateEvidenceAction').addEventListener('click', () => {
+    evidenceFixed = true;
+    refreshFlow();
+    showToast('已归档 3 份正式依据');
+  });
+  $('#gateTemplateAction').addEventListener('click', () => { structure = !structure; refreshFlow(); });
+  $('#gateBusinessAction').addEventListener('click', () => {
+    if (!blockingOpen()) return;
+    if (confirmSheet.open) hideDialog(confirmSheet);
+    const section = $('.section[data-sec="08"]');
+    if (section) {
+      section.open = true;
+      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      section.classList.add('flash');
+      setTimeout(() => section.classList.remove('flash'), 2000);
+    }
+    const choice = $('.decision[data-key="refund"] .choice');
+    if (choice) choice.focus({ preventScroll: true });
+  });
+
+  $('#closeDrawer').addEventListener('click', closeDrawer);
+  backdrop.addEventListener('click', closeDrawer);
+  runCompareBtn.addEventListener('click', () => { if (consistency !== 'running') runConsistency(false); });
+  $('#cancelCompare').addEventListener('click', () => {
+    clearTimeout(compareTimer);
+    consistency = 'none';
+    renderConsistency();
+    showToast('已取消本次对比');
+  });
+  $$('.conflict-actions button').forEach(button => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.act;
+      if (action === 'talk') {
+        closeDrawer();
+        if (confirmed) showToast('已确认；开始修订后可继续讨论这条冲突');
+        else { msgField.focus(); showToast('把这条冲突带入对话讨论'); }
+      }
+      if (action === 'revise') {
+        closeDrawer();
+        showToast(confirmed ? '修订前会先列出受影响的 2 个需求（演示）' : '请先完成确认，再开始修订');
+      }
+      if (action === 'open') showToast('打开关联需求查看（演示）');
+    });
+  });
+  const grid = $('.grid');
+  const docPanel = $('#docPanel');
+  const docRestore = $('#docRestore');
+
+  function collapseDoc() {
+    grid.classList.add('doc-collapsed');
+    docPanel.setAttribute('aria-hidden', 'true');
+    docRestore.hidden = false;
+    $('#docCollapse').setAttribute('aria-expanded', 'false');
+    $('#docExpand').focus({ preventScroll: true });
+    showToast('已收起文档预览');
+  }
+  function expandDoc() {
+    grid.classList.remove('doc-collapsed');
+    docPanel.removeAttribute('aria-hidden');
+    docRestore.hidden = true;
+    $('#docCollapse').setAttribute('aria-expanded', 'true');
+    $('#docCollapse').focus({ preventScroll: true });
+  }
+  $('#docCollapse').addEventListener('click', collapseDoc);
+  $('#docExpand').addEventListener('click', expandDoc);
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !drawer.hidden) closeDrawer();
   });
 
   $('#reviewBtn').addEventListener('click', openSheet);
@@ -817,9 +1311,13 @@
           other.disabled = other !== choice;
         });
         choice.classList.add('is-answered');
-        markClarified(key);
+        if (!decisions.has(key)) {
+          decisions.add(key);
+          markClarified(key);
+        }
         const remaining = $$('.decision').filter(d => !$('.choice[aria-pressed="true"]', d)).length;
         $('#decideCount').textContent = remaining ? remaining + ' 项' : '已答复';
+        refreshFlow();
       });
     });
   });
@@ -878,6 +1376,7 @@
 
   $('#composer').addEventListener('submit', event => {
     event.preventDefault();
+    if (confirmed) return;
     const field = $('#msg');
     const text = field.value.trim();
     if (!text) return;
@@ -890,8 +1389,8 @@
     turn.scrollIntoView({ behavior: 'smooth', block: 'end' });
   });
 
-  renderClarify();
-  setStage(3);
+  refreshFlow();
+  renderConsistency();
 })();
 </script>
 </body>
