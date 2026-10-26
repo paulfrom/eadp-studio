@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -60,6 +60,41 @@ test('AI merges a conflict on this confirmation material', async t => {
   assert.equal(await readFile(path.join(f.worktree, '场景/场景02.md'), 'utf8'), '合并后的材料\n')
   assert.ok(f.calls.includes('resolve:场景/场景02.md'))
   assert.ok(!f.calls.includes('abortApply'))
+})
+
+test('a conflicted file symlink cannot write outside the worktree', async t => {
+  const f = await fixture(t, ['场景/场景02.md'], async () => ({ content: '越界写入\n' }))
+  const externalRoot = await mkdtemp(path.join(tmpdir(), 'eadp-remote-merge-external-'))
+  t.after(() => rm(externalRoot, { recursive: true, force: true }))
+  const external = path.join(externalRoot, 'outside.md')
+  await writeFile(external, '外部原内容\n')
+  await symlink(external, path.join(f.worktree, '场景/场景02.md'))
+  await assert.rejects(f.merges.align({ worktree: f.worktree, target, identity: author }), /普通文件|超出项目范围/)
+  assert.equal(await readFile(external, 'utf8'), '外部原内容\n')
+})
+
+test('a conflicted parent directory symlink cannot write outside the worktree', async t => {
+  const f = await fixture(t, ['场景/场景02.md'], async () => ({ content: '越界写入\n' }))
+  const externalRoot = await mkdtemp(path.join(tmpdir(), 'eadp-remote-merge-external-'))
+  t.after(() => rm(externalRoot, { recursive: true, force: true }))
+  const external = path.join(externalRoot, '场景02.md')
+  await writeFile(external, '外部原内容\n')
+  await rm(path.join(f.worktree, '场景'), { recursive: true })
+  await symlink(externalRoot, path.join(f.worktree, '场景'))
+  await assert.rejects(f.merges.align({ worktree: f.worktree, target, identity: author }), /普通文件|超出项目范围/)
+  assert.equal(await readFile(external, 'utf8'), '外部原内容\n')
+})
+
+test('an AI deletion also refuses a conflicted file symlink', async t => {
+  const f = await fixture(t, ['场景/场景02.md'], async () => ({ delete: true }))
+  const externalRoot = await mkdtemp(path.join(tmpdir(), 'eadp-remote-merge-external-'))
+  t.after(() => rm(externalRoot, { recursive: true, force: true }))
+  const external = path.join(externalRoot, 'outside.md')
+  await writeFile(external, '外部原内容\n')
+  const linked = path.join(f.worktree, '场景/场景02.md')
+  await symlink(external, linked)
+  await assert.rejects(f.merges.align({ worktree: f.worktree, target, identity: author }), /普通文件|超出项目范围/)
+  assert.equal(await readFile(linked, 'utf8'), '外部原内容\n')
 })
 
 test('a clean worktree fast-forwards without replaying its own history', async t => {

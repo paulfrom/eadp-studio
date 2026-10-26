@@ -261,7 +261,7 @@ export class MaterialConfirmations {
     const local = await this.store.read()
     local.operations = local.operations.filter(value => value.id !== child.id)
     await this.store.save()
-    delete operation.integrationId; delete operation.prepare; delete operation.candidate; delete operation.input
+    delete operation.integrationId; delete operation.prepare; delete operation.candidate; delete operation.input; delete operation.mergeNote
     operation.phase = 'checking'; operation.message = `上次提交被协同后台拒绝：${child.message ?? '原因未知'}，已重新开始固定`
   }
 
@@ -285,7 +285,7 @@ export class MaterialConfirmations {
     if (!target) throw new Error('项目没有已接受版本，请先恢复首次提交')
     let report: RemoteMergeReport | undefined
     try {
-      report = await new RemoteMerges(this.ports).align({ worktree: task.worktree, target, identity: await this.deps.identity(operation.projectId) })
+      report = await new RemoteMerges(this.ports).align({ worktree: task.worktree, target, identity: await this.deps.identity(operation.projectId), material: { path: draft.path, metadata: draft.metadata } })
     } catch (error) {
       if (!(error instanceof RemoteSyncPending)) throw error
       operation.phase = 'syncing'; operation.message = error.message
@@ -302,10 +302,9 @@ export class MaterialConfirmations {
     }
     if (!report) return { draft, merged: false }
     operation.merge = report
-    const declared = await this.refreshDeclarations(operation, task, draft)
-    // The accepted version may itself be newer than the bytes read before the
-    // merge; the gate must judge what is now in the worktree.
-    return { draft: await readMaterial(task.worktree, declared.metadata.kind, declared.entityId), merged: true }
+    const merged = await readMaterial(task.worktree, draft.metadata.kind, draft.entityId)
+    const declared = await this.refreshDeclarations(operation, task, merged)
+    return { draft: declared, merged: true }
   }
 
   /** A failed background fetch must not leave the confirmation reporting sync forever. */
@@ -386,7 +385,7 @@ export class MaterialConfirmations {
       // The requirement save was bound to its own expected hash and exact
       // receipt; only a hash-only material command refers to an existing file.
       if (!savedInPlace && draft.sha256 !== request.expectedHash) {
-        if (!operation.recovered) throw new Error('文件已变化，请选择当前内容、外部版本或合并后继续确认')
+        if (!aligned.merged) throw new Error('文件已变化，请选择当前内容、外部版本或合并后继续确认')
         request.expectedHash = draft.sha256
       }
       operation.savedHash = draft.sha256; operation.phase = 'checking'; delete operation.message; await this.store.save()

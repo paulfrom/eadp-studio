@@ -1,5 +1,6 @@
 import { rm, writeFile } from 'node:fs/promises'
-import path from 'node:path'
+import type { MaterialMetadata } from '@eadp/contracts'
+import { containedFile, materialText, parseMaterial } from '../adapters/assets/materials.ts'
 import type { HostPorts } from './ports.ts'
 
 /** One automatic reconciliation with the project's accepted remote head. */
@@ -10,6 +11,8 @@ export interface RemoteMergeRequest {
   worktree: string; target: string;
   /** The author identity already bound to this project and confirmation. */
   identity: { name: string; email: string };
+  /** Host-trusted material identity; model input and output contain business body only. */
+  material?: { path: string; metadata: MaterialMetadata };
 }
 /** The accepted commit is not local yet; the caller schedules the Git fetch on the background lane. */
 export class RemoteSyncPending extends Error {
@@ -59,15 +62,20 @@ export class RemoteMerges {
         const conflicts = await this.ports.git.applyCommit(worktree, preserved)
         for (const file of conflicts) {
           const stages = await this.ports.git.conflictStages(worktree, file)
-          const base = decode(stages.base), ours = decode(stages.ours), theirs = decode(stages.theirs)
+          let base = decode(stages.base), ours = decode(stages.ours), theirs = decode(stages.theirs)
           if (base === undefined && ours === undefined && theirs === undefined) throw new Error(`无法读取冲突文件内容：${file}`)
+          const material = request.material?.path === file ? request.material : undefined
+          if (material) {
+            const businessBody = (text: string | undefined) => text === undefined ? undefined : parseMaterial(Buffer.from(text), file).body
+            base = businessBody(base); ours = businessBody(ours); theirs = businessBody(theirs)
+          }
           if (!this.ports.mergeConflict) throw new Error(`远端合并出现冲突：${file}，AI 合并能力当前不可用`)
           const merged = await this.ports.mergeConflict({ path: file, ...(base !== undefined ? { base } : {}), ...(ours !== undefined ? { ours } : {}), ...(theirs !== undefined ? { theirs } : {}) }, AbortSignal.timeout(180_000))
-          const absolute = path.join(worktree, file)
+          const absolute = await containedFile(worktree, file)
           if (merged.delete) await rm(absolute, { force: true })
           else {
             if (merged.content === undefined) throw new Error(`AI 未返回合并内容：${file}`)
-            await writeFile(absolute, merged.content, 'utf8')
+            await writeFile(absolute, material ? materialText(material.metadata, merged.content) : merged.content, 'utf8')
           }
           await this.ports.git.resolvePath(worktree, file)
           report.aiFiles.push(file)
