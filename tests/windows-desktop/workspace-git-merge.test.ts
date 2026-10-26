@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, mkdir, symlink, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -62,4 +62,37 @@ test('merge reports a clean merge commit and conflicted files, completeMerge fin
   const merged = await git.completeMerge(root, ['a.md'], identity)
   assert.match(merged, /^[a-f0-9]{40}$/)
   assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim(), merged)
+})
+
+test('changed path statuses use committed tree metadata for large, special and non-regular files', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'git-status-')); t.after(() => rm(root, { recursive: true, force: true }))
+  await exec('git', ['init', '--initial-branch', 'main'], { cwd: root })
+  await exec('git', ['config', 'user.name', identity.name], { cwd: root }); await exec('git', ['config', 'user.email', identity.email], { cwd: root })
+  const commitAll = async (message: string) => { await exec('git', ['add', '-A'], { cwd: root }); await exec('git', ['commit', '-m', message], { cwd: root }); return (await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim() }
+  await writeFile(path.join(root, 'modify.md'), 'base')
+  await writeFile(path.join(root, 'delete.md'), 'base')
+  const base = await commitAll('base')
+
+  await writeFile(path.join(root, 'modify.md'), 'head')
+  await unlink(path.join(root, 'delete.md'))
+  const large = '.eadp/evidence/large.md'
+  await mkdir(path.dirname(path.join(root, large)), { recursive: true })
+  await writeFile(path.join(root, large), Buffer.alloc(1_048_577, 97))
+  const special = '场景/特殊\n换行\t制表.md'
+  await mkdir(path.dirname(path.join(root, special)), { recursive: true })
+  await writeFile(path.join(root, special), 'special')
+  await mkdir(path.join(root, 'bulk'))
+  await Promise.all(Array.from({ length: 1200 }, (_, index) => writeFile(path.join(root, 'bulk', `${index}.md`), String(index))))
+  if (process.platform !== 'win32') await symlink('modify.md', path.join(root, 'link.md'))
+  const head = await commitAll('large change set')
+
+  const statuses = await new WorkspaceGit(runtime).changedPathStatuses(root, base, head)
+  const byPath = new Map(statuses.map(value => [value.path, value.status]))
+  assert.equal(statuses.length, process.platform === 'win32' ? 1204 : 1205)
+  assert.equal(byPath.get('modify.md'), 'M')
+  assert.equal(byPath.get('delete.md'), 'D')
+  assert.equal(byPath.get(large), 'A')
+  assert.equal(byPath.get(special), 'A')
+  assert.equal(byPath.get('bulk/1199.md'), 'A')
+  if (process.platform !== 'win32') assert.equal(byPath.get('link.md'), 'A')
 })

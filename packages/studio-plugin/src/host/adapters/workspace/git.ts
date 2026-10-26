@@ -187,6 +187,17 @@ export class WorkspaceGit {
     const result = await this.command(root, ['diff', '--name-only', '-z', '--no-renames', fixedSha(baseSha), fixedSha(candidateSha), '--'])
     return result.stdout.split('\0').filter(Boolean).map(gitRelativePath)
   }
+  async changedPathStatuses(root: string, baseSha: string, candidateSha: string): Promise<Array<{ path: string; status: string }>> {
+    const result = await this.command(root, ['diff', '--name-status', '-z', '--no-renames', fixedSha(baseSha), fixedSha(candidateSha), '--'])
+    const entries = result.stdout.split('\0')
+    if (entries.pop() !== '' || entries.length % 2) throw new Error('Git 已提交路径状态结果无效。')
+    const paths: Array<{ path: string; status: string }> = []
+    for (let index = 0; index < entries.length; index += 2) {
+      const status = entries[index]!, path = gitRelativePath(entries[index + 1]!)
+      paths.push({ path, status: status === 'A' || status === 'D' ? status : 'M' })
+    }
+    return paths
+  }
   async commitFiles(root: string, files: readonly string[], message: string, identity: GitIdentity): Promise<string> {
     if (!files.length || !message.trim() || message.length > 500) throw new Error('Git 提交信息无效。')
     validateIdentity(identity)

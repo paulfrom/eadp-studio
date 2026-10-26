@@ -22,7 +22,7 @@ const request = { idempotencyKey: 'op1', sourceSha: candidate, candidateSha: can
   confirmations: [{ entityId: 'e', fixed: { commitSha: candidate, path: '场景/e.md', sha256: sha('c') }, readHash: sha('c'), authorConfirmed: true }] } as unknown as MaterialIntegrationRequest
 const draft = { path: '场景/e.md', sha256: sha('d'), body: 'merged', entityId: 'e', metadata: { entityId: 'e', sources: [] } } as unknown as MaterialDraft
 
-async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean, outOfScope = false, wrongParent = false) {
+async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean, outOfScope = false, wrongParent = false, crashAfterComplete = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'merges-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
   const local = await store.read(); local.tasks.push(structuredClone(task)); await store.save()
@@ -46,16 +46,25 @@ async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean,
       deleteBranch: async (_root: string, branch: string, commit: string) => { deletions.push({ branch, commit }) },
       changedFiles: async (_root: string, from: string, to: string) => from === expected && to === remote ? ['场景/remote.md'] : outOfScope ? ['其他/x.md'] : ['场景/e.md'],
       merge: async (_root: string, commit: string) => { mergeCommits.push(commit); if (!conflict) currentHead = merged; return conflict ? { status: 'conflicted', files: ['场景/e.md', '.eadp/evidence/interview.md'] } : { status: 'merged', commit: merged } },
-      completeMerge: async (_root: string, files: string[]) => { calls.push(`complete:${files.join(',')}`); currentHead = merged; return merged },
+      completeMerge: async (_root: string, files: string[]) => {
+        calls.push(`complete:${files.join(',')}`); currentHead = merged
+        if (crashAfterComplete && !calls.includes('crash')) { calls.push('crash'); throw new Error('remap 前进程崩溃') }
+        return merged
+      },
     },
   } as unknown as HostPorts
-  const merges = new CandidateMerges(store, ports, {
+  const dependencies = {
     entity: async () => ({ entity: { id: 'e', kind: 'scenario' } as EntityView }),
     identity: async () => ({ name: '作者', email: 'a@b.test' }),
     checks: (candidateSha: string) => ({ candidateSha, passed: true, checks: [] }) as CheckEvidence,
     readDraft: async () => structuredClone(draft),
-  })
-  return { merges, calls, prompted, mergeCommits, checkouts, switches, deletions, sessionTasks, cancelled, head: () => currentHead }
+  }
+  const merges = new CandidateMerges(store, ports, dependencies)
+  const recover = async () => {
+    const recoveredStore = new StudioStore(root); recoveredStore.useUser(1)
+    return { merges: new CandidateMerges(recoveredStore, ports, dependencies), operation: (await recoveredStore.read()).operations[0]! }
+  }
+  return { merges, recover, store, calls, prompted, mergeCommits, checkouts, switches, deletions, sessionTasks, cancelled, head: () => currentHead }
 }
 
 test('a clean merge rebuilds the candidate on the new remote head and keeps the original read hash', async t => {
@@ -78,17 +87,40 @@ test('a clean merge rebuilds the candidate on the new remote head and keeps the 
 })
 
 test('an existing merge commit is resumed without repeating checkout, merge or AI', async t => {
-  const { merges, calls, prompted, checkouts, mergeCommits, sessionTasks } = await fixture(t, true)
+  const { merges, prompted, checkouts, mergeCommits, sessionTasks } = await fixture(t, true)
   const first = merges.merge(operation, request, remote, 'main')
   await prompted
   await merges.accept(mergeSession, { kind: 'turn-ended', reason: 'stop' })
-  assert.ok(await first)
+  const initial = await first
+  assert.ok(initial)
   const resumed = await merges.merge(operation, request, remote, 'main')
   assert.ok(resumed)
   assert.equal(resumed.prepare.candidateSha, merged)
-  assert.deepEqual(resumed.note, { remoteFiles: ['场景/remote.md'], aiFiles: [] })
+  assert.deepEqual(resumed.note, initial.note)
+  assert.deepEqual(resumed.note.aiFiles, ['场景/e.md', '.eadp/evidence/interview.md'])
   assert.equal(checkouts.length, 1)
   assert.deepEqual(mergeCommits, [candidate])
+  assert.equal(sessionTasks.length, 1)
+})
+
+test('a crash after AI commits but before remap restores the persisted note without repeating AI', async t => {
+  const { merges, recover, store, prompted, sessionTasks } = await fixture(t, true, false, false, true)
+  const persisted = structuredClone(operation)
+  ;(await store.read()).operations.push(persisted); await store.save()
+  const first = merges.merge(persisted, request, remote, 'main')
+  await prompted
+  await merges.accept(mergeSession, { kind: 'turn-ended', reason: 'stop' })
+  await assert.rejects(first, /remap 前进程崩溃/)
+
+  const recovered = await recover()
+  const resumed = await recovered.merges.merge(recovered.operation, request, remote, 'main')
+  assert.ok(resumed)
+  assert.deepEqual(resumed.note, { remoteFiles: ['场景/remote.md'], aiFiles: ['场景/e.md', '.eadp/evidence/interview.md'] })
+  const repeated = await recovered.merges.merge(recovered.operation, request, remote, 'main')
+  assert.ok(repeated)
+  assert.deepEqual(repeated.note, resumed.note)
+  assert.deepEqual(repeated.prepare, resumed.prepare)
+  assert.equal(resumed.prepare.candidateSha, merged)
   assert.equal(sessionTasks.length, 1)
 })
 

@@ -41,7 +41,7 @@ export class MaterialStatusReports {
       record = { id: randomUUID(), projectId: input.projectId, entityId: input.entityId, trigger: input.trigger, worktree: input.worktree, baseHead: input.baseHead, shared: false }
       ;(owner.statusReports ??= []).push(record)
       await this.store.save()
-      this.deps.deliver(() => this.collect(input, record!))
+      this.schedule(input, record)
     } catch (error) {
       if (record) await this.fail(record, error)
     }
@@ -52,16 +52,29 @@ export class MaterialStatusReports {
     void this.store.read().then(async local => {
       for (const owner of local.scenarios.filter(record => record.projectId === projectId)) {
         for (const record of owner.statusReports ?? []) {
-          if (record.shared || this.inflight.has(record.id)) continue
+          if (record.shared) continue
           const input: MaterialStatusReportInput = { projectId: record.projectId, entityId: record.entityId, trigger: record.trigger, worktree: record.worktree, baseHead: record.baseHead }
-          try { this.deps.deliver(() => record.submission ? this.submit(record) : this.collect(input, record)) }
+          try { this.schedule(input, record) }
           catch (error) { await this.fail(record, error) }
         }
       }
     }).catch(() => undefined)
   }
 
+  private schedule(input: MaterialStatusReportInput, record: LocalMaterialStatusReport): void {
+    if (record.shared || this.inflight.has(record.id)) return
+    this.inflight.add(record.id)
+    try { this.deps.deliver(() => this.process(input, record)) }
+    catch (error) { this.inflight.delete(record.id); throw error }
+  }
+
+  private async process(input: MaterialStatusReportInput, record: LocalMaterialStatusReport): Promise<void> {
+    try { await (record.submission ? this.submit(record) : this.collect(input, record)) }
+    finally { this.inflight.delete(record.id) }
+  }
+
   private async collect(input: MaterialStatusReportInput, record: LocalMaterialStatusReport): Promise<void> {
+    if (record.shared) return
     try {
       const state = await this.ports.git.state(input.worktree)
       const baseHead = input.baseHead ?? (await this.deps.baseHead?.(input.worktree)) ?? state.head
@@ -81,13 +94,11 @@ export class MaterialStatusReports {
   }
 
   private async submit(record: LocalMaterialStatusReport): Promise<void> {
-    if (!record.submission || record.shared || this.inflight.has(record.id)) return
-    this.inflight.add(record.id)
+    if (!record.submission || record.shared) return
     try {
       await this.api.request('POST', `/v1/projects/${encodeURIComponent(record.projectId)}/entities/${encodeURIComponent(record.entityId)}/status-reports`, record.submission)
       record.shared = true; delete record.message; await this.store.save()
     } catch (error) { record.shared = false; await this.fail(record, error) }
-    finally { this.inflight.delete(record.id) }
   }
 
   private async fail(record: LocalMaterialStatusReport, error: unknown): Promise<void> {
@@ -96,15 +107,7 @@ export class MaterialStatusReports {
   }
 
   private async changedPaths(worktree: string, baseHead: string, worktreeHead: string): Promise<StatusPath[]> {
-    const committed = await this.ports.git.changedFiles(worktree, baseHead, worktreeHead)
-    const paths = new Map<string, StatusPath>()
-    for (const path of committed) {
-      const [before, after] = await Promise.all([
-        this.ports.git.readOptionalBlob(worktree, baseHead, path),
-        this.ports.git.readOptionalBlob(worktree, worktreeHead, path),
-      ])
-      paths.set(path, { path, status: !before && after ? 'A' : before && !after ? 'D' : 'M' })
-    }
+    const paths = new Map((await this.ports.git.changedPathStatuses(worktree, baseHead, worktreeHead)).map(value => [value.path, value]))
     for (const value of await this.uncommittedPaths(worktree)) paths.set(value.path, value)
     return [...paths.values()]
   }

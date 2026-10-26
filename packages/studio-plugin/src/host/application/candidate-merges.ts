@@ -32,7 +32,7 @@ export class CandidateMerges {
     const { entity } = await this.deps.entity(operation.entityId, operation.projectId)
     const state = await this.ports.git.state(task.worktree)
     const mergeBranch = `studio-merge/${operation.candidateSha.slice(0, 12)}-${remoteHead.slice(0, 12)}`
-    let mergeSha = state.head, aiFiles: string[] = []
+    let mergeSha = state.head, aiFiles = state.head === operation.candidateSha ? [] : operation.mergeAiFiles ?? []
     if (state.head !== operation.candidateSha) {
       const parents = (await this.ports.gitLocal(['rev-list', '--parents', '-n', '1', state.head], task.worktree)).trim().split(/\s+/)
       if (parents.length !== 3 || parents[0] !== state.head || parents[1] !== remoteHead || parents[2] !== operation.candidateSha) throw new Error('候选提交已变化，请核对原候选后再集成')
@@ -49,8 +49,12 @@ export class CandidateMerges {
       const identity = await this.deps.identity(operation.projectId)
       await this.ports.git.checkoutBranch(task.worktree, mergeBranch, remoteHead)
       const result = await this.ports.git.merge(task.worktree, operation.candidateSha, identity)
-      aiFiles = result.status === 'conflicted' ? result.files : []
-      mergeSha = result.status === 'merged' ? result.commit : await this.resolveWithAgent(task, operation, remoteHead, result.files, identity)
+      if (result.status === 'conflicted') {
+        aiFiles = result.files
+        operation.mergeAiFiles = result.files
+        await this.store.save()
+        mergeSha = await this.resolveWithAgent(task, operation, remoteHead, result.files, identity)
+      } else mergeSha = result.commit
     }
     const after = await this.ports.git.state(task.worktree)
     if (after.dirty || after.head !== mergeSha) throw new Error('合并后工作区仍有未提交改动，已保留现场请核对')
