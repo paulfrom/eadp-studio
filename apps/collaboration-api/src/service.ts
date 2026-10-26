@@ -341,9 +341,14 @@ export class CollaborationService {
     });
   }
   async listStatusReports(actor: Actor, projectId: string, filter: MaterialStatusReportFilter): Promise<MaterialStatusReportView[]> {
-    return this.transact(actor, c => repository.listStatusReports(c, projectId, filter));
+    await this.authorize(actor, projectId);
+    return this.transact(actor, async c => {
+      if (filter.entityId) await repository.entityRow(c, projectId, filter.entityId);
+      return repository.listStatusReports(c, projectId, filter);
+    });
   }
   async getStatusReport(actor: Actor, projectId: string, id: string): Promise<MaterialStatusReportView> {
+    await this.authorize(actor, projectId);
     return this.transact(actor, c => repository.getStatusReport(c, projectId, id));
   }
   async consistencyContext(actor: Actor, projectId: string, entityId: string) {

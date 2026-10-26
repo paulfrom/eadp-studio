@@ -10,6 +10,10 @@ import type { HostPorts } from '../../packages/studio-plugin/src/host/applicatio
 import type { CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 
 const head = 'b'.repeat(40)
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100 && !condition(); attempt++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.ok(condition())
+}
 test('status reports carry mechanical plus optional AI summaries and recover after failure', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
@@ -19,7 +23,7 @@ test('status reports carry mechanical plus optional AI summaries and recover aft
   let failing = true
   const api = { async request(method: string, url: string, body: never) { if (failing) throw new Error('网络不可用'); posts.push({ url, body }); return {} } } as unknown as CollaborationClient
   const ports = {
-    git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }) },
+    git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }), changedFiles: async () => [] },
     gitLocal: async () => ' M 场景/登录.md\0?? 场景/新增.md\0',
     summarize: async () => '本次编辑调整登录场景并新增一个场景草稿',
   } as unknown as HostPorts
@@ -34,11 +38,114 @@ test('status reports carry mechanical plus optional AI summaries and recover aft
   assert.equal(posts[0]!.url, '/v1/projects/p/entities/e/status-reports')
   assert.equal(posts[0]!.body.worktreeHead, head)
   assert.equal(posts[0]!.body.changedPathCount, 2)
-  assert.match(posts[0]!.body.summary, /未提交变更 2 个文件：场景\/登录.md（修改）、场景\/新增.md（新增）/)
+  assert.match(posts[0]!.body.summary, /变更 2 个文件：场景\/登录.md（修改）、场景\/新增.md（新增）/)
   assert.match(posts[0]!.body.summary, /本次编辑调整登录场景/)
   assert.ok(posts[0]!.body.summary.length <= 500)
   assert.equal(owner.statusReports![0]!.shared, true)
   reports.resume('p'); assert.equal(pending.length, 2, '已共享记录不再重发')
+})
+
+test('committed changes join uncommitted changes and uncommitted status wins per path', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'status-committed-')); t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new StudioStore(root); store.useUser(1)
+  const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
+  ;(await store.read()).scenarios.push(owner); await store.save()
+  const posts: Array<{ summary: string; changedPathCount: number }> = []
+  const api = { async request(method: string, url: string, body: { summary: string; changedPathCount: number }) { posts.push(body); return {} } } as unknown as CollaborationClient
+  const committed = ['场景/已提交新增.md', '场景/已提交删除.md', '场景/覆盖.md']
+  const ports = {
+    git: {
+      state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }),
+      changedFiles: async () => committed,
+      readOptionalBlob: async (worktree: string, commit: string, file: string) => {
+        if (file === '场景/已提交新增.md') return commit === head ? Buffer.from('new') : undefined
+        if (file === '场景/已提交删除.md') return commit === head ? undefined : Buffer.from('old')
+        return Buffer.from('same-path')
+      },
+    },
+    gitLocal: async () => ' D 场景/覆盖.md\0?? 场景/未提交.md\0',
+  } as unknown as HostPorts
+  const pending: Array<() => Promise<void>> = []
+  const reports = new MaterialStatusReports(store, api, ports, { record: async () => owner, deliver: work => { pending.push(work) } })
+  await reports.report({ projectId: 'p', entityId: 'e', trigger: 'save', worktree: '/w', baseHead: 'a'.repeat(40) })
+  await pending[0]!()
+  assert.equal(posts.length, 1)
+  assert.equal(posts[0]!.changedPathCount, 4)
+  assert.match(posts[0]!.summary, /场景\/已提交新增.md（新增）/)
+  assert.match(posts[0]!.summary, /场景\/已提交删除.md（删除）/)
+  assert.match(posts[0]!.summary, /场景\/覆盖.md（删除）/)
+  assert.doesNotMatch(posts[0]!.summary, /场景\/覆盖.md（修改）/)
+  assert.match(posts[0]!.summary, /场景\/未提交.md（新增）/)
+})
+
+test('collection failures persist their input and resume recollects before submitting', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'status-recollect-')); t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new StudioStore(root); store.useUser(1)
+  const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
+  ;(await store.read()).scenarios.push(owner); await store.save()
+  const posts: Array<{ changedPathCount: number }> = []
+  const api = { async request(method: string, url: string, body: { changedPathCount: number }) { posts.push(body); return {} } } as unknown as CollaborationClient
+  let failCollection = true, collections = 0
+  const ports = {
+    git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }), changedFiles: async () => [] },
+    gitLocal: async () => { collections++; if (failCollection) { failCollection = false; throw new Error('采集失败') } return ' M 场景/恢复.md\0' },
+  } as unknown as HostPorts
+  const pending: Array<() => Promise<void>> = []
+  const reports = new MaterialStatusReports(store, api, ports, { record: async () => owner, deliver: work => { pending.push(work) } })
+  const input = { projectId: 'p', entityId: 'e', trigger: 'save' as const, worktree: '/w', baseHead: 'a'.repeat(40) }
+  await reports.report(input); await pending[0]!()
+  assert.equal(owner.statusReports![0]!.submission, undefined)
+  assert.equal(owner.statusReports![0]!.worktree, '/w')
+  assert.equal(owner.statusReports![0]!.baseHead, input.baseHead)
+  reports.resume('p'); await Promise.resolve(); await Promise.resolve()
+  assert.equal(pending.length, 2); await pending[1]!()
+  assert.equal(collections, 2)
+  assert.equal(posts.length, 1)
+  assert.equal(posts[0]!.changedPathCount, 1)
+  assert.equal(owner.statusReports![0]!.shared, true)
+})
+
+test('resume does not duplicate an inflight submission', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'status-inflight-')); t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new StudioStore(root); store.useUser(1)
+  const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
+  ;(await store.read()).scenarios.push(owner); await store.save()
+  let release!: () => void, requests = 0
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const api = { async request() { requests++; await blocked; return {} } } as unknown as CollaborationClient
+  const ports = {
+    git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }), changedFiles: async () => [] },
+    gitLocal: async () => ' M 场景/在途.md\0',
+  } as unknown as HostPorts
+  const pending: Array<() => Promise<void>> = []
+  const reports = new MaterialStatusReports(store, api, ports, { record: async () => owner, deliver: work => { pending.push(work) } })
+  await reports.report({ projectId: 'p', entityId: 'e', trigger: 'save', worktree: '/w' })
+  const initial = pending[0]!(); await waitFor(() => requests === 1)
+  reports.resume('p'); reports.resume('p'); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(pending.length, 1)
+  assert.equal(requests, 1)
+  release(); await initial
+  assert.equal(owner.statusReports![0]!.shared, true)
+})
+
+test('changed path count is capped while the mechanical summary keeps the actual total', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'status-limit-')); t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new StudioStore(root); store.useUser(1)
+  const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
+  ;(await store.read()).scenarios.push(owner); await store.save()
+  const posts: Array<{ summary: string; changedPathCount: number }> = []
+  const api = { async request(method: string, url: string, body: { summary: string; changedPathCount: number }) { posts.push(body); return {} } } as unknown as CollaborationClient
+  const paths = Array.from({ length: 3001 }, (_, index) => `场景/${index}.md`)
+  const ports = {
+    git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }), changedFiles: async () => [] },
+    gitLocal: async () => paths.map(file => ` M ${file}`).join('\0') + '\0',
+  } as unknown as HostPorts
+  const pending: Array<() => Promise<void>> = []
+  const reports = new MaterialStatusReports(store, api, ports, { record: async () => owner, deliver: work => { pending.push(work) } })
+  await reports.report({ projectId: 'p', entityId: 'e', trigger: 'save', worktree: '/w' }); await pending[0]!()
+  assert.equal(posts[0]!.changedPathCount, 3000)
+  assert.match(posts[0]!.summary, /3001 个文件/)
+  assert.ok(posts[0]!.summary.length <= 500)
 })
 
 test('status report setup failures stay local and never reject', async t => {
@@ -71,7 +178,7 @@ test('AI summary failures and overlong results preserve bounded mechanical submi
     const posts: Array<{ summary: string }> = []
     const api = { async request(method: string, url: string, body: { summary: string }) { posts.push(body); return {} } } as unknown as CollaborationClient
     const ports = {
-      git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }) },
+      git: { state: async () => ({ root: 'w', head, branch: 'main', dirty: true, repositoryUrl: 'https://gitlab.test/p.git' }), changedFiles: async () => [] },
       gitLocal: async () => ' M 场景/登录.md\0',
       summarize: async () => { if (kind === 'failure') throw new Error('模型不可用'); return '补'.repeat(600) },
     } as unknown as HostPorts
@@ -79,7 +186,7 @@ test('AI summary failures and overlong results preserve bounded mechanical submi
     const reports = new MaterialStatusReports(store, api, ports, { record: async () => owner, deliver: work => { pending.push(work) } })
     await reports.report({ projectId: 'p', entityId: 'e', trigger: 'save', worktree: '/w' })
     await pending[0]!()
-    const mechanical = '未提交变更 1 个文件：场景/登录.md（修改）'
+    const mechanical = '变更 1 个文件：场景/登录.md（修改）'
     assert.equal(posts.length, 1)
     if (kind === 'failure') assert.equal(posts[0]!.summary, mechanical)
     else {

@@ -113,6 +113,18 @@ test('material status reports: sealed idempotent records without Git content rea
     assert.equal(changed.json<{ error: { code: string } }>().error.code, 'IDEMPOTENCY_CONFLICT')
   })
 
+  await t.test('status report reads require project membership and list validates its entity', async () => {
+    const created = await post<MaterialStatusReportView>(reportsUrl, report())
+    remote.memberLevel = 0
+    const list = await send('GET', reportsUrl)
+    assert.equal(list.statusCode, 403, list.body)
+    const detail = await send('GET', `${reportsUrl}/${created.id}`)
+    assert.equal(detail.statusCode, 403, detail.body)
+    remote.memberLevel = 40
+    const missing = await send('GET', `${base}/entities/${key()}/status-reports`)
+    assert.equal(missing.statusCode, 404, missing.body)
+  })
+
   await t.test('summary over 500 chars and mismatched route entity are rejected', async () => {
     const long = await send('POST', reportsUrl, report({ summary: '长'.repeat(501) }))
     assert.equal(long.statusCode, 400)
