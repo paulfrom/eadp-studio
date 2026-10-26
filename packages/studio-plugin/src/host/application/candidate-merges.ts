@@ -31,19 +31,33 @@ export class CandidateMerges {
     if (!task || task.cleanup) return undefined
     const { entity } = await this.deps.entity(operation.entityId, operation.projectId)
     const state = await this.ports.git.state(task.worktree)
-    if (state.head !== operation.candidateSha) throw new Error('候选提交已变化，请核对原候选后再集成')
-    await this.ports.git.fetch(task.worktree, branch)
-    const identity = await this.deps.identity(operation.projectId)
-    const remoteFiles = await this.ports.git.changedFiles(task.worktree, operation.expectedHead, remoteHead)
     const mergeBranch = `studio-merge/${operation.candidateSha.slice(0, 12)}-${remoteHead.slice(0, 12)}`
-    await this.ports.git.checkoutBranch(task.worktree, mergeBranch, remoteHead)
-    const result = await this.ports.git.merge(task.worktree, operation.candidateSha, identity)
-    const aiFiles = result.status === 'conflicted' ? result.files : []
-    const mergeSha = result.status === 'merged' ? result.commit : await this.resolveWithAgent(task, operation, remoteHead, result.files, identity)
+    let mergeSha = state.head, aiFiles: string[] = []
+    if (state.head !== operation.candidateSha) {
+      const parents = (await this.ports.gitLocal(['rev-list', '--parents', '-n', '1', state.head], task.worktree)).trim().split(/\s+/)
+      if (parents.length !== 3 || parents[0] !== state.head || parents[1] !== remoteHead || parents[2] !== operation.candidateSha) throw new Error('候选提交已变化，请核对原候选后再集成')
+    }
+    const originalBranch = state.head === operation.candidateSha ? state.branch : operation.mergeOriginalBranch ?? (state.branch === mergeBranch ? undefined : state.branch)
+    if (!originalBranch) throw new Error('原任务分支记录缺失，合并现场已保留请核对')
+    if (state.head === operation.candidateSha) {
+      operation.mergeOriginalBranch = originalBranch
+      await this.store.save()
+    }
+    await this.ports.git.fetch(task.worktree, branch)
+    const remoteFiles = await this.ports.git.changedFiles(task.worktree, operation.expectedHead, remoteHead)
+    if (state.head === operation.candidateSha) {
+      const identity = await this.deps.identity(operation.projectId)
+      await this.ports.git.checkoutBranch(task.worktree, mergeBranch, remoteHead)
+      const result = await this.ports.git.merge(task.worktree, operation.candidateSha, identity)
+      aiFiles = result.status === 'conflicted' ? result.files : []
+      mergeSha = result.status === 'merged' ? result.commit : await this.resolveWithAgent(task, operation, remoteHead, result.files, identity)
+    }
     const after = await this.ports.git.state(task.worktree)
     if (after.dirty || after.head !== mergeSha) throw new Error('合并后工作区仍有未提交改动，已保留现场请核对')
     const parents = (await this.ports.gitLocal(['rev-list', '--parents', '-n', '1', mergeSha], task.worktree)).trim().split(/\s+/)
-    if (parents.length !== 3 || parents[0] !== mergeSha || parents[1] !== remoteHead) throw new Error('合并父顺序不符合远端头优先，已保留现场请核对')
+    if (parents.length !== 3 || parents[0] !== mergeSha || parents[1] !== remoteHead || parents[2] !== operation.candidateSha) throw new Error('合并父顺序不符合远端头优先，已保留现场请核对')
+    await this.ports.git.switchBranch(task.worktree, originalBranch, mergeSha)
+    await this.ports.git.deleteBranch(task.worktree, mergeBranch, mergeSha)
     const scope = await this.ports.git.changedFiles(task.worktree, remoteHead, mergeSha)
     if (!scope.length || scope.some(file => !request.allowedPaths.includes(file))) throw new Error('合并结果超出本材料允许范围，已保留现场请核对')
     const draft = await this.deps.readDraft(task, entity)
@@ -63,7 +77,7 @@ export class CandidateMerges {
 
   private async resolveWithAgent(task: TaskView, operation: PendingOperation, remoteHead: string, files: string[], identity: GitIdentity): Promise<string> {
     const sessionId = `studio-merge-${operation.id}-${remoteHead.slice(0, 12)}`
-    const sessionTask: TaskView = { ...task, sessionId }
+    const sessionTask: TaskView = { ...task, sessionId, writePaths: [...files] }
     const completion = new Promise<void>((resolve, reject) => this.pending.set(sessionId, error => error ? reject(error) : resolve()))
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {

@@ -40,6 +40,12 @@ test('merge reports a clean merge commit and conflicted files, completeMerge fin
   assert.ok(cleanParents.every(sha => /^[a-f0-9]{40}$/.test(sha)))
   assert.equal(cleanParents[1], remote)
   assert.equal(cleanParents[2], candidate)
+  await git.switchBranch(root, 'candidate', clean.commit)
+  assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim(), clean.commit)
+  assert.equal((await exec('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: root })).stdout.trim(), 'candidate')
+  assert.equal((await exec('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], { cwd: root })).stdout.trim(), cleanParents.join(' '))
+  await git.deleteBranch(root, 'studio-merge/test', clean.commit)
+  assert.equal((await exec('git', ['branch', '--list', 'studio-merge/test'], { cwd: root })).stdout.trim(), '')
   // 冲突场景：双方改同一行
   await exec('git', ['checkout', '-b', 'conflict', base], { cwd: root })
   await writeFile(path.join(root, 'a.md'), 'candidate line\n'); await commitAll('candidate edit')

@@ -128,7 +128,8 @@ export class DshTaskSessions {
       } else {
         const kind = task.purpose === 'handoff' ? 'handoff' : scenarioFile !== undefined ? 'scenario' : 'requirement'
         const writable = task.purpose === 'split' || scenarioTask ? undefined : await findMaterialFile(task.worktree, kind, task.entityId)
-        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths: writable ? [writable] : [] }, agent), 'studio: material file boundary')
+        const writablePaths = [...writable ? [writable] : [], ...task.writePaths ?? []]
+        scope.effect(() => registerStudioExecutionScope(task.worktree, { readRoot: task.worktree, readPaths: () => readPaths, writablePaths }, agent), 'studio: material file boundary')
       }
       configuredAgents.add(agent)
     }

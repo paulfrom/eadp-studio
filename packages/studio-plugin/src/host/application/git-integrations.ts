@@ -62,7 +62,7 @@ export class GitIntegrations {
 
   /** Re-drive a failed integration from projection reads; one automatic attempt per interval. */
   recover(operation: PendingOperation): void {
-    if (operation.phase !== 'unknown') return
+    if (operation.phase !== 'unknown' || operation.mergeFailed) return
     const identity = `${operation.accountId}:${operation.projectId}:${operation.id}`
     if (this.now() - (this.attempts.get(identity) ?? 0) < GitIntegrations.RETRY_INTERVAL_MS) return
     this.schedule(operation)
@@ -177,8 +177,15 @@ export class GitIntegrations {
       await this.persist(operation)
     } catch (error) {
       if (error instanceof RemoteDiverged && request && operation.phase !== 'accepted' && this.deps.merge) {
-        const handled = await this.deps.merge(operation, request, error.head, error.branch)
-        if (handled) return
+        try {
+          const handled = await this.deps.merge(operation, request, error.head, error.branch)
+          if (handled) return
+        } catch (mergeError) {
+          await this.assertOwner(operation.accountId)
+          operation.phase = 'unknown'; operation.mergeFailed = true; operation.message = message(mergeError)
+          await this.persist(operation)
+          throw mergeError
+        }
       }
       await this.assertOwner(operation.accountId)
       if (operation.phase === 'accepted') operation.deliveryMessage = message(error)

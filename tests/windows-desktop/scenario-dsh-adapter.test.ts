@@ -60,6 +60,28 @@ test('a requirement session uses its dedicated read-only design preset and share
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
+test('a merge session can write every conflict file and no other path', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-merge-boundary-'))
+  try {
+    const scope = { systemPrompt: { section: () => {}, context: () => {} }, on: () => () => {}, plugin: () => ({}), effect: (register: () => () => void) => register() }
+    const agent = { session: { header: { cwd: root } }, ctx: scope, followup: () => {} }
+    const ctx = {
+      on: () => () => {}, effect: () => {},
+      agentDefaultModel: { currentSelection: () => ({ provider: 'native', model: 'native' }) },
+      agentPresets: { resolve: async (id: string) => ({ id }), mount: async () => {} },
+      sessionProjections: { restore: () => undefined }, sessionController: { inspect: async () => { throw new Error('new') } },
+      agents: { get: () => undefined, create: async ({ setup }: any) => { await setup(scope, agent); return { agent, dispose: async () => {} } } },
+    }
+    const sessions = new DshTaskSessions(ctx as never, '', async () => {})
+    await saveMaterial(root, initialMetadata({ id: 'requirement', kind: 'requirement', title: '需求', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) } }), '# 需求正文')
+    await sessions.open({ projectId: 'p', entityId: 'requirement', purpose: 'material', sessionId: 'merge-session', inputHash: '', worktree: root,
+      writePaths: ['.eadp/evidence/interview.md', '需求/需求.md'] }, 'merge', undefined)
+    for (const file of ['.eadp/evidence/interview.md', '需求/需求.md']) assert.equal(studioToolGuard({ name: 'write', arguments: { file_path: file }, agent }), undefined)
+    assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: '.eadp/evidence/other.md' }, agent }))
+    assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: '场景/范围外.md' }, agent }))
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('source reading uses real PDF text coverage, handles scanned pages and Office service honestly', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-source-reader-'))
   try {

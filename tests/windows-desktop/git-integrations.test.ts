@@ -251,6 +251,27 @@ test('a diverged remote head is handed to the merge dependency instead of failin
   assert.deepEqual(seen, ['f'.repeat(40)])
 })
 
+test('a terminal merge failure keeps its original message and is not retried by recover', async t => {
+  const f = await fixture(t)
+  f.remote('f'.repeat(40))
+  let now = 1_000_000, merges = 0
+  const runner = new GitIntegrations(f.store, f.api, f.ports, f.lane, {
+    accepted: async () => undefined,
+    merge: async () => { merges++; throw new Error('AI 合并超时，现场已保留') },
+  }, () => now)
+  const operation = await runner.submit(f.task, f.draft, f.prepare)
+  await f.lane.settle()
+  assert.equal(operation.phase, 'unknown')
+  assert.equal(operation.mergeFailed, true)
+  assert.equal(operation.message, 'AI 合并超时，现场已保留')
+  const originalMessage = operation.message
+  now += 61_000
+  runner.recover(operation)
+  await f.lane.settle()
+  assert.equal(merges, 1)
+  assert.equal(operation.message, originalMessage)
+})
+
 test('a diverged remote head remains unknown when the merge dependency declines it', async t => {
   const f = await fixture(t)
   f.remote('f'.repeat(40))
