@@ -61,6 +61,13 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   app.get<{ Params: { projectId: string } }>(`${base}/publication-current`, request => service.publicationCurrent(request.headers.authorization, request.params.projectId));
   write('POST', `${base}/deployment`, contract.DeploymentSchema, (a, p, b) => service.deployment(a, p.projectId!, b));
   write('POST', `${base}/consistency-comparisons`, contract.SubmitConsistencyComparisonSchema, (a, p, b) => service.submitComparison(a, p.projectId!, b));
+  write('POST', `${base}/entities/:entityId/status-reports`, contract.SubmitMaterialStatusReportSchema, (a, p, b) => service.submitStatusReport(a, p.projectId!, p.entityId!, b));
+  app.get<{ Params: { projectId: string; entityId: string }; Querystring: Record<string, string> }>(`${base}/entities/:entityId/status-reports`, request => {
+    const query = request.query, limit = Number(query.limit ?? '20'), offset = Number(query.offset ?? '0');
+    requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 100 && Number.isInteger(offset) && offset >= 0, 'INVALID_PAGINATION', 'Status report queries require limit 1..100 and a non-negative offset', 422);
+    return service.listStatusReports(request.actor, request.params.projectId, { entityId: request.params.entityId, limit, offset });
+  });
+  read(`${base}/entities/:entityId/status-reports/:reportId`, (a, p) => service.getStatusReport(a, p.projectId!, p.reportId!));
   app.get<{ Params: { projectId: string }; Querystring: Record<string, string> }>(`${base}/consistency-comparisons`, request => {
     const query = request.query, limit = Number(query.limit ?? '20'), offset = Number(query.offset ?? '0');
     requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 100 && Number.isInteger(offset) && offset >= 0, 'INVALID_PAGINATION', 'Comparison queries require limit 1..100 and a non-negative offset', 422);

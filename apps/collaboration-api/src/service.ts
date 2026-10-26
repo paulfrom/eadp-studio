@@ -1,5 +1,5 @@
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, SubmitConsistencyComparisonRequest, ConsistencyComparisonFilter, UpdateRelationsRequest } from '@eadp/contracts';
+import type { BindTemplateRequest, UpdateEntityRequest, FixedReference, MaterialMetadata, MaterialIntegrationRequest, MaterialStatusReportFilter, MaterialStatusReportView, RepairStartRequest, RepairEventRequest, StudioUser, AdoptRequest, AdoptionSuccessRequest, ClaimRequest, CompleteIntegrationRequest, DeploymentRequest, EligibilityRequest, EntityView, HandoffReceiptRequest, PrepareIntegrationRequest, PublicationAuthorizationRequest, ProjectState, ProjectView, ReconcileRequest, CreateProjectRequest, InitializeProjectRequest, ReleaseRequest, ReserveEntityRequest, SubmitConsistencyComparisonRequest, SubmitMaterialStatusReportRequest, ConsistencyComparisonFilter, UpdateRelationsRequest } from '@eadp/contracts';
 import { GitLab } from './auth/gitlab.js';
 import { SessionAuth, type Actor } from './auth/session.js';
 import { Projects } from './projects.js';
@@ -325,6 +325,26 @@ export class CollaborationService {
   }
   async getComparison(actor: Actor, projectId: string, id: string) {
     return this.transact(actor, c => repository.getComparison(c, projectId, id));
+  }
+  async submitStatusReport(actor: Actor, projectId: string, entityId: string, input: SubmitMaterialStatusReportRequest): Promise<MaterialStatusReportView> {
+    await this.authorize(actor, projectId, true);
+    requireCondition(input.entityId === entityId, 'STATUS_REPORT_TARGET_MISMATCH', 'Status report must name the entity in its route', 422);
+    return this.transact(actor, async c => {
+      await repository.project(c, projectId, true);
+      const project = await repository.project(c, projectId); repository.assertProjectReady(project);
+      const previous = await repository.previous(c, projectId, actor, 'material.status-report', input);
+      if (previous.found) return repository.getStatusReport(c, projectId, input.id);
+      await repository.entityRow(c, projectId, entityId);
+      const result = await repository.saveStatusReport(c, projectId, actor, input);
+      await repository.remember(c, projectId, actor, 'material.status-report', input, { id: result.id });
+      return result;
+    });
+  }
+  async listStatusReports(actor: Actor, projectId: string, filter: MaterialStatusReportFilter): Promise<MaterialStatusReportView[]> {
+    return this.transact(actor, c => repository.listStatusReports(c, projectId, filter));
+  }
+  async getStatusReport(actor: Actor, projectId: string, id: string): Promise<MaterialStatusReportView> {
+    return this.transact(actor, c => repository.getStatusReport(c, projectId, id));
   }
   async consistencyContext(actor: Actor, projectId: string, entityId: string) {
     return this.transact(actor, c => repository.consistencyContext(c, projectId, entityId));

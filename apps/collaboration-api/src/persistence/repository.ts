@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, DomainError, requireCondition } from '@eadp/asset-domain';
 import { isBuiltinScenarioMetadata } from '@eadp/contracts';
-import type { BaselineView, BuiltinScenarioMetadata, ComparisonFailure, ConfirmationEvent, ConfirmationInput, ConsistencyComparisonFilter, ConsistencyComparisonView, ConsistencyConflictView, ConsistencyContextView, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, OccupationView, ProjectView, ReserveEntityRequest, SubmitConsistencyComparisonRequest } from '@eadp/contracts';
+import type { BaselineView, BuiltinScenarioMetadata, ComparisonFailure, ConfirmationEvent, ConfirmationInput, ConsistencyComparisonFilter, ConsistencyComparisonView, ConsistencyConflictView, ConsistencyContextView, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, MaterialStatusReportFilter, MaterialStatusReportView, MaterialStatusTrigger, OccupationView, ProjectView, ReserveEntityRequest, SubmitConsistencyComparisonRequest, SubmitMaterialStatusReportRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { AdoptionRecord } from '../modules/reuse.js';
 import type { StoredIntegration } from '../modules/integration.js';
@@ -374,6 +374,27 @@ export async function getComparison(c: Transaction, projectId: string, id: strin
   const row = (await c.query<Row>('SELECT * FROM studio_consistency_comparisons WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
   requireCondition(row, 'COMPARISON_NOT_FOUND', 'Comparison was not found', 404);
   return comparisonView(c, row);
+}
+function statusReportView(row: Row): MaterialStatusReportView {
+  return { id: String(row.id), entityId: String(row.entity_id), trigger: row.trigger as MaterialStatusTrigger,
+    baseHead: String(row.base_head), worktreeHead: String(row.worktree_head), changedPathCount: Number(row.changed_path_count),
+    summary: String(row.summary), creator: snapshot(row, 'creator'), createdAt: date(row.created_date) };
+}
+/** Append-only local git status fact; idempotency lives in studio_operations, not on this table. */
+export async function saveStatusReport(c: Transaction, projectId: string, actor: Actor, input: SubmitMaterialStatusReportRequest): Promise<MaterialStatusReportView> {
+  await c.query(`INSERT INTO studio_material_status_reports(id,project_id,entity_id,trigger,base_head,worktree_head,changed_path_count,summary,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [input.id, projectId, input.entityId, input.trigger, input.baseHead, input.worktreeHead, input.changedPathCount, input.summary, ...actorFields()]);
+  return getStatusReport(c, projectId, input.id);
+}
+export async function listStatusReports(c: Transaction, projectId: string, filter: MaterialStatusReportFilter): Promise<MaterialStatusReportView[]> {
+  const rows = (await c.query<Row>('SELECT * FROM studio_material_status_reports WHERE project_id=$1 AND ($2::text IS NULL OR entity_id=$2) ORDER BY created_date DESC,id DESC LIMIT $3 OFFSET $4',
+    [projectId, filter.entityId ?? null, filter.limit, filter.offset])).rows;
+  return rows.map(statusReportView);
+}
+export async function getStatusReport(c: Transaction, projectId: string, id: string): Promise<MaterialStatusReportView> {
+  const row = (await c.query<Row>('SELECT * FROM studio_material_status_reports WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
+  requireCondition(row, 'STATUS_REPORT_NOT_FOUND', 'Status report was not found', 404);
+  return statusReportView(row);
 }
 /** Formal relation catalog for comparison inputs; control fields only, no Git reads. */
 export async function consistencyContext(c: Transaction, projectId: string, entityId: string): Promise<ConsistencyContextView> {
