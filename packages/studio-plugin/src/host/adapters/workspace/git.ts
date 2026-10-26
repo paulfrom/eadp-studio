@@ -86,6 +86,9 @@ export class WorkspaceGit {
     await mkdir(path.dirname(destination), { recursive: true })
     await this.command(root, ['worktree', 'add', '-b', branchName(branch), destination, fixedSha(baseSha)])
   }
+  async checkoutBranch(root: string, branch: string, baseSha: string): Promise<void> {
+    await this.command(root, ['checkout', '-b', branchName(branch), fixedSha(baseSha)])
+  }
   async removeWorktree(root: string, destination: string, force = false): Promise<void> { await this.command(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', destination]) }
   /** Fast-forward only: a diverged checkout or one with conflicting local bytes stays exactly as it was. */
   async fastForward(root: string, commit: string): Promise<void> { await this.command(root, ['merge', '--ff-only', '--no-edit', fixedSha(commit)]) }

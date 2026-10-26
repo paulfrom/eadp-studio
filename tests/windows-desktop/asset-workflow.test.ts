@@ -68,10 +68,27 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const sourceDraft = await saveMaterial(sourceDirectory, sourceMetadata, body)
   local.projects.push({ id: 'source-project', name: '来源项目', directory: sourceDirectory, repositoryUrl: project.repositoryUrl }); await store.save()
   const source: FixedVersion = { version: 2, fixed: { commitSha: head, path: sourceDraft.path, sha256: sourceDraft.sha256 }, metadata: sourceMetadata, confirmationId: 'source-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
-  const records = new Map<string, unknown>(), calls = { prompts: [] as string[], sessions: [] as string[], adoptions: 0, successEffects: 0, successRequests: [] as object[], commits: [] as Array<readonly string[]>, prepared: [] as PrepareIntegrationRequest[], pushes: [] as string[], conditionalUpdates: 0 }
+  const records = new Map<string, unknown>(), integrationInputs = new Map<string, PrepareIntegrationRequest>(), calls = { prompts: [] as string[], sessions: [] as string[], adoptions: 0, successEffects: 0, successRequests: [] as object[], commits: [] as Array<readonly string[]>, prepared: [] as PrepareIntegrationRequest[], pushes: [] as string[], conditionalUpdates: 0 }
   const gitState = { head, remote: head, dirtyFiles: [(await readMaterial(worktree, kind, value.id)).path], changedFiles: [] as string[] }
   const reviewTrees = new Map<string, string>()
   const failures = { adoptionResponse: false, successResponse: false, prompt: false, session: false, push: false, integrationResponse: false, pendingIntegration: false }
+  const readMaterials = async (prepared: PrepareIntegrationRequest) => {
+    const materials = new Map<string, MaterialMetadata>()
+    for (const confirmation of prepared.confirmations) {
+      const target = remote.entities.find(entity => entity.id === confirmation.entityId) as EntityView
+      const fixedDraft = await readMaterial(worktree, target.kind, target.id)
+      assert.equal(fixedDraft.sha256, confirmation.fixed.sha256, 'backend verification reads the exact fixed material bytes')
+      assert.equal('metadata' in confirmation, false, 'confirmation controls cannot carry business content')
+      materials.set(confirmation.entityId, fixedDraft.metadata)
+    }
+    return materials
+  }
+  const acceptMaterials = (prepared: PrepareIntegrationRequest, materials: Map<string, MaterialMetadata>) => {
+    for (const item of prepared.confirmations) {
+      const changed = remote.entities.find(e => e.id === item.entityId) as EntityView
+      changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: materials.get(item.entityId)!, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
+    }
+  }
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
     if (input && 'token' in input) assert.equal(Value.Check(OccupationTokenSchema, input.token), true, 'Host writes must send the exact occupation token contract')
     if (method === 'GET' && route === '/v1/projects') return [project]
@@ -100,22 +117,28 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
       const prepared = input as unknown as PrepareIntegrationRequest; calls.prepared.push(prepared)
       assert.notEqual(prepared.stage, 'template', 'material workflow must not publish project configuration')
       if (prepared.stage === 'template') throw new Error('Unexpected template integration')
-      const materials = new Map<string, MaterialMetadata>()
-      for (const confirmation of prepared.confirmations) {
-        const target = remote.entities.find(entity => entity.id === confirmation.entityId) as EntityView
-        const fixedDraft = await readMaterial(worktree, target.kind, target.id)
-        assert.equal(fixedDraft.sha256, confirmation.fixed.sha256, 'backend verification reads the exact fixed material bytes')
-        assert.equal('metadata' in confirmation, false, 'confirmation controls cannot carry business content')
-        materials.set(confirmation.entityId, fixedDraft.metadata)
-      }
+      const materials = await readMaterials(prepared)
       validateIntegration(project, remote.entities as EntityView[], { id: 1 } as never, prepared, materials)
-      const saved = { id: `integration-${prepared.idempotencyKey}`, entityId: value.id, ownerId: 1, status: failures.pendingIntegration ? 'prepared' as const : 'accepted' as const, sourceSha: prepared.sourceSha, expectedHead: prepared.expectedHead, candidateSha: prepared.candidateSha, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
-      remote.integrations.push(saved); records.set(prepared.idempotencyKey, saved)
-      if (saved.status === 'accepted' && prepared.stage !== 'prototype') for (const item of prepared.confirmations) {
-        const changed = remote.entities.find(e => e.id === item.entityId) as EntityView
-        changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: materials.get(item.entityId)!, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
+      const pending = remote.integrations.find(operation => operation.status === 'prepared')
+      if (pending) {
+        const previous = integrationInputs.get(pending.id)
+        const sameOccupation = !!(previous && prepared.stage !== 'template' && previous.stage !== 'template' && previous.token.occupationId === prepared.token.occupationId)
+        if (!sameOccupation) throw new CollaborationError('INTEGRATION_PENDING', 'An integration is pending', 409)
+        pending.status = 'aborted'
       }
+      const saved = { id: `integration-${prepared.idempotencyKey}`, entityId: value.id, ownerId: 1, status: failures.pendingIntegration ? 'prepared' as const : 'accepted' as const, sourceSha: prepared.sourceSha, expectedHead: prepared.expectedHead, candidateSha: prepared.candidateSha, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
+      remote.integrations.push(saved); integrationInputs.set(saved.id, prepared); records.set(prepared.idempotencyKey, saved)
+      if (saved.status === 'accepted' && prepared.stage !== 'prototype') acceptMaterials(prepared, materials)
       if (failures.integrationResponse) { failures.integrationResponse = false; throw new Error('integration response lost') }
+      return saved
+    }
+    if (method === 'POST' && /\/integrations\/[^/]+\/complete$/.test(route)) {
+      const id = route.split('/').at(-2)!, saved = remote.integrations.find(operation => operation.id === id)
+      assert.ok(saved); assert.equal(saved.status, 'prepared')
+      const prepared = integrationInputs.get(id)!, materials = await readMaterials(prepared)
+      saved.status = 'accepted'; saved.confirmationIds = prepared.confirmations.map(item => 'confirmed-' + item.entityId)
+      if (prepared.stage !== 'prototype') acceptMaterials(prepared, materials)
+      project.recognizedHead = prepared.candidateSha
       return saved
     }
     throw new Error('Unexpected request: ' + method + ' ' + route)
@@ -124,8 +147,8 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failures.session) { failures.session = false; throw new Error('session failed') }; return task.sessionId },
     prompt: async (session: string, text: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') } },
     checks: async (_task: unknown, sha: string) => ({ candidateSha: sha, passed: true, checks: [{ name: 'engineering', passed: true, evidenceHash: digest('checked') }] }),
-    gitLocal: async () => gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
-    git: { hasCommit: async () => true, commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async (_root: string, commit: string, branch: string) => { calls.pushes.push(commit + ':' + branch); if (failures.push) { failures.push = false; throw new Error('push response lost') } }, remoteHead: async () => gitState.remote, conditionalUpdate: async () => { calls.conditionalUpdates++ }, fetch: async () => {}, merge: async () => { gitState.head = 'd'.repeat(40); project.recognizedHead = gitState.remote; failures.pendingIntegration = false; return { status: 'merged' as const, commit: gitState.head } }, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
+    gitLocal: async (args: readonly string[]) => args[0] === 'rev-list' ? `${gitState.head} ${gitState.remote} ${candidate}` : gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
+    git: { hasCommit: async () => true, commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async (_root: string, commit: string, branch: string) => { calls.pushes.push(commit + ':' + branch); if (failures.push) { failures.push = false; throw new Error('push response lost') } }, remoteHead: async () => gitState.remote, conditionalUpdate: async (_directory: string, _branch: string, expected: string, next: string) => { assert.equal(expected, gitState.remote); gitState.remote = next; calls.conditionalUpdates++ }, fetch: async () => {}, checkoutBranch: async (_root: string, _branch: string, baseSha: string) => { gitState.head = baseSha }, merge: async (_root: string, commit: string) => { assert.equal(commit, candidate); gitState.head = 'd'.repeat(40); project.recognizedHead = gitState.remote; return { status: 'merged' as const, commit: gitState.head } }, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
   } as unknown as HostPorts
   const app = (nextStore = store) => { const created = new StudioApplication(nextStore, api, ports); apps.push(created); return created }
   const settle = async () => { for (const created of apps) await created.settle() }
@@ -375,7 +398,9 @@ test('a moved remote head rebuilds and accepts a merged candidate without rewrit
   assert.equal(operations[1]!.phase, 'accepted', operations[1]!.message)
   assert.equal(operations[1]!.id, `m-${'d'.repeat(40)}`)
   assert.equal(f.calls.prepared[1]!.confirmations[0]!.readHash, draft.sha256)
-  assert.equal(f.calls.conditionalUpdates, 0, 'a moved remote head is never force-updated')
+  assert.equal(f.remote.integrations[0]!.status, 'aborted')
+  assert.equal(f.remote.integrations[1]!.status, 'accepted')
+  assert.equal(f.calls.conditionalUpdates, 1, 'only the rebuilt candidate updates the remote head')
   assert.equal(f.calls.prepared.length, 2)
 })
 

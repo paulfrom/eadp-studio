@@ -11,6 +11,7 @@ import type { HostPorts } from '../../packages/studio-plugin/src/host/applicatio
 
 const sha = (letter: string) => letter.repeat(40)
 const candidate = sha('1'), expected = sha('2'), remote = sha('3'), merged = sha('4')
+const mergeSession = 'studio-merge-op1-333333333333'
 const task: TaskView = { projectId: 'p', entityId: 'e', sessionId: 's1', purpose: 'material', inputHash: '', worktree: '/w' }
 const operation = { id: 'op1', accountId: 1, projectId: 'p', entityId: 'e', phase: 'unknown',
   task: { projectId: 'p', entityId: 'e', worktree: '/w', purpose: 'material', sessionId: 's1', inputHash: '' },
@@ -21,20 +22,27 @@ const request = { idempotencyKey: 'op1', sourceSha: candidate, candidateSha: can
   confirmations: [{ entityId: 'e', fixed: { commitSha: candidate, path: '场景/e.md', sha256: sha('c') }, readHash: sha('c'), authorConfirmed: true }] } as unknown as MaterialIntegrationRequest
 const draft = { path: '场景/e.md', sha256: sha('d'), body: 'merged', entityId: 'e', metadata: { entityId: 'e', sources: [] } } as unknown as MaterialDraft
 
-async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean, outOfScope = false) {
+async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean, outOfScope = false, wrongParent = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'merges-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
   const local = await store.read(); local.tasks.push(structuredClone(task)); await store.save()
-  const calls: string[] = []
+  const calls: string[] = [], mergeCommits: string[] = [], cancelled: string[] = []
+  const checkouts: Array<{ branch: string; baseSha: string }> = []
   let currentHead = candidate
   const ports = {
-    session: async (_task: TaskView) => 'studio-merge-op1-333333333333',
+    session: async (_task: TaskView) => mergeSession,
     prompt: async () => { calls.push('prompt') },
+    cancelSession: async (sessionId: string) => { cancelled.push(sessionId) },
+    gitLocal: async (args: readonly string[]) => {
+      assert.deepEqual(args, ['rev-list', '--parents', '-n', '1', merged])
+      return wrongParent ? `${merged} ${candidate} ${remote}` : `${merged} ${remote} ${candidate}`
+    },
     git: {
       state: async () => ({ root: '/w', head: currentHead, branch: 'main', dirty: false, repositoryUrl: 'https://gitlab.test/p.git' }),
       fetch: async () => { calls.push('fetch') },
+      checkoutBranch: async (_root: string, branch: string, baseSha: string) => { checkouts.push({ branch, baseSha }); currentHead = baseSha },
       changedFiles: async (_root: string, from: string, to: string) => from === expected && to === remote ? ['场景/remote.md'] : outOfScope ? ['其他/x.md'] : ['场景/e.md'],
-      merge: async () => { currentHead = merged; return conflict ? { status: 'conflicted', files: ['场景/e.md'] } : { status: 'merged', commit: merged } },
+      merge: async (_root: string, commit: string) => { mergeCommits.push(commit); if (!conflict) currentHead = merged; return conflict ? { status: 'conflicted', files: ['场景/e.md'] } : { status: 'merged', commit: merged } },
       completeMerge: async (_root: string, files: string[]) => { calls.push(`complete:${files.join(',')}`); currentHead = merged; return merged },
     },
   } as unknown as HostPorts
@@ -44,13 +52,15 @@ async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean,
     checks: (candidateSha: string) => ({ candidateSha, passed: true, checks: [] }) as CheckEvidence,
     readDraft: async () => structuredClone(draft),
   })
-  return { merges, calls }
+  return { merges, calls, mergeCommits, checkouts, cancelled, head: () => currentHead }
 }
 
 test('a clean merge rebuilds the candidate on the new remote head and keeps the original read hash', async t => {
-  const { merges } = await fixture(t, false)
+  const { merges, checkouts, mergeCommits } = await fixture(t, false)
   const result = await merges.merge(operation, request, remote, 'main')
   assert.ok(result)
+  assert.deepEqual(checkouts, [{ branch: `studio-merge/${candidate.slice(0, 12)}-${remote.slice(0, 12)}`, baseSha: remote }])
+  assert.deepEqual(mergeCommits, [candidate])
   assert.equal(result.prepare.idempotencyKey, `m-${merged}`)
   assert.equal(result.prepare.expectedHead, remote)
   assert.equal(result.prepare.candidateSha, merged)
@@ -66,11 +76,42 @@ test('a conflicted merge waits for the agent turn and completes the merge commit
   const promise = merges.merge(operation, request, remote, 'main')
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(calls, ['fetch', 'prompt'])
-  assert.equal(await merges.accept('studio-merge-op1-333333333333', { kind: 'turn-ended', reason: 'stop' }), true)
+  assert.equal(await merges.accept(mergeSession, { kind: 'turn-ended', reason: 'stop' }), true)
   const result = await promise
   assert.ok(result)
   assert.deepEqual(result.note.aiFiles, ['场景/e.md'])
   assert.ok(calls.includes('complete:场景/e.md'))
+})
+
+for (const reason of ['error', 'aborted', 'completed']) test(`a conflicted merge rejects a ${reason} agent turn without completing it`, async t => {
+  const { merges, calls, head } = await fixture(t, true)
+  const promise = merges.merge(operation, request, remote, 'main')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(await merges.accept(mergeSession, { kind: 'turn-ended', reason }), true)
+  await assert.rejects(promise, /AI 合并未正常完成，现场已保留/)
+  assert.equal(calls.some(call => call.startsWith('complete:')), false)
+  assert.equal(head(), remote)
+  assert.equal(await merges.accept(mergeSession, { kind: 'turn-ended', reason: 'stop' }), false)
+})
+
+test('a timed out merge cancels the session and ignores late output without completing it', async t => {
+  const { merges, calls, cancelled, head } = await fixture(t, true)
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const promise = merges.merge(operation, request, remote, 'main')
+  await new Promise(resolve => setImmediate(resolve))
+  const rejection = assert.rejects(promise, /AI 合并超时，现场已保留/)
+  t.mock.timers.tick(600_000)
+  await new Promise(resolve => setImmediate(resolve))
+  await rejection
+  assert.deepEqual(cancelled, [mergeSession])
+  assert.equal(calls.some(call => call.startsWith('complete:')), false)
+  assert.equal(head(), remote)
+  assert.equal(await merges.accept(mergeSession, { kind: 'turn-ended', reason: 'stop' }), false)
+})
+
+test('a merge whose first parent is not the new remote head is rejected', async t => {
+  const { merges } = await fixture(t, false, false, true)
+  await assert.rejects(merges.merge(operation, request, remote, 'main'), /合并父顺序不符合远端头优先/)
 })
 
 test('a merged result outside the material scope is rejected and nothing is produced', async t => {

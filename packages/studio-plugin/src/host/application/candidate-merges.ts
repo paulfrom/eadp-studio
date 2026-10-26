@@ -35,11 +35,15 @@ export class CandidateMerges {
     await this.ports.git.fetch(task.worktree, branch)
     const identity = await this.deps.identity(operation.projectId)
     const remoteFiles = await this.ports.git.changedFiles(task.worktree, operation.expectedHead, remoteHead)
-    const result = await this.ports.git.merge(task.worktree, remoteHead, identity)
+    const mergeBranch = `studio-merge/${operation.candidateSha.slice(0, 12)}-${remoteHead.slice(0, 12)}`
+    await this.ports.git.checkoutBranch(task.worktree, mergeBranch, remoteHead)
+    const result = await this.ports.git.merge(task.worktree, operation.candidateSha, identity)
     const aiFiles = result.status === 'conflicted' ? result.files : []
     const mergeSha = result.status === 'merged' ? result.commit : await this.resolveWithAgent(task, operation, remoteHead, result.files, identity)
     const after = await this.ports.git.state(task.worktree)
     if (after.dirty || after.head !== mergeSha) throw new Error('合并后工作区仍有未提交改动，已保留现场请核对')
+    const parents = (await this.ports.gitLocal(['rev-list', '--parents', '-n', '1', mergeSha], task.worktree)).trim().split(/\s+/)
+    if (parents.length !== 3 || parents[0] !== mergeSha || parents[1] !== remoteHead) throw new Error('合并父顺序不符合远端头优先，已保留现场请核对')
     const scope = await this.ports.git.changedFiles(task.worktree, remoteHead, mergeSha)
     if (!scope.length || scope.some(file => !request.allowedPaths.includes(file))) throw new Error('合并结果超出本材料允许范围，已保留现场请核对')
     const draft = await this.deps.readDraft(task, entity)
@@ -53,7 +57,7 @@ export class CandidateMerges {
   async accept(sessionId: string, output: SessionOutput): Promise<boolean> {
     const settle = this.pending.get(sessionId)
     if (!settle) return false
-    if (output.kind === 'turn-ended') { this.pending.delete(sessionId); settle(output.reason === 'aborted' ? new Error('AI 合并已中止，现场已保留') : undefined) }
+    if (output.kind === 'turn-ended') { this.pending.delete(sessionId); settle(output.reason === 'stop' ? undefined : new Error('AI 合并未正常完成，现场已保留')) }
     return true
   }
 
@@ -61,12 +65,23 @@ export class CandidateMerges {
     const sessionId = `studio-merge-${operation.id}-${remoteHead.slice(0, 12)}`
     const sessionTask: TaskView = { ...task, sessionId }
     const completion = new Promise<void>((resolve, reject) => this.pending.set(sessionId, error => error ? reject(error) : resolve()))
-    const timeout = new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('AI 合并超时，现场已保留')), 600_000); timer.unref() })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        this.pending.delete(sessionId)
+        void (async () => {
+          try { await this.ports.cancelSession?.(sessionId) }
+          catch (error) { reject(new Error('AI 合并超时，现场已保留', { cause: error })); return }
+          reject(new Error('AI 合并超时，现场已保留'))
+        })()
+      }, 600_000)
+      timer.unref()
+    })
     try {
       await this.ports.session(sessionTask, mergeRules)
       await this.ports.prompt(sessionId, `本次合并的冲突文件：${files.join('、')}。原候选提交 ${operation.candidateSha}，远端新头 ${remoteHead}。请直接在工作区写入每个冲突文件的合并结果。`)
       await Promise.race([completion, timeout])
       return await this.ports.git.completeMerge(task.worktree, files, identity)
-    } finally { this.pending.delete(sessionId) }
+    } finally { if (timer) clearTimeout(timer); this.pending.delete(sessionId) }
   }
 }
