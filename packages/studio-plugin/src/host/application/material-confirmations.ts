@@ -105,8 +105,9 @@ export class MaterialConfirmations {
     if (!operation || operation.phase === 'accepted' || operation.phase === 'superseded') return undefined
     const child = operation.integrationId ? operations?.find(value => value.id === operation.integrationId && value.projectId === operation.projectId) : undefined
     const failure = child?.phase === 'unknown' ? child.message : undefined
+    const fallback = operation.phase === 'integrating' ? '确认已提交，正在核对原结果' : '请按选择恢复保存并继续确认'
     return { operationId: operation.operationId,
-      message: operation.message ?? failure ?? (operation.phase === 'integrating' ? '确认已提交，正在核对原结果' : '请按选择恢复保存并继续确认'),
+      message: operation.phase === 'integrating' ? failure ?? operation.message ?? fallback : operation.message ?? failure ?? fallback,
       ...(operation.savedHash ? { expectedHash: operation.savedHash } : {}) }
   }
 

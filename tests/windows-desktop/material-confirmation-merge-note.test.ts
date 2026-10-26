@@ -14,4 +14,8 @@ test('merge notes tell the user exactly which files were merged automatically an
   assert.equal(mergeNoticeFor(owner('accepted', { remoteFiles: ['场景/a.md'], aiFiles: [] })), '已自动合并远端变更：场景/a.md')
   assert.equal(mergeNoticeFor(owner('accepted')), undefined)
   assert.equal(mergeNoticeFor(owner('integrating', { remoteFiles: ['场景/a.md'], aiFiles: [] })), undefined)
+  assert.equal(mergeNoticeFor({} as ScenarioRecord), undefined, '完全无操作时不显示提示')
+  const restarted = owner('accepted', { remoteFiles: ['场景/a.md'], aiFiles: [] })
+  restarted.materialConfirmations!.push({ operationId: 'c2', phase: 'saving' } as never)
+  assert.equal(mergeNoticeFor(restarted), undefined, '新确认开始后清除旧 accepted 提示')
 })
