@@ -39,6 +39,12 @@ const identity = ({ occupationId, generation, taskId, clientId }: OccupationToke
 const current = (owner: ScenarioRecord): MaterialConfirmationOperation | undefined => owner.materialConfirmations?.at(-1)
 const recovering = (owner: ScenarioRecord): boolean => { const operation = current(owner); return !!operation && operation.phase !== 'accepted' && operation.phase !== 'superseded' }
 
+/** The latest accepted confirmation keeps its merge note visible until a new confirmation starts. */
+export function mergeNoticeFor(owner: ScenarioRecord): string | undefined {
+  const operation = current(owner)
+  return operation?.phase === 'accepted' && operation.mergeNote ? mergeNoteText(operation.mergeNote) : undefined
+}
+
 /** Collects current material, template and authority facts behind one gate interface. */
 export class MaterialConfirmationChecks {
   constructor(private readonly store: StudioStore, private readonly ports: HostPorts,
