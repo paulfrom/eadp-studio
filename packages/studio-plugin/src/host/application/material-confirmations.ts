@@ -93,10 +93,14 @@ export class MaterialConfirmations {
     private readonly workspaces: ScenarioWorkspaces, private readonly candidates: FixedCandidates, private readonly integrations: GitIntegrations,
     private readonly reviews: AuthorReviews, private readonly deps: Dependencies) {}
 
-  view(owner: ScenarioRecord): { operationId: string; message: string; expectedHash?: string } | undefined {
+  view(owner: ScenarioRecord, operations?: PendingOperation[]): { operationId: string; message: string; expectedHash?: string } | undefined {
     const operation = current(owner)
     if (!operation || operation.phase === 'accepted' || operation.phase === 'superseded') return undefined
-    return { operationId: operation.operationId, message: operation.message ?? (operation.phase === 'integrating' ? '确认已提交，正在核对原结果' : '请按选择恢复保存并继续确认'), ...(operation.savedHash ? { expectedHash: operation.savedHash } : {}) }
+    const child = operation.integrationId ? operations?.find(value => value.id === operation.integrationId && value.projectId === operation.projectId) : undefined
+    const failure = child?.phase === 'unknown' ? child.message : undefined
+    return { operationId: operation.operationId,
+      message: operation.message ?? failure ?? (operation.phase === 'integrating' ? '确认已提交，正在核对原结果' : '请按选择恢复保存并继续确认'),
+      ...(operation.savedHash ? { expectedHash: operation.savedHash } : {}) }
   }
 
   async confirm(request: MaterialConfirmationRequest): Promise<MaterialConfirmationOperation> {

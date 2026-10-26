@@ -492,7 +492,7 @@ export class StudioApplication {
         ...local.templateOperations.filter(op => op.projectId === selected?.id && op.phase === 'unknown').map(op => ({ id: op.preview.operationId, entityId: 'templates', phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.templateBinding?.status === 'pending').map(record => ({ id: record.templateBinding!.application?.operationId ?? record.templateBinding!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.templateBinding!.message ?? '模板绑定结果待核对' })),
         ...local.scenarios.filter(record => record.projectId === selected?.id).flatMap(record => {
-          const save = this.scenarios.requirementSaves.view(record), confirmation = this.confirmations.view(record)
+          const save = this.scenarios.requirementSaves.view(record), confirmation = this.confirmations.view(record, local.operations)
           return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? 'confirmation-recovery', message: save?.message ?? confirmation?.message ?? '请按选择继续保存并确认' }] : []
         }),
         ...tasks.filter(task => task.prototypeStart && task.prototypeStart.status !== 'sent').map(task => ({ id: task.prototypeStart!.id, entityId: task.entityId, phase: 'prototype-startup', message: task.prototypeStart!.message ?? '材料已确认，原型启动等待恢复' })),
