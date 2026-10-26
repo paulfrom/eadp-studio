@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.js'
 
 export interface GitIdentity { name: string; email: string }
+export type GitMergeResult = { status: 'merged'; commit: string } | { status: 'conflicted'; files: string[] }
 export interface GitState { root: string; head: string; branch: string; dirty: boolean; repositoryUrl: string }
 export type GitProgressStage = 'enumerating' | 'counting' | 'compressing' | 'writing' | 'receiving' | 'resolving' | 'checking' | 'updating'
 /** One progress print Git made during a transfer; `percent` is that stage's own count. */
@@ -85,6 +86,24 @@ export class WorkspaceGit {
   async removeWorktree(root: string, destination: string, force = false): Promise<void> { await this.command(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', destination]) }
   /** Fast-forward only: a diverged checkout or one with conflicting local bytes stays exactly as it was. */
   async fastForward(root: string, commit: string): Promise<void> { await this.command(root, ['merge', '--ff-only', '--no-edit', fixedSha(commit)]) }
+  /** Three-way merge of one fetched commit; conflicted paths keep the merge state for AI resolution. */
+  async merge(root: string, commit: string, identity: GitIdentity): Promise<GitMergeResult> {
+    fixedSha(commit)
+    if (!identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交身份无效。')
+    await this.guardLocal(root)
+    const result = await this.result(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'merge', '--no-ff', '--no-edit', fixedSha(commit)])
+    if (result.exitCode === 0) return { status: 'merged', commit: fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim()) }
+    const files = (await this.command(root, ['diff', '--name-only', '-z', '--diff-filter=U'])).stdout.split('\0').filter(Boolean).map(gitRelativePath)
+    if (!files.length) throw new Error(`git 合并失败（退出码 ${result.exitCode}），现场已保留。`)
+    return { status: 'conflicted', files }
+  }
+  /** Finish a conflicted merge after the conflict files hold their resolved bytes. */
+  async completeMerge(root: string, files: readonly string[], identity: GitIdentity): Promise<string> {
+    if (!files.length) throw new Error('没有待完成的合并冲突文件。')
+    await this.command(root, ['add', '--', ...files.map(gitRelativePath)])
+    await this.command(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit', '--no-edit'])
+    return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
+  }
   /** Keep a cleaned worktree's commit reachable after its temporary branch is deleted. */
   async keepRef(root: string, ref: string, commit: string): Promise<void> {
     if (!/^refs\/eadp\/archive\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) throw new Error('归档引用无效。')
