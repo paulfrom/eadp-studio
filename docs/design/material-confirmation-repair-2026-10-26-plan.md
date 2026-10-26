@@ -1097,3 +1097,14 @@ git commit -m "确认视图提示自动合并与 AI 合并文件清单"
 
 - [ ] 全量验证：`apps/collaboration-api/node_modules/.bin/tsx --test tests/windows-desktop/*.test.ts`、后端 `backend-status-reports.test.ts` 与 `backend-comparisons.test.ts`（真实测试库）、`pnpm check:repository` 全部通过。
 - [ ] 按验收口径复核设计文档三项缺口逐条关闭，必要时更新 `docs/milestones.md`。
+
+---
+
+## Task 7 修正记录（评审后，2026-10-26，用户已批准）
+
+评审发现原方案两处计划级错误与两处 AI 生命周期缺陷，按以下修正执行，替代 Task 7 对应原文：
+
+1. **后端 supersede 协议**（原"后端零改动"作废）：分叉时原集成在后端已是 `prepared`，直接提交新候选会被 `INTEGRATION_PENDING`（`modules/integration.ts:84`）拒绝。修正：`validateIntegration` 在 `assertOccupation` 之后，允许同占用（同 occupationId）的新 prepare 在同一事务内将该占用旧的 prepared 集成置为 `aborted`（可复用 `repository.abortIntegrations`），再写入新集成；其他占用/其他实体的 prepared 仍按 `INTEGRATION_PENDING` 拒绝。后端补真实 PostgreSQL 测试：同占用替换 prepare 后旧记录 aborted、新记录 prepared；不同占用仍 409。
+2. **合并方向反转**（保证 `mergeSha^1 === remoteHead`）：先在工作区基于 `remoteHead` 检出临时合并分支，再 `git merge --no-ff --no-edit <原candidateSha>`；冲突时 `completeMerge` 保持该分支状态。适配器可增加一个"从指定 base 建分支"的小原语（如 `checkoutBranch(root, branch, baseSha)`），原 `merge` 不变。`CandidateMerges` 增加 `mergeSha` 第一父校验（`rev-list --parents -n 1` 经 `gitLocal`，其白名单已含 rev-list）：`parents[0] === mergeSha && parents[1] === remoteHead && parents.length === 3`，不符则抛错保留现场。
+3. **AI 结束语义**：`accept` 仅 `turn-ended` 且 `reason === 'stop'` 视为成功；`error`、`aborted` 及其他 reason 全部以错误 settle，不进入 `completeMerge`。补 error/aborted/超时三个行为测试。
+4. **超时生命周期**：超时除报错外必须 `await this.ports.cancelSession?.(sessionId)` 取消会话；迟到的输出因 pending 已删除而被 `accept` 忽略（返回 false）。计时器句柄提升为局部变量，在 `finally` 中 `clearTimeout`。

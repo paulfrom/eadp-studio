@@ -56,9 +56,9 @@
 `publish` 发现远端 head 分叉（`head !== expectedHead && head !== candidateSha`）时，替代现有抛错，转入合并子流程：
 
 1. fetch 稳定分支，取新远端 head；
-2. `WorkspaceGit` 新增 `merge` 能力，在原任务 worktree 内 `git merge <新head>`；
-3. **合并干净**：merge commit 作为新候选——第一父为新 head、diff 仍限于本材料 allowedPaths，后端 `verifyCandidate` 现有校验天然兼容，**后端零改动**。重新生成检查证据（material 重算 materialEvidence，prototype 走 `ports.checks`），以新幂等键重新 prepare，继续原集成流程；
-4. **存在冲突**：复用现有 AI 会话通道（`ports.session`/`prompt`，同 requirement-candidates、scenario-repairs 模式），指令 AI 在 worktree 内直接产出冲突文件的合并结果，`git add` 后完成 merge commit，回到第 3 步。AI 失败或超时：确认操作进入 recovery，保留现场并报告真实错误，不自动重试 AI；
+2. `WorkspaceGit` 新增 `merge` 能力：在任务 worktree 内先基于新远端 head 检出临时合并分支，再 `git merge <原候选>`，保证 **merge commit 第一父=新远端 head**（原候选为第二父）；
+3. **合并干净**：merge commit 作为新候选——第一父为新 head、diff 仍限于本材料 allowedPaths，通过后端 `verifyCandidate`。**后端配合一处调整**：同占用的新 prepare 允许在同一事务内把该占用旧的 prepared 集成置为 aborted（其他占用仍按 INTEGRATION_PENDING 拒绝），否则新候选会被全局互斥阻断。重新生成检查证据（material 重算 materialEvidence，prototype 走 `ports.checks`），以新幂等键重新 prepare，继续原集成流程；
+4. **存在冲突**：复用现有 AI 会话通道（`ports.session`/`prompt`，同 requirement-candidates、scenario-repairs 模式），指令 AI 在 worktree 内直接产出冲突文件的合并结果，`git add` 后完成 merge commit，回到第 3 步。AI 会话仅 `turn-ended(reason='stop')` 视为成功；error、aborted 或超时均视为失败——超时同时取消会话并清理计时器，确认操作进入 recovery，保留现场并报告真实错误，不自动重试 AI；
 5. **用户提示**：自动合并与 AI 合并的文件清单记入确认操作，确认视图呈现「已自动合并：X、Y；AI 合并：Z」；
 6. 原候选对应的旧集成记录标记为被新候选承接（superseded 语义），幂等键不复用；
 7. 任务现场已销毁（worktree 不存在）时无法合并：保留现有报错与人工恢复出口。
