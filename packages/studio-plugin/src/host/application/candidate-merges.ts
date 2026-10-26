@@ -23,7 +23,7 @@ const mergeRules = '你是合并助手。当前工作区处于 git merge 冲突�
 /** Rebuilds a fixed candidate on a moved remote head; the agent resolves conflicts in place. */
 export class CandidateMerges {
   private readonly pending = new Map<string, (error?: Error) => void>()
-  constructor(private readonly store: StudioStore, private readonly ports: Pick<HostPorts, 'git' | 'session' | 'prompt'>, private readonly deps: Dependencies) {}
+  constructor(private readonly store: StudioStore, private readonly ports: Pick<HostPorts, 'git' | 'session' | 'prompt' | 'gitLocal' | 'cancelSession'>, private readonly deps: Dependencies) {}
 
   async merge(operation: PendingOperation, request: MaterialIntegrationRequest, remoteHead: string, branch: string): Promise<MergedCandidate | undefined> {
     const local = await this.store.read()
