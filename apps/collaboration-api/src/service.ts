@@ -80,7 +80,7 @@ export class CollaborationService {
     return this.transact(actor, async c => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
-      const integrations = await repository.listIntegrations(c, projectId);
+      const integrations = (await repository.listIntegrations(c, projectId)).map(integration.publicIntegration);
       const baselines = await repository.listBaselines(c, projectId);
       return { project, entities: entities.map(entity => visibleEntity(entity, actor)), integrations, baselines };
     });

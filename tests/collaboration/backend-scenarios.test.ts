@@ -408,6 +408,25 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     assert.equal(repair.status, 'terminated'); assert.equal(repair.terminationReason, 'concurrent-edit')
     await post(`${base}/entities/${draft.id}/cancel`, { idempotencyKey: key(), token: token(draft), reason: '结束测试' })
   })
+  await t.test('a merged candidate supersedes only the prepared integration from the same occupation', async () => {
+    const draft = await claim(await scene('同占用合并替换'))
+    const original = await post<IntegrationView>(`${base}/integrations`, await candidate([{ value: draft, metadata: material(draft) }]))
+    const mergedInput = await candidate([{ value: draft, metadata: material(draft) }])
+    const merged = await post<IntegrationView>(`${base}/integrations`, mergedInput)
+    assert.notEqual(merged.id, original.id)
+    assert.equal((await get<IntegrationView>(`${base}/integrations/${original.id}`)).status, 'aborted')
+    assert.equal(merged.status, 'prepared')
+    assert.equal((await post<IntegrationView>(`${base}/integrations`, mergedInput)).id, merged.id, 'idempotent replay does not supersede again')
+
+    const other = await claim(await scene('其他占用仍互斥'))
+    const denied = await send('POST', `${base}/integrations`, await candidate([{ value: other, metadata: material(other) }]))
+    assert.equal(denied.statusCode, 409, denied.body)
+    assert.equal(errorCode(denied), 'INTEGRATION_PENDING')
+
+    remote.head = mergedInput.candidateSha
+    assert.equal((await post<IntegrationView>(`${base}/integrations/${merged.id}/complete`, { idempotencyKey: key(), token: mergedInput.token })).status, 'accepted')
+    await post(`${base}/entities/${other.id}/cancel`, { idempotencyKey: key(), token: token(other), reason: '结束互斥测试' })
+  })
   await t.test('a prepared integration rechecks edit permission before accepting the pushed candidate', async () => {
     const draft = await claim(await scene('权限变化'))
     const input = await candidate([{ value: draft, metadata: material(draft) }])

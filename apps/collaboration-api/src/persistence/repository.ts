@@ -174,11 +174,9 @@ export async function getIntegration(c: Transaction, projectId: string, id: stri
   const row = (await c.query<Row>('SELECT * FROM studio_integrations WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
   requireCondition(row, 'INTEGRATION_NOT_FOUND', 'Integration operation was not found', 404); return integrationView(c, row);
 }
-export async function listIntegrations(c: Transaction, projectId: string): Promise<IntegrationView[]> {
-  const result: IntegrationView[] = [];
-  for (const row of (await c.query<Row>('SELECT * FROM studio_integrations WHERE project_id=$1 ORDER BY id', [projectId])).rows) {
-    const { request: _request, occupationId: _occupationId, ...view } = await integrationView(c, row); result.push(view);
-  }
+export async function listIntegrations(c: Transaction, projectId: string): Promise<StoredIntegration[]> {
+  const result: StoredIntegration[] = [];
+  for (const row of (await c.query<Row>('SELECT * FROM studio_integrations WHERE project_id=$1 ORDER BY id', [projectId])).rows) result.push(await integrationView(c, row));
   return result;
 }
 /**

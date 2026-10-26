@@ -81,7 +81,10 @@ async function validateRepairs(c: Transaction, projectId: string, all: EntityVie
 export async function prepare(c: Transaction, project: ProjectView, all: EntityView[], actor: Actor, input: PrepareIntegrationRequest, materials: VerifiedMaterials): Promise<IntegrationView> {
   const root = validateIntegration(project, all, actor, input, materials);
   await validateRepairs(c, project.id, all, input, actor);
-  requireCondition(!(await repository.listIntegrations(c, project.id)).some(operation => operation.status === 'prepared'), 'INTEGRATION_PENDING', 'An integration is pending; query and reconcile it before accepting another');
+  const pending = (await repository.listIntegrations(c, project.id)).filter(operation => operation.status === 'prepared');
+  const occupationId = root?.occupation?.occupationId;
+  requireCondition(pending.every(operation => !!occupationId && operation.occupationId === occupationId), 'INTEGRATION_PENDING', 'An integration is pending; query and reconcile it before accepting another');
+  if (pending.length) await repository.abortIntegrations(c, project.id, occupationId);
   const operation: StoredIntegration = { id: repository.newId(), ...(root ? { entityId: root.id, occupationId: root.occupation!.occupationId } : {}), ownerId: actor.id, status: 'prepared', sourceSha: input.sourceSha, expectedHead: input.expectedHead, candidateSha: input.candidateSha, stage: input.stage, createdAt: repository.now(), request: input };
   await repository.saveIntegration(c, project.id, operation);
   return publicIntegration(operation);
