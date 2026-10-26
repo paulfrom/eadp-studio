@@ -173,10 +173,10 @@
 
 - 候选提交后的首次推送移入 `resumeOperation` 的 prepare 步骤：只有查询不到原操作（`OPERATION_NOT_FOUND`）时才推送候选到 `studio-fixed/<id>`，再创建集成。推送幂等，恢复路径不会跳过一次丢失的推送；查询到原操作时不再重复推送。
 - `integrate` 只落盘 `PendingOperation` 并排队 `resumeOperation`，不再单独排队一次推送。丢响应时 `retryOperation` 查询原操作、原集成与 `complete` 幂等键，不重复准备、不重复接受。
-- 远端稳定分支已前进时，恢复在 CAS 前停止并将操作置为 `unknown`，保留“已确认待核对”，不使用强制更新绕过重新确认。
-- 执行边界（文档化而非宣称）：材料候选提交仍发生在命令队列中的 `confirmMaterial`/`confirmPrototype`，任务与评审 worktree 创建仍在命令队列中的 `designTask`/`prototypeTask`；只有候选推送、集成 prepare、CAS、complete、接受后副作用在后台车道。未在本轮迁移这些 Git 写入。
+- 远端稳定分支已前进时，确认在制作固定候选之前先把任务 worktree 对齐到后台认可头：本地变化先保存、快进、再以不提交方式重放；文本冲突由 AI 合并，本次材料、正式依据与已声明文件的冲突停止并保留现场。准备完成之后、CAS 之前远端再次变化仍按原规则停止并置为 `unknown`，不使用强制更新绕过重新确认；用户无需手工合并已完成对齐的远端提交。
+- 执行边界（文档化而非宣称）：材料候选提交仍发生在命令队列中的 `confirmMaterial`/`confirmPrototype`，任务与评审 worktree 创建仍在命令队列中的 `designTask`/`prototypeTask`；对齐只使用本机 Git，认可提交缺失时进入 `syncing` 并由后台车道取回后自动继续；候选推送、集成 prepare、CAS、complete、接受后副作用仍在后台车道。
 
-校验：`asset-workflow.test.ts` 新增 3 项覆盖推送响应丢失后的重推、集成响应丢失后查询原操作、远端头变化时拒绝 CAS，全文件 28 项通过；`tests/windows-desktop` 全量 170 项中 169 项通过、1 项因未配置测试数据库跳过。未连接真实 GitLab 与真实 PostgreSQL。
+校验：2026-10-26 新增 `remote-merges.test.ts` 5 项覆盖干净快进重放、AI 冲突合并、受保护材料冲突回滚、认可提交待取回与独立本地提交拒绝；`requirement-confirmation.test.ts` 11 项、`fixed-candidates.test.ts` 16 项、`scenario-orchestration.test.ts` 29 项、`scenario-documents.test.ts` 14 项通过。真实 Git 与真实 GitLab 未在本机沙箱内执行，桌面闭环未验收。
 
 ## SC02 内置 grill 与技能快照接入（2026-10-22）
 
@@ -193,7 +193,7 @@
 
 - `eadp-write-proposal` 增加可选 `target:"context"`（只允许该值，缺省为场景正文）。目标为项目根 `CONTEXT.md` 时，`body` 是新上下文全文，`entityId` 仍是当前场景；Host 不新增集合，提议仍存 `ScenarioRecord.writeProposal`。
 - 提议的 `baseHash`/`contextHash` 取提问时的 `CONTEXT.md` 实际 hash（缺失记为 `absent`）；作废判定只绑定 `CONTEXT.md` 与依据集合，场景正文或模板变化不使上下文提议失效。上下文提议与正文相同会被拒绝。
-- 用户按钮消费时重新读取文件并核对 `baseHash`；随后做三方比较：任务基线 = 任务 worktree HEAD 的 `CONTEXT.md`，本次修改 = 工作区文件，最新接受版 = 认可头的 `CONTEXT.md`。接受版与基线相同或工作区已等于接受版才写入；否则拒绝并提示回对话核对，不做 rebase、不改 expectedHead 重试。
+- 用户按钮消费时重新读取文件并核对 `baseHash`；随后做三方比较：任务基线 = 任务 worktree HEAD 的 `CONTEXT.md`，本次修改 = 工作区文件，最新接受版 = 认可头的 `CONTEXT.md`。接受版与基线相同或工作区已等于接受版才写入；否则拒绝并提示回对话核对。该写入提议路径仍不做 rebase、不改 expectedHead 重试；材料确认路径在固定候选前对后台认可头的自动对齐见 SC08。
 - 写入使用原子替换，只在任务 worktree 落盘、不 commit；随后用 `syncProjectContext` 把新 hash 写入场景 `metadata.files`（经 `ScenarioDocumentService.save` 做 expectedHash 检查），否则 SC06 确认会拒绝。提议 ID 作为幂等凭据，重复决策直接返回。
 - 上下文写入不产生正文 `writeReceipt`，因此没有正文撤销入口；项目级接受仍走模板发布的受控配置链路。
 - 界面：写入提议卡按目标显示“写入项目根 CONTEXT.md”与对应提示，不暴露 hash 或正文。

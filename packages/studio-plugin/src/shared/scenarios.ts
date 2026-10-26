@@ -62,7 +62,7 @@ export interface ScenarioWorkspace {
   writeReceipt?: ScenarioWriteReceiptView;
   requirementSave?: RequirementSaveView;
   /** A confirmation keeps its user intent while the author resolves an exception. */
-  confirmationRecovery?: { operationId: string; message: string; expectedHash?: string };
+  confirmationRecovery?: { operationId: string; phase: string; message: string; expectedHash?: string };
   settlement: ScenarioSettlementView;
   sessions: TaskView[]; activeSessionId?: string; conflict?: ScenarioConflict;
   repair?: RepairTaskView & { question?: string; message?: string; sessionId?: string };

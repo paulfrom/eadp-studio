@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { digest, findMaterialFile, parseMaterial, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
+import { digest, findMaterialFile, identityBlockCount, normalizeMaterialBody, parseMaterial, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { initialMetadata } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { ScenarioDocumentService } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
 
@@ -61,4 +61,18 @@ test('an unidentified same-title file cannot be overwritten by a new current mat
   assert.equal(draft.path, '场景/作者草稿-2.md')
   assert.equal(await readFile(path.join(root, relative), 'utf8'), original)
   assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, '新材料正文')
+})
+
+test('a model echo of the identity block is removed instead of producing a second block', async t => {
+  const root = await fixture(t), echo = `\`\`\`eadp-metadata\n${JSON.stringify(metadata())}\n\`\`\`\n\n完整正文\n`
+  const draft = await saveMaterial(root, metadata(), echo)
+  assert.equal(draft.body, '完整正文\n')
+  const text = await readFile(path.join(root, draft.path), 'utf8')
+  assert.equal(identityBlockCount(text), 1)
+  assert.equal(parseMaterial(Buffer.from(text), draft.path).body, '完整正文\n')
+})
+
+test('a second identity block inside the business body is refused before writing', () => {
+  assert.throws(() => normalizeMaterialBody('正文\n\n```eadp-metadata\n{}\n```\n'), /正文不能包含材料身份块/)
+  assert.equal(normalizeMaterialBody('正文\n'), '正文\n')
 })

@@ -28,7 +28,7 @@ function scenarioProposalHasChanges(value: unknown): boolean {
 }
 
 export interface PendingOperation {
-  id: string; projectId: string; entityId: string; phase: 'fixed' | 'prepared' | 'pushed' | 'accepted' | 'unknown';
+  id: string; projectId: string; entityId: string; phase: 'fixed' | 'prepared' | 'pushed' | 'accepted' | 'unknown' | 'rejected';
   /** The account and exact task that own this candidate, independent of the current selection. */
   accountId: number; task: Pick<TaskView, 'projectId' | 'entityId' | 'worktree' | 'purpose' | 'sessionId' | 'inputHash'>;
   candidateSha: string; expectedHead: string; fixedPath: string; sha256: string; integrationId?: string;

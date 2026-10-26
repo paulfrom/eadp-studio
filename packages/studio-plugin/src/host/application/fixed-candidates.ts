@@ -5,7 +5,7 @@ import { canonical } from '@eadp/asset-domain'
 import { reviewInputText } from '@eadp/contracts'
 import type { CheckEvidence, ConfirmationInput, EntityView, OccupationToken, ProjectState } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
-import { checkMaterial, containedFile, digest, normalizeMaterialPath, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
+import { assertSingleIdentityBlock, checkMaterial, containedFile, digest, normalizeMaterialPath, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import type { HostPorts } from './ports.ts'
 import type { ReviewCandidate, ReviewFile } from './reviews.ts'
 import type { StudioStore } from './state.ts'
@@ -46,6 +46,7 @@ export class FixedCandidates {
     await this.requireTask(task, remote, entity, token, request.purpose)
     const draft = await this.currentMaterialDraft(task, entity)
     if (request.expectedHash && draft.sha256 !== request.expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
+    if (request.purpose === 'material') await assertSingleIdentityBlock(task.worktree, draft.path)
     // The snapshot starts from the task HEAD; target files are bound by their own hashes.
     const head = (await this.ports.git.state(task.worktree)).head
     let paths: string[], allowedPaths: string[]

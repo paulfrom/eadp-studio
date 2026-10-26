@@ -7,6 +7,9 @@ export type SessionOutput = ({ kind: 'assistant'; content: string } | { kind: 't
   | { kind: 'source-read'; path: string; ranges: string[]; attachmentId: string }) & { seq?: number }
 export interface ScenarioSourceRead { status: 'read' | 'partial' | 'failed'; ranges: string[]; text: string; error?: string }
 
+export interface MergeConflictInput { path: string; base?: string; ours?: string; theirs?: string }
+export interface MergeConflictResult { content?: string; delete?: true }
+
 export interface HostPorts {
   workspaceRoot: string
   git: WorkspaceGit
@@ -19,6 +22,8 @@ export interface HostPorts {
   prompt(sessionId: string, text: string): Promise<void>
   /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */
   compareConsistency?(input: ConsistencyModelInput, signal: AbortSignal): Promise<string>
+  /** One-shot merging of text that a remote accepted change and this task both modified. */
+  mergeConflict?(input: MergeConflictInput, signal: AbortSignal): Promise<MergeConflictResult>
   cancelSession?(sessionId: string): Promise<void>
   /** Release the Agent handles owned by one task worktree; other tasks stay live. */
   releaseTask?(worktree: string): Promise<void>

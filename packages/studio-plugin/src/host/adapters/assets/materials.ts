@@ -104,6 +104,26 @@ export async function containedFile(root: string, relative: string, create = fal
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('资产必须是项目内的普通文件')
   return target
 }
+/** Every identity block a Markdown document carries; the accepted contract allows exactly one. */
+export function identityBlockCount(text: string): number {
+  return [...text.replace(/\r\n?/g, '\n').matchAll(/^```eadp-metadata[ \t]*$/gm)].length
+}
+/**
+ * Removes the Host-owned identity block a model may echo at the head of a
+ * whole-body proposal. Material identity is never part of the business body;
+ * any further identity block is refused instead of guessed away.
+ */
+export function normalizeMaterialBody(body: string): string {
+  const normalized = body.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '')
+  const stripped = normalized.replace(/^```eadp-metadata\n[^]*?\n```\n*/, '')
+  if (/^```eadp-metadata[ \t]*$/m.test(stripped)) throw new Error('正文不能包含材料身份块，材料身份由 Host 维护')
+  return stripped
+}
+/** Fails before a candidate is fixed when the exact file would carry more than one identity. */
+export async function assertSingleIdentityBlock(root: string, relative: string): Promise<void> {
+  const text = await readFile(await containedFile(root, relative), 'utf8')
+  if (identityBlockCount(text) !== 1) throw new Error('材料包含重复的身份块，请保存材料以移除重复内容后再确认')
+}
 export function parseMaterial(bytes: Buffer, relative: string): MaterialDraft {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   if (bytes[0] === 0xef || text.includes('\r')) throw new Error('材料必须为 UTF-8 无 BOM、LF 换行')
@@ -128,7 +148,7 @@ export async function readMaterial(root: string, kind: MaterialMetadata['kind'],
 }
 export function materialText(metadata: MaterialMetadata, body: string): string {
   if (!isMaterialMetadata(metadata) || body.length > 1_000_000) throw new Error('材料内容无效或过大')
-  return `\`\`\`eadp-metadata\n${JSON.stringify(metadata, null, 2)}\n\`\`\`\n\n${body.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '')}`
+  return `\`\`\`eadp-metadata\n${JSON.stringify(metadata, null, 2)}\n\`\`\`\n\n${normalizeMaterialBody(body)}`
 }
 /** Writes in the target directory so readers never observe a partially written material. */
 export async function atomicWriteFile(target: string, bytes: string | Uint8Array): Promise<void> {

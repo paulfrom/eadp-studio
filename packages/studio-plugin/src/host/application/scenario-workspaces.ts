@@ -18,6 +18,7 @@ import { hasMaterialDecisionQuestions, identifyMaterialQuestions, parseMaterialD
 import { MaterialSources } from './material-sources.ts'
 import { applyWriteChanges, describeWriteChanges } from './material-write-changes.ts'
 import { syncProjectContext } from './scenario-package.ts'
+import { confirmationStep } from './material-confirmations.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
 import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
 
@@ -192,7 +193,7 @@ export class ScenarioWorkspaces {
       ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
-      ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, message: confirmation.message ?? requirementSave?.message ?? '请按选择恢复保存并继续确认', ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
+      ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, phase: confirmation.phase, message: confirmationStep(confirmation), ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
   }

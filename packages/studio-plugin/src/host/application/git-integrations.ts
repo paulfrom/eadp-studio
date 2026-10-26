@@ -112,7 +112,9 @@ export class GitIntegrations {
         result = this.integration(operation, request, receipt.result)
       } catch (error) {
         if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error
-        await this.external(operation, () => this.ports.git.push(operation.task.worktree, operation.candidateSha, `studio-fixed/${operation.id}`))
+        // A rebuilt confirmation fixes a new candidate; its own Host branch keeps
+        // the old and new bytes reachable without a force push.
+        await this.external(operation, () => this.ports.git.push(operation.task.worktree, operation.candidateSha, `studio-fixed/${operation.id}-${operation.candidateSha.slice(0, 12)}`))
         result = this.integration(operation, request, await this.external(operation, () => this.api.request<IntegrationView>('POST', this.route(operation, '/integrations'), request)))
       }
       operation.integrationId = result.id
@@ -162,7 +164,11 @@ export class GitIntegrations {
     } catch (error) {
       await this.assertOwner(operation.accountId)
       if (operation.phase === 'accepted') operation.deliveryMessage = message(error)
-      else { operation.phase = 'unknown'; operation.message = message(error) }
+      else if (error instanceof CollaborationError && error.status >= 400 && error.status < 500 && !operation.integrationId) {
+        // The backend gave a definite answer and no integration was created;
+        // this input can be fixed and submitted again instead of staying unknown.
+        operation.phase = 'rejected'; operation.message = message(error)
+      } else { operation.phase = 'unknown'; operation.message = message(error) }
       await this.persist(operation)
       throw error
     }
