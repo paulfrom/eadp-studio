@@ -4,6 +4,7 @@ import type { ConfirmationChoice, MaterialDraft, TaskView } from '../../shared/s
 import { digest, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import { checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
 import type { FixedCandidateInput, FixedCandidates, PreparedCandidate } from './fixed-candidates.ts'
+import { mergeNoteText, type MergedCandidate, type MergeNote } from './candidate-merges.ts'
 import type { GitIntegrations } from './git-integrations.ts'
 import type { HostPorts } from './ports.ts'
 import type { ProjectWorkspaces } from './projects.ts'
@@ -23,7 +24,7 @@ export interface MaterialConfirmationOperation {
   occupation: Pick<OccupationToken, 'occupationId' | 'generation' | 'taskId' | 'clientId'>;
   phase: 'saving' | 'checking' | 'fixed' | 'integrating' | 'accepted' | 'recovery' | 'superseded';
   savedHash?: string; input?: FixedCandidateInput; candidate?: PreparedCandidate; prepare?: MaterialIntegrationRequest;
-  integrationId?: string; accepted?: IntegrationView; message?: string;
+  integrationId?: string; accepted?: IntegrationView; message?: string; mergeNote?: MergeNote;
 }
 export interface MaterialInspectionRequest {
   projectId: string; entity: EntityView; task?: TaskView; draft?: MaterialDraft; expectedHash?: string;
@@ -155,6 +156,21 @@ export class MaterialConfirmations {
     const owner = await this.workspaces.record(entityId, projectId), operation = owner.materialConfirmations?.find(value => value.operationId === operationId)
     if (!operation || current(owner) !== operation || operation.phase === 'superseded') throw new Error('未找到当前用户选择对应的确认操作')
     await this.advance(owner, operation)
+  }
+
+  /** Rebind a confirmation to its merged candidate; the author's original read hash stays untouched. */
+  async remap(originalIntegrationId: string, next: MergedCandidate): Promise<void> {
+    const local = await this.store.read()
+    const operation = local.scenarios.flatMap(record => record.materialConfirmations ?? []).find(value => value.integrationId === originalIntegrationId)
+    if (!operation) throw new Error('原确认记录缺失，合并候选已保留')
+    operation.integrationId = next.prepare.idempotencyKey
+    operation.prepare = structuredClone(next.prepare)
+    operation.candidate = { ...operation.candidate!, task: structuredClone(next.task), draft: structuredClone(next.draft),
+      prepare: structuredClone(next.prepare), confirmations: structuredClone(next.prepare.confirmations) }
+    operation.mergeNote = structuredClone(next.note)
+    operation.message = `${mergeNoteText(next.note)}，正在核对集成结果`
+    operation.phase = 'integrating'
+    await this.store.save()
   }
 
   /** Persist completion before independently delivered work can fail. */

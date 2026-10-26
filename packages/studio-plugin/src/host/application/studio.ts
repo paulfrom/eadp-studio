@@ -15,6 +15,7 @@ import { ProjectWorkspaces } from './projects.ts'
 import { TaskMaintenance } from './task-maintenance.ts'
 import { AuthorReviews } from './reviews.ts'
 import { FixedCandidates } from './fixed-candidates.ts'
+import { CandidateMerges } from './candidate-merges.ts'
 import { GitIntegrations } from './git-integrations.ts'
 import { MaterialConfirmations } from './material-confirmations.ts'
 import { syncProjectContext } from './scenario-package.ts'
@@ -59,6 +60,7 @@ export class StudioApplication {
   private readonly candidates: RequirementCandidates
   private readonly comparisons: ConsistencyComparisons
   private readonly fixedCandidates: FixedCandidates
+  private readonly candidateMerges: CandidateMerges
   private readonly integrations: GitIntegrations
   private readonly confirmations: MaterialConfirmations
   private lastState: StudioState | undefined
@@ -71,9 +73,26 @@ export class StudioApplication {
       prototypeTask: (remote, entity) => this.prototypeTask(remote, entity), owned: entity => this.requireOwned(entity),
       identity: projectId => this.identity(projectId), pruneEvidence: task => this.scenarios.sources.pruneEvidence(task),
     })
+    this.candidateMerges = new CandidateMerges(store, ports, {
+      entity: (id, projectId) => this.entity(id, projectId),
+      identity: projectId => this.identity(projectId),
+      checks: (candidateSha, draft) => this.fixedCandidates.materialChecks(candidateSha, draft),
+      readDraft: (task, entity) => readMaterial(task.worktree, entity.kind, entity.id),
+    })
     this.integrations = new GitIntegrations(store, api, ports, this.lane, { accepted: async (operation, integration, task) => {
       await this.confirmations.accept(operation, integration)
       this.scheduleAcceptedWork(operation, integration, task)
+    }, merge: async (operation, request, head, branch) => {
+      if (request.stage !== 'material') return false
+      const merged = await this.candidateMerges.merge(operation, request, head, branch)
+      if (!merged) return false
+      const local = await this.store.read()
+      const original = local.operations.find(value => value.id === operation.id && value.projectId === operation.projectId)
+      if (original) { original.phase = 'superseded'; original.message = '已由自动合并候选承接' }
+      await this.confirmations.remap(operation.id, merged)
+      await this.store.save()
+      await this.integrations.submit(merged.task, merged.draft, merged.prepare)
+      return true
     } })
     this.confirmations = new MaterialConfirmations(store, ports, this.scenarios, this.fixedCandidates, this.integrations, this.reviews, {
       entity: (id, projectId) => this.entity(id, projectId), designTask: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity),
@@ -487,7 +506,7 @@ export class StudioApplication {
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id), ...(this.previewState ? { preview: this.previewState } : {}),
       consistencyTasks: await this.comparisons.views(selected?.id), consistencyLatest: this.comparisons.latestViews(selected?.id),
       pending: [
-        ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id).map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
+        ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id && op.phase !== 'superseded').map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.repairAuthorization?.status === 'pending').map(record => ({ id: record.repairAuthorization!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.repairAuthorization!.message ?? '修复授权结果待核对' })),
         ...local.scenarioRepairs.filter(record => record.projectId === selected?.id && (record.pending || record.recoverPending)).map(record => ({ id: (record.pending ?? record.recoverPending)!.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.message ?? '修复轮次结果待核对' })),
         ...local.templateOperations.filter(op => op.projectId === selected?.id && op.phase === 'unknown').map(op => ({ id: op.preview.operationId, entityId: 'templates', phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
@@ -807,6 +826,7 @@ export class StudioApplication {
     const result = this.queue.then(async () => {
       if (!this.store.scoped || (await this.ports.account())?.id !== this.store.accountId) return
       if (output.kind === 'source-read') { await this.acceptSourceRead(sessionId, output); return }
+      if (await this.candidateMerges.accept(sessionId, output)) return
       if (await this.repairs.accept(sessionId, output)) return
       if (!await this.reviews.accept(sessionId, output) && output.kind === 'assistant' && !await this.scenarios.accept(sessionId, output.content)) await this.candidates.accept(sessionId, output.content)
     })

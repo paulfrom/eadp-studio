@@ -9,6 +9,10 @@ import type { PendingOperation, StudioStore } from './state.ts'
 
 interface Dependencies {
   accepted(operation: PendingOperation, integration: IntegrationView, task: TaskView): Promise<void>
+  merge?(operation: PendingOperation, request: MaterialIntegrationRequest, head: string, branch: string): Promise<boolean>
+}
+export class RemoteDiverged extends Error {
+  constructor(readonly head: string, readonly branch: string) { super('Git 集成头已变化，需核对原候选并重新集成') }
 }
 class ScopeChanged extends Error {}
 const taskBinding = (task: TaskView): PendingOperation['task'] => ({ projectId: task.projectId, entityId: task.entityId, worktree: path.resolve(task.worktree), purpose: task.purpose, sessionId: task.sessionId, inputHash: task.inputHash })
@@ -138,7 +142,7 @@ export class GitIntegrations {
       const branch = remote.project.stableBranch
       const head = await this.external(operation, () => this.ports.git.remoteHead(directory, branch))
       if (head === operation.expectedHead) await this.external(operation, () => this.ports.git.conditionalUpdate(operation.task.worktree, branch, operation.expectedHead, operation.candidateSha))
-      else if (head !== operation.candidateSha) throw new Error('Git 集成头已变化，需核对原候选并重新集成')
+      else if (head !== operation.candidateSha) throw new RemoteDiverged(head, branch)
       operation.phase = 'pushed'
       await this.persist(operation)
       integration = this.integration(operation, request, await this.external(operation, () => this.api.request<IntegrationView>('POST', this.route(operation, `/integrations/${encodeURIComponent(integration.id)}/complete`), { idempotencyKey: `${operation.id}-complete`, token: request.token })))
@@ -152,8 +156,9 @@ export class GitIntegrations {
     await this.assertOwner(input.accountId)
     const operation = local.operations.find(value => value.projectId === input.projectId && value.id === input.id)
     if (!operation || binding(operation) !== binding(input)) throw new Error('原集成记录不存在或固定身份已变化')
+    let request: MaterialIntegrationRequest | undefined
     try {
-      const request = this.prepare(operation)
+      request = this.prepare(operation)
       this.originalTask(operation, local.tasks)
       if (operation.phase !== 'accepted') {
         const project = local.projects.find(value => value.id === operation.projectId)
@@ -171,6 +176,10 @@ export class GitIntegrations {
       delete operation.deliveryMessage
       await this.persist(operation)
     } catch (error) {
+      if (error instanceof RemoteDiverged && request && operation.phase !== 'accepted' && this.deps.merge) {
+        const handled = await this.deps.merge(operation, request, error.head, error.branch)
+        if (handled) return
+      }
       await this.assertOwner(operation.accountId)
       if (operation.phase === 'accepted') operation.deliveryMessage = message(error)
       else { operation.phase = 'unknown'; operation.message = message(error) }

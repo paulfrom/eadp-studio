@@ -98,7 +98,7 @@ export class FixedCandidates {
       const allowed = new Set(allowedPaths)
       candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), allowedPaths, '固定材料 ' + entity.id)).sha
       for (const relative of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, relative)
-      checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialEvidence(candidateSha, value.draft).checks) }
+      checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialChecks(candidateSha, value.draft).checks) }
       for (const value of content.confirmations) value.fixed.commitSha = candidateSha
     } else {
       const allowed = request.fixedInput ? (file: string) => allowedPaths.includes(file) : (file: string) => file.startsWith('原型代码/')
@@ -153,7 +153,7 @@ export class FixedCandidates {
     if (!registered || task.projectId !== remote.project.id || task.entityId !== entity.id || task.purpose !== expectedPurpose || path.basename(task.worktree) !== token.taskId || entity.occupation?.purpose !== (purpose === 'prototype' ? 'prototype' : 'design')) throw new Error('原任务现场与当前材料占用不一致，请保留现场并重新核对')
   }
 
-  private materialEvidence(candidateSha: string, draft: MaterialDraft): CheckEvidence {
+  materialChecks(candidateSha: string, draft: MaterialDraft): CheckEvidence {
     checkMaterial(draft)
     return { candidateSha, passed: true, checks: ['materials', 'relations'].map(name => ({ name, passed: true, evidenceHash: digest(`${name}:${draft.sha256}`) })) }
   }

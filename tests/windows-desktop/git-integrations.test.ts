@@ -83,7 +83,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
     return { runner, lane }
   }
   t.after(async () => { for (const lane of lanes) await lane.settle(); await rm(root, { recursive: true, force: true }) })
-  return { root, stateRoot, store, local, task, draft, prepare, calls, delivered, failures, create, ...create(),
+  return { root, stateRoot, store, api, ports, local, task, draft, prepare, calls, delivered, failures, create, ...create(),
     during(name: Step, hook: () => Promise<void>) { hooks.set(name, hook) },
     remote(value: string) { remoteHead = value },
     account(value: number) { accountId = value },
@@ -236,4 +236,30 @@ for (const wait of ['push', 'complete', 'delivery'] as const) test(`switching ac
   await f.create(previous).runner.resume(original)
   assert.equal(original.phase, 'accepted')
   assert.equal(f.completeEffects, 1)
+})
+
+test('a diverged remote head is handed to the merge dependency instead of failing', async t => {
+  const f = await fixture(t)
+  f.remote('f'.repeat(40))
+  const seen: string[] = []
+  const runner = new GitIntegrations(f.store, f.api, f.ports, f.lane, {
+    accepted: async () => undefined,
+    merge: async (_operation, _request, head) => { seen.push(head); return true },
+  })
+  await runner.submit(f.task, f.draft, f.prepare)
+  await f.lane.settle()
+  assert.deepEqual(seen, ['f'.repeat(40)])
+})
+
+test('a diverged remote head remains unknown when the merge dependency declines it', async t => {
+  const f = await fixture(t)
+  f.remote('f'.repeat(40))
+  const runner = new GitIntegrations(f.store, f.api, f.ports, f.lane, {
+    accepted: async () => undefined,
+    merge: async () => false,
+  })
+  const operation = await runner.submit(f.task, f.draft, f.prepare)
+  await f.lane.settle()
+  assert.equal(operation.phase, 'unknown')
+  assert.equal(operation.message, 'Git 集成头已变化，需核对原候选并重新集成')
 })

@@ -109,9 +109,9 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
         materials.set(confirmation.entityId, fixedDraft.metadata)
       }
       validateIntegration(project, remote.entities as EntityView[], { id: 1 } as never, prepared, materials)
-      const saved = { id: 'integration', entityId: value.id, ownerId: 1, status: failures.pendingIntegration ? 'prepared' as const : 'accepted' as const, sourceSha: candidate, expectedHead: head, candidateSha: candidate, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
+      const saved = { id: `integration-${prepared.idempotencyKey}`, entityId: value.id, ownerId: 1, status: failures.pendingIntegration ? 'prepared' as const : 'accepted' as const, sourceSha: prepared.sourceSha, expectedHead: prepared.expectedHead, candidateSha: prepared.candidateSha, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
       remote.integrations.push(saved); records.set(prepared.idempotencyKey, saved)
-      if (prepared.stage !== 'prototype') for (const item of prepared.confirmations) {
+      if (saved.status === 'accepted' && prepared.stage !== 'prototype') for (const item of prepared.confirmations) {
         const changed = remote.entities.find(e => e.id === item.entityId) as EntityView
         changed.current = { version: changed.materialVersion + 1, fixed: item.fixed, metadata: materials.get(item.entityId)!, confirmationId: 'confirmed-' + item.entityId, confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }; changed.materialVersion++; delete changed.occupation
       }
@@ -125,7 +125,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     prompt: async (session: string, text: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') } },
     checks: async (_task: unknown, sha: string) => ({ candidateSha: sha, passed: true, checks: [{ name: 'engineering', passed: true, evidenceHash: digest('checked') }] }),
     gitLocal: async () => gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
-    git: { hasCommit: async () => true, commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async (_root: string, commit: string, branch: string) => { calls.pushes.push(commit + ':' + branch); if (failures.push) { failures.push = false; throw new Error('push response lost') } }, remoteHead: async () => gitState.remote, conditionalUpdate: async () => { calls.conditionalUpdates++ }, fetch: async () => {}, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
+    git: { hasCommit: async () => true, commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async (_root: string, commit: string, branch: string) => { calls.pushes.push(commit + ':' + branch); if (failures.push) { failures.push = false; throw new Error('push response lost') } }, remoteHead: async () => gitState.remote, conditionalUpdate: async () => { calls.conditionalUpdates++ }, fetch: async () => {}, merge: async () => { gitState.head = 'd'.repeat(40); project.recognizedHead = gitState.remote; failures.pendingIntegration = false; return { status: 'merged' as const, commit: gitState.head } }, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
   } as unknown as HostPorts
   const app = (nextStore = store) => { const created = new StudioApplication(nextStore, api, ports); apps.push(created); return created }
   const settle = async () => { for (const created of apps) await created.settle() }
@@ -362,18 +362,21 @@ test('same-named accepted operations in two projects start their own prototypes 
   assert.equal(f.calls.prepared.length, 1); assert.equal(f.calls.prompts.length, 2)
 })
 
-test('a moved remote head stops the pipeline instead of rewriting the accepted branch', async t => {
+test('a moved remote head rebuilds and accepts a merged candidate without rewriting the diverged branch', async t => {
   const f = await fixture(t), app = f.app()
   f.failures.pendingIntegration = true
   f.gitState.remote = 'c'.repeat(40)
   const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, true)
   await app.settle()
-  const operation = (await f.store.read()).operations[0]!
-  assert.equal(operation.phase, 'unknown')
-  assert.match(operation.message ?? '', /Git 集成头已变化/)
+  const operations = (await f.store.read()).operations
+  assert.equal(operations.length, 2)
+  assert.equal(operations[0]!.phase, 'superseded')
+  assert.equal(operations[1]!.phase, 'accepted', operations[1]!.message)
+  assert.equal(operations[1]!.id, `m-${'d'.repeat(40)}`)
+  assert.equal(f.calls.prepared[1]!.confirmations[0]!.readHash, draft.sha256)
   assert.equal(f.calls.conditionalUpdates, 0, 'a moved remote head is never force-updated')
-  assert.equal(f.calls.prepared.length, 1)
+  assert.equal(f.calls.prepared.length, 2)
 })
 
 test('accepted handoff generation is durable per fixed baseline and never overwrites author edits on retry', async t => {
