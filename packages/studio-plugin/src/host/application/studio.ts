@@ -96,6 +96,7 @@ export class StudioApplication {
     } })
     this.confirmations = new MaterialConfirmations(store, ports, this.scenarios, this.fixedCandidates, this.integrations, this.reviews, {
       entity: (id, projectId) => this.entity(id, projectId), designTask: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity),
+      deliver: work => { this.lane.append(work) }, identity: projectId => this.identity(projectId),
     })
     this.repairs = new ScenarioRepairs(this.scenarios, async (entityId, expectedHash, repairId) => {
       const operation = await this.confirmations.confirm({ operationId: digest(`${repairId}:${expectedHash}`), entityId, expectedHash, repairId })
@@ -243,13 +244,14 @@ export class StudioApplication {
         const local = await this.store.read(), matching = local.operations.filter(op => op.id === command.operationId)
         const operation = matching.find(op => op.projectId === local.selectedProjectId) ?? (matching.length === 1 ? matching[0] : undefined)
         const startup = local.tasks.find(task => task.prototypeStart?.id === command.operationId)
-        const confirmation = local.scenarios.find(record => record.materialConfirmations?.some(value => value.operationId === command.operationId))
-        if (operation) this.integrations.schedule(operation)
+        const confirmation = local.scenarios.find(record => record.materialConfirmations?.some(value => value.operationId === command.operationId || value.integrationId === command.operationId))
+        const confirmed = confirmation?.materialConfirmations?.find(value => value.operationId === command.operationId || value.integrationId === command.operationId)
+        if (confirmation && confirmed) await this.confirmations.retry(confirmation.entityId, confirmed.operationId, confirmation.projectId)
+        else if (operation) this.integrations.schedule(operation)
         else if (startup) {
           if (startup.prototypeStart?.status === 'unknown') throw new Error('原型启动答复未知，请恢复原会话核对，不能重复发送')
           this.schedulePrototypeStartup(startup, this.store.accountId!)
-        } else if (confirmation) await this.confirmations.retry(confirmation.entityId, command.operationId, confirmation.projectId)
-          else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
+        } else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
             const repairAuthorization = local.scenarios.find(record => record.projectId === local.selectedProjectId && record.repairAuthorization?.request.idempotencyKey === command.operationId)
             const repairEvent = local.scenarioRepairs.find(record => record.projectId === local.selectedProjectId && (record.pending?.idempotencyKey === command.operationId || record.recoverPending?.idempotencyKey === command.operationId))
             const templateBinding = local.scenarios.find(record => record.projectId === local.selectedProjectId && (record.templateBinding?.request.idempotencyKey === command.operationId || record.templateBinding?.application?.operationId === command.operationId))
@@ -461,6 +463,9 @@ export class StudioApplication {
     const selected = projects.find(project => project.id === local.selectedProjectId)
     const remote = selected ? await this.api.request<ProjectState>('GET', this.route(selected.id)) : undefined
     for (const operation of local.operations) if (operation.phase === 'accepted' && operation.accepted && operation.accountId === account.id && allowed.has(operation.projectId)) {
+      // A confirmation may have been persisted after its child was accepted but
+      // before it recorded completion; adopt the durable child receipt first.
+      await this.confirmations.accept(operation, operation.accepted)
       const original = local.tasks.find(task => task.projectId === operation.projectId && task.entityId === operation.entityId && task.worktree === operation.task.worktree && task.sessionId === operation.task.sessionId && task.purpose === operation.task.purpose)
       if (original) this.scheduleAcceptedWork(operation, operation.accepted, original)
     }
@@ -495,6 +500,12 @@ export class StudioApplication {
     const materialSources = remote ? await this.scenarios.sources.views(remote, drafts) : []
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
     const recovery = this.store.preservedRecord
+    // One confirmation owns its integration notice. Emitting the child as a
+    // second pending row duplicated the key and hid the child's real failure.
+    const claimed = new Set(local.scenarios.filter(record => record.projectId === selected?.id)
+      .flatMap(record => record.materialConfirmations ?? [])
+      .filter(value => value.phase !== 'accepted' && value.phase !== 'superseded' && value.integrationId)
+      .map(value => value.integrationId!))
     const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
@@ -506,14 +517,14 @@ export class StudioApplication {
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id), ...(this.previewState ? { preview: this.previewState } : {}),
       consistencyTasks: await this.comparisons.views(selected?.id), consistencyLatest: this.comparisons.latestViews(selected?.id),
       pending: [
-        ...[...local.operations, ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id && op.phase !== 'superseded').map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
+        ...[...local.operations.filter(op => !claimed.has(op.id)), ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id && op.phase !== 'superseded').map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.repairAuthorization?.status === 'pending').map(record => ({ id: record.repairAuthorization!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.repairAuthorization!.message ?? '修复授权结果待核对' })),
         ...local.scenarioRepairs.filter(record => record.projectId === selected?.id && (record.pending || record.recoverPending)).map(record => ({ id: (record.pending ?? record.recoverPending)!.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.message ?? '修复轮次结果待核对' })),
         ...local.templateOperations.filter(op => op.projectId === selected?.id && op.phase === 'unknown').map(op => ({ id: op.preview.operationId, entityId: 'templates', phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.templateBinding?.status === 'pending').map(record => ({ id: record.templateBinding!.application?.operationId ?? record.templateBinding!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.templateBinding!.message ?? '模板绑定结果待核对' })),
         ...local.scenarios.filter(record => record.projectId === selected?.id).flatMap(record => {
           const save = this.scenarios.requirementSaves.view(record), confirmation = this.confirmations.view(record, local.operations)
-          return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? 'confirmation-recovery', message: save?.message ?? confirmation?.message ?? '请按选择继续保存并确认' }] : []
+          return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? confirmation!.phase, message: save?.message ?? confirmation!.message }] : []
         }),
         ...tasks.filter(task => task.prototypeStart && task.prototypeStart.status !== 'sent').map(task => ({ id: task.prototypeStart!.id, entityId: task.entityId, phase: 'prototype-startup', message: task.prototypeStart!.message ?? '材料已确认，原型启动等待恢复' })),
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
@@ -696,7 +707,7 @@ export class StudioApplication {
     local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === 'prototype')); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save()); return task
   }
   private materialRules(draft: MaterialDraft): string {
-    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
+    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。场景只确认业务流程完整：触发条件、角色、主要路径、必要分支及业务结果；金额阈值、字段和计算口径等细节留待需求确认，不作为场景阻断项。资料与引用仅提醒，可依据当前正文和用户明确答复，不强制外部附件。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
     if (draft.metadata.kind === 'requirement') return '你是需求设计助手。使用 grilling 逐问推进需求设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，不写正文、不直接修改文件或确认。以Host提供的当前需求、已接受场景依据和实际已读资料为准，缺业务答案时提问。'
     return `你正在整理 ${draft.metadata.kind} ${draft.entityId}。仅编辑 ${draft.path}；保留 eadp-metadata 身份。实际业务依据、核心业务规则、验收条件缺失时提出问题，不编造；核心待澄清项阻断确认，非阻断项明确限制和不适用范围。不得自行确认、释放占用、修改Git/模板规则或执行shell。作者通过工作台确认。当前材料哈希 ${draft.sha256}。`
   }
@@ -867,7 +878,7 @@ export class StudioApplication {
             scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites,
             sources: [...(entity.scenarioSources ?? []), operation.request.source],
             businessEvidence: draft.metadata.businessEvidence, files: draft.metadata.files, referencedAssets: draft.metadata.referencedAssets,
-            coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: draft.metadata.openQuestions,
+            ...(entity.kind === 'scenario' ? { flowComplete: false } : { coreRulesPresent: false, acceptanceCriteriaPresent: false }), openQuestions: draft.metadata.openQuestions,
             ...(entity.kind === 'scenario' && entity.templateId && entity.templateRef ? { templateId: entity.templateId, templateRef: entity.templateRef } : {}) } as MaterialMetadata
           await saveMaterial(operation.worktree, metadata, draft.body + '\n\n## 目标采用调整\n\n' + operation.request.adjustmentSummary + '\n')
         }

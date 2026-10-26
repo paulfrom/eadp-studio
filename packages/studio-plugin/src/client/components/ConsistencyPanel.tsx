@@ -100,7 +100,7 @@ export function ConsistencyPanel({ entityId, entities, tasks, busy, call, onOpen
             <span className={conflict.relation === 'potential' ? css.potentialTag : css.sourceChip}>{conflict.relation === 'potential' ? '潜在关联' : '正式关系'}</span>
             <p>{conflict.summary}</p>
             <small className={css.muted}>涉及材料：{conflict.entities.map(materialLabel).join('、')}</small>
-            {onOpenMaterial && <div>{conflict.entities.map(id => entities.find(entity => entity.id === id)).filter((entity): entity is EntityView => !!entity).map(entity => <button key={entity.id} disabled={busy} onClick={() => onOpenMaterial(entity)}>查看{entity.kind === 'scenario' ? '场景' : '需求'} · {entity.title}</button>)}</div>}
+            {onOpenMaterial && <div>{conflict.entities.map(id => entities.find(entity => entity.id === id)).filter((entity): entity is EntityView => !!entity && !entity.builtinKey).map(entity => <button key={entity.id} disabled={busy} onClick={() => onOpenMaterial(entity)}>查看{entity.kind === 'scenario' ? '场景' : '需求'} · {entity.title}</button>)}</div>}
           </li>)}
         </ul>
       </section>}

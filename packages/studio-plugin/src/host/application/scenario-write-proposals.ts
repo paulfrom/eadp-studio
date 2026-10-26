@@ -1,7 +1,7 @@
 import type { FixedReference } from '@eadp/contracts'
 import type { MaterialDraft } from '../../shared/studio.ts'
 import type { ScenarioWriteSummary } from '../../shared/scenarios.ts'
-import { digest } from '../adapters/assets/materials.ts'
+import { digest, normalizeMaterialBody } from '../adapters/assets/materials.ts'
 import { describeWriteChanges } from './material-write-changes.ts'
 
 export interface ParsedWriteProposal { conclusions: Array<{ id: string; text: string }>; evidenceIds: string[]; body: string; target?: 'context' }
@@ -74,9 +74,12 @@ export function parseWriteProposal(response: string, draft: MaterialDraft, readE
     evidenceIds.push(evidenceId)
   }
   text(value.body, 1_000_000)
+  // Models often echo the Host-owned identity block at the head of the whole
+  // body; identity is never business content, so the Host removes it here.
+  const body = normalizeMaterialBody(value.body)
   // A context proposal replaces another file; its identity is checked against CONTEXT.md by the Host.
-  if (value.target !== 'context' && value.body === draft.body) throw new Error('写入提议正文与当前正文相同')
-  return { conclusions, evidenceIds, body: value.body, ...(value.target === 'context' ? { target: 'context' as const } : {}) }
+  if (value.target !== 'context' && body === draft.body) throw new Error('写入提议正文与当前正文相同')
+  return { conclusions, evidenceIds, body, ...(value.target === 'context' ? { target: 'context' as const } : {}) }
 }
 
 /** Stable key for a conclusion text; a rejected conclusion cannot return under another model-chosen ID. */

@@ -11,7 +11,7 @@ import test from 'node:test'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
 
 /** A record as this version writes it: every collection and the check flag present. */
-const currentRecord = { formatVersion: 1, clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [], consistencyComparisons: [] }
+const currentRecord = { formatVersion: 2, clientId: 'client-current', scenarioStructureCheck: true, projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [], materialReservations: [], templateOperations: [], scenarios: [], scenarioRepairs: [], consistencyComparisons: [] }
 /** A record an earlier version wrote: later collections are absent. */
 const previousRecord = { clientId: 'client-previous', projects: [], tasks: [], candidates: [], operations: [], reviews: [], adoptions: [], projectInitializations: [] }
 
@@ -45,7 +45,7 @@ test('a complete pre-confirmation-format record preserves its exact bytes instea
   const original = JSON.stringify(previous)
   await writeFile(path.join(directory, 'studio-state.json'), original)
   const state = await store.read()
-  assert.equal(state.formatVersion, 1); assert.equal(state.clientId, currentRecord.clientId)
+  assert.equal(state.formatVersion, 2); assert.equal(state.clientId, currentRecord.clientId)
   assert.deepEqual(state.scenarios, []); assert.deepEqual(state.operations, [])
   assert.ok(store.preservedRecord)
   assert.equal(await readFile(store.preservedRecord.preservedPath, 'utf8'), original)

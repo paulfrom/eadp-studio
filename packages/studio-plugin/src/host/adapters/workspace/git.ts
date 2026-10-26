@@ -151,6 +151,67 @@ export class WorkspaceGit {
     return this.readBlob(root, commit, relativePath)
   }
   async fetchCommit(root: string, commit: string): Promise<void> { await this.command(root, ['fetch', '--no-tags', 'origin', fixedSha(commit)], true) }
+  /** Whether one commit is an ancestor of another; a rewritten remote history is not one. */
+  async isAncestor(root: string, ancestor: string, descendant: string): Promise<boolean> {
+    const result = await this.result(root, ['merge-base', '--is-ancestor', fixedSha(ancestor), fixedSha(descendant)])
+    if (result.exitCode === 0) return true
+    if (result.exitCode === 1) return false
+    throw new Error('无法核对 Git 提交历史。')
+  }
+  /** Commit every working-tree change so a fast-forward cannot discard local material. */
+  async commitAll(root: string, message: string, identity: GitIdentity): Promise<string> {
+    if (!message.trim() || message.length > 500 || !identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交信息无效。')
+    const status = await this.requireResult(root, ['status', '--porcelain'])
+    if (!status.stdout.trim()) return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
+    await this.requireResult(root, ['add', '--all'])
+    await this.requireResult(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit', '-m', message])
+    return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
+  }
+  /**
+   * Replay one local commit onto the current head without committing it.
+   * @returns paths left in conflict; an empty list means the replay applied cleanly.
+   */
+  async applyCommit(root: string, commit: string): Promise<string[]> {
+    const result = await this.result(root, ['cherry-pick', '--no-commit', fixedSha(commit)])
+    const conflicts = await this.conflictPaths(root)
+    if (result.exitCode !== 0 && !conflicts.length) { await this.abortApply(root); throw new Error('无法把本地材料应用到远端已接受版本，请保留现场后核对。') }
+    return conflicts
+  }
+  async conflictPaths(root: string): Promise<string[]> {
+    const result = await this.command(root, ['diff', '--name-only', '--diff-filter=U', '-z'])
+    return result.stdout.split('\0').filter(Boolean).map(gitRelativePath)
+  }
+  /** The three versions Git kept for one conflicted path; an absent side was deleted. */
+  async conflictStages(root: string, relativePath: string): Promise<{ base?: Buffer | undefined; ours?: Buffer | undefined; theirs?: Buffer | undefined }> {
+    const file = gitRelativePath(relativePath)
+    const stage = async (index: 1 | 2 | 3): Promise<Buffer | undefined> => {
+      const result = await this.result(root, ['show', `:${index}:${file}`])
+      return result.exitCode === 0 ? result.stdoutBytes : undefined
+    }
+    return { base: await stage(1), ours: await stage(2), theirs: await stage(3) }
+  }
+  /** Marks one resolved path and clears the replay state without creating a commit. */
+  async resolvePath(root: string, relativePath: string): Promise<void> { await this.requireResult(root, ['add', '--', gitRelativePath(relativePath)]) }
+  async quitApply(root: string): Promise<void> { await this.result(root, ['cherry-pick', '--quit']) }
+  async abortApply(root: string): Promise<void> { await this.result(root, ['cherry-pick', '--abort']) }
+  /** Keep the working tree but return the index to the current head. */
+  async unstage(root: string): Promise<void> { await this.requireResult(root, ['reset']) }
+  /** Restore the exact bytes of a preserved commit, used only when a replay must be abandoned. */
+  async restore(root: string, commit: string): Promise<void> { await this.requireResult(root, ['reset', '--hard', fixedSha(commit)]) }
+  /** Move the branch tip without touching the working tree, so preserved local bytes stay editable. */
+  async moveHead(root: string, commit: string): Promise<void> { await this.requireResult(root, ['reset', '--soft', fixedSha(commit)]) }
+  async commits(root: string, from: string, to: string): Promise<Array<{ sha: string; title: string }>> {
+    const result = await this.command(root, ['log', '--format=%H%x09%s', `${fixedSha(from)}..${fixedSha(to)}`])
+    return result.stdout.split('\n').filter(Boolean).map(line => { const [sha, title = ''] = line.split('\t'); return { sha: sha!, title } })
+  }
+  private async requireResult(root: string, args: readonly string[]): Promise<ProcessResult> {
+    const result = await this.result(root, args)
+    if (result.exitCode !== 0) {
+      const detail = result.stderr.trim().split('\n').filter(Boolean).at(-1)
+      throw new Error(`Git 操作失败（${args[0]}，退出码 ${result.exitCode}）${detail ? `：${detail}` : '。'}`)
+    }
+    return result
+  }
   /** Whether the commit object already exists locally, so a read can avoid the network. */
   async hasCommit(root: string, commit: string): Promise<boolean> {
     const result = await this.result(root, ['cat-file', '-e', `${fixedSha(commit)}^{commit}`])

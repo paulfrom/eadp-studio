@@ -16,7 +16,7 @@ import { digest, saveMaterial } from '../../packages/studio-plugin/src/host/adap
 const noConflicts = JSON.stringify({ summary: '本次已读范围未发现冲突', conflicts: [] })
 const identity = (entityId: string, kind: 'scenario' | 'requirement', title: string): MaterialMetadata => ({ entityId, kind, title,
   templateId: `${kind}-default`, templateRef: { commitSha: 'a'.repeat(40), path: `.template/${kind}-default.md`, sha256: 'b'.repeat(64) },
-  scenarioIds: kind === 'requirement' ? ['scene'] : [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false })
+  scenarioIds: kind === 'requirement' ? ['scene'] : [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], ...(kind === 'scenario' ? { flowComplete: false } : { coreRulesPresent: false, acceptanceCriteriaPresent: false }) } as MaterialMetadata)
 
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const root = await mkdtemp(path.join(tmpdir(), 'eadp-consistency-host-')), worktree = path.join(root, 'project')

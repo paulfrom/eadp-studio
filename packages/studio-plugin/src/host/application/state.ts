@@ -11,13 +11,24 @@ import type { Candidate, LocalProject, TaskView, StudioRecovery } from '../../sh
 
 const recordName = 'studio-state.json'
 /** Only this format carries the task and request identities required for safe recovery. */
-const formatVersion = 1
+const formatVersion = 2
 /** Collections every current-version record carries; a record missing one is a previous version's. */
 const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
 const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** Pending local proposals are rendered directly and must retain their chapter changes. */
+function scenarioProposalHasChanges(value: unknown): boolean {
+  if (!isObjectRecord(value)) return false
+  const proposal = value.writeProposal
+  return proposal === undefined || (isObjectRecord(proposal) && Array.isArray(proposal.changes))
+}
+
 export interface PendingOperation {
-  id: string; projectId: string; entityId: string; phase: 'fixed' | 'prepared' | 'pushed' | 'accepted' | 'unknown' | 'superseded';
+  id: string; projectId: string; entityId: string; phase: 'fixed' | 'prepared' | 'pushed' | 'accepted' | 'unknown' | 'rejected' | 'superseded';
   /** The account and exact task that own this candidate, independent of the current selection. */
   accountId: number; task: Pick<TaskView, 'projectId' | 'entityId' | 'worktree' | 'purpose' | 'sessionId' | 'inputHash'>;
   candidateSha: string; expectedHead: string; fixedPath: string; sha256: string; integrationId?: string;
@@ -33,7 +44,7 @@ export interface AdoptionOperation {
 export interface MaterialReservation {
   id: string; projectId: string; kind: 'scenario' | 'requirement' | 'handoff'; title: string; templateId?: string; templateRef?: FixedReference; scenarioIds: string[]; sources: AssetSource[];
   phase: 'reserving' | 'unknown' | 'reserved' | 'materialized'; entityId?: string; message?: string;
-  initialContent?: { body: string; summary: string; quality: Pick<MaterialMetadata, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'> };
+  initialContent?: { body: string; summary: string; quality: Pick<Extract<MaterialMetadata, { kind: 'requirement' }>, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'> };
 }
 export interface ProjectInitialization {
   id: string; name: string; namespaceId: number; path: string; projectId?: string;
@@ -41,7 +52,7 @@ export interface ProjectInitialization {
   phase: 'creating' | 'initializing' | 'pushing' | 'verifying' | 'ready' | 'unknown'; message?: string;
 }
 export interface LocalState {
-  formatVersion: 1; clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
+  formatVersion: 2; clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
   candidates: Candidate[]; operations: PendingOperation[]; reviews: LocalReview[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
   materialReservations: MaterialReservation[]; templateOperations: TemplateOperation[]; scenarios: ScenarioRecord[]; scenarioStructureCheck: boolean; scenarioRepairs: LocalScenarioRepair[];
   consistencyComparisons: LocalConsistencyComparison[];
@@ -61,6 +72,7 @@ function parseRecord(text: string): LocalState | undefined {
   const record = value as Record<string, unknown>
   if (record.formatVersion !== formatVersion || typeof record.clientId !== 'string' || typeof record.scenarioStructureCheck !== 'boolean') return undefined
   if (collections.some(name => !Array.isArray(record[name]))) return undefined
+  if ((record.scenarios as unknown[]).some(scenario => !scenarioProposalHasChanges(scenario))) return undefined
   if ((record.operations as Array<Partial<PendingOperation>>).some(operation => !operation || !Number.isSafeInteger(operation.accountId) || !operation.task || typeof operation.task.worktree !== 'string' || typeof operation.task.sessionId !== 'string')) return undefined
   return value as LocalState
 }

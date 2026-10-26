@@ -127,13 +127,13 @@ export function StudioPanel(props: StudioProps) {
   const loadError = storeError || (state.connected ? '' : '请登录后读取项目目录')
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
   const openProjectDialog = async () => { if (!await flushBeforeLeave()) return; setProjectDialog(true); await call({ action: 'namespaces' }) }
-  const selected = entities.find(e => e.id === selectedId)
+  const selected = entities.find(e => e.id === selectedId && !e.builtinKey)
   const draft = state.drafts.find(d => d.entityId === selectedId)
   const purpose = stage === 'prototype' ? 'prototype' : 'material'
   const taskPurpose = stage === 'handoffs' ? 'handoff' : purpose
   const task = state.tasks.find(t => t.entityId === selectedId && t.purpose === taskPurpose)
   const review = state.reviews.filter(item => item.entityId === selectedId && item.purpose === purpose).at(-1)
-  const visible = entities.filter(e => e.kind === (stage === 'scenarios' ? 'scenario' : stage === 'handoffs' ? 'handoff' : 'requirement'))
+  const visible = entities.filter(e => !e.builtinKey && e.kind === (stage === 'scenarios' ? 'scenario' : stage === 'handoffs' ? 'handoff' : 'requirement'))
     .filter(e => `${e.title} ${e.id}`.toLowerCase().includes(filter.toLowerCase()))
   const currentStage = stages.find(s => s.id === stage)!
   const materialStage = stage === 'scenarios' || stage === 'requirements'
@@ -141,6 +141,7 @@ export function StudioPanel(props: StudioProps) {
   const backToList = async () => { if (await flushBeforeLeave()) setSelectedId(undefined) }
   const selectTab = async (next: 'material' | 'versions') => { if (await flushBeforeLeave()) setActiveTab(next) }
   const selectMaterial = async (id: string) => {
+    if (entities.find(entity => entity.id === id)?.builtinKey) return
     if (!await flushBeforeLeave()) return
     setSelectedId(id); setActiveTab('material')
     if (stage === 'scenarios' && !entities.find(e => e.id === id)?.legacyCurrent) await call({ action: 'openScenario', entityId: id })
@@ -148,6 +149,7 @@ export function StudioPanel(props: StudioProps) {
   }
   /** A requirement's formal source opens in the scenario stage with its own workspace. */
   const openScenarioFromRequirement = async (entityId: string) => {
+    if (entities.find(entity => entity.id === entityId)?.builtinKey) return
     if (!await flushBeforeLeave()) return
     setStage('scenarios'); setSelectedId(entityId); setActiveTab('material')
     await call({ action: 'openScenario', entityId })
@@ -159,6 +161,7 @@ export function StudioPanel(props: StudioProps) {
     await call({ action: 'openRequirement', entityId })
   }
   const openRelatedMaterial = (entity: EntityView) => {
+    if (entity.builtinKey) return
     if (entity.kind === 'scenario') void openScenarioFromRequirement(entity.id)
     else if (entity.kind === 'requirement') void openRequirementFromScenario(entity.id)
   }

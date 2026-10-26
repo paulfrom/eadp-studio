@@ -76,8 +76,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
     }]
   }],
   "files": [],
-  "coreRulesPresent": true,
-  "acceptanceCriteriaPresent": true,
+  "flowComplete": true,
   "openQuestions": [],
   "referencedAssets": []
 }

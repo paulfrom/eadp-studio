@@ -1,3 +1,4 @@
+import { isBuiltinScenarioMetadata } from '@eadp/contracts'
 import { randomUUID } from 'node:crypto'
 import type { FixedReference, MaterialMetadata } from '@eadp/contracts'
 import type { Candidate, CandidateExcerpt, CandidateSource, CandidateTemplate, SplitSource } from '../../shared/requirements.ts'
@@ -135,7 +136,7 @@ export class RequirementCandidates {
       if (bytesRead > maxInputBytes) throw new Error('拆分固定输入超过读取边界，请减少所选场景')
       if (digest(bytes) !== source.fixed.sha256) throw new Error('场景拆分固定输入哈希校验失败')
       const draft = parseMaterial(Buffer.from(bytes), source.fixed.path)
-      if (draft.metadata.kind !== 'scenario' || draft.entityId !== source.entityId || !draft.metadata.businessEvidence.length) throw new Error('拆分只接受真实已确认普通场景，通用场景不能作为业务依据')
+      if (draft.metadata.kind !== 'scenario' || draft.entityId !== source.entityId || isBuiltinScenarioMetadata(draft.metadata)) throw new Error('拆分只接受真实已确认普通场景，通用场景不能作为业务依据')
       inputs.push({ source, body: draft.body })
     }
     return inputs

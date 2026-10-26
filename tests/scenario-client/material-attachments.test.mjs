@@ -342,7 +342,7 @@ function requirementPanel(readOnly = false, readComparisons, readSummaries, resp
     collaboration: { project, entities: [entity], baselines: [], integrations: [] },
     materialSources: [{ entityId: entity.id, readOnly, sources: [] }],
     requirement: { entityId: entity.id, draft: initialDraft, readOnly, template: { id: 'default', name: '默认需求模板', fixed: initialDraft.metadata.templateRef, body: '# 模板正文不能自动写入' }, structureCheck: false, gates: [], sources: [], sessions: [], settlement: { status: readOnly ? 'settled' : 'draft' },
-      writeProposal: { id: 'proposal-original', baseHash: initialDraft.sha256, createdAt: '2026-10-23T00:00:00Z', conclusions: ['本轮明确结论'], evidenceCount: 1, status: 'pending',
+      writeProposal: { id: 'proposal-original', baseHash: initialDraft.sha256, createdAt: '2026-10-23T00:00:00Z', conclusions: ['本轮明确结论'], evidenceIds: ['source-one'], status: 'pending',
         changes: [{ id: 'change-original', title: '业务正文', before: initialDraft.body, after: '本轮建议的业务正文', kind: 'changed', addedLines: 1, removedLines: 1 }],
       },
     },

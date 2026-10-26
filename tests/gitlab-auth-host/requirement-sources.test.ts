@@ -7,7 +7,7 @@ import { readRequirementSource } from '../../packages/studio-plugin/src/host/app
 
 const metadata: MaterialMetadata = { entityId: 'scene', kind: 'scenario', title: '审批场景', templateId: 'default',
   templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) },
-  scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], referencedAssets: [], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }
+  scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], referencedAssets: [], flowComplete: true, openQuestions: [] }
 const requirement = { id: 'requirement', kind: 'requirement', scenarioSources: [{ projectId: 'project', entityId: 'scene', version: 1 }] } as EntityView
 function version(body: string, number: number): { value: FixedVersion; bytes: string } {
   const bytes = materialText(metadata, body)

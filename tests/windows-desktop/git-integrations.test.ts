@@ -30,7 +30,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
   const prepare: MaterialIntegrationRequest = { idempotencyKey: 'operation', entityId: task.entityId, stage, token, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [draft.path], checks: { candidateSha: candidate, passed: true, checks: [{ name: 'materials', passed: true, evidenceHash: digest('checked') }] },
     confirmations: [{ entityId: task.entityId, expectedRevision: 1, fixed: { commitSha: stage === 'prototype' ? head : candidate, path: draft.path, sha256: draft.sha256 }, readHash: draft.sha256, authorConfirmed: true, confirmationMethod: 'direct' }] }
   const calls: Step[] = [], delivered: Array<{ operation: string; integration: string; task: TaskView }> = [], hooks = new Map<Step, () => Promise<void>>()
-  const failures = { prepareReply: false, completeReply: false, completePending: false, delivery: false }
+  const failures = { prepareReply: false, prepareRejected: false, completeReply: false, completePending: false, delivery: false }
   let accountId = 1, remoteHead = head, integration: IntegrationView | undefined, completeEffects = 0
   const step = async (name: Step) => { calls.push(name); const hook = hooks.get(name); hooks.delete(name); await hook?.() }
   const api = { async request(method: string, route: string, input?: MaterialIntegrationRequest) {
@@ -46,6 +46,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
       assert.ok(input); assert.deepEqual(input, prepare)
       integration = { id: 'integration', entityId: task.entityId, ownerId: 1, status: 'prepared', sourceSha: input.sourceSha, expectedHead: input.expectedHead, candidateSha: input.candidateSha, stage: input.stage, createdAt: '' }
       await step('prepare')
+      if (failures.prepareRejected) { failures.prepareRejected = false; throw new CollaborationError('CANDIDATE_BASE_MISMATCH', 'candidate base changed', 409) }
       if (failures.prepareReply) { failures.prepareReply = false; throw new Error('prepare response lost') }
       return structuredClone(integration)
     }
@@ -65,7 +66,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
     throw new Error(`unexpected ${method} ${route}`)
   } } as unknown as CollaborationClient
   const ports = { account: async () => ({ id: accountId }), git: {
-    async push(directory: string, sha: string, branch: string) { assert.equal(directory, worktree); assert.equal(sha, candidate); assert.equal(branch, 'studio-fixed/operation'); await step('push') },
+    async push(directory: string, sha: string, branch: string) { assert.equal(directory, worktree); assert.equal(sha, candidate); assert.equal(branch, `studio-fixed/operation-${candidate.slice(0, 12)}`); await step('push') },
     async remoteHead(directory: string, branch: string) { assert.equal(directory, root); assert.equal(branch, 'main'); await step('head'); return remoteHead },
     async conditionalUpdate(directory: string, branch: string, expected: string, next: string) { assert.equal(directory, worktree); assert.equal(branch, 'main'); assert.equal(expected, remoteHead); remoteHead = next; await step('update') },
   } } as unknown as HostPorts
@@ -104,6 +105,15 @@ for (const stage of ['material', 'prototype'] as const) test(`${stage} persists 
   const requests = f.calls.filter(value => value !== 'delivery').length
   await f.runner.resume(operation)
   assert.equal(f.calls.filter(value => value !== 'delivery').length, requests, 'accepted recovery never repeats Git or backend acceptance')
+})
+
+test('a definite prepare rejection is recorded as rejected so the confirmation can be fixed again', async t => {
+  const f = await fixture(t); f.failures.prepareRejected = true
+  const operation = await f.runner.submit(f.task, f.draft, f.prepare)
+  await f.lane.settle()
+  assert.equal(operation.phase, 'rejected')
+  assert.equal(operation.integrationId, undefined)
+  assert.match(operation.message ?? '', /candidate base changed/)
 })
 
 test('a lost prepare response recovers the original receipt after restart without another push or prepare', async t => {

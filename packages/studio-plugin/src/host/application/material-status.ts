@@ -38,10 +38,11 @@ export class MaterialStatusReports {
     let record: LocalMaterialStatusReport | undefined
     try {
       const owner = await this.deps.record(input.entityId, input.projectId)
-      record = { id: randomUUID(), projectId: input.projectId, entityId: input.entityId, trigger: input.trigger, worktree: input.worktree, baseHead: input.baseHead, shared: false }
-      ;(owner.statusReports ??= []).push(record)
+      const created: LocalMaterialStatusReport = { id: randomUUID(), projectId: input.projectId, entityId: input.entityId, trigger: input.trigger, worktree: input.worktree, ...(input.baseHead ? { baseHead: input.baseHead } : {}), shared: false }
+      record = created
+      ;(owner.statusReports ??= []).push(created)
       await this.store.save()
-      this.schedule(input, record)
+      this.schedule(input, created)
     } catch (error) {
       if (record) await this.fail(record, error)
     }
@@ -53,7 +54,7 @@ export class MaterialStatusReports {
       for (const owner of local.scenarios.filter(record => record.projectId === projectId)) {
         for (const record of owner.statusReports ?? []) {
           if (record.shared) continue
-          const input: MaterialStatusReportInput = { projectId: record.projectId, entityId: record.entityId, trigger: record.trigger, worktree: record.worktree, baseHead: record.baseHead }
+          const input: MaterialStatusReportInput = { projectId: record.projectId, entityId: record.entityId, trigger: record.trigger, worktree: record.worktree, ...(record.baseHead ? { baseHead: record.baseHead } : {}) }
           try { this.schedule(input, record) }
           catch (error) { await this.fail(record, error) }
         }

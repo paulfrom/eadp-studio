@@ -12,6 +12,7 @@ import { studioCall, studioProgressCall } from './command.ts'
 import { StudioPanel } from './StudioPanel.tsx'
 import { StudioPanelIcon } from './panelIcon.tsx'
 import { MaterialAttachmentButton } from './components/MaterialAttachments.tsx'
+import { MaterialDecisionQuestionDock } from './components/MaterialDecisionQuestions.tsx'
 import { settingsSections, type StudioSettingsFaces } from './settings/sections.tsx'
 import { createStudioSession, type StudioSession } from './session.ts'
 import type { ThemeFace } from './theme.ts'
@@ -95,6 +96,9 @@ export async function apply(ctx: ClientContext): Promise<() => Promise<void>> {
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
     name: 'conversation.input.left', id: 'studio-material-attachments', order: 0,
   }, MaterialAttachmentButton))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock', id: 'studio-material-question-answer', order: 10,
+  }, MaterialDecisionQuestionDock))
   // `remote.studio` is only addressable inside a fiber that declares it, so the
   // command channel and the one projection session both belong to that fiber.
   const ui = ctx.inject(['remote.studio'], (injected: ClientContext) => {

@@ -105,7 +105,9 @@ test('source panel pins fixed versions, marks the builtin scenario and links bac
   const withSources = metadata({ scenarioIds: ['scene-id', 'general-id'], sources: [{ projectId: 'project', entityId: 'scene-id', version: 2 }, { projectId: 'project', entityId: 'general-id', version: 1 }] })
   const view = render(h(RequirementSourcePanel, { entity: entity(), metadata: withSources, entities, candidates: [], busy: false, onOpenScenario: id => opened.push(id) }))
   assert.match(view.container.textContent, /SC-0001 · 采购流程 · 固定版本 v2/)
-  assert.match(view.container.textContent, /通用场景 · 系统内置 · 预置版本 v1/)
+  assert.match(view.container.textContent, /通用场景 · 系统内置/)
+  assert.equal(view.queryByRole('button', { name: /通用场景/ }), null)
+  assert.equal(view.queryByRole('button', { name: '查看固定来源 v1' }), null)
   fireEvent.click(view.getByText(/SC-0001 · 采购流程/))
   assert.deepEqual(opened, ['scene-id'])
 })
@@ -188,7 +190,7 @@ test('metadata form edits scenario relations and prerequisites through the paren
   const view = render(h(RequirementMetadataForm, { buffer, snapshot: snap, entities, projectId: 'project', readOnly: false }))
   const relation = view.getByRole('listbox', { name: /关联场景/ })
   assert.match(relation.innerHTML, /SC-0001 · 采购流程 · v2/)
-  assert.match(relation.innerHTML, /系统内置/)
+  assert.doesNotMatch(relation.innerHTML, /系统内置|通用场景/)
   const prerequisite = view.getByRole('checkbox', { name: /基础档案/ })
   assert.equal(prerequisite.checked, true)
   fireEvent.click(prerequisite)
@@ -268,4 +270,22 @@ test('requirement workspace wires the requirement commands and StudioPanel route
   assert.ok(panelSource.includes('正在读取需求材料…'), 'StudioPanel must keep the requirement loading branch')
   assert.ok(panelSource.includes('openScenarioFromRequirement'), 'StudioPanel must provide the scenario jump callback')
   assert.ok(!panelSource.includes('requirementAction'), 'the stale requirementAction helper must be gone')
+})
+
+
+test('metadata relation editing keeps builtin attribution static, preserves its pinned source and allows explicit removal', () => {
+  const edits = []
+  const snap = snapshot({ metadata: metadata({ scenarioIds: ['scene-id', 'general-id'], sources: [{ projectId: 'project', entityId: 'scene-id', version: 2 }, { projectId: 'project', entityId: 'general-id', version: 1 }] }) })
+  const buffer = { edit: value => edits.push(value), getSnapshot: () => snap }
+  const view = render(h(RequirementMetadataForm, { buffer, snapshot: snap, entities, projectId: 'project', readOnly: false }))
+  const relation = view.getByRole('listbox', { name: /关联场景/ })
+  assert.doesNotMatch(relation.innerHTML, /通用场景|general-id/)
+  assert.ok(view.getByText('通用场景 · 系统内置'))
+  for (const option of relation.options) option.selected = false
+  fireEvent.change(relation)
+  assert.deepEqual(edits.at(-1).metadata.scenarioIds, ['general-id'])
+  assert.deepEqual(edits.at(-1).metadata.sources, [{ projectId: 'project', entityId: 'general-id', version: 1 }])
+  fireEvent.click(view.getByRole('button', { name: '移除通用场景关联' }))
+  assert.deepEqual(edits.at(-1).metadata.scenarioIds, ['scene-id'])
+  assert.deepEqual(edits.at(-1).metadata.sources, [{ projectId: 'project', entityId: 'scene-id', version: 2 }])
 })

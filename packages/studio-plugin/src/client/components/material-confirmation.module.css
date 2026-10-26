@@ -6,6 +6,8 @@
 .gateIcon { display: grid; place-items: center; flex: 0 0 22px; height: 22px; margin-top: 1px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-3); font: 600 12px/1 var(--mono); }
 .gateRow[data-state='passed'] .gateIcon { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); background: var(--ok-soft); }
 .gateRow[data-state='blocked'] .gateIcon { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); background: var(--danger-soft); }
+.gateRow[data-state='warning'] .gateIcon { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); background: var(--warn-soft); }
+.gateRow[data-state='warning'] .gateTitle > span { color: var(--warn); }
 .gateMain { flex: 1; min-width: 0; }
 .gateTitle { font-size: 12px; }
 .gateTitle > span { color: var(--text-3); font-size: 10.5px; }

@@ -255,7 +255,7 @@ test('the scenario explains a missing write button and shows actionable buttons 
   assert.equal(view.queryByRole('button', { name: /写入所选/ }), null)
   view.unmount()
 
-  const corrected = chatPanel({ workspace: { readOnly: false, writeProposal: { id: 'proposal', status: 'pending', conclusions: ['仅允许审批人退回'], evidenceCount: 1,
+  const corrected = chatPanel({ workspace: { readOnly: false, writeProposal: { id: 'proposal', status: 'pending', conclusions: ['仅允许审批人退回'], evidenceIds: ['source-one'],
     changes: [{ id: 'rules', title: '退回规则', before: '允许退回', after: '仅允许审批人退回', kind: 'changed', addedLines: 1, removedLines: 1 }],
   } }, actions })
   assert.equal(corrected.queryByRole('alert'), null)

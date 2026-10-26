@@ -4,7 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { BindTemplateRequest, EntityView, MaterialMetadata, OccupationToken, ProjectState, RepairStartRequest } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
-import type { ScenarioCommand, ScenarioConflict, ScenarioSource, ScenarioWorkspace, ScenarioWriteProposal, ScenarioWriteReceipt } from '../../shared/scenarios.ts'
+import type { MaterialDecisionQuestionTurn, ScenarioCommand, ScenarioConflict, ScenarioSource, ScenarioWorkspace, ScenarioWriteProposal, ScenarioWriteReceipt } from '../../shared/scenarios.ts'
 import type { RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
 import { containedFile, atomicWriteFile, digest, findMaterialFile, materialText, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError, type CollaborationClient } from '../adapters/collaboration/client.ts'
@@ -14,9 +14,11 @@ import type { ProjectWorkspaces } from './projects.ts'
 import { ScenarioDocumentService, sameTemplate } from './scenario-documents.ts'
 import { MaterialConfirmationChecks, mergeNoticeFor, type MaterialConfirmationOperation } from './material-confirmations.ts'
 import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite, type ProposalCurrent } from './scenario-write-proposals.ts'
+import { hasMaterialDecisionQuestions, identifyMaterialQuestions, parseMaterialDecisionQuestions } from './material-decision-questions.ts'
 import { MaterialSources } from './material-sources.ts'
 import { applyWriteChanges, describeWriteChanges } from './material-write-changes.ts'
 import { syncProjectContext } from './scenario-package.ts'
+import { confirmationStep } from './material-confirmations.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
 import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
 import { MaterialStatusReports, type LocalMaterialStatusReport } from './material-status.ts'
@@ -35,7 +37,7 @@ type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | '
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
 export interface ScenarioRecord {
-  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
   /** Explains why the latest model proposal could not become an actionable write. */
   writeProposalError?: string;
   requirementSaves?: RequirementSaveOperation[];
@@ -186,13 +188,23 @@ export class ScenarioWorkspaces {
         : cleanup && cleanup.status !== 'done'
           ? { status: 'cleanup-pending', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), cleanup }
           : { status: 'settled', ...(projectSync ? { sync: { status: projectSync.status, ...(projectSync.message ? { message: projectSync.message } : {}) } } : {}), ...(cleanup ? { cleanup } : {}) }
+    const activeSessionId = readOnly ? undefined : record.activeSessionId ?? task?.sessionId
+    const questionTurn = activeSessionId ? record.decisionQuestions?.[activeSessionId] : undefined
+    let decisionQuestions: ScenarioWorkspace['decisionQuestions']
+    if (questionTurn && activeSessionId) {
+      const currentContext = task ? await this.projectContext(task.worktree) : undefined
+      const stale = questionTurn.entityId !== entity.id || questionTurn.sessionId !== activeSessionId || !task || path.basename(task.worktree) !== questionTurn.taskId || !currentContext ||
+        !!proposalInvalidReason(questionTurn, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: currentContext.hash, evidenceIds: this.readEvidenceIds(record) })
+      decisionQuestions = { id: questionTurn.id, sessionId: questionTurn.sessionId, createdAt: questionTurn.createdAt, questions: questionTurn.questions, stale }
+    }
     return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly && !recoveringRequirement ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
-      ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceCount: record.writeProposal.evidenceIds.length, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
+      ...(decisionQuestions ? { decisionQuestions } : {}), ...(activeSessionId && record.decisionQuestionErrors?.[activeSessionId] ? { decisionQuestionsError: record.decisionQuestionErrors[activeSessionId] } : {}),
+      ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceIds: record.writeProposal.evidenceIds, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
       ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
-      ...(mergeNoticeFor(record) ? { mergeNotice: mergeNoticeFor(record) } : {}),
-      ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, message: confirmation.message ?? requirementSave?.message ?? '请按选择恢复保存并继续确认', ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
+      ...(mergeNoticeFor(record) ? { mergeNotice: mergeNoticeFor(record)! } : {}),
+      ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, phase: confirmation.phase, message: confirmationStep(confirmation), ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
   }
@@ -400,14 +412,14 @@ export class ScenarioWorkspaces {
   async newSession(entityId: string): Promise<string> {
     const { task, entity } = await this.editable(entityId), local = await this.store.read(), record = await this.record(entityId)
     const next = { ...task, sessionId: `studio-${randomUUID()}` }; local.tasks.push(next); record.activeSessionId = next.sessionId; await this.store.save()
-    return this.ports.session(next, `你是${entity.kind === 'scenario' ? '场景' : '需求'}设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；回答先用可读中文归纳明确结论、已读资料与仍缺的业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件或确认。`)
+    return this.ports.session(next, `你是${entity.kind === 'scenario' ? '场景' : '需求'}设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；回答先用可读中文归纳明确结论、已读资料与仍缺的业务答案。场景仅检查业务流程完整性，具体阈值、字段与计算口径留待需求确认；资料与引用仅提醒，不阻断场景确认。遇到影响业务范围、流程或验收的未定选择时，给出互斥且具体的选项，并按本轮结构化问题协议输出；选项只有在用户发送回答后才算收到，不能据此宣称业务已澄清或通过确认门禁。满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件或确认。`)
   }
   async selectSession(entityId: string, sessionId: string): Promise<string> {
     const { task } = await this.editable(entityId), local = await this.store.read()
     const found = local.tasks.find(t => t.projectId === task.projectId && t.entityId === entityId && t.sessionId === sessionId && t.purpose === 'material')
     if (!found) throw new Error('此会话不属于当前材料')
     const record = await this.record(entityId); record.activeSessionId = sessionId; await this.store.save()
-    return this.ports.session(found, '材料设计会话：先用可读中文归纳明确结论、已读资料与仍缺的业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。')
+    return this.ports.session(found, '材料设计会话：先用可读中文归纳明确结论、已读资料与仍缺的业务答案。场景仅检查业务流程完整性，具体阈值、字段与计算口径留待需求确认；资料与引用仅提醒，不阻断场景确认。遇到影响业务范围、流程或验收的未定选择时，给出互斥且具体的选项，并按本轮结构化问题协议输出；选项只有在用户发送回答后才算收到，不能据此宣称业务已澄清或通过确认门禁。满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。')
   }
   /** Resolves the currently occupied worktree even when a historical conversation is resumed. */
   private async currentInput(task: TaskView) {
@@ -435,14 +447,20 @@ export class ScenarioWorkspaces {
     delete record.writeProposalError
     await this.store.save()
     const protocol = task.scenarioRepair
-      ? `当前为已授权修复任务，场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
+      ? `当前为已授权修复任务，只修复影响流程完整性的缺口，具体规则留待需求。当前场景 ${task.entityId}，baseHash=${draft.sha256}。不得写文件或自行确认，缺业务答案只输出 question，不能编造。先用可读中文说明本轮修复要点、依据的已读资料与仍缺的业务答案，再在回答最后给出唯一 eadp-repair 代码块。`
       : `当前${entity.kind === 'scenario' ? '场景' : '需求'} ${task.entityId}，整文件 baseHash=${draft.sha256}。仅输出候选，不写入、不确认，禁止引用未读取资料。
-回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
-当本轮形成新明确结论、且核心规则与验收所需信息已具备时，先向用户提问是否写入，并在回答最后输出唯一一个围栏代码块，起始行逐字为三个反引号加 eadp-write-proposal，结束行逐字为三个反引号，块内是下面这行 JSON 的格式（正文换成真实内容）：
+${entity.kind === 'scenario' ? '本阶段只确认业务流程完整性。金额阈值、字段、计算口径等细节留待需求，不阻断场景；资料与引用只提醒。只有影响流程走向或结果的未决问题才可标为blocking。' : '需求阶段明确具体业务规则与可判断验收条件。'}
+回答规则：先用可读中文归纳本轮明确结论、依据哪些已读资料、还缺哪些业务答案；遇到影响范围、流程或验收的未定选择时，应在回答正文之后输出本轮问题块；满足条件时可同时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。
+问题块必须是严格 JSON，且每轮至多一个，格式如下；问题 key 在本轮唯一，evidenceIds 只引用本轮实际读取的资料：
+\`\`\`eadp-material-questions
+{"entityId":"${task.entityId}","questions":[{"key":"Q1","title":"需要决定的问题","reason":"为什么当前资料无法确定","evidenceIds":[],"options":[{"key":"A","label":"选项一","description":"此选择代表什么"},{"key":"B","label":"选项二","description":"此选择代表什么"}]}]}
+\`\`\`
+问题只作为可选回答，用户必须通过原生输入区插入并发送，选择或插入草稿本身都不算回答，不修改 Markdown，也不满足业务确认门禁。
+当本轮形成可以写入的明确结论时，先向用户提问是否写入，并输出唯一一个 eadp-write-proposal JSON 围栏块，块内是下面这行 JSON 的格式（正文换成真实内容）：
 \`\`\`eadp-write-proposal
 {"entityId":"${task.entityId}","conclusions":[{"id":"C1","text":"本轮结论"}],"evidenceIds":[],"body":"整篇新正文"}
 \`\`\`
-不要用 <eadp-write-proposal> 之类的标签代替围栏，围栏之后不要再写任何文字。块内只写这四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
+问题块先于提议块；可以只输出问题块、只输出提议块，或按需同时输出两块。每种块至多一个，代码块之后不再写解释文字。不要用 XML 标签替代围栏。提议块内只写示例中的四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
     return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n${await this.sources.context(task)}`
   }
   /**
@@ -453,8 +471,43 @@ export class ScenarioWorkspaces {
   async accept(sessionId: string, content: string): Promise<boolean> {
     const local = await this.store.read(), sessionTask = local.tasks.find(t => t.sessionId === sessionId && t.purpose === 'material')
     if (!sessionTask) return false
-    if (!hasWriteProposal(content)) return false
     const record = await this.record(sessionTask.entityId, sessionTask.projectId)
+    const hasQuestionBlock = hasMaterialDecisionQuestions(content)
+    let acceptedQuestions = hasQuestionBlock || !!record.decisionQuestions?.[sessionId] || !!record.decisionQuestionErrors?.[sessionId]
+    if (acceptedQuestions) {
+      record.decisionQuestions ??= {}
+      record.decisionQuestionErrors ??= {}
+      delete record.decisionQuestions[sessionId]
+      delete record.decisionQuestionErrors[sessionId]
+      if (hasQuestionBlock) {
+        try {
+          // Question choices are bound to the same live material context as a write proposal.
+          const task = await this.liveTask(sessionTask.entityId, sessionTask.projectId)
+          const draft = await this.localMaterial(task)
+          if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
+          const input = record.requestContexts?.[sessionId]
+          if (!input) throw new Error('会话材料上下文已失效，请重新提问')
+          const context = await this.projectContext(task.worktree)
+          const invalid = proposalInvalidReason({ baseHash: input.draftHash, templateRef: input.templateRef, contextHash: input.contextHash, evidenceIds: input.evidenceIds }, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record) })
+          if (invalid) throw new Error('材料正文、模板、CONTEXT.md 或依据集合已变化，本轮问题已失效，请重新提问')
+          const parsed = parseMaterialDecisionQuestions(content, draft.entityId, input.evidenceIds)
+          if (parsed.questions.length > 0) {
+            const id = digest(JSON.stringify({ sessionId, entityId: task.entityId, content, input }))
+            record.decisionQuestions[sessionId] = {
+              id, entityId: task.entityId, sessionId, taskId: path.basename(task.worktree), baseHash: input.draftHash,
+              templateRef: input.templateRef, contextHash: input.contextHash, evidenceIds: [...input.evidenceIds],
+              questions: identifyMaterialQuestions(id, parsed.questions), createdAt: new Date().toISOString(),
+            }
+          }
+        } catch (error) {
+          record.decisionQuestionErrors[sessionId] = error instanceof Error ? error.message : '本轮问题无法校验'
+        }
+      }
+      if (Object.keys(record.decisionQuestions).length === 0) delete record.decisionQuestions
+      if (Object.keys(record.decisionQuestionErrors).length === 0) delete record.decisionQuestionErrors
+      await this.store.save()
+    }
+    if (!hasWriteProposal(content)) return acceptedQuestions
     try {
       // A resumed historical conversation still proposes against the live revision worktree.
       const task = await this.liveTask(sessionTask.entityId, sessionTask.projectId)

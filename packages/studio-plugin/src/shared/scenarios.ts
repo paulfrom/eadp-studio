@@ -3,7 +3,11 @@ import type { MaterialDraft, TaskView } from './studio.ts'
 import type { RequirementSaveView } from './requirement-workspace.ts'
 
 export interface ScenarioSource { id: string; name: string; format: string; sha256: string; status: 'reading' | 'read' | 'partial' | 'failed'; ranges: string[]; text: string; error?: string; selected: boolean; formal: boolean }
-export interface ScenarioGate { id: 'business' | 'evidence' | 'version' | 'template'; label: string; status: 'passed' | 'blocked' | 'disabled'; messages: string[] }
+export interface ScenarioGate {
+  id: 'business' | 'evidence' | 'version' | 'template'; label: string; status: 'passed' | 'blocked' | 'warning' | 'disabled'; messages: string[];
+  /** Invalid formal citations the author can explicitly exclude without deleting local source files. */
+  invalidEvidenceIndexes?: number[];
+}
 export interface ScenarioConflict { expectedHash: string; actual: MaterialDraft; localBody: string; localMetadata: MaterialMetadata; savedPath: string }
 /** Exact chapter change offered for explicit review before a local write. */
 export interface ScenarioWriteChange { id: string; title: string; kind: 'added' | 'changed' | 'removed'; before: string; after: string; addedLines: number; removedLines: number }
@@ -18,9 +22,19 @@ export interface ScenarioWriteProposal {
   status: 'pending' | 'consumed' | 'rejected'; operationId?: string; error?: string;
 }
 /** Review data contains chapter text; write authorization remains Host-owned. */
-export interface ScenarioWriteProposalView { id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceCount: number; changes: ScenarioWriteChange[]; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
+export interface ScenarioWriteProposalView { id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceIds: string[]; changes: ScenarioWriteChange[]; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
 /** Chapters, evidence and remaining business answers reported after one whole-body write. */
 export interface ScenarioWriteSummary { added: string[]; removed: string[]; changed: string[]; evidence: string[]; unanswered: string[] }
+/** One user-facing choice raised by the current material conversation turn. */
+export interface MaterialDecisionQuestionOption { id: string; label: string; description: string }
+export interface MaterialDecisionQuestion { id: string; title: string; reason: string; evidenceIds: string[]; options: MaterialDecisionQuestionOption[] }
+/** Host-owned context binding for questions returned by one assistant turn. */
+export interface MaterialDecisionQuestionTurn {
+  id: string; entityId: string; sessionId: string; taskId: string; baseHash: string; templateRef: FixedReference; contextHash: string;
+  evidenceIds: string[]; questions: MaterialDecisionQuestion[]; createdAt: string;
+}
+/** Client projection deliberately omits Host-only identity and context hashes. */
+export interface MaterialDecisionQuestionTurnView { id: string; sessionId: string; createdAt: string; questions: MaterialDecisionQuestion[]; stale: boolean }
 /** The latest whole-body write, kept locally so undo can restore its exact previous body. */
 export interface ScenarioWriteReceipt {
   operationId: string; createdAt: string; beforeBody: string; beforeHash: string; afterHash: string; summary: ScenarioWriteSummary;
@@ -40,13 +54,15 @@ export interface ScenarioWorkspace {
   entityId: string; draft: MaterialDraft; readOnly: boolean;
   template: { id: string; name: string; fixed: FixedReference; body: string };
   structureCheck: boolean; gates: ScenarioGate[]; sources: ScenarioSource[];
+  decisionQuestions?: MaterialDecisionQuestionTurnView;
+  decisionQuestionsError?: string;
   writeProposal?: ScenarioWriteProposalView;
   /** Reason the latest proposed write could not be offered for confirmation. */
   writeProposalError?: string;
   writeReceipt?: ScenarioWriteReceiptView;
   requirementSave?: RequirementSaveView;
   /** A confirmation keeps its user intent while the author resolves an exception. */
-  confirmationRecovery?: { operationId: string; message: string; expectedHash?: string };
+  confirmationRecovery?: { operationId: string; phase: string; message: string; expectedHash?: string };
   mergeNotice?: string;
   settlement: ScenarioSettlementView;
   sessions: TaskView[]; activeSessionId?: string; conflict?: ScenarioConflict;

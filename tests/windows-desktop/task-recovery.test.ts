@@ -26,7 +26,8 @@ const template = '## 场景范围\n'
 const templateHash = createHash('sha256').update(template).digest('hex')
 const requirementTemplate = '# 需求目标\n\n## 业务规则\n'
 const requirementTemplateHash = createHash('sha256').update(requirementTemplate).digest('hex')
-const scenarioMetadata = () => ({ ...initialMetadata({ id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }), businessEvidence: [{ label: '采购制度', reference: '已读取的采购制度', files: [{ path: '资料/采购制度.md', sha256: 'c'.repeat(64) }], ranges: [{ path: '资料/采购制度.md', startLine: 1, endLine: 1 }] }], coreRulesPresent: true, acceptanceCriteriaPresent: true })
+// Confirmed flow-only scenes need no uploaded evidence and remain valid split inputs.
+const scenarioMetadata = () => ({ ...initialMetadata({ id: 'scenario', kind: 'scenario', title: '采购', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }), flowComplete: true })
 const material = (version: number) => materialText(scenarioMetadata(), `# 固定场景 ${version}\n\n采购业务规则。\n`)
 const hash = (version: number) => createHash('sha256').update(material(version)).digest('hex')
 const output = (title: string, sourceId = 'scenario') => '```eadp-candidates\n' + JSON.stringify([{ title, summary: '需求摘要', goal: '采购可追溯', scope: '已提交采购申请', rules: ['申请完成后保留流水'], acceptanceCriteria: ['用户可核对申请结果'], openQuestions: [], sources: [{ entityId: sourceId, excerpts: [{ startLine: 3, endLine: 3, text: '采购业务规则。' }] }], body: `# ${title}\n\n采购可追溯\n\n已提交采购申请\n\n申请完成后保留流水\n\n用户可核对申请结果` }]) + '\n```'
@@ -426,7 +427,8 @@ for (const status of ['pending', 'failed'] as const) test('durable request and r
     events.get(task.sessionId)!.push(assistant(output('投递崩溃窗口候选')))
     const store = new StudioStore(f.storeRoot); store.useUser(1); app = f.createApp(store)
     const dsh = dshFixture(events); sessions = new DshTaskSessions(dsh.context as never, '', (id, text) => app.acceptSessionOutput(id, text))
-    assert.equal((await app.command({ action: 'restoreSession', sessionId: task.sessionId })).ok, true)
+    const restored = await app.command({ action: 'restoreSession', sessionId: task.sessionId })
+    assert.equal(restored.ok, true, JSON.stringify(restored))
     await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '' })
     assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
     assert.equal((await store.read()).tasks.filter(task => task.purpose === 'split').length, 1)

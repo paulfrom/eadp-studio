@@ -26,8 +26,8 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   const templateRef = { commitSha: fixedSha, path: '.template/default.md', sha256: createHash('sha256').update(templateBytes).digest('hex') };
   const requirementTemplateBytes = Buffer.from('# 默认需求模板\n\n## 自定义章节\n');
   const requirementTemplateRef = { commitSha: fixedSha, path: '.template/requirement-default.md', sha256: createHash('sha256').update(requirementTemplateBytes).digest('hex') };
-  const common = { entityId: 'asset-1', title: 'Accepted input', scenarioIds: ['source-1'], prerequisites: [], sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }], businessEvidence: [{ label: 'Author', reference: 'synthetic-acceptance', files: [{ path: evidencePath, sha256: createHash('sha256').update(evidenceBytes).digest('hex') }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }], coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] };
-  const metadata: MaterialMetadata = { ...common, kind, templateId: 'requirement-default', templateRef: requirementTemplateRef };
+  const common = { entityId: 'asset-1', title: 'Accepted input', scenarioIds: ['source-1'], prerequisites: [], sources: [{ projectId: 'project-1', entityId: 'source-1', version: 1 }], businessEvidence: [{ label: 'Author', reference: 'synthetic-acceptance', files: [{ path: evidencePath, sha256: createHash('sha256').update(evidenceBytes).digest('hex') }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }], openQuestions: [], referencedAssets: [] };
+  const metadata: MaterialMetadata = { ...common, kind, coreRulesPresent: true, acceptanceCriteriaPresent: true, templateId: 'requirement-default', templateRef: requirementTemplateRef };
   const materialPath = `需求/${metadata.title}.md`;
   const body = Buffer.from('# Accepted input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
   const fixed = { commitSha: fixedSha, path: materialPath, sha256: createHash('sha256').update(body).digest('hex') };
@@ -69,7 +69,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   });
   const content = new GitLabContent(new GitLab(config));
   const materials: Map<string, MaterialMetadata> = new Map([[metadata.entityId, structuredClone(metadata)]]);
-  const sourceEntity: EntityView = { ...entity, id: 'source-1', kind: 'scenario', scenarioIds: [], occupation: undefined, current: { ...entity.current!, metadata: { ...common, entityId: 'source-1', kind: 'scenario', templateId: 'default', templateRef, scenarioIds: [], sources: [] } } };
+  const sourceEntity: EntityView = { ...entity, id: 'source-1', kind: 'scenario', scenarioIds: [], occupation: undefined, current: { ...entity.current!, metadata: { ...common, entityId: 'source-1', kind: 'scenario', flowComplete: true, templateId: 'default', templateRef, scenarioIds: [], sources: [] } } };
   const all = [entity, sourceEntity];
   const verify = async () => { validateIntegration(project, all, actor, input, materials); await content.verifyCandidate(actor, project.gitlabProjectId, input); };
   return { input, entity, project, content, controls, reads, body, metadata, materialPath, diff, verify, all, materials };
@@ -264,6 +264,33 @@ test('explicit business checks accept custom headings and short author-confirmed
     assert.throws(() => parseMaterial(materialText(changed)), code('CORE_UNRESOLVED'));
   }
   assert.throws(() => parseMaterial(materialText({ ...f.metadata, sources: [] })), code('SCENARIO_SOURCE_REQUIRED'));
+  assert.throws(() => parseMaterial(materialText({ ...f.metadata, businessEvidence: [] })), code('INVALID_MATERIAL'));
+  assert.throws(() => parseMaterial(materialText({ ...f.metadata, flowComplete: true } as MaterialMetadata)), code('INVALID_MATERIAL'));
+});
+
+test('scenario fixed content accepts a complete flow without evidence or detailed acceptance declarations', async () => {
+  const f = fixture('material');
+  const { coreRulesPresent: _rules, acceptanceCriteriaPresent: _acceptance, applicability: _applicability, ...common } = f.metadata as Extract<MaterialMetadata, { kind: 'requirement' }>;
+  const metadata: Extract<MaterialMetadata, { kind: 'scenario' }> = { ...common, kind: 'scenario', flowComplete: true, templateId: 'default', templateRef: (f.all[1]!.current!.metadata as Extract<MaterialMetadata, { kind: 'scenario' }>).templateRef, scenarioIds: [], sources: [], businessEvidence: [], openQuestions: [{ blocking: false, limitation: '字段精度留待需求细化', excludedScope: '字段校验细节' }] };
+  assert.deepEqual(parseMaterial(materialText(metadata, '提交后审核，通过后完成；退回后重新提交。')), metadata);
+  const bytes = Buffer.from(materialText(metadata));
+  const path = `场景/${metadata.title}.md`;
+  f.controls.previousMaterials.set(path, bytes);
+  const fixed = { commitSha: fixedSha, path, sha256: createHash('sha256').update(bytes).digest('hex') };
+  assert.deepEqual(await f.content.verify(actor, 7, fixed), metadata);
+  for (const changed of [{ ...metadata, flowComplete: false }, { ...metadata, openQuestions: [{ blocking: true, limitation: '审核失败后去向不明', excludedScope: '失败分支' }] }]) {
+    assert.throws(() => parseMaterial(materialText(changed)), code('FLOW_UNRESOLVED'));
+  }
+  for (const changed of [{ ...metadata, coreRulesPresent: true }, { ...metadata, acceptanceCriteriaPresent: true }]) {
+    assert.throws(() => parseMaterial(materialText(changed)), code('INVALID_MATERIAL'));
+  }
+  const { flowComplete: _flow, ...withoutFlow } = metadata;
+  assert.throws(() => parseMaterial(materialText(withoutFlow as MaterialMetadata)), code('INVALID_MATERIAL'));
+  const invalidEvidence = { ...metadata, businessEvidence: f.metadata.businessEvidence };
+  const invalidBytes = Buffer.from(materialText(invalidEvidence));
+  f.controls.previousMaterials.set(path, invalidBytes);
+  f.controls.files.clear();
+  await assert.rejects(f.content.verify(actor, 7, { ...fixed, sha256: createHash('sha256').update(invalidBytes).digest('hex') }), code('FIXED_FILE_MISSING'));
 });
 
 test('fixed formal evidence is required in the material commit and checked against its bytes', async () => {

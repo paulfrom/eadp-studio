@@ -61,7 +61,11 @@ export function parseMaterial(markdown: string): MaterialMetadata {
 }
 /** Checks explicit business declarations without inferring quality from document headings. */
 export function validateMaterialMetadata(metadata: MaterialMetadata): void {
-  requireCondition(metadata.coreRulesPresent && metadata.acceptanceCriteriaPresent && !metadata.openQuestions.some(q => q.blocking), 'CORE_UNRESOLVED', 'Core business rules and acceptance criteria must be resolved', 422);
+  if (metadata.kind === 'scenario') {
+    requireCondition(metadata.flowComplete && !metadata.openQuestions.some(q => q.blocking), 'FLOW_UNRESOLVED', 'Scenario business flow must be complete with no unresolved flow gaps', 422);
+  } else {
+    requireCondition(metadata.coreRulesPresent && metadata.acceptanceCriteriaPresent && !metadata.openQuestions.some(q => q.blocking), 'CORE_UNRESOLVED', 'Core business rules and acceptance criteria must be resolved', 422);
+  }
   requireCondition(!metadata.referencedAssets.some(r => r.entityId === metadata.entityId), 'SELF_REFERENCE', 'An asset manifest cannot reference itself', 422);
   if (metadata.kind === 'requirement') requireCondition(metadata.sources.length > 0, 'SCENARIO_SOURCE_REQUIRED', 'Requirements need at least one confirmed scenario version source', 422);
   const files = new Map<string, string>();
@@ -146,7 +150,7 @@ const GENERAL_SCENARIO_BODY = `# 通用场景
 `;
 /** Controlled metadata for the system-provisioned general scenario. */
 export function generalScenarioMetadata(entityId: string): BuiltinScenarioMetadata {
-  return { entityId, kind: 'scenario', title: GENERAL_SCENARIO_TITLE, summary: GENERAL_SCENARIO_SUMMARY, scenarioIds: [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false };
+  return { entityId, kind: 'scenario', title: GENERAL_SCENARIO_TITLE, summary: GENERAL_SCENARIO_SUMMARY, scenarioIds: [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], flowComplete: false };
 }
 /** The exact document bytes the Host writes into the initialization commit; the backend rebuilds and byte-compares it. */
 export function generalScenarioDocument(entityId: string): string {

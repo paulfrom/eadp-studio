@@ -10,7 +10,7 @@ export interface MaterialConfirmationChecksProps {
   onStructureCheck(enabled: boolean): void;
 }
 
-const gateStates = { passed: '通过', blocked: '阻断', disabled: '关闭' }
+const gateStates = { passed: '通过', blocked: '阻断', warning: '提醒，不阻断', disabled: '关闭' }
 
 /** Displays current material checks and edits the author's business declarations. */
 export function MaterialConfirmationChecks({ workspace, disabled, dirty, buffer, snapshot, onStructureCheck }: MaterialConfirmationChecksProps) {
@@ -35,25 +35,31 @@ export function MaterialConfirmationChecks({ workspace, disabled, dirty, buffer,
           {gate.messages.length ? gate.messages.map((message, index) => <p key={index}>{message}</p>) : <p>{gate.status === 'disabled' ? '仅影响本机检查，不影响后台接受。' : '当前检查通过。'}</p>}
         </div>
         {gate.id === 'business' && metadata.openQuestions.length > 0 && <button type="button" onClick={revealQuestions}>查看待澄清</button>}
+        {metadata.kind === 'scenario' && gate.id === 'evidence' && !!gate.invalidEvidenceIndexes?.length && <button type="button" disabled={!editable || dirty} onClick={() => edit({ businessEvidence: metadata.businessEvidence.filter((_, index) => !gate.invalidEvidenceIndexes!.includes(index)) })}>移除无效正式引用，保留本地资料</button>}
         {gate.id === 'template' && <label className={css.structureToggle}><input type="checkbox" disabled={!editable || dirty} checked={workspace.structureCheck} onChange={event => onStructureCheck(event.target.checked)} />结构检查</label>}
       </section>)}
     </div>
     <div className={css.declarations}>
-      <label><input type="checkbox" disabled={!editable} checked={metadata.coreRulesPresent} onChange={event => edit({ coreRulesPresent: event.target.checked })} />核心业务规则已由依据明确</label>
-      <label><input type="checkbox" disabled={!editable} checked={metadata.acceptanceCriteriaPresent} onChange={event => edit({ acceptanceCriteriaPresent: event.target.checked })} />验收条件可以客观判断</label>
+      {metadata.kind === 'scenario' ? <>
+        <label><input type="checkbox" disabled={!editable} checked={metadata.flowComplete} onChange={event => edit({ flowComplete: event.target.checked })} />业务流程完整</label>
+        <p className={css.confirmNote}>核对触发条件、参与角色、主要路径、必要分支和业务结果。金额阈值等具体规则留到需求阶段确认。</p>
+      </> : <>
+        <label><input type="checkbox" disabled={!editable} checked={metadata.coreRulesPresent} onChange={event => edit({ coreRulesPresent: event.target.checked })} />核心业务规则已由依据明确</label>
+        <label><input type="checkbox" disabled={!editable} checked={metadata.acceptanceCriteriaPresent} onChange={event => edit({ acceptanceCriteriaPresent: event.target.checked })} />验收条件可以客观判断</label>
+      </>}
     </div>
     <details ref={questions} className={css.questions}>
       <summary>待澄清项 <span>{metadata.openQuestions.length} 条 · {metadata.openQuestions.filter(question => question.blocking).length} 条阻断确认</span></summary>
       {metadata.openQuestions.length === 0 && <p>没有待澄清项。</p>}
       {metadata.openQuestions.map((question, index) => <fieldset key={index}>
         <legend>待澄清项 {index + 1}</legend>
-        <label className={css.questionBlocking}><input type="checkbox" disabled={!editable} checked={question.blocking} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, blocking: event.target.checked } : item) })} />阻断确认</label>
+        <label className={css.questionBlocking}><input type="checkbox" disabled={!editable} checked={question.blocking} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, blocking: event.target.checked } : item) })} />{metadata.kind === 'scenario' ? '流程无法确定，阻断确认' : '阻断确认'}</label>
         <label>问题或限制<input aria-label={`待澄清项 ${index + 1} 问题或限制`} readOnly={!editable} value={question.limitation} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, limitation: event.target.value } : item) })} /></label>
         <label>不适用范围<input aria-label={`待澄清项 ${index + 1} 不适用范围`} readOnly={!editable} value={question.excludedScope} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, excludedScope: event.target.value } : item) })} /></label>
         {editable && <button type="button" onClick={() => edit({ openQuestions: metadata.openQuestions.filter((_, i) => i !== index) })}>删除此项</button>}
       </fieldset>)}
-      {editable && <button type="button" onClick={() => edit({ openQuestions: [...metadata.openQuestions, { blocking: true, limitation: '', excludedScope: '' }] })}>添加待澄清项</button>}
+      {editable && <button type="button" onClick={() => edit({ openQuestions: [...metadata.openQuestions, { blocking: metadata.kind !== 'scenario', limitation: '', excludedScope: '' }] })}>添加待澄清项</button>}
     </details>
-    <p className={css.confirmNote}>确认后材料只读。确认表示当前版本的核心规则、验收条件、正式依据与待澄清项已完整；需要修改时请开始修订。</p>
+    <p className={css.confirmNote}>{metadata.kind === 'scenario' ? '确认表示当前业务流程完整。具体规则和验收细节在需求阶段确认，资料与引用只作提醒；确认后需要修改时请开始修订。' : '确认后材料只读。确认表示当前版本的核心规则、验收条件、正式依据与待澄清项已完整；需要修改时请开始修订。'}</p>
   </div>
 }

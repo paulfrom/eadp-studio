@@ -6,11 +6,11 @@ import test from 'node:test'
 import type { MaterialMetadata } from '../../packages/contracts/src/index.ts'
 import type { ScenarioSource } from '../../packages/studio-plugin/src/shared/scenarios.ts'
 import { digest, materialText, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
-import { ScenarioDocumentConflictError, ScenarioDocumentService, checkScenarioDocument, scenarioFileErrors } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
+import { ScenarioDocumentConflictError, ScenarioDocumentService, checkScenarioDocument, invalidScenarioEvidenceIndexes, scenarioFileErrors } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
 import { archiveSelectedEvidence } from '../../packages/studio-plugin/src/host/application/scenario-evidence.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
-function metadata(): MaterialMetadata { return { entityId: 'scenario-one', kind: 'scenario', title: '退回申请', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [] } }
+function metadata(): MaterialMetadata { return { entityId: 'scenario-one', kind: 'scenario', title: '退回申请', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], flowComplete: false, openQuestions: [], referencedAssets: [] } }
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }, body = '甲乙丙丁') {
   const parent = await mkdtemp(path.join(tmpdir(), 'eadp-scenario-documents-'))
   const root = path.join(parent, 'project'), localRoot = path.join(parent, 'local')
@@ -100,7 +100,7 @@ for (const [text, endLine] of [['第一行\n第二行', 2], ['第一行\n第二�
 test('business checks do not infer completeness from titles or text length; optional template headings ignore fenced examples', async t => {
   const { draft } = await fixture(t, '## 自定义范围\n甲\n## 判断\n乙')
   const formal = { label: '确认依据', reference: 'source:approved', files: [{ path: '.eadp/evidence/hash/original.txt', sha256: 'd'.repeat(64) }], ranges: [{ path: '.eadp/evidence/hash/original.txt', startLine: 1, endLine: 1 }] }
-  const ready = { ...draft, metadata: { ...draft.metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true, businessEvidence: [formal] } }
+  const ready = { ...draft, metadata: { ...draft.metadata, flowComplete: true, businessEvidence: [formal] } }
   const input = { draft: ready, expectedHash: ready.sha256, hasPermission: true, hasOccupation: true }
   const result = checkScenarioDocument(input)
   assert.equal(result.passed, true)
@@ -108,7 +108,7 @@ test('business checks do not infer completeness from titles or text length; opti
   assert.equal(checkScenarioDocument({ ...input, structureCheck: true, templateBody: '## 判断\n## 自定义范围\n```md\n## 示例章节\n```' }).passed, true)
   assert.equal(checkScenarioDocument({ ...input, structureCheck: true, templateBody: '## 缺少的章' }).passed, false)
   for (const changed of [{ expectedHash: 'e'.repeat(64) }, { hasPermission: false }, { hasOccupation: false }, { conflict: true }]) assert.equal(checkScenarioDocument({ ...input, ...changed }).passed, false)
-  assert.equal(checkScenarioDocument({ ...input, draft: { ...ready, metadata: { ...ready.metadata, coreRulesPresent: false } } }).passed, false)
+  assert.equal(checkScenarioDocument({ ...input, draft: { ...ready, metadata: { ...ready.metadata, flowComplete: false } } }).passed, false)
 })
 
 test('requirement evidence metadata uses the same serialized expected-hash writer and preserves the losing version', async t => {
@@ -121,4 +121,50 @@ test('requirement evidence metadata uses the same serialized expected-hash write
   assert.deepEqual(new Set([failed.reason.conflict.actual.metadata.title, failed.reason.conflict.localMetadata.title]), new Set(['甲', '乙']))
   assert.equal((await readMaterial(f.root, 'requirement', requirement.entityId)).body, draft.body)
   assert.equal((await readdir(path.join(f.root, '需求'))).length, 1)
+})
+
+
+test('a complete scenario can confirm with an amount threshold left to requirements and no uploaded evidence', async t => {
+  const { draft } = await fixture(t, '提交申请 → 按金额进入审批 → 通过后执行，拒绝后退回。阈值在需求确认。')
+  const ready = { ...draft, metadata: { ...draft.metadata, flowComplete: true, openQuestions: [{ blocking: false, limitation: '审批金额阈值待需求明确', excludedScope: '具体阈值与计算口径' }] } }
+  const input = { draft: ready, expectedHash: ready.sha256, hasPermission: true, hasOccupation: true }
+  const checked = checkScenarioDocument(input)
+  assert.equal(checked.passed, true)
+  assert.equal(checked.groups.find(group => group.id === 'evidence')!.status, 'warning')
+  assert.equal(checkScenarioDocument({ ...input, draft: { ...ready, metadata: { ...ready.metadata, openQuestions: [{ blocking: true, limitation: '拒绝后的业务去向尚未确定', excludedScope: '拒绝路径' }] } } }).passed, false)
+})
+
+test('broken formal references are identified for explicit hash-bound removal without deleting local files', async t => {
+  const f = await fixture(t), original = Buffer.from('已读资料原文')
+  const source: ScenarioSource = { id: 'valid', name: '流程说明.txt', format: 'txt', sha256: digest(original), status: 'read', ranges: ['line:1'], text: original.toString(), selected: true, formal: true }
+  const evidence = await archiveSelectedEvidence(f.root, [{ source, original }], ['valid'])
+  const originalPath = evidence[0]!.files[0]!.path
+  await writeFile(path.join(f.root, originalPath), '文件被修改，但必须保留')
+  const missing = { label: '丢失资料', reference: 'source:missing', files: [{ path: '.eadp/evidence/missing/source.txt', sha256: 'c'.repeat(64) }], ranges: [{ path: '.eadp/evidence/missing/source.txt', startLine: 1, endLine: 1 }] }
+  const draft = await saveMaterial(f.root, { ...f.draft.metadata, flowComplete: true, businessEvidence: [...evidence, missing] }, f.draft.body)
+  const indexes = await invalidScenarioEvidenceIndexes(f.root, draft)
+  assert.deepEqual(indexes, [0, 1])
+  const checked = checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: true, hasOccupation: true, fileErrors: await scenarioFileErrors(f.root, draft), invalidEvidenceIndexes: indexes })
+  assert.equal(checked.passed, true)
+  assert.deepEqual(checked.groups.find(group => group.id === 'evidence')!.invalidEvidenceIndexes, [0, 1])
+  const next = await f.service.save({ root: f.root, metadata: { ...draft.metadata, businessEvidence: draft.metadata.businessEvidence.filter((_, index) => !indexes.includes(index)) }, body: draft.body, expectedHash: draft.sha256, operationId: 'exclude-invalid' })
+  assert.notEqual(next.sha256, draft.sha256)
+  assert.equal(next.body, draft.body)
+  assert.deepEqual(await scenarioFileErrors(f.root, next), [])
+  assert.equal(await readFile(path.join(f.root, originalPath), 'utf8'), '文件被修改，但必须保留')
+})
+
+
+test('blank, terminal-only and invalid UTF-8 citations are warnings with explicit exclusion indexes', async t => {
+  const f = await fixture(t)
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(path.join(f.root, '.eadp/evidence/empty'), { recursive: true })
+  for (const bytes of [Buffer.from('有效行\n\n'), Buffer.from('   \n'), Buffer.from([0xff])]) {
+    const relative = '.eadp/evidence/empty/extracted.txt'
+    await writeFile(path.join(f.root, relative), bytes)
+    const evidence = { label: '空引用', reference: 'source:empty', files: [{ path: relative, sha256: digest(bytes) }], ranges: [{ path: relative, startLine: bytes.toString().startsWith('有效行') ? 2 : 1, endLine: bytes.toString().startsWith('有效行') ? 2 : 1 }] }
+    const draft = { ...f.draft, metadata: { ...f.draft.metadata, flowComplete: true, businessEvidence: [evidence] } }
+    assert.deepEqual(await invalidScenarioEvidenceIndexes(f.root, draft), [0])
+    assert.ok((await scenarioFileErrors(f.root, draft)).length)
+  }
 })

@@ -9,7 +9,7 @@ import { syncProjectContext } from '../../packages/studio-plugin/src/host/applic
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
 function metadata(kind: MaterialMetadata['kind'] = 'scenario'): MaterialMetadata {
-  const shared = { entityId: 'scenario-one', kind, title: '退回申请', scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [], files: [{ path: '场景/附件.txt', sha256: 'c'.repeat(64) }] }
+  const shared = { entityId: 'scenario-one', kind, title: '退回申请', scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], ...(kind === 'scenario' ? { flowComplete: false } : { coreRulesPresent: false, acceptanceCriteriaPresent: false }), openQuestions: [], referencedAssets: [], files: [{ path: '场景/附件.txt', sha256: 'c'.repeat(64) }] }
   return (kind === 'scenario' || kind === 'requirement' ? { ...shared, kind, templateId: 'default', templateRef } : shared) as MaterialMetadata
 }
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
