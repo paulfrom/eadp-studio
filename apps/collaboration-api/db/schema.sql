@@ -106,6 +106,9 @@ COMMENT ON TYPE studio_comparison_coverage IS '覆盖范围';
 CREATE TYPE studio_comparison_failure AS ENUM ('model-failed','timeout','permission-denied','read-failed','context-limit','relationship-unavailable','submission-failed','cancelled','internal-error');
 COMMENT ON TYPE studio_comparison_failure IS '失败码';
 
+CREATE TYPE studio_status_trigger AS ENUM ('occupation-start','save','pre-confirmation');
+COMMENT ON TYPE studio_status_trigger IS '状态记录动作';
+
 -- formal 沿正式关系发现，potential 为项目内发现的潜在关联
 CREATE TYPE studio_conflict_relation AS ENUM ('formal','potential');
 COMMENT ON TYPE studio_conflict_relation IS '关系类型';
@@ -1141,6 +1144,37 @@ COMMENT ON COLUMN studio_consistency_conflict_entities.conflict_id IS '所属冲
 COMMENT ON COLUMN studio_consistency_conflict_entities.ordinal IS '材料序号';
 COMMENT ON COLUMN studio_consistency_conflict_entities.entity_id IS '涉及材料ID';
 
+-- 本地材料 git 状态：仅追加记录，摘要不超 500 字，不含材料正文。
+CREATE TABLE studio_material_status_reports (
+  id studio_control_id PRIMARY KEY,
+  project_id text NOT NULL REFERENCES studio_projects(id),
+  entity_id text NOT NULL,
+  trigger studio_status_trigger NOT NULL,
+  base_head text NOT NULL CHECK (base_head ~ '^[a-f0-9]{40}$'),
+  worktree_head text NOT NULL CHECK (worktree_head ~ '^[a-f0-9]{40}$'),
+  changed_path_count integer NOT NULL CHECK (changed_path_count BETWEEN 0 AND 3000),
+  summary varchar(500) NOT NULL DEFAULT '',
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  creator_account varchar(50) NOT NULL,
+  creator_name varchar(50) NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (project_id,id),
+  FOREIGN KEY (project_id,entity_id) REFERENCES studio_entities(project_id,id)
+);
+COMMENT ON TABLE studio_material_status_reports IS '材料状态记录';
+COMMENT ON COLUMN studio_material_status_reports.id IS '状态记录ID';
+COMMENT ON COLUMN studio_material_status_reports.project_id IS '所属项目ID';
+COMMENT ON COLUMN studio_material_status_reports.entity_id IS '目标材料ID';
+COMMENT ON COLUMN studio_material_status_reports.trigger IS '触发途径';
+COMMENT ON COLUMN studio_material_status_reports.base_head IS '基线提交';
+COMMENT ON COLUMN studio_material_status_reports.worktree_head IS '工作区提交';
+COMMENT ON COLUMN studio_material_status_reports.changed_path_count IS '变更文件数';
+COMMENT ON COLUMN studio_material_status_reports.summary IS '状态摘要';
+COMMENT ON COLUMN studio_material_status_reports.creator_id IS '发起人ID';
+COMMENT ON COLUMN studio_material_status_reports.creator_account IS '发起人账号';
+COMMENT ON COLUMN studio_material_status_reports.creator_name IS '发起人姓名';
+COMMENT ON COLUMN studio_material_status_reports.created_date IS '记录时间';
+CREATE INDEX studio_status_reports_target ON studio_material_status_reports(project_id,entity_id,created_date DESC);
 
 -- ============================================================
 -- 不变量触发器
@@ -1519,6 +1553,8 @@ CREATE TRIGGER studio_conflict_immutable BEFORE UPDATE OR DELETE ON studio_consi
 CREATE TRIGGER studio_conflict_entity_immutable BEFORE UPDATE OR DELETE ON studio_consistency_conflict_entities
   FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
 
+CREATE TRIGGER studio_status_report_immutable BEFORE UPDATE OR DELETE ON studio_material_status_reports
+  FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
 
 -- 前置生产输入引用的基线必须对应同一需求版本的真实完成接受与集成提交。
 CREATE FUNCTION studio_check_baseline_acceptance() RETURNS trigger AS $$

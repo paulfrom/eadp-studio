@@ -255,6 +255,24 @@ export interface ConsistencyComparisonView {
 export interface ConsistencyComparisonFilter {
   entityId?: string; result?: ConsistencyComparisonView['result']; latestPerEntity?: boolean; limit: number; offset: number;
 }
+export const MaterialStatusTriggerSchema = Type.Union((['occupation-start', 'save', 'pre-confirmation'] as const).map(value => Type.Literal(value)));
+export type MaterialStatusTrigger = Static<typeof MaterialStatusTriggerSchema>;
+/** One append-only record of local material git status; the backend only records it. */
+export const SubmitMaterialStatusReportSchema = object({
+  ...keyed, id: IdSchema, entityId: IdSchema, trigger: MaterialStatusTriggerSchema,
+  baseHead: Type.String({ pattern: '^[a-f0-9]{40}$' }),
+  worktreeHead: Type.String({ pattern: '^[a-f0-9]{40}$' }),
+  changedPathCount: Type.Integer({ minimum: 0, maximum: 3000 }),
+  summary: Type.String({ maxLength: 500 }),
+});
+export type SubmitMaterialStatusReportRequest = Static<typeof SubmitMaterialStatusReportSchema>;
+export function isSubmitMaterialStatusReportRequest(value: unknown): value is SubmitMaterialStatusReportRequest { return Value.Check(SubmitMaterialStatusReportSchema, value); }
+export interface MaterialStatusReportView {
+  id: string; entityId: string; trigger: MaterialStatusTrigger;
+  baseHead: string; worktreeHead: string; changedPathCount: number; summary: string;
+  creator: AuditIdentity; createdAt: string;
+}
+export interface MaterialStatusReportFilter { entityId?: string; limit: number; offset: number }
 /** Formal relation catalog for one comparison target; control fields only, never material content. */
 export interface ConsistencyContextView {
   builtinScenario?: { entityId: string; path: '场景/通用场景.md' };
