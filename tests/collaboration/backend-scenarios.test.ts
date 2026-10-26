@@ -67,7 +67,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
       scenarioIds: value.scenarioIds, prerequisites: value.prerequisites, sources: value.scenarioSources ?? [],
       businessEvidence: [{ label: '订单访谈', reference: '已选择的业务访谈', files: [{ path: evidencePath, sha256: hash(evidence) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 2 }] }],
       files: [{ path: attachmentPath, sha256: hash(attachment) }],
-      coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [], ...overrides } as MaterialMetadata
+      ...(value.kind === 'scenario' ? { flowComplete: true } : { coreRulesPresent: true, acceptanceCriteriaPresent: true }), openQuestions: [], referencedAssets: [], ...overrides } as MaterialMetadata
   }
   async function candidate(values: Array<{ value: EntityView; metadata: MaterialMetadata }>, stage: MaterialIntegrationRequest['stage'] = 'material') {
     const current = (await state()).project, sha = (++candidateNumber).toString(16).padStart(40, '0')
@@ -166,7 +166,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
   })
   await t.test('S13/S33 invalid final business facts, missing fixed files and incorrect file hashes block acceptance', async () => {
     const draft = await claim(await scene('阻断验证'))
-    for (const metadata of [material(draft, { coreRulesPresent: false }), material(draft, { openQuestions: [{ blocking: true, limitation: '尚未知晓', excludedScope: '待补答' }] }), material(draft, { files: [{ path: 'attachments/missing.txt', sha256: '1'.repeat(64) }] }), material(draft, { files: [{ path: evidencePath, sha256: '0'.repeat(64) }] })]) {
+    for (const metadata of [material(draft, { flowComplete: false }), material(draft, { openQuestions: [{ blocking: true, limitation: '尚未知晓', excludedScope: '待补答' }] }), material(draft, { files: [{ path: 'attachments/missing.txt', sha256: '1'.repeat(64) }] }), material(draft, { files: [{ path: evidencePath, sha256: '0'.repeat(64) }] })]) {
       const rejected = await send('POST', `${base}/integrations`, await candidate([{ value: draft, metadata }]))
       assert.ok([409, 422].includes(rejected.statusCode), rejected.body)
     }
@@ -424,6 +424,6 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     const removed = await database.query("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND (column_name IN ('metadata','body','content','messages','prompt','conversation') OR table_name IN ('studio_project_creations','studio_confirmation_files','studio_confirmation_evidence'))")
     assert.equal(removed.rowCount, 0)
     const records = await database.query('SELECT request AS payload FROM studio_integrations UNION ALL SELECT result AS payload FROM studio_operations UNION ALL SELECT data AS payload FROM studio_audit UNION ALL SELECT detail AS payload FROM studio_repair_task_events')
-    for (const row of records.rows) assert.doesNotMatch(JSON.stringify(row.payload), /"(?:metadata|businessEvidence|files|openQuestions|coreRulesPresent|acceptanceCriteriaPresent|body|messages)"/)
+    for (const row of records.rows) assert.doesNotMatch(JSON.stringify(row.payload), /"(?:metadata|businessEvidence|files|openQuestions|flowComplete|coreRulesPresent|acceptanceCriteriaPresent|body|messages)"/)
   })
 })

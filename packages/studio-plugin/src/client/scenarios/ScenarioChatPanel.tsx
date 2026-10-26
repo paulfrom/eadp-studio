@@ -30,8 +30,9 @@ export interface ScenarioCandidateFace {
  * caller passes as children, and the docked write and split cards. The related
  * requirement rows look back from the scenario to its formal requirements.
  */
-export function ScenarioChatPanel({ entity, workspace, busy, locked, sessions, activeSessionId, actions, revision, split, candidates, relatedRequirements, onOpenRequirement, reviewRequested, onReview, onConfirm, questions, children }: {
+export function ScenarioChatPanel({ entity, entities, workspace, busy, locked, sessions, activeSessionId, actions, revision, split, candidates, relatedRequirements, onOpenRequirement, reviewRequested, onReview, onConfirm, questions, children }: {
   entity: EntityView; workspace: Workspace; busy: boolean; locked: boolean;
+  entities: EntityView[];
   sessions: TaskView[]; activeSessionId: string | undefined;
   actions: ScenarioChatActions; revision: ScenarioRevisionFace; split: ScenarioSplitFace; candidates: ScenarioCandidateFace;
   relatedRequirements: EntityView[]; onOpenRequirement(entityId: string): void;
@@ -57,9 +58,14 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, sessions, a
       {task?.error && <div className={css.notice}>{task.error}</div>}
       <MaterialDiscussionSummary questions={questions} sources={workspace.sources} onQuestions={onConfirm} />
       {workspace.writeProposalError && <ScenarioWriteProposalError message={workspace.writeProposalError} />}
-      {workspace.writeProposal && <ScenarioWriteProposalCard hideReviewAction reviewRequested={reviewRequested} proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
+      {workspace.writeProposal && <ScenarioWriteProposalCard sources={workspace.sources} hideReviewAction reviewRequested={reviewRequested} proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
       {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly} onUndo={actions.undoWrite} />}
-      {workspace.readOnly && <details className={layout.secondaryDetails}><summary>从已确认场景拆分需求</summary><section className={css.dockCard} aria-label="需求拆分">
+      {workspace.readOnly && split.offered && !split.deferred && <section className={css.dockCard} aria-label="从已确认场景拆分需求">
+        <header className={css.cardHead}><strong>场景已被后台接受</strong><small>可继续拆分需求</small></header>
+        <p className={css.muted}>仅生成候选；选择后才会创建需求草稿。</p>
+        <div className={css.dockActions}><button className={css.primary} disabled={busy} onClick={split.split}>生成需求候选</button><button disabled={busy} onClick={split.defer}>稍后拆分</button></div>
+      </section>}
+      {workspace.readOnly && (!split.offered || split.deferred) && <details className={layout.secondaryDetails}><summary>从已确认场景拆分需求</summary><section className={css.dockCard} aria-label="需求拆分">
         <header className={css.cardHead}><strong>{split.offered && !split.deferred ? '场景已被后台接受，是否立即拆分需求？' : '从当前确认版拆分需求'}</strong></header>
         <p className={css.muted}>仅生成候选，选用后才创建需求草稿。</p>
         <div className={css.dockActions}>
@@ -67,7 +73,7 @@ export function ScenarioChatPanel({ entity, workspace, busy, locked, sessions, a
           {split.offered && !split.deferred && <button onClick={split.defer}>稍后拆分</button>}
         </div>
       </section></details>}
-      <RequirementCandidatePanel candidates={candidates.items} entities={[entity]} busy={busy} adopt={candidate => candidates.create(candidate.id)} onOpen={onOpenRequirement} />
+      <RequirementCandidatePanel candidates={candidates.items} entities={entities} busy={busy} adopt={candidate => candidates.create(candidate.id)} onOpen={onOpenRequirement} />
       <details className={layout.secondaryDetails}><summary>关联需求 · {relatedRequirements.length} 项</summary><section className={css.dockCard} aria-label="关联需求">
         <header className={css.cardHead}><strong>关联需求</strong><small>{relatedRequirements.length} 项</small></header>
         {relatedRequirements.length === 0 && <p className={css.muted}>尚无正式关联的需求。</p>}

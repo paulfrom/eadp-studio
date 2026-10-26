@@ -2,7 +2,7 @@ import { canonical } from '@eadp/asset-domain'
 import { isMaterialMetadata, type EntityView, type IntegrationView, type MaterialIntegrationRequest, type MaterialMetadata, type OccupationToken, type ProjectState } from '@eadp/contracts'
 import type { ConfirmationChoice, MaterialDraft, TaskView } from '../../shared/studio.ts'
 import { digest, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
-import { checkScenarioDocument, scenarioFileErrors } from './scenario-documents.ts'
+import { checkScenarioDocument, invalidScenarioEvidenceIndexes, scenarioFileErrors } from './scenario-documents.ts'
 import type { FixedCandidateInput, FixedCandidates, PreparedCandidate } from './fixed-candidates.ts'
 import type { GitIntegrations } from './git-integrations.ts'
 import type { HostPorts } from './ports.ts'
@@ -67,10 +67,12 @@ export class MaterialConfirmationChecks {
     const template = await this.projects.localFixed(projectId, ref.commitSha, ref.path, ref.sha256)
     if (!template) return undefined
     const templateBody = Buffer.from(template).toString('utf8')
+    const inspectFiles = task && (!readOnly || recovering(owner))
     const checked = checkScenarioDocument({ draft, expectedHash: input.expectedHash ?? draft.sha256,
       hasPermission: !!account, hasOccupation: !!occupied, conflict: !!owner.conflict,
       structureCheck: local.scenarioStructureCheck, templateBody,
-      fileErrors: task && (!readOnly || recovering(owner)) ? await scenarioFileErrors(task.worktree, draft) : [] })
+      fileErrors: inspectFiles ? await scenarioFileErrors(task.worktree, draft) : [],
+      invalidEvidenceIndexes: inspectFiles ? await invalidScenarioEvidenceIndexes(task.worktree, draft) : [] })
     if (owner.observationError) {
       const version = checked.groups.find(gate => gate.id === 'version')!
       version.status = 'blocked'; version.messages.push(owner.observationError); checked.passed = false

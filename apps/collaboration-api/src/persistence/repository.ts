@@ -272,7 +272,7 @@ function stripMaterial(value: unknown): unknown {
   const source = value as Record<string, unknown>;
   // 系统预置版本的元数据是固定契约产物而非材料快照，随控制结果保留
   const keepMetadata = source.builtin === true;
-  const result = Object.fromEntries(Object.entries(source).filter(([key]) => (keepMetadata && key === 'metadata') || !['metadata', 'body', 'businessEvidence', 'openQuestions', 'files', 'evidence', 'coreRulesPresent', 'acceptanceCriteriaPresent'].includes(key)).map(([key, item]) => [key, stripMaterial(item)]));
+  const result = Object.fromEntries(Object.entries(source).filter(([key]) => (keepMetadata && key === 'metadata') || !['metadata', 'body', 'businessEvidence', 'openQuestions', 'files', 'evidence', 'flowComplete', 'coreRulesPresent', 'acceptanceCriteriaPresent'].includes(key)).map(([key, item]) => [key, stripMaterial(item)]));
   if (typeof source.id === 'string' && typeof source.kind === 'string' && Array.isArray(source.files)) result.fileProjectionFromCurrent = true;
   return result;
 }

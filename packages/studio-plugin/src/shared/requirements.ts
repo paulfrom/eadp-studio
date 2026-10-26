@@ -22,7 +22,7 @@ export interface Candidate {
   title: string; summary: string; goal: string; scope: string;
   rules: string[]; acceptanceCriteria: string[]; body: string;
   sources: CandidateSource[]; template: CandidateTemplate;
-  quality: Pick<MaterialMetadata, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'>;
+  quality: Pick<Extract<MaterialMetadata, { kind: 'requirement' }>, 'coreRulesPresent' | 'acceptanceCriteriaPresent' | 'openQuestions'>;
   /** Reserved identity survives a failed first body write; retries finish that same material. */
   reservedEntityId?: string; selectedEntityId?: string;
 }

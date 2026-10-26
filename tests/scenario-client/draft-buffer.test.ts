@@ -5,7 +5,7 @@ import { DraftBuffer } from '../../packages/studio-plugin/src/client/scenarios/D
 import { isRevising, selectCatalog } from '../../packages/studio-plugin/src/client/scenarios/catalog.ts'
 import type { EntityView } from '../../packages/studio-plugin/src/shared/studio.ts'
 
-const metadata = { entityId: 'scenario', kind: 'scenario', title: '测试场景', coreRulesPresent: false, acceptanceCriteriaPresent: false, businessEvidence: [], openQuestions: [] } as unknown as MaterialMetadata
+const metadata = { entityId: 'scenario', kind: 'scenario', title: '测试场景', flowComplete: false, businessEvidence: [], openQuestions: [] } as unknown as MaterialMetadata
 const draft = (body = '', sha256 = 'hash-0'): MaterialDraft => ({ entityId: 'scenario', metadata, body, sha256, path: '场景/scenario.md' })
 
 test('debounces 800ms local editing and leaves an unchanged projection out of the input buffer', async t => {

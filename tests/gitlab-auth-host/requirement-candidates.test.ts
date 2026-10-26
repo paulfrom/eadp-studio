@@ -4,6 +4,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import type { MaterialMetadata } from '@eadp/contracts'
+import { generalScenarioDocument } from '../../packages/asset-domain/src/index.ts'
 import type { Candidate, CandidateTemplate, SplitSource } from '../../packages/studio-plugin/src/shared/requirements.ts'
 import { digest, materialText } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import { RequirementCandidates } from '../../packages/studio-plugin/src/host/application/requirement-candidates.ts'
@@ -15,8 +16,8 @@ const templateBody = '# 需求名称\n\n## 目标\n\n## 范围\n\n## 规则\n\n#
 const template = (): CandidateTemplate => ({ id: 'requirement-default', fixed: fixed('.template/requirement-default.md', templateBody), body: templateBody })
 function scenario(id: string, body: string): { source: SplitSource; bytes: string } {
   const metadata: MaterialMetadata = { entityId: id, kind: 'scenario', title: id, templateId: 'scenario-default', templateRef: fixed('.template/scenario-default.md', '# 场景'),
-    scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [{ label: '业务说明', reference: '用户提供的业务说明', files: [{ path: '资料/说明.md', sha256: digest('用户依据') }], ranges: [{ path: '资料/说明.md', startLine: 1, endLine: 1 }] }],
-    coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] }
+    scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [],
+    flowComplete: true, openQuestions: [], referencedAssets: [] }
   const bytes = materialText(metadata, body)
   return { source: { projectId: 'project-1', entityId: id, title: id, version: 1, confirmationId: `confirmation-${id}`, fixed: fixed(`场景/${id}.md`, bytes) }, bytes }
 }
@@ -53,7 +54,7 @@ async function fixture() {
   }
 }
 
-test('joint splitting binds immutable ordinary sources and adopts the complete selected capability only once', async t => {
+test('joint splitting accepts ordinary flows without evidence attachments and adopts the complete selected capability only once', async t => {
   const f = await fixture(); t.after(f.dispose)
   const task = await f.start()
   assert.equal(f.creates.length, 0)
@@ -161,9 +162,9 @@ test('cross-project, duplicate, builtin and mismatching fixed-byte inputs cannot
   await assert.rejects(f.service.start({ ...request, sources: [f.first.source, f.first.source] }), /不同/)
   f.bytes.set(f.first.source.fixed.sha256, '篡改的固定输入')
   await assert.rejects(f.service.start(request), /哈希/)
-  const raw = `\`\`\`eadp-metadata\n${JSON.stringify({ entityId: 'general', kind: 'scenario', title: '通用场景' })}\n\`\`\`\n\n系统内置说明`
+  const raw = generalScenarioDocument('general')
   const source = { ...f.first.source, entityId: 'general', fixed: fixed('场景/通用场景.md', raw) }
   f.bytes.set(source.fixed.sha256, raw)
-  await assert.rejects(f.service.start({ ...request, sources: [source] }), /元数据无效|普通场景/)
+  await assert.rejects(f.service.start({ ...request, sources: [source] }), /材料缺少 eadp 元数据|元数据无效|普通场景/)
   assert.equal((await f.store.read()).tasks.length, 0)
 })

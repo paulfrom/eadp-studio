@@ -229,10 +229,10 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
         </section>}
         <MaterialDiscussionSummary questions={snapshot.metadata.openQuestions} sources={materialSources?.sources ?? []} onQuestions={() => setConfirmationOpen(true)} />
         {workspace.writeProposalError && <ScenarioWriteProposalError message={workspace.writeProposalError} />}
-        {workspace.writeProposal && <ScenarioWriteProposalCard hideReviewAction reviewRequested={reviewRequested} materialLabel="需求" proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
+        {workspace.writeProposal && <ScenarioWriteProposalCard sources={materialSources?.sources ?? []} hideReviewAction reviewRequested={reviewRequested} materialLabel="需求" proposal={workspace.writeProposal} disabled={locked || workspace.readOnly} onResolve={actions.resolveWriteProposal} />}
         {workspace.writeReceipt && <ScenarioWriteReceiptCard receipt={workspace.writeReceipt} disabled={locked || workspace.readOnly} onUndo={actions.undoWrite} />}
       </div>
-      <MaterialConversation sessionId={task?.sessionId} faces={faces} attachments={{
+      <MaterialConversation sessionId={task?.sessionId} faces={faces} decisionQuestions={workspace.decisionQuestions} decisionQuestionsError={workspace.decisionQuestionsError} attachments={{
         sources: materialSources?.sources ?? [], disabled: locked || !materialSources, readOnly: materialSources?.readOnly ?? true,
         onImport: actions.importSource, onRetry: actions.retrySource, onSelect: actions.selectSource,
       }}>

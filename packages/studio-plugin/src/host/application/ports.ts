@@ -31,10 +31,11 @@ export interface HostPorts {
 export function initialMetadata(entity: { id: string; kind: MaterialMetadata['kind']; title: string; templateId?: string; templateRef?: FixedReference }, scenarioIds: string[] = [], sources: Array<{ projectId: string; entityId: string; version: number }> = []): MaterialMetadata {
   const shared = { entityId: entity.id, kind: entity.kind, title: entity.title,
     scenarioIds: entity.kind === 'requirement' ? scenarioIds : [], prerequisites: [], sources: [], businessEvidence: [],
-    coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [] }
+    openQuestions: [], referencedAssets: [] }
   if (entity.kind === 'scenario' || entity.kind === 'requirement') {
     if (!entity.templateId || !entity.templateRef) throw new Error(entity.kind === 'scenario' ? '场景缺少后台分配的固定模板' : '需求缺少后台分配的固定模板')
-    return { ...shared, kind: entity.kind, templateId: entity.templateId, templateRef: entity.templateRef, ...(entity.kind === 'requirement' ? { sources } : {}) }
+    if (entity.kind === 'scenario') return { ...shared, kind: 'scenario', templateId: entity.templateId, templateRef: entity.templateRef, flowComplete: false }
+    return { ...shared, kind: 'requirement', templateId: entity.templateId, templateRef: entity.templateRef, sources, coreRulesPresent: false, acceptanceCriteriaPresent: false }
   }
-  return { ...shared, kind: entity.kind, sources }
+  return { ...shared, kind: entity.kind, sources, coreRulesPresent: false, acceptanceCriteriaPresent: false }
 }

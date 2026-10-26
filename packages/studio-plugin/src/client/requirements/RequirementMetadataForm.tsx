@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { EntityView, MaterialMetadata } from '../../shared/studio.ts'
 import type { DraftBuffer, DraftSnapshot } from '../scenarios/DraftBuffer.ts'
+import { ordinaryScenarioSources, removeScenarioSource, updateScenarioSources } from './scenario-sources.ts'
 import css from '../studio.module.css'
 
 const evidenceText = (metadata: MaterialMetadata): string => JSON.stringify(metadata.businessEvidence, null, 2)
@@ -87,19 +88,23 @@ export const RequirementMetadataForm = forwardRef<RequirementMetadataFormHandle,
     const current = buffer.getSnapshot()
     buffer.edit({ body: current.body, metadata: { ...current.metadata, ...change } as MaterialMetadata })
   }
-  const scenarios = entities.filter(entity => entity.kind === 'scenario' && entity.materialVersion > 0)
+  const scenarios = ordinaryScenarioSources(entities)
+  const builtinSources = entities.filter(entity => entity.builtinKey && metadata.scenarioIds.includes(entity.id))
   const prerequisites = entities.filter(entity => entity.kind === 'requirement' && entity.id !== metadata.entityId && entity.current)
   return <section className={css.specSection} hidden={hidden} aria-label="需求业务字段">
     <header className={css.sectionHead}><h3>业务依据、关系与待澄清项</h3></header>
     <label>正式依据（JSON，须标明 `.eadp/evidence/` 归档文件、SHA-256 和行范围）<textarea rows={8} readOnly={readOnly} value={evidence} onChange={event => editFields({ evidence: event.target.value, questions })} placeholder='[{"label":"业务访谈","reference":"采购流程访谈记录","files":[{"path":".eadp/evidence/interview.md","sha256":"…"}],"ranges":[{"path":".eadp/evidence/interview.md","startLine":1,"endLine":8}] }' /></label>
-    <label>关联场景（固定已确认版本）<select multiple disabled={readOnly} value={metadata.scenarioIds} onChange={event => {
+    {builtinSources.map(source => <p key={source.id} className={css.sourceChip}>{source.title} · 系统内置<button type="button" disabled={readOnly} onClick={() => edit(removeScenarioSource(metadata, source.id))}>移除通用场景关联</button></p>)}
+    <label>关联场景（固定已确认版本）<select multiple disabled={readOnly} value={metadata.scenarioIds.filter(id => scenarios.some(source => source.id === id))} onChange={event => {
       const scenarioIds = [...event.target.selectedOptions].map(option => option.value)
-      edit({ scenarioIds, sources: scenarioIds.map(entityId => metadata.sources.find(source => source.entityId === entityId) ?? { projectId, entityId, version: entities.find(entity => entity.id === entityId)!.materialVersion }) })
-    }}>{scenarios.map(scenario => <option key={scenario.id} value={scenario.id}>{scenario.code ?? scenario.id} · {scenario.title} · v{metadata.sources.find(source => source.entityId === scenario.id)?.version ?? scenario.materialVersion}{scenario.builtinKey === 'general' ? ' · 系统内置' : ''}</option>)}</select></label>
+      edit(updateScenarioSources(metadata, scenarioIds, entities, projectId))
+    }}>{scenarios.map(scenario => <option key={scenario.id} value={scenario.id}>{scenario.code ?? scenario.id} · {scenario.title} · v{metadata.sources.find(source => source.entityId === scenario.id)?.version ?? scenario.materialVersion}</option>)}</select></label>
     <fieldset><legend>前置需求（固定已确认版本）</legend>{prerequisites.map(prerequisite => <label className={css.checkbox} key={prerequisite.id}><input type="checkbox" disabled={readOnly} checked={metadata.prerequisites.some(value => value.requirementId === prerequisite.id)} onChange={event => edit({ prerequisites: event.target.checked ? [...metadata.prerequisites, { requirementId: prerequisite.id, version: prerequisite.materialVersion }] : metadata.prerequisites.filter(value => value.requirementId !== prerequisite.id) })} />{prerequisite.title} · v{metadata.prerequisites.find(value => value.requirementId === prerequisite.id)?.version ?? prerequisite.materialVersion}</label>)}</fieldset>
     <label>待澄清项（每行：阻断/限制 | 问题或限制 | 不适用范围）<textarea rows={3} readOnly={readOnly} value={questions} onChange={event => editFields({ evidence, questions: event.target.value })} /></label>
-    <label className={css.checkbox}><input type="checkbox" disabled={readOnly} checked={metadata.coreRulesPresent} onChange={event => edit({ coreRulesPresent: event.target.checked })} />核心业务规则已由业务依据明确</label>
-    <label className={css.checkbox}><input type="checkbox" disabled={readOnly} checked={metadata.acceptanceCriteriaPresent} onChange={event => edit({ acceptanceCriteriaPresent: event.target.checked })} />验收条件可以客观判断</label>
+    {metadata.kind === 'requirement' && <>
+      <label className={css.checkbox}><input type="checkbox" disabled={readOnly} checked={metadata.coreRulesPresent} onChange={event => edit({ coreRulesPresent: event.target.checked })} />核心业务规则已由业务依据明确</label>
+      <label className={css.checkbox}><input type="checkbox" disabled={readOnly} checked={metadata.acceptanceCriteriaPresent} onChange={event => edit({ acceptanceCriteriaPresent: event.target.checked })} />验收条件可以客观判断</label>
+    </>}
     {error && <p role="alert" className={css.reviewError}>{error}</p>}
   </section>
 })

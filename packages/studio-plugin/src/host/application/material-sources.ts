@@ -173,6 +173,17 @@ export class MaterialSources {
     const removed = new Set<string>()
     for (const relative of candidates) {
       if (tracked.has(relative)) continue
+      // A worktree archive is disposable only while the imported original still exists.
+      const sourceHash = /^\.eadp\/evidence\/([a-f0-9]{64})\//.exec(relative)?.[1]
+      let originalPreserved = false
+      for (const record of records) {
+        for (const source of record.sources.filter(value => value.sha256 === sourceHash)) {
+          const filename = record.sourcePaths[source.id]
+          if (!filename) continue
+          try { if (digest(await readFile(filename)) === source.sha256) originalPreserved = true } catch { /* Keep the archive if the imported original is unavailable. */ }
+        }
+      }
+      if (!originalPreserved) throw new Error('未引用归档的原始资料无法核实，已保留文件，请恢复本地资料后再清理')
       try { await rm(await containedFile(task.worktree, relative), { force: true }) }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       removed.add(relative)

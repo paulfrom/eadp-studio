@@ -134,18 +134,20 @@ export class ScenarioDocumentService {
 
 export interface ScenarioCheckInput {
   draft: MaterialDraft; expectedHash: string; hasPermission: boolean; hasOccupation: boolean;
-  conflict?: boolean; structureCheck?: boolean; templateBody?: string; fileErrors?: readonly string[];
+  conflict?: boolean; structureCheck?: boolean; templateBody?: string; fileErrors?: readonly string[]; invalidEvidenceIndexes?: number[];
 }
 /** Groups fixed checks separately from the optional, local template preference. */
 export function checkScenarioDocument(input: ScenarioCheckInput): { hash: string; passed: boolean; groups: ScenarioGate[] } {
   const { draft } = input, metadata = draft.metadata
   const business: string[] = [], evidence: string[] = [...(input.fileErrors ?? [])], version: string[] = [], template: string[] = []
   if (metadata.kind !== 'scenario' && metadata.kind !== 'requirement') business.push('当前材料不是场景或需求')
-  if (!metadata.coreRulesPresent) business.push('核心业务规则尚未声明完整')
-  if (!metadata.acceptanceCriteriaPresent) business.push('验收条件尚未声明完整')
+  if (metadata.kind === 'scenario') {
+    if (!metadata.flowComplete) business.push('业务流程尚未声明完整')
+  } else if (!metadata.coreRulesPresent) business.push('核心业务规则尚未声明完整')
+  if (metadata.kind !== 'scenario' && !metadata.acceptanceCriteriaPresent) business.push('验收条件尚未声明完整')
   business.push(...metadata.openQuestions.filter(question => question.blocking).map(question => question.limitation))
-  if (!metadata.businessEvidence.length) evidence.push('请选定并归档真实业务依据')
-  try { validateMaterialMetadata({ ...metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }) } catch (error) { evidence.push(error instanceof Error ? error.message : '资料与引用无效') }
+  if (!metadata.businessEvidence.length) evidence.push(metadata.kind === 'scenario' ? '尚未选定正式资料；不影响场景确认' : '请选定并归档真实业务依据')
+  try { validateMaterialMetadata(metadata.kind === 'scenario' ? { ...metadata, flowComplete: true, openQuestions: [] } : { ...metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }) } catch (error) { evidence.push(error instanceof Error ? error.message : '资料与引用无效') }
   if (draft.sha256 !== input.expectedHash) version.push('当前文件已不是用户阅读的版本')
   if (!input.hasPermission) version.push('当前用户没有确认权限')
   if (!input.hasOccupation) version.push('当前用户没有有效设计占用')
@@ -158,7 +160,7 @@ export function checkScenarioDocument(input: ScenarioCheckInput): { hash: string
     }
   }
   const gate = (id: ScenarioGate['id'], label: string, messages: string[], enabled = true): ScenarioGate => ({ id, label, messages, status: !enabled ? 'disabled' : messages.length ? 'blocked' : 'passed' })
-  const groups = [gate('business', '业务内容', business), gate('evidence', '资料与引用', evidence), gate('version', '版本与占用', version), gate('template', '模板结构', template, input.structureCheck === true)]
+  const groups = [gate('business', metadata.kind === 'scenario' ? '业务流程' : '业务内容', business), { ...gate('evidence', '资料与引用', evidence), ...(metadata.kind === 'scenario' && evidence.length ? { status: 'warning' as const, invalidEvidenceIndexes: input.invalidEvidenceIndexes ?? [] } : {}) }, gate('version', '版本与占用', version), gate('template', '模板结构', template, input.structureCheck === true)]
   return { hash: draft.sha256, passed: groups.every(group => group.status !== 'blocked'), groups }
 }
 
@@ -184,9 +186,30 @@ export async function scenarioFileErrors(root: string, draft: MaterialDraft): Pr
   }
   for (const evidence of draft.metadata.businessEvidence) for (const range of evidence.ranges) {
     try {
-      const lines = (await readFile(await containedFile(root, range.path), 'utf8')).split('\n').length
-      if (range.startLine < 1 || range.endLine < range.startLine || range.endLine > lines || !evidence.files.some(file => file.path === range.path)) errors.push(`依据引用范围无效：${range.path}`)
+      const bytes = await readFile(await containedFile(root, range.path))
+      const lines = new TextDecoder('utf-8', { fatal: true }).decode(bytes).split('\n')
+      if (lines.at(-1) === '') lines.pop()
+      if (range.startLine < 1 || range.endLine < range.startLine || range.endLine > lines.length || !lines.slice(range.startLine - 1, range.endLine).join('\n').trim() || !evidence.files.some(file => file.path === range.path)) errors.push(`依据引用范围无效：${range.path}`)
     } catch { errors.push(`无法读取依据范围：${range.path}`) }
   }
   return [...new Set(errors)]
+}
+
+/** Finds declared references the author can explicitly exclude without deleting local files. */
+export async function invalidScenarioEvidenceIndexes(root: string, draft: MaterialDraft): Promise<number[]> {
+  if (draft.metadata.kind !== 'scenario') return []
+  const metadata = draft.metadata, declared = new Map<string, Set<string>>()
+  for (const file of [...(metadata.files ?? []), ...metadata.businessEvidence.flatMap(evidence => evidence.files)]) {
+    const hashes = declared.get(file.path) ?? new Set<string>()
+    hashes.add(file.sha256); declared.set(file.path, hashes)
+  }
+  const invalid: number[] = []
+  for (const [index, evidence] of metadata.businessEvidence.entries()) {
+    const candidate = { ...metadata, flowComplete: true, openQuestions: [], businessEvidence: [evidence], files: [] }
+    try {
+      validateMaterialMetadata(candidate)
+      if (evidence.files.some(file => declared.get(file.path)!.size > 1) || (await scenarioFileErrors(root, { ...draft, metadata: candidate })).length) invalid.push(index)
+    } catch { invalid.push(index) }
+  }
+  return invalid
 }

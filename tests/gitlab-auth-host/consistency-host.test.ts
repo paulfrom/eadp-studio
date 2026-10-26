@@ -13,7 +13,7 @@ import { saveMaterial } from '../../packages/studio-plugin/src/host/adapters/ass
 import { CollaborationError, type CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 
 const noConflicts = JSON.stringify({ summary: '本次范围未发现冲突', conflicts: [] })
-const metadata: MaterialMetadata = { entityId: 'scene', kind: 'scenario', title: '审批', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }, scenarioIds: [], sources: [], prerequisites: [], referencedAssets: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false }
+const metadata: MaterialMetadata = { entityId: 'scene', kind: 'scenario', title: '审批', templateId: 'default', templateRef: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }, scenarioIds: [], sources: [], prerequisites: [], referencedAssets: [], businessEvidence: [], openQuestions: [], flowComplete: false }
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
 async function bounded<T>(work: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined

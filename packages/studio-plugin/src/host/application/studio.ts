@@ -669,7 +669,7 @@ export class StudioApplication {
     local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === 'prototype')); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save()); return task
   }
   private materialRules(draft: MaterialDraft): string {
-    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
+    if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。场景只确认业务流程完整：触发条件、角色、主要路径、必要分支及业务结果；金额阈值、字段和计算口径等细节留待需求确认，不作为场景阻断项。资料与引用仅提醒，可依据当前正文和用户明确答复，不强制外部附件。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
     if (draft.metadata.kind === 'requirement') return '你是需求设计助手。使用 grilling 逐问推进需求设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，不写正文、不直接修改文件或确认。以Host提供的当前需求、已接受场景依据和实际已读资料为准，缺业务答案时提问。'
     return `你正在整理 ${draft.metadata.kind} ${draft.entityId}。仅编辑 ${draft.path}；保留 eadp-metadata 身份。实际业务依据、核心业务规则、验收条件缺失时提出问题，不编造；核心待澄清项阻断确认，非阻断项明确限制和不适用范围。不得自行确认、释放占用、修改Git/模板规则或执行shell。作者通过工作台确认。当前材料哈希 ${draft.sha256}。`
   }
@@ -839,7 +839,7 @@ export class StudioApplication {
             scenarioIds: entity.scenarioIds, prerequisites: entity.prerequisites,
             sources: [...(entity.scenarioSources ?? []), operation.request.source],
             businessEvidence: draft.metadata.businessEvidence, files: draft.metadata.files, referencedAssets: draft.metadata.referencedAssets,
-            coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: draft.metadata.openQuestions,
+            ...(entity.kind === 'scenario' ? { flowComplete: false } : { coreRulesPresent: false, acceptanceCriteriaPresent: false }), openQuestions: draft.metadata.openQuestions,
             ...(entity.kind === 'scenario' && entity.templateId && entity.templateRef ? { templateId: entity.templateId, templateRef: entity.templateRef } : {}) } as MaterialMetadata
           await saveMaterial(operation.worktree, metadata, draft.body + '\n\n## 目标采用调整\n\n' + operation.request.adjustmentSummary + '\n')
         }

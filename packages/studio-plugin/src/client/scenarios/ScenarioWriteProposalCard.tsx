@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ScenarioWriteProposalView } from '../../shared/scenarios.ts'
 import { MaterialWorkspaceSheet } from '../components/MaterialWorkspaceChrome.tsx'
+import type { ScenarioSource } from '../../shared/scenarios.ts'
 import css from '../studio.module.css'
 import reviewCss from './write-review.module.css'
 
@@ -14,8 +15,9 @@ export function ScenarioWriteProposalError({ message }: { message: string }) {
 }
 
 /** Explicit chapter review is the only gesture that authorizes a proposed document write. */
-export function ScenarioWriteProposalCard({ proposal, disabled, onResolve, materialLabel = '场景', reviewRequested = 0, hideReviewAction = false }: {
+export function ScenarioWriteProposalCard({ proposal, sources = [], disabled, onResolve, materialLabel = '场景', reviewRequested = 0, hideReviewAction = false }: {
   proposal: ScenarioWriteProposalView; disabled: boolean;
+  sources?: ScenarioSource[];
   onResolve(decision: 'write' | 'reject', selectedChangeIds?: string[]): void;
   materialLabel?: string; reviewRequested?: number; hideReviewAction?: boolean;
 }) {
@@ -29,6 +31,7 @@ export function ScenarioWriteProposalCard({ proposal, disabled, onResolve, mater
   const state = failed ? '失败，可重试' : pending ? '待审阅' : proposal.status === 'consumed' ? '已写入' : '已拒绝'
   const added = proposal.changes.reduce((count, change) => count + change.addedLines, 0)
   const removed = proposal.changes.reduce((count, change) => count + change.removedLines, 0)
+  const evidence = proposal.evidenceIds.map(id => sources.find(source => source.id === id) ?? { id, name: id, status: 'failed' as const, ranges: [] })
   useEffect(() => { setSelected(new Set(proposal.changes.map(change => change.id))); setDeferred(false); setReviewing(false) }, [proposal.id])
   useEffect(() => { if (all.current) all.current.indeterminate = selected.size > 0 && selected.size < proposal.changes.length }, [selected, proposal.changes.length])
   useEffect(() => {
@@ -40,8 +43,9 @@ export function ScenarioWriteProposalCard({ proposal, disabled, onResolve, mater
   const open = () => { setDeferred(false); setReviewing(true) }
   return <section className={`${css.dockCard} ${reviewCss.proposal}`} aria-label="写入提议" data-state={proposal.status}>
     <header className={css.cardHead}><strong>写入提议 · {state}</strong><small>{proposal.target === 'context' ? 'CONTEXT.md' : `${materialLabel}正文`}</small></header>
-    <div className={reviewCss.stats}><span>{proposal.changes.length} 处章节变更</span><span className={reviewCss.added}>+{added}</span><span className={reviewCss.removed}>−{removed}</span><span>依据 {proposal.evidenceCount} 份已读资料</span></div>
+    <div className={reviewCss.stats}><span>{proposal.changes.length} 处章节变更</span><span className={reviewCss.added}>+{added}</span><span className={reviewCss.removed}>−{removed}</span><span>引用 {evidence.length} 份资料</span></div>
     <details className={reviewCss.conclusions}><summary>查看本轮结论 · {proposal.conclusions.length} 项</summary><ul>{proposal.conclusions.map((text, index) => <li key={index}>{text}</li>)}</ul></details>
+    {evidence.length > 0 && <details className={reviewCss.evidence}><summary>查看本提议实际引用的资料 · {evidence.length} 份</summary><ul>{evidence.map(source => <li key={source.id}><span>{source.name}{source.status === 'partial' ? ' · 部分读取' : ''}</span>{source.ranges.length > 0 ? <small> · {source.ranges.join(' · ')}</small> : source.status === 'failed' ? <small> · 当前不可读取</small> : null}</li>)}</ul></details>}
     {proposal.error && <p className={css.notice} role="alert">{proposal.error}</p>}
     {pending && <div className={css.dockActions}>
       <span className={css.muted}>{deferred ? '已暂存，随时可以继续审阅' : '写入前可逐章核对'}</span>

@@ -68,7 +68,7 @@ test('requirement cards resolve source chips with builtin marker and only pinned
   const { entities, drafts } = fixtures()
   const view = render(catalog({ entities, drafts }))
   assert.ok(view.getByText('SC-0001 · 订单审批 · v2'))
-  const builtin = view.getByText(/SC-0000 · 通用场景 · 系统内置/)
+  const builtin = view.getByText(/通用场景 · 系统内置/)
   assert.doesNotMatch(builtin.textContent, /系统内置 · v/)
 })
 
@@ -128,7 +128,7 @@ test('joint split excludes the builtin general scenario and submits the checked 
   const view = render(catalog({ entities, drafts, call: async command => { commands.push(command); return { ok: false, code: 'X', message: '停止' } } }))
   fireEvent.click(view.getByRole('button', { name: '联合拆分需求' }))
   const form = view.getByRole('form', { name: '联合拆分需求' })
-  assert.match(form.textContent, /通用场景说明不作拆分输入/)
+  assert.match(form.textContent, /选择已确认的普通场景/)
   assert.ok(within(form).getByRole('checkbox', { name: /SC-0001 · 订单审批 · v2/ }))
   assert.equal(within(form).queryByRole('checkbox', { name: /通用场景/ }), null)
   const submit = within(form).getByRole('button', { name: '生成需求候选' })
@@ -250,4 +250,34 @@ test('the catalog keeps joint-split and candidate sections inside the requiremen
   assert.match(source, /expectedInputHash: candidate\.inputHash/)
   const catalogSource = readFileSync(path.join(client, 'scenarios/catalog.ts'), 'utf8')
   assert.match(catalogSource, /options\.source === 'all' \|\| entity\.scenarioIds\.includes\(options\.source\)/)
+})
+
+
+test('builtin scenarios never enter scene cards, counts, search results or pagination', () => {
+  const { entities } = fixtures()
+  const ordinary = Array.from({ length: 12 }, (_, index) => scenario({ id: `scene-${index + 10}`, code: `SC-${index + 10}`, title: `普通场景${index}` }))
+  const view = render(catalog({ kind: 'scenario', entities: [...entities.filter(entity => entity.builtinKey), ...ordinary] }))
+  assert.ok(view.getByText('场景目录 · 共 12 项 · 已确认 12 · 草稿 0'))
+  assert.ok(view.getByText('共 12 项 · 第 1 / 1 页'))
+  assert.equal(view.queryByText('通用场景'), null)
+  assert.equal(view.getByRole('button', { name: '下一页' }).disabled, true)
+  fireEvent.change(view.getByRole('textbox', { name: '搜索资产' }), { target: { value: '通用场景' } })
+  assert.ok(view.getByText('共 0 项 · 第 1 / 1 页'))
+  assert.equal(view.queryByText('通用场景'), null)
+})
+
+test('only the new requirement source picker offers builtin attribution and submits its stable ID', async () => {
+  const { entities } = fixtures(), commands = []
+  const view = render(catalog({ entities, call: async command => { commands.push(command); return { ok: false, code: 'STOP', message: '保留输入' } } }))
+  assert.equal(within(view.getByRole('combobox', { name: '来源场景' })).queryByRole('option', { name: /通用场景/ }), null)
+  fireEvent.click(view.getByRole('button', { name: '＋ 新建需求' }))
+  const sources = view.getByRole('listbox', { name: '固定场景来源' })
+  const builtin = within(sources).getByRole('option', { name: 'SC-0000 · 通用场景 · 系统内置' })
+  builtin.selected = true
+  fireEvent.change(sources)
+  fireEvent.change(view.getByRole('textbox', { name: '需求标题' }), { target: { value: '通用业务需求' } })
+  fireEvent.submit(sources.closest('form'))
+  await waitFor(() => assert.equal(commands.length, 1))
+  assert.equal(commands[0].action, 'createMaterial')
+  assert.deepEqual(commands[0].scenarioIds, ['scene-general'])
 })

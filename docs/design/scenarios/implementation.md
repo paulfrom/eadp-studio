@@ -282,3 +282,35 @@
 - 代码：`host/application/scenario-workspaces.ts`（`liveTask`、`localMaterial`、`save`、`accept`、`consumeWriteProposal`、`resolveContextProposal`、`undoWrite`）、`shared/scenarios.ts`（提议记录增加 `taskId`）。
 
 校验：装配树 Host/Client `tsc -b` 通过；`scenario-write-proposals`、`scenario-orchestration` 与 `requirement-workspaces` 共 50 项通过；`tests/scenario-client` 98 项通过；完整 `tests/windows-desktop/*.test.ts` 289 项中 286 通过、3 失败，三项均为既有环境或并行负载不稳定项：`asset-workflow` 的图片资料读取转换在未改动的基线上同样失败，`requirement-confirmation` 的目录失败恢复与 `task-recovery` 的持久输出重放单独重跑均通过（后者连续 3 次通过），并伴随临时目录 `EPERM` 重命名。新增用例覆盖后台实体与占用接口不可用时仍生成提议、写入、撤销与场景草稿保存；需求侧把提议过期条件收敛为正文、依据与 `CONTEXT.md` 三项本地输入，原先“占用变化即作废”与“按后台模板绑定拒绝写入”的断言按新边界改写。界面状态仍依赖后台项目投影（列表、门禁、只读判定），同步失败时面板可能显示联动错误，但本地文件与提议状态已落盘，后台恢复后可见。未做真实模型、界面视觉或安装包验收。
+
+## 场景与需求 AI 本轮问题（2026-10-25）
+
+- 为场景与需求会话增加同一份 `eadp-material-questions` 回答协议。Host 校验实体身份、实际已读依据以及当前正文 hash、模板固定引用和项目上下文；Host 生成问题轮次标识并将最新轮次保存在现有材料状态中。问题块与写入提议互相独立，可同轮出现；回答选择不修改 Markdown、不代表业务已澄清，也不改变确认门禁。材料上下文变化后问题仅供回看，后续 AI 轮次会撤下旧轮次。
+- 在 DSH 原生 `conversation.input.dock` 展示问题选项。用户可选择多项并通过 revision-guarded `insertText` 插入当前草稿，再自行发送；选区非折叠或输入版本过期时不插入，不自动发送，也不替换整份草稿。问题依据使用已读资料名称显示，场景与需求复用同一组件。
+- 对齐 AI 交付信息：写入提议列出它实际引用的资料及读取范围，不再用当前选中资料数量代替提议依据；需求候选出处明确标为创建时的历史来源，并与当前正式来源关系区分；确认场景的拆分入口在未延后时直接显示，联合候选卡可显示其全部来源场景。
+- 需求 AI 优化稿的演示交互同步为“选择 → 插入草稿 → 用户发送”：选择不再永久锁定选项、不自动标记已澄清或减少确认门禁；待澄清状态仍由材料内容决定。场景/需求设计文档同步记录共享契约及状态边界。
+- 代码：`host/application/material-decision-questions.ts`、`host/application/scenario-workspaces.ts`、`shared/scenarios.ts`、`client/components/MaterialDecisionQuestions.tsx`、`client/components/MaterialConversation.tsx`、两类工作区与 DSH dock 注册；增加解析器、Host 状态投影和原生输入插入保护用例。
+
+校验：`node apps/desktop-distribution/build/prepare-studio-plugin.mjs --dev-stage` 成功；装配树 Host/Client `tsc -b` 通过；`tests/scenario-client/*.test.mjs` 93 项全部通过；本轮问题解析 3 项、Host 问题与需求会话 2 项、场景拆分/恢复 8 项，以及需求候选/来源/工作区/保存/确认 58 项全部通过。需求 Host 聚焦组首次默认并发运行时，删除文件恢复用例一次失败；该用例单独重跑通过，之后串行重跑整组 58 项全部通过。`check:repository` 显示 416 个受跟踪文件与 49 项模板 hash 一致；`git diff --check` 与优化稿内联脚本语法检查通过。配置装配树 runtime 和实际 Git CGI backend 后，`studio-workflow.test.ts` 的 loopback Git Smart HTTP 用例 1 项通过；Host/API/PostgreSQL/Git 完整协作链仍因没有可用 PostgreSQL 测试实例而跳过，不能作为集成验收。未做真实模型与 DSH 桌面视觉验收。
+
+
+## 2026-10-26 场景确认仅检查流程完整性
+
+用户已确认场景与需求的粒度边界：场景确认触发条件、角色、主要路径、必要分支与业务结果是否完整；金额审批阈值、字段口径、计算规则及可执行验收细节留到需求确认。资料与引用只提醒，不作为场景业务确认门禁。
+
+- 场景契约改为 `flowComplete`，删除场景旧的 `coreRulesPresent`、`acceptanceCriteriaPresent`；不增加兼容字段或迁移。需求保留原质量与依据校验。
+- Host、领域与后台从固定材料检查流程完整声明及流程阻断问题。确认面板提供流程声明，新增场景待澄清项默认不阻断；AI 提示词按相同粒度提问和修复，可使用当前正文及用户明确答案，不强制上传附件。
+- 无正式资料的普通场景可以确认并拆分需求；普通／内置场景按严格身份契约区分，不再以依据数量识别。需求候选仍绑定场景固定版本及实际原文片段。
+- 资料检查增加提醒状态；坏引用不能冒充有效固定资料。面板允许显式移除无法验证的正式引用，经原有 hash 保护保存并重读后确认；本地导入资料不因此删除。固定提交继续校验声明文件的路径、hash 和引用范围。
+- 局部验证：场景 Host 五文件 75 项、客户端组件 95 项、草稿与需求回归 63 项、固定 Git 内容及后台集成逻辑 52 项、相关 Host 认证／候选／来源 37 项通过；最终 Studio 装配树 `tsc -b` 通过，场景日志为 `.local/scenario-flow-tests.log`。扩展 Host Git 工具检查有 3 项因缺少 `.local/build/studio-tools-prepared/runtime-manifest.json` 失败；任务恢复 30/31，另一次 `restoreSession` 捕获 Windows `EPERM` 原子 rename 失败；需求原生图片读取测试仍得到 `failed` 而非 `read`，未定位为本次变更导致，亦未据此宣称全部回归通过。
+- 真实桌面 UI、真实模型、指定 `100.119.183.44` 协同服务、Git／持久化及中断恢复闭环均未验收；本轮未部署远端服务或生成新安装包。
+
+
+## 2026-10-26 内置通用场景仅在新增需求时可选
+
+用户明确：内置通用场景不显示、不编辑，只在新增需求时可选择。
+
+- 场景目录、统计、搜索、分页和其他选择入口排除内置场景；新增需求保留“通用场景 · 系统内置”选项。
+- 既有需求仅保留静态归属标识，不展示通用场景正文、不提供跳转或编辑入口。隐藏选择项时仍保留已有关联及固定版本，不删除真实系统预置身份或来源记录。
+- Host 及后台现有不可编辑保护保持；即使直接传入内置场景 ID，也不能打开工作区或取得编辑占用。相关直达 ID 与投影回归、来源及候选验证 11 项通过。
+- 客户端组件检查 99/99 通过，覆盖目录数量／搜索／分页隐藏、新增需求选中真实通用来源、关系编辑保留固定来源及显式移除；最终 Studio 装配树类型检查通过。上述为实现与局部验证记录，真实桌面及指定协同服务闭环未验收。

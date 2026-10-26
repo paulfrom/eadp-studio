@@ -1,3 +1,4 @@
+import { isBuiltinScenarioMetadata } from '@eadp/contracts'
 import { readFile, writeFile } from 'node:fs/promises'
 import type { FixedReference, MaterialMetadata } from '@eadp/contracts'
 import type { Candidate } from '../../shared/requirements.ts'
@@ -11,7 +12,7 @@ export async function candidateBusinessEvidence(root: string, candidate: Candida
     const bytes = Buffer.from(await readFixed(source.projectId, source.fixed))
     if (digest(bytes) !== source.fixed.sha256) throw new Error('候选来源固定内容已变化')
     const draft = parseMaterial(bytes, source.fixed.path)
-    if (draft.metadata.kind !== 'scenario' || draft.entityId !== source.entityId || !draft.metadata.businessEvidence.length) throw new Error('候选依据必须是真实已确认普通场景')
+    if (draft.metadata.kind !== 'scenario' || draft.entityId !== source.entityId || isBuiltinScenarioMetadata(draft.metadata)) throw new Error('候选依据必须是真实已确认普通场景')
     const text = bytes.toString('utf8'), lines = draft.body.split('\n')
     const offset = text.slice(0, text.length - draft.body.length).split('\n').length - 1
     for (const excerpt of source.excerpts) if (lines.slice(excerpt.startLine - 1, excerpt.endLine).join('\n') !== excerpt.text) throw new Error('候选原文片段与固定输入不符')

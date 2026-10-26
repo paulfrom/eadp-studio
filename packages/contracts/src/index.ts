@@ -30,18 +30,18 @@ const metadataFields = {
   prerequisites: Type.Array(PrerequisiteSchema, { maxItems: 100 }), sources: Type.Array(SourceSchema, { maxItems: 100 }),
   businessEvidence: Type.Array(businessEvidenceSchema, { maxItems: 100 }),
   files: Type.Optional(Type.Array(MaterialFileSchema, { maxItems: 1000 })),
-  coreRulesPresent: Type.Boolean(), acceptanceCriteriaPresent: Type.Boolean(),
   openQuestions: Type.Array(object({ blocking: Type.Boolean(), limitation: text, excludedScope: text }), { maxItems: 100 }),
   referencedAssets: Type.Array(SourceSchema, { maxItems: 100 }),
   applicability: Type.Optional(object({ status: Type.Literal('not-applicable'), reason: evidenceText })),
 };
-const scenarioMetadata = { ...metadataFields, kind: Type.Literal('scenario'), templateId: IdSchema, templateRef: FixedReferenceSchema, applicability: Type.Optional(Type.Never()) };
-const requirementMetadata = { ...metadataFields, kind: Type.Literal('requirement'), templateId: IdSchema, templateRef: FixedReferenceSchema };
-const aggregateMetadata = { ...metadataFields, kind: Type.Union([Type.Literal('baseline'), Type.Literal('handoff')]) };
+const businessQuality = { coreRulesPresent: Type.Boolean(), acceptanceCriteriaPresent: Type.Boolean() };
+const scenarioMetadata = { ...metadataFields, kind: Type.Literal('scenario'), flowComplete: Type.Boolean(), templateId: IdSchema, templateRef: FixedReferenceSchema, applicability: Type.Optional(Type.Never()) };
+const requirementMetadata = { ...metadataFields, ...businessQuality, kind: Type.Literal('requirement'), templateId: IdSchema, templateRef: FixedReferenceSchema };
+const aggregateMetadata = { ...metadataFields, ...businessQuality, kind: Type.Union([Type.Literal('baseline'), Type.Literal('handoff')]) };
 export const MaterialMetadataSchema = Type.Union([object(scenarioMetadata), object(requirementMetadata), object(aggregateMetadata)]);
 export type MaterialMetadata = Static<typeof MaterialMetadataSchema>;
 export const ConfirmedMaterialMetadataSchema = Type.Union([
-  object({ ...scenarioMetadata, businessEvidence: Type.Array(businessEvidenceSchema, { minItems: 1, maxItems: 100 }) }),
+  object(scenarioMetadata),
   object({ ...requirementMetadata, businessEvidence: Type.Array(businessEvidenceSchema, { minItems: 1, maxItems: 100 }) }),
   object({ ...aggregateMetadata, businessEvidence: Type.Array(businessEvidenceSchema, { minItems: 1, maxItems: 100 }) }),
 ]);
@@ -51,7 +51,7 @@ export const BuiltinScenarioMetadataSchema = object({
   entityId: IdSchema, kind: Type.Literal('scenario'), title: Type.Literal('通用场景'), summary: Type.String({ minLength: 1, maxLength: 500 }),
   scenarioIds: emptyList, prerequisites: emptyList, sources: emptyList, referencedAssets: emptyList,
   businessEvidence: emptyList, openQuestions: emptyList,
-  coreRulesPresent: Type.Literal(false), acceptanceCriteriaPresent: Type.Literal(false),
+  flowComplete: Type.Literal(false),
 });
 export type BuiltinScenarioMetadata = Static<typeof BuiltinScenarioMetadataSchema>;
 export function isBuiltinScenarioMetadata(value: unknown): value is BuiltinScenarioMetadata { return Value.Check(BuiltinScenarioMetadataSchema, value); }

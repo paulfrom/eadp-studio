@@ -36,7 +36,14 @@ async function materialFileState(file: string): Promise<MaterialFileState> {
   if (!block) return { state: 'unknown' }
   try {
     const value: unknown = JSON.parse(block)
-    return isMaterialMetadata(value) ? { state: 'material', entityId: value.entityId, kind: value.kind } : { state: 'unknown' }
+    // Identity survives an invalid business contract; strict parsing reports the
+    // actual file instead of treating an existing author draft as missing.
+    if (!value || typeof value !== 'object') return { state: 'unknown' }
+    const identity = value as { entityId?: unknown; kind?: unknown }
+    return typeof identity.entityId === 'string' && entityIdPattern.test(identity.entityId) &&
+      ['scenario', 'requirement', 'baseline', 'handoff'].includes(identity.kind as string)
+      ? { state: 'material', entityId: identity.entityId, kind: identity.kind as MaterialMetadata['kind'] }
+      : { state: 'unknown' }
   } catch { return { state: 'unknown' } }
 }
 
@@ -102,8 +109,10 @@ export function parseMaterial(bytes: Buffer, relative: string): MaterialDraft {
   if (bytes[0] === 0xef || text.includes('\r')) throw new Error('材料必须为 UTF-8 无 BOM、LF 换行')
   const match = /^```eadp-metadata\n([\s\S]*?)\n```\n?/.exec(text)
   if (!match) throw new Error('材料缺少 eadp 元数据')
-  const metadata: unknown = JSON.parse(match[1]!)
-  if (!isMaterialMetadata(metadata)) throw new Error('材料元数据无效')
+  let metadata: unknown
+  try { metadata = JSON.parse(match[1]!) }
+  catch (cause) { throw Object.assign(new Error(`材料元数据 JSON 无效：${relative}`, { cause }), { code: 'INVALID_MATERIAL' }) }
+  if (!isMaterialMetadata(metadata)) throw Object.assign(new Error(`材料元数据无效：${relative}`), { code: 'INVALID_MATERIAL' })
   if (!isMaterialFile(metadata, relative)) throw new Error('材料身份与路径不一致')
   const remainder = text.slice(match[0].length)
   return { entityId: metadata.entityId, metadata, body: remainder.startsWith('\n') ? remainder.slice(1) : remainder, sha256: digest(bytes), path: relative }
@@ -149,7 +158,9 @@ export async function saveMaterial(root: string, metadata: MaterialMetadata, bod
   return parseMaterial(Buffer.from(text), relative)
 }
 export function checkMaterial(draft: MaterialDraft): void {
-  const m = draft.metadata
-  if (!isConfirmedMaterialMetadata(m)) throw new Error('请补充明确的业务依据后再确认材料')
-  if (!m.coreRulesPresent || !m.acceptanceCriteriaPresent || m.openQuestions.some(q => q.blocking)) throw new Error('核心规则、验收条件或阻断待澄清项尚未解决')
+  const m = draft.metadata, kind = m.kind
+  if (!isConfirmedMaterialMetadata(m)) throw new Error(kind === 'scenario' ? '场景材料格式无效，请核对流程声明与固定引用' : '请补充明确的业务依据后再确认材料')
+  if (m.kind === 'scenario') {
+    if (!m.flowComplete || m.openQuestions.some(q => q.blocking)) throw new Error('业务流程尚未完整，或存在使流程无法确定的待澄清项')
+  } else if (!m.coreRulesPresent || !m.acceptanceCriteriaPresent || m.openQuestions.some(q => q.blocking)) throw new Error('核心规则、验收条件或阻断待澄清项尚未解决')
 }

@@ -10,7 +10,7 @@ import { applyWriteChanges, describeWriteChanges } from '../../packages/studio-p
 import { conclusionKey, hasWriteProposal, parseWriteProposal, proposalInvalidReason, summarizeWrite } from '../../packages/studio-plugin/src/host/application/scenario-write-proposals.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
-function metadata(): MaterialMetadata { return { entityId: 'scenario-one', kind: 'scenario', title: '退回申请', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, openQuestions: [], referencedAssets: [] } }
+function metadata(): MaterialMetadata { return { entityId: 'scenario-one', kind: 'scenario', title: '退回申请', templateId: 'default', templateRef, scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [], flowComplete: false, openQuestions: [], referencedAssets: [] } }
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const parent = await mkdtemp(path.join(tmpdir(), 'eadp-write-proposals-'))
   const root = path.join(parent, 'project'), localRoot = path.join(parent, 'local')

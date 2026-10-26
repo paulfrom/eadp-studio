@@ -37,7 +37,7 @@ const entity = (id: string, kind: EntityView['kind'] = 'requirement'): EntityVie
   prerequisites: [], authorId: 1 })
 const metadata = (value: EntityView): MaterialMetadata => ({ ...initialMetadata(value, value.scenarioIds,
   value.scenarioIds.map(entityId => ({ projectId: 'project', entityId, version: 1 }))),
-  businessEvidence: [evidence], coreRulesPresent: true, acceptanceCriteriaPresent: true })
+  businessEvidence: [evidence], ...(value.kind === 'scenario' ? { flowComplete: true } : { coreRulesPresent: true, acceptanceCriteriaPresent: true }) })
 async function fixedFiles(directory: string): Promise<void> {
   await mkdir(path.dirname(path.join(directory, evidencePath)), { recursive: true })
   await writeFile(path.join(directory, evidencePath), evidenceBody)
@@ -411,13 +411,13 @@ test('scenario confirmation fixes only the scenario material and leaves related 
 test('a blocked scenario confirmation retains its original saved input after an external correction', async t => {
   const f = await fixture(t, 'scenario'), app = f.app()
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
-  const blocked = await saveMaterial(f.worktree, { ...draft.metadata, coreRulesPresent: false }, '作者原始正文\n' + body)
+  const blocked = await saveMaterial(f.worktree, { ...draft.metadata, flowComplete: false }, '作者原始正文\n' + body)
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: blocked.sha256, method: 'direct' })).ok, false)
   const original = f.local.scenarios.find(record => record.entityId === f.value.id)!.materialConfirmations![0]!
   assert.equal(original.phase, 'recovery'); assert.equal(original.request.body, blocked.body)
-  await saveMaterial(f.worktree, { ...blocked.metadata, coreRulesPresent: true }, '外部修正正文\n' + body)
+  await saveMaterial(f.worktree, { ...blocked.metadata, flowComplete: true }, '外部修正正文\n' + body)
   await app.command({ action: 'retryOperation', operationId: original.operationId }); await app.settle()
-  assert.equal(original.request.body, blocked.body); assert.equal(original.request.metadata!.coreRulesPresent, false)
+  assert.equal(original.request.body, blocked.body); assert.equal(original.request.metadata!.kind === 'scenario' && original.request.metadata!.flowComplete, false)
   assert.equal(original.request.expectedHash, blocked.sha256); assert.equal(original.phase, 'recovery')
   assert.equal(f.calls.prepared.length, 0, 'an old confirmation cannot silently adopt the externally corrected bytes')
 })
@@ -428,8 +428,43 @@ test('a requirement material session receives the shared read-only design contex
   const context = await app.scenarioSessionContext(f.local.tasks[0]!)
   assert.match(context.text, /当前需求 target/)
   assert.match(context.text, /回答规则：先用可读中文归纳本轮明确结论/)
+  assert.match(context.text, /eadp-material-questions/)
   assert.match(context.text, /核心业务规则/)
   assert.deepEqual(context.readPaths, [], 'requirement context never grants paths outside its worktree')
+})
+
+test('material decision questions are a separate, context-bound assistant turn beside an optional write proposal', async t => {
+  const f = await fixture(t), app = f.app(), task = f.local.tasks[0]!
+  await app.scenarioSessionContext(task)
+  await app.command({ action: 'openRequirement', entityId: f.value.id })
+  const before = await readMaterial(f.worktree, 'requirement', f.value.id)
+  const questions = { entityId: f.value.id, questions: [{ key: 'Q1', title: '退款由谁审批？', reason: '当前资料没有说明审批角色。', evidenceIds: [], options: [
+    { key: 'A', label: '客服主管', description: '由客服主管审批。' }, { key: 'B', label: '财务主管', description: '由财务主管审批。' },
+  ] }] }
+  const proposal = { entityId: f.value.id, conclusions: [{ id: 'C1', text: '退款保留审批记录' }], evidenceIds: [], body: `${before.body}\n新增审批记录。` }
+  const response = `本轮保留一项未决选择。\n\`\`\`eadp-material-questions\n${JSON.stringify(questions)}\n\`\`\`\n\`\`\`eadp-write-proposal\n${JSON.stringify(proposal)}\n\`\`\``
+  await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: response })
+
+  const accepted = await f.store.read(), record = accepted.scenarios.find(value => value.entityId === f.value.id)!
+  const turn = record.decisionQuestions?.[task.sessionId]
+  assert.ok(turn)
+  assert.equal(turn.questions[0]!.title, '退款由谁审批？')
+  assert.equal(turn.entityId, f.value.id)
+  assert.equal(turn.taskId, path.basename(f.worktree))
+  assert.equal(record.writeProposal?.status, 'pending', 'the question block and write proposal remain independent')
+  assert.equal((await readMaterial(f.worktree, 'requirement', f.value.id)).body, before.body, 'receiving an option never writes Markdown')
+
+  const projected = await app.state()
+  assert.equal(projected.requirement?.decisionQuestions?.stale, false)
+  assert.equal(projected.requirement?.decisionQuestions?.questions[0]!.options[1]!.label, '财务主管')
+
+  await saveMaterial(f.worktree, before.metadata, `${before.body}\n外部正文变化。`)
+  const stale = await app.state()
+  assert.equal(stale.requirement?.decisionQuestions?.stale, true, 'questions from an old body stay readable and stop accepting answers')
+
+  await app.acceptSessionOutput(task.sessionId, { kind: 'assistant', content: '收到你的回答，我继续整理。' })
+  const afterReply = await f.store.read()
+  assert.equal(afterReply.scenarios.find(value => value.entityId === f.value.id)!.decisionQuestions?.[task.sessionId], undefined, 'a later assistant turn retires old choices')
 })
 
 test('an adoption acknowledgement cannot overwrite a target edited while its response was lost', async t => {
@@ -792,4 +827,17 @@ test('confirmed requirement attachment projections use fixed evidence and reject
   await writeFile(path.join(f.worktree, manifest.path), '{}')
   projection = (await f.app().state()).materialSources!.find(value => value.entityId === f.value.id)!
   assert.equal(projection.sources[0]!.status, 'failed'); assert.match(projection.sources[0]!.error!, /hash|哈希/)
+})
+
+
+test('a flow-only scenario with no formal evidence confirms through the fixed candidate and backend acceptance pipeline', async t => {
+  const f = await fixture(t, 'scenario'), app = f.app()
+  const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
+  const ready = await saveMaterial(f.worktree, { ...draft.metadata, businessEvidence: [], flowComplete: true, openQuestions: [{ blocking: false, limitation: '审批金额阈值在需求确认', excludedScope: '具体金额与计算口径' }] }, '提交申请 → 按金额审批 → 通过后执行，拒绝退回。')
+  const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: ready.sha256, method: 'direct' })
+  assert.equal(reply.ok, true, JSON.stringify(reply)); await app.settle()
+  assert.equal(f.local.operations[0]!.phase, 'accepted')
+  assert.deepEqual(f.calls.commits[0], [ready.path])
+  assert.deepEqual(f.value.current!.metadata.businessEvidence, [])
+  assert.equal(f.value.current!.metadata.kind === 'scenario' && f.value.current!.metadata.flowComplete, true)
 })

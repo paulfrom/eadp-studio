@@ -55,7 +55,7 @@ test('consistency comparisons: sealed submission, table idempotency and a pure-S
     return { entityId: value.id, kind: value.kind, title: value.title, templateId: value.templateId!, templateRef: value.templateRef!,
       scenarioIds: value.scenarioIds, prerequisites: value.prerequisites, sources: value.scenarioSources ?? [],
       businessEvidence: [{ label: '订单访谈', reference: '已选择的业务访谈', files: [{ path: evidencePath, sha256: hash(evidence) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 2 }] }],
-      coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [], referencedAssets: [] } as MaterialMetadata
+      ...(value.kind === 'scenario' ? { flowComplete: true } : { coreRulesPresent: true, acceptanceCriteriaPresent: true }), openQuestions: [], referencedAssets: [] } as MaterialMetadata
   }
   let candidateNumber = 0
   async function acceptMaterial(value: EntityView, metadata: MaterialMetadata) {

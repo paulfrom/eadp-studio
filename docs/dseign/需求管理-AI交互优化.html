@@ -122,7 +122,12 @@
   .choice:hover{border-color:var(--accent);color:var(--tx)}
   .choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:#dde6ff}
   .choice[disabled]{opacity:.42;cursor:not-allowed}
-  .choice.is-answered::after{content:" ✓";color:var(--ok)}
+  .choice.is-selected::after{content:" ✓";color:var(--accent)}
+  .decision-answer-dock{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--tx-2);font-size:11px}
+  .decision-answer-dock[hidden]{display:none}
+  .decision-answer-dock span{flex:1;line-height:1.5}
+  .decision-answer-dock button{height:28px;padding:0 10px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#0b0d12;font-size:11px;cursor:pointer}
+  .decision-answer-dock button:hover{filter:brightness(1.08)}
   .evidence{font-size:11.5px;color:var(--tx-3)}
   .evidence summary{display:flex;align-items:center;gap:5px;width:max-content;list-style:none;cursor:pointer;padding:3px 0;border-radius:5px}
   .evidence summary::-webkit-details-marker{display:none}
@@ -494,6 +499,11 @@
               </div>
             </section>
           </article>
+        </div>
+
+        <div class="decision-answer-dock" id="decisionAnswerDock" hidden>
+          <span id="decisionAnswerStatus">插入后仍需发送；材料待澄清门禁由 Markdown 决定。</span>
+          <button type="button" id="insertDecisionAnswers">插入所选回答</button>
         </div>
 
         <form class="composer" id="composer">
@@ -883,6 +893,9 @@
   const composer = $('#composer');
   const msgField = $('#msg');
   const sendBtn = $('#sendBtn');
+  const decisionAnswerDock = $('#decisionAnswerDock');
+  const insertDecisionAnswersBtn = $('#insertDecisionAnswers');
+  let decisionAnswerInserted = false;
   const drawer = $('#consistencyDrawer');
   const backdrop = $('#drawerBackdrop');
   const consEmpty = $('#consEmpty');
@@ -901,14 +914,13 @@
   let confirmed = false;
   let submitting = false;
   let consistency = 'none';
-  const decisions = new Set();
   const declared = { core: true, acceptance: true };
   let evidenceFixed = false;
   let structure = false;
   let toastTimer = 0;
   let compareTimer = 0;
 
-  function blockingOpen() { return Math.max(0, 2 - decisions.size); }
+  function blockingOpen() { return 2; }
   function businessBlocked() { return blockingOpen() > 0 || !declared.core || !declared.acceptance; }
   function evidenceBlocked() { return !evidenceFixed; }
   function blockedGates() { return (businessBlocked() ? 1 : 0) + (evidenceBlocked() ? 1 : 0); }
@@ -1137,19 +1149,6 @@
     setTimeout(() => runConsistency(true), 600);
   }
 
-  function markClarified(key) {
-    const item = $('#clarifyList li[data-key="' + key + '"]');
-    if (!item || item.classList.contains('is-done')) return false;
-    item.classList.add('is-done');
-    const severity = $('.sev', item);
-    if (severity) { severity.textContent = '已答'; severity.className = 'sev norm'; }
-    const link = $('.link', item);
-    if (link) link.remove();
-    answered = Math.min(8, answered + 1);
-    renderClarify();
-    return true;
-  }
-
   stageCta.addEventListener('click', () => {
     if (!written) { openSheet(); return; }
     openConfirm();
@@ -1191,24 +1190,33 @@
   });
 
   $$('.decision').forEach(decision => {
-    const key = decision.dataset.key;
     $$('.choice', decision).forEach(choice => {
       choice.addEventListener('click', () => {
-        if (choice.disabled) return;
         $$('.choice', decision).forEach(other => {
           other.setAttribute('aria-pressed', String(other === choice));
-          other.disabled = other !== choice;
+          other.classList.toggle('is-selected', other === choice);
         });
-        choice.classList.add('is-answered');
-        if (!decisions.has(key)) {
-          decisions.add(key);
-          markClarified(key);
-        }
-        const remaining = $$('.decision').filter(item => !$('.choice[aria-pressed="true"]', item)).length;
-        $('#decideCount').textContent = remaining ? remaining + ' 项' : '已答复';
-        refreshFlow();
+        decisionAnswerInserted = false;
+        const selected = $$('.decision').filter(item => $('.choice[aria-pressed="true"]', item)).length;
+        $('#decideCount').textContent = selected ? `已选 ${selected}/2 项` : '2 项待答';
+        decisionAnswerDock.hidden = selected === 0;
       });
     });
+  });
+
+  insertDecisionAnswersBtn.addEventListener('click', () => {
+    const selected = $$('.decision').flatMap(decision => {
+      const choice = $('.choice[aria-pressed="true"]', decision);
+      return choice ? [{ question: $('.decision-q', decision).textContent.trim(), answer: choice.textContent.trim() }] : [];
+    });
+    if (!selected.length) return;
+    const lines = selected.map((item, index) => `${index + 1}. ${item.question}\n   我的选择：${item.answer}`);
+    const prefix = msgField.value.trim() ? '\n\n' : '';
+    msgField.value += `${prefix}我对本轮问题的回答是：\n${lines.join('\n')}\n`;
+    decisionAnswerInserted = true;
+    decisionAnswerDock.hidden = true;
+    msgField.focus();
+    showToast('已插入输入草稿；发送后 AI 才会收到回答，选择本身不会改变确认门禁。');
   });
 
   $$('#clarifyList .link').forEach(link => {
@@ -1319,6 +1327,10 @@
     $('.lead', turn).textContent = text;
     $('.transcript').appendChild(turn);
     msgField.value = '';
+    if (decisionAnswerInserted && text.includes('我对本轮问题的回答是：')) {
+      decisionAnswerInserted = false;
+      $('#decideCount').textContent = '已发送，等待 AI 下一轮';
+    }
     turn.scrollIntoView({ behavior: 'smooth', block: 'end' });
   });
 

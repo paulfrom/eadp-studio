@@ -26,7 +26,7 @@ async function fixture(t: test.TestContext) {
     occupation: { occupationId: 'occupation', generation: 1, taskId: path.basename(worktree), clientId: local.clientId, expectedRevision: 1, entityId: 'scenario', ownerId: 1, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' } }
   const metadata: MaterialMetadata = { entityId: entity.id, kind: 'scenario', title: entity.title, templateId: 'default', templateRef,
     scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [{ label: '业务访谈', reference: 'synthetic:approved', files: [{ path: evidencePath, sha256: digest(evidence) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }],
-    openQuestions: [], coreRulesPresent: true, acceptanceCriteriaPresent: true, referencedAssets: [] }
+    openQuestions: [], flowComplete: true, referencedAssets: [] }
   const draft = await saveMaterial(worktree, metadata, '## 核心业务规则\n\n只有作者可确认业务材料。\n\n## 验收条件\n\n作者确认后形成可追溯的固定版本。\n')
   const task: TaskView = { projectId: 'project', entityId: entity.id, purpose: 'material', worktree, sessionId: 'original-session', inputHash: '' }
   // A historical task precedes the original task, and the selected project has changed.
