@@ -43,7 +43,7 @@ export interface PrototypeStartup {
   status: 'pending' | 'opening' | 'sending' | 'sent' | 'unknown' | 'blocked'; message?: string;
   task?: Pick<TaskView, 'projectId' | 'entityId' | 'sessionId' | 'purpose' | 'inputHash' | 'worktree'>;
 }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding; prototypeStart?: PrototypeStartup }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; baseHead?: string; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; entityId: string; version: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding; prototypeStart?: PrototypeStartup }
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
 export interface StudioState {

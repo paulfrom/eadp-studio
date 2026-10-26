@@ -19,6 +19,7 @@ import { applyWriteChanges, describeWriteChanges } from './material-write-change
 import { syncProjectContext } from './scenario-package.ts'
 import type { TemplateCatalogResponse } from './scenario-templates.ts'
 import { RequirementSaves, type RequirementSaveOperation } from './requirement-saves.ts'
+import { MaterialStatusReports, type LocalMaterialStatusReport } from './material-status.ts'
 
 /** Retains one exact backend request while a local template rebind is being reconciled. */
 export interface MaterialTemplateBinding {
@@ -40,6 +41,7 @@ export interface ScenarioRecord {
   requirementSaves?: RequirementSaveOperation[];
   /** Exact confirmation requests and their accepted progress, retained across recovery choices. */
   materialConfirmations?: MaterialConfirmationOperation[];
+  statusReports?: LocalMaterialStatusReport[];
 }
 export interface ScenarioDependencies {
   entity(id: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView }>
@@ -53,15 +55,23 @@ export class ScenarioWorkspaces {
   readonly sources: MaterialSources
   readonly requirementSaves: RequirementSaves
   readonly confirmationChecks: MaterialConfirmationChecks
+  readonly statusReports: MaterialStatusReports
   get documents(): ScenarioDocumentService { return new ScenarioDocumentService(this.store.directory) }
   activeEntityId: string | undefined
   private observer: ScenarioFileObserver | undefined
   private observerDirectory: string | undefined
   constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {
     this.sources = new MaterialSources(store, ports, projects, deps, (entityId, projectId) => this.record(entityId, projectId))
+    this.statusReports = new MaterialStatusReports(store, api, ports, { record: (entityId, projectId) => this.record(entityId, projectId), deliver: work => deps.deliver(work) })
     this.requirementSaves = new RequirementSaves(store, api, {
       context: (entityId, projectId) => this.requirementContext(entityId, projectId),
       owned: entity => deps.owned(entity), record: (entityId, projectId) => this.record(entityId, projectId), documents: () => this.documents,
+      applied: operation => {
+        void this.store.read().then(local => {
+          const task = local.tasks.find(value => path.resolve(value.worktree) === path.resolve(operation.root!))
+          return this.statusReports.report({ projectId: operation.projectId, entityId: operation.entityId, trigger: 'save', worktree: operation.root!, ...(task?.baseHead ? { baseHead: task.baseHead } : {}) })
+        }).catch(() => undefined)
+      },
     })
     this.confirmationChecks = new MaterialConfirmationChecks(store, ports, this, projects)
   }

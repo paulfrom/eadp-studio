@@ -136,6 +136,7 @@ export class MaterialConfirmations {
     if (previous && previous.phase !== 'accepted') previous.phase = 'superseded'
     ;(owner.materialConfirmations ??= []).push(operation)
     await this.store.save()
+    void this.workspaces.statusReports.report({ projectId: operation.projectId, entityId: operation.entityId, trigger: 'pre-confirmation', worktree: task.worktree, baseHead: remote.project.recognizedHead ?? task.baseHead })
     await this.advance(owner, operation)
     return operation
   }

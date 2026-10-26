@@ -19,6 +19,8 @@ export interface HostPorts {
   prompt(sessionId: string, text: string): Promise<void>
   /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */
   compareConsistency?(input: ConsistencyModelInput, signal: AbortSignal): Promise<string>
+  /** One-shot short-text inference with no Agent tools, Session persistence, or Git access. */
+  summarize?(input: { subject: string; facts: string }, signal: AbortSignal): Promise<string>
   cancelSession?(sessionId: string): Promise<void>
   /** Release the Agent handles owned by one task worktree; other tasks stay live. */
   releaseTask?(worktree: string): Promise<void>

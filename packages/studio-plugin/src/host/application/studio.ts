@@ -499,6 +499,7 @@ export class StudioApplication {
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
       ] }
     if (selected) await this.scheduleRequirementRecoveries(selected.id)
+    if (selected) this.scenarios.statusReports.resume(selected.id)
     this.lastState = state
     return state
   }
@@ -627,20 +628,26 @@ export class StudioApplication {
     const accountId = this.store.accountId, directory = this.store.directory
     if (!accountId) throw new Error('请登录后打开任务')
     const local = await this.taskAccount(accountId, () => this.store.read())
+    const claimed = !entity.occupation
     let current = entity
     if (!current.occupation) current = await this.taskAccount(accountId, () => this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: 'design' }))
     const token = await this.taskAccount(accountId, () => this.requireOwned(current))
     const sessions = local.tasks.filter(t => t.projectId === remote.project.id && t.entityId === entity.id && (t.purpose === 'material' || t.purpose === 'handoff') && path.basename(t.worktree) === token.taskId)
     const activeSessionId = local.scenarios.find(record => record.projectId === remote.project.id && record.entityId === entity.id)?.activeSessionId
     const existing = sessions.find(task => task.sessionId === activeSessionId) ?? sessions.at(-1)
-    if (existing) return existing
+    if (existing) {
+      if (claimed) void this.scenarios.statusReports.report({ projectId: remote.project.id, entityId: entity.id, trigger: 'occupation-start', worktree: existing.worktree, baseHead: remote.project.recognizedHead! })
+      return existing
+    }
     const project = local.projects.find(p => p.id === remote.project.id)!
     if (!project) throw new Error('原项目未在本机登记')
     await this.taskAccount(accountId, () => this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!))
     const worktree = path.join(directory, 'worktrees', remote.project.id, token.taskId)
     await this.taskAccount(accountId, () => this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/${token.generation}`, remote.project.recognizedHead!))
-    const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: entity.kind === 'handoff' ? 'handoff' : 'material', inputHash: entity.current?.fixed.sha256 ?? '', worktree }
-    if (entity.kind === 'handoff') local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === task.purpose)); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save()); return task
+    const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: entity.kind === 'handoff' ? 'handoff' : 'material', inputHash: entity.current?.fixed.sha256 ?? '', worktree, baseHead: remote.project.recognizedHead! }
+    if (entity.kind === 'handoff') local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === task.purpose)); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save())
+    if (claimed) void this.scenarios.statusReports.report({ projectId: remote.project.id, entityId: entity.id, trigger: 'occupation-start', worktree: task.worktree, baseHead: remote.project.recognizedHead! })
+    return task
   }
   private async prototypeTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
     if (entity.kind !== 'requirement' || !entity.current) throw new Error('请先确认唯一需求材料')

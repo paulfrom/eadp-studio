@@ -33,6 +33,7 @@ interface Dependencies {
   owned(entity: EntityView): Promise<OccupationToken>
   record(entityId: string, projectId?: string): Promise<RequirementSaveOwner>
   documents(): ScenarioDocumentService
+  applied?(operation: RequirementSaveOperation): void
 }
 class SaveProblem extends Error { constructor(readonly reason: Reason, message: string) { super(message) } }
 class ScopeChanged extends Error {}
@@ -239,6 +240,7 @@ export class RequirementSaves {
     if ((await this.read(operation)).sha256 !== operation.document!.sha256) throw new SaveProblem('conflict', '正文在目录请求期间发生变化，请选择当前内容后继续')
     operation.status = 'applied'; operation.message = '需求已保存'
     await this.persist(operation)
+    this.deps.applied?.(operation)
   }
   private async run(owner: RequirementSaveOwner, operation: RequirementSaveOperation): Promise<void> {
     try {
