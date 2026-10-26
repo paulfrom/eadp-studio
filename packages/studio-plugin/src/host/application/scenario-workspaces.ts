@@ -62,15 +62,15 @@ export class ScenarioWorkspaces {
   private observerDirectory: string | undefined
   constructor(readonly store: StudioStore, readonly api: CollaborationClient, readonly ports: HostPorts, readonly projects: ProjectWorkspaces, readonly deps: ScenarioDependencies) {
     this.sources = new MaterialSources(store, ports, projects, deps, (entityId, projectId) => this.record(entityId, projectId))
-    this.statusReports = new MaterialStatusReports(store, api, ports, { record: (entityId, projectId) => this.record(entityId, projectId), deliver: work => deps.deliver(work) })
+    this.statusReports = new MaterialStatusReports(store, api, ports, {
+      record: (entityId, projectId) => this.record(entityId, projectId), deliver: work => deps.deliver(work),
+      baseHead: async worktree => (await this.store.read()).tasks.find(value => path.resolve(value.worktree) === path.resolve(worktree))?.baseHead,
+    })
     this.requirementSaves = new RequirementSaves(store, api, {
       context: (entityId, projectId) => this.requirementContext(entityId, projectId),
       owned: entity => deps.owned(entity), record: (entityId, projectId) => this.record(entityId, projectId), documents: () => this.documents,
       applied: operation => {
-        void this.store.read().then(local => {
-          const task = local.tasks.find(value => path.resolve(value.worktree) === path.resolve(operation.root!))
-          return this.statusReports.report({ projectId: operation.projectId, entityId: operation.entityId, trigger: 'save', worktree: operation.root!, ...(task?.baseHead ? { baseHead: task.baseHead } : {}) })
-        }).catch(() => undefined)
+        void this.statusReports.report({ projectId: operation.projectId, entityId: operation.entityId, trigger: 'save', worktree: operation.root! })
       },
     })
     this.confirmationChecks = new MaterialConfirmationChecks(store, ports, this, projects)

@@ -15,6 +15,7 @@ export interface MaterialStatusReportInput {
 interface Dependencies {
   record(entityId: string, projectId?: string): Promise<ScenarioRecord>
   deliver(work: () => Promise<void>): void
+  baseHead?(worktree: string): Promise<string | undefined>
 }
 interface StatusPath { path: string; status: string }
 const LIMIT = 500
@@ -31,39 +32,48 @@ export class MaterialStatusReports {
     private readonly ports: Pick<HostPorts, 'git' | 'gitLocal' | 'summarize'>, private readonly deps: Dependencies) {}
 
   async report(input: MaterialStatusReportInput): Promise<void> {
-    const owner = await this.deps.record(input.entityId, input.projectId)
-    const record: LocalMaterialStatusReport = { id: randomUUID(), projectId: input.projectId, entityId: input.entityId, trigger: input.trigger, shared: false }
-    ;(owner.statusReports ??= []).push(record)
-    await this.store.save()
-    this.deps.deliver(async () => {
-      try {
-        const state = await this.ports.git.state(input.worktree)
-        const paths = await this.changedPaths(input.worktree)
-        let summary = mechanicalSummary(paths)
-        if (this.ports.summarize) {
-          try {
-            const ai = await this.ports.summarize({ subject: '本地材料 git 状态摘要', facts: JSON.stringify({ entityId: input.entityId, trigger: input.trigger, baseHead: input.baseHead ?? state.head, worktreeHead: state.head, paths }) }, AbortSignal.timeout(30_000))
-            if (ai.trim()) summary = `${summary}；${ai.trim()}`
-          } catch { /* AI 摘要失败只保留机械摘要 */ }
-        }
-        record.submission = { idempotencyKey: record.id, id: record.id, entityId: input.entityId, trigger: input.trigger,
-          baseHead: input.baseHead ?? state.head, worktreeHead: state.head, changedPathCount: paths.length, summary: summary.slice(0, LIMIT) }
-        await this.store.save()
-        await this.submit(record)
-      } catch (error) { record.message = error instanceof Error ? error.message : '状态记录待核对'; await this.store.save() }
-    })
+    let record: LocalMaterialStatusReport | undefined
+    try {
+      const owner = await this.deps.record(input.entityId, input.projectId)
+      record = { id: randomUUID(), projectId: input.projectId, entityId: input.entityId, trigger: input.trigger, shared: false }
+      ;(owner.statusReports ??= []).push(record)
+      await this.store.save()
+      this.deps.deliver(() => this.collect(input, record!))
+    } catch (error) {
+      if (record) await this.fail(record, error)
+    }
   }
 
   /** Re-deliver unfinished submissions; a successful POST is idempotent on its record key. */
   resume(projectId: string): void {
-    void this.store.read().then(local => {
+    void this.store.read().then(async local => {
       for (const owner of local.scenarios.filter(record => record.projectId === projectId)) {
         for (const record of owner.statusReports ?? []) {
           if (record.shared || !record.submission) continue
-          this.deps.deliver(() => this.submit(record))
+          try { this.deps.deliver(() => this.submit(record)) }
+          catch (error) { await this.fail(record, error) }
         }
       }
     }).catch(() => undefined)
+  }
+
+  private async collect(input: MaterialStatusReportInput, record: LocalMaterialStatusReport): Promise<void> {
+    try {
+      const state = await this.ports.git.state(input.worktree)
+      const paths = await this.changedPaths(input.worktree)
+      const baseHead = input.baseHead ?? (await this.deps.baseHead?.(input.worktree)) ?? state.head
+      let summary = mechanicalSummary(paths)
+      if (this.ports.summarize) {
+        try {
+          const ai = await this.ports.summarize({ subject: '本地材料 git 状态摘要', facts: JSON.stringify({ entityId: input.entityId, trigger: input.trigger, baseHead, worktreeHead: state.head, paths }) }, AbortSignal.timeout(30_000))
+          if (ai.trim()) summary = `${summary}；${ai.trim()}`
+        } catch { /* AI 摘要失败只保留机械摘要 */ }
+      }
+      record.submission = { idempotencyKey: record.id, id: record.id, entityId: input.entityId, trigger: input.trigger,
+        baseHead, worktreeHead: state.head, changedPathCount: paths.length, summary: summary.slice(0, LIMIT) }
+      await this.store.save()
+      await this.submit(record)
+    } catch (error) { await this.fail(record, error) }
   }
 
   private async submit(record: LocalMaterialStatusReport): Promise<void> {
@@ -71,7 +81,12 @@ export class MaterialStatusReports {
     try {
       await this.api.request('POST', `/v1/projects/${encodeURIComponent(record.projectId)}/entities/${encodeURIComponent(record.entityId)}/status-reports`, record.submission)
       record.shared = true; delete record.message; await this.store.save()
-    } catch (error) { record.message = error instanceof Error ? error.message : '状态记录待核对'; await this.store.save() }
+    } catch (error) { record.shared = false; await this.fail(record, error) }
+  }
+
+  private async fail(record: LocalMaterialStatusReport, error: unknown): Promise<void> {
+    record.message = error instanceof Error ? error.message : '状态记录待核对'
+    try { await this.store.save() } catch { /* 状态记录不得影响原业务动作 */ }
   }
 
   private async changedPaths(worktree: string): Promise<StatusPath[]> {
