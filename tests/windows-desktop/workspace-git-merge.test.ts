@@ -32,7 +32,12 @@ test('merge reports a clean merge commit and conflicted files, completeMerge fin
   await writeFile(path.join(root, 'b.md'), 'remote\n'); const remote = await commitAll('remote')
   await exec('git', ['checkout', 'candidate'], { cwd: root })
   const clean = await git.merge(root, remote, identity)
-  assert.equal(clean.status, 'merged')
+  if (clean.status !== 'merged') assert.fail('expected a clean merge')
+  const cleanHead = (await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim()
+  assert.equal(clean.commit, cleanHead)
+  const cleanParents = (await exec('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], { cwd: root })).stdout.trim().split(' ')
+  assert.equal(cleanParents.length, 3)
+  assert.ok(cleanParents.every(sha => /^[a-f0-9]{40}$/.test(sha)))
   // 冲突场景：双方改同一行
   await exec('git', ['checkout', '-b', 'conflict', base], { cwd: root })
   await writeFile(path.join(root, 'a.md'), 'candidate line\n'); await commitAll('candidate edit')
@@ -43,6 +48,9 @@ test('merge reports a clean merge commit and conflicted files, completeMerge fin
   assert.equal(conflicted.status, 'conflicted')
   assert.deepEqual(conflicted.files, ['a.md'])
   await writeFile(path.join(root, 'a.md'), 'merged line\n')
+  const stagedBeforeInvalidIdentity = (await exec('git', ['diff', '--cached', '--name-only'], { cwd: root })).stdout
+  await assert.rejects(git.completeMerge(root, ['a.md'], { ...identity, name: '' }), /Git 提交身份无效。/)
+  assert.equal((await exec('git', ['diff', '--cached', '--name-only'], { cwd: root })).stdout, stagedBeforeInvalidIdentity)
   const merged = await git.completeMerge(root, ['a.md'], identity)
   assert.match(merged, /^[a-f0-9]{40}$/)
   assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim(), merged)

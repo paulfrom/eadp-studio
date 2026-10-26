@@ -39,6 +39,9 @@ const TRANSFER_TIMEOUT_MS = 1_800_000
 const SHA = /^[a-f0-9]{40}$/
 const branchName = (value: string) => { if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) || value.includes('..') || value.endsWith('/') || value.endsWith('.lock') || value.includes('//')) throw new Error('Git 分支名无效。'); return value }
 const fixedSha = (value: string) => { if (!SHA.test(value)) throw new Error('必须指定完整固定 Git SHA。'); return value }
+const validateIdentity = (identity: GitIdentity): void => {
+  if (!identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交身份无效。')
+}
 export function gitRelativePath(value: string): string {
   if (!value || value.includes('\\') || value.includes('\0') || value.includes(':') || value.startsWith('/') || value.split('/').some(part => !part || part === '..' || part === '.' || part.toLowerCase() === '.git')) throw new Error('Git 文件相对路径无效。')
   return value
@@ -89,7 +92,7 @@ export class WorkspaceGit {
   /** Three-way merge of one fetched commit; conflicted paths keep the merge state for AI resolution. */
   async merge(root: string, commit: string, identity: GitIdentity): Promise<GitMergeResult> {
     fixedSha(commit)
-    if (!identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交身份无效。')
+    validateIdentity(identity)
     await this.guardLocal(root)
     const result = await this.result(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'merge', '--no-ff', '--no-edit', fixedSha(commit)])
     if (result.exitCode === 0) return { status: 'merged', commit: fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim()) }
@@ -99,6 +102,7 @@ export class WorkspaceGit {
   }
   /** Finish a conflicted merge after the conflict files hold their resolved bytes. */
   async completeMerge(root: string, files: readonly string[], identity: GitIdentity): Promise<string> {
+    validateIdentity(identity)
     if (!files.length) throw new Error('没有待完成的合并冲突文件。')
     await this.command(root, ['add', '--', ...files.map(gitRelativePath)])
     await this.command(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit', '--no-edit'])
@@ -178,7 +182,8 @@ export class WorkspaceGit {
     return result.stdout.split('\0').filter(Boolean).map(gitRelativePath)
   }
   async commitFiles(root: string, files: readonly string[], message: string, identity: GitIdentity): Promise<string> {
-    if (!files.length || !message.trim() || message.length > 500 || !identity.name.trim() || !identity.email.includes('@') || /[\r\n\0]/.test(identity.name + identity.email)) throw new Error('Git 提交信息无效。')
+    if (!files.length || !message.trim() || message.length > 500) throw new Error('Git 提交信息无效。')
+    validateIdentity(identity)
     const paths = files.map(gitRelativePath)
     const staged = await this.command(root, ['diff', '--cached', '--name-only', '-z'])
     if (staged.stdout) throw new Error('存在其他暂存改动，请先处理后再固定材料。')
