@@ -70,7 +70,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
     async conditionalUpdate(directory: string, branch: string, expected: string, next: string) { assert.equal(directory, worktree); assert.equal(branch, 'main'); assert.equal(expected, remoteHead); remoteHead = next; await step('update') },
   } } as unknown as HostPorts
   const lanes: BackgroundLane[] = []
-  const create = (nextStore = store) => {
+  const create = (nextStore = store, now: () => number = Date.now) => {
     const lane = new BackgroundLane(); lanes.push(lane)
     const runner = new GitIntegrations(nextStore, api, ports, lane, { async accepted(operation, accepted, originalTask) {
       assert.equal(operation.phase, 'accepted')
@@ -79,7 +79,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
       await step('delivery')
       if (failures.delivery) throw new Error('delivery not recorded')
       delivered.push({ operation: operation.id, integration: accepted.id, task: structuredClone(originalTask) })
-    } })
+    } }, now)
     return { runner, lane }
   }
   t.after(async () => { for (const lane of lanes) await lane.settle(); await rm(root, { recursive: true, force: true }) })
@@ -119,6 +119,24 @@ test('a lost prepare response recovers the original receipt after restart withou
   assert.equal(f.calls.filter(value => value === 'push').length, 1)
   assert.equal(f.calls.filter(value => value === 'prepare').length, 1)
   assert.equal(f.completeEffects, 1)
+})
+
+test('unknown operations recover automatically at most once per retry interval', async t => {
+  const f = await fixture(t)
+  let now = 1_000_000
+  const { runner, lane } = f.create(f.store, () => now)
+  f.failures.prepareReply = true
+  const operation = await runner.submit(f.task, f.draft, f.prepare)
+  await lane.settle()
+  assert.equal(operation.phase, 'unknown')
+  const callsAfterFailure = f.calls.length
+  runner.recover(operation)
+  await lane.settle()
+  assert.equal(f.calls.length, callsAfterFailure)
+  now += 61_000
+  runner.recover(operation)
+  await lane.settle()
+  assert.equal(operation.phase, 'accepted')
 })
 
 test('a lost complete response queries the accepted integration without completing it twice', async t => {

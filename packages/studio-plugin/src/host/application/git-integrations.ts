@@ -17,9 +17,11 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
 
 /** Owns one fixed candidate's Git publication and backend acceptance, independently of later business work. */
 export class GitIntegrations {
+  private static readonly RETRY_INTERVAL_MS = 60_000
   private readonly running = new Map<string, Promise<void>>()
+  private readonly attempts = new Map<string, number>()
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts,
-    private readonly lane: BackgroundLane, private readonly deps: Dependencies) {}
+    private readonly lane: BackgroundLane, private readonly deps: Dependencies, private readonly now: () => number = Date.now) {}
 
   /** Persist the exact candidate and original task before any remote work can begin. */
   async submit(task: TaskView, draft: MaterialDraft, prepare: MaterialIntegrationRequest): Promise<PendingOperation> {
@@ -54,11 +56,20 @@ export class GitIntegrations {
     this.lane.schedule(`${operation.phase === 'accepted' ? 'accepted' : 'operation'}:${identity}`, () => this.resume(operation))
   }
 
+  /** Re-drive a failed integration from projection reads; one automatic attempt per interval. */
+  recover(operation: PendingOperation): void {
+    if (operation.phase !== 'unknown') return
+    const identity = `${operation.accountId}:${operation.projectId}:${operation.id}`
+    if (this.now() - (this.attempts.get(identity) ?? 0) < GitIntegrations.RETRY_INTERVAL_MS) return
+    this.schedule(operation)
+  }
+
   /** Reconcile the original receipt and candidate; an accepted operation only replays delivery. */
   resume(operation: PendingOperation): Promise<void> {
     const identity = `${operation.accountId}:${operation.projectId}:${operation.id}`
     const previous = this.running.get(identity)
     if (previous) return previous
+    this.attempts.set(identity, this.now())
     const started = this.run(operation)
     this.running.set(identity, started)
     const settled = (): void => { if (this.running.get(identity) === started) this.running.delete(identity) }

@@ -445,6 +445,7 @@ export class StudioApplication {
       const original = local.tasks.find(task => task.projectId === operation.projectId && task.entityId === operation.entityId && task.worktree === operation.task.worktree && task.sessionId === operation.task.sessionId && task.purpose === operation.task.purpose)
       if (original) this.scheduleAcceptedWork(operation, operation.accepted, original)
     }
+    for (const operation of local.operations) if (operation.accountId === account.id && allowed.has(operation.projectId)) this.integrations.recover(operation)
     for (const task of local.tasks) if (allowed.has(task.projectId) && task.prototypeStart && task.prototypeStart.status !== 'sent') this.schedulePrototypeStartup(task, account.id)
     const projectTemplates = remote?.project.initializationStatus === 'ready' ? await this.templates.catalog(remote.project) : undefined
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
