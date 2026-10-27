@@ -31,6 +31,26 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   const base = '/v1/projects/:projectId';
   read(base, (a, p) => service.state(a, p.projectId!));
   write('POST', `${base}/initialize`, contract.InitializeProjectSchema, (a, p, b) => service.initializeProject(a, p.projectId!, b));
+  read(`${base}/prototype`, (a, p) => service.prototype(a, p.projectId!));
+  read(`${base}/prototype/tasks/:taskId`, (a, p) => service.prototypeTask(a, p.projectId!, p.taskId!));
+  write('POST', `${base}/prototype/tasks`, contract.CreatePrototypeTaskSchema, (a, p, b) => service.createPrototypeTask(a, p.projectId!, b));
+  write('POST', `${base}/prototype/tasks/:taskId/development-claims`, contract.UpdatePrototypeClaimsSchema, (a, p, b) => service.extendPrototypeClaims(a, p.projectId!, p.taskId!, b));
+  write('PUT', `${base}/prototype/tasks/:taskId/reference-requirements`, contract.UpdatePrototypeReferencesSchema, (a, p, b) => service.updatePrototypeReferences(a, p.projectId!, p.taskId!, b));
+  write('PUT', `${base}/prototype/tasks/:taskId/write-scope`, contract.UpdatePrototypeScopeSchema, (a, p, b) => service.updatePrototypeScope(a, p.projectId!, p.taskId!, b));
+  write('POST', `${base}/prototype/tasks/:taskId/cancel`, contract.CancelPrototypeTaskSchema, (a, p, b) => service.cancelPrototypeTask(a, p.projectId!, p.taskId!, b));
+  write('POST', `${base}/prototype/tasks/:taskId/admin-release`, contract.ReleasePrototypeTaskSchema, (a, p, b) => service.releasePrototypeTask(a, p.projectId!, p.taskId!, b));
+  app.get<{ Params: { projectId: string }; Querystring: { limit?: string; offset?: string } }>(`${base}/prototype/baselines`, request => {
+    const limit = Number(request.query.limit ?? '20'), offset = Number(request.query.offset ?? '0');
+    requireCondition(Number.isInteger(limit) && limit >= 1 && limit <= 100 && Number.isInteger(offset) && offset >= 0, 'INVALID_PAGINATION', 'Baseline queries require limit 1..100 and a non-negative offset', 422);
+    return service.prototypeBaselines(request.actor, request.params.projectId, limit, offset);
+  });
+  write('POST', `${base}/prototype/integrations`, contract.PrototypeIntegrationSchema, (a, p, b) => service.preparePrototypeIntegration(a, p.projectId!, b));
+  read(`${base}/prototype/integrations/:integrationId`, (a, p) => service.prototypeIntegration(a, p.projectId!, p.integrationId!));
+  write('POST', `${base}/prototype/integrations/:integrationId/complete`, contract.CompletePrototypeIntegrationSchema, (a, p, b) => service.completePrototypeIntegration(a, p.projectId!, p.integrationId!, b));
+  write('POST', `${base}/prototype/integrations/:integrationId/abort`, contract.AbortPrototypeIntegrationSchema, (a, p, b) => service.abortPrototypeIntegration(a, p.projectId!, p.integrationId!, b));
+  read(`${base}/prototype/adoptions`, (a, p) => service.prototypeAdoptions(a, p.projectId!));
+  write('POST', `${base}/prototype/adoptions`, contract.PrototypeAdoptSchema, (a, p, b) => service.adoptPrototype(a, p.projectId!, b));
+  write('POST', `${base}/prototype/adoptions/:adoptionId/success`, contract.PrototypeAdoptionSuccessSchema, (a, p, b) => service.prototypeAdoptionSuccess(a, p.projectId!, p.adoptionId!, b));
   write('POST', `${base}/entities`, contract.ReserveEntitySchema, (a, p, b) => service.reserve(a, p.projectId!, b));
   write('PUT', `${base}/entities/:entityId`, contract.UpdateEntitySchema, (a, p, b) => service.updateEntity(a, p.projectId!, p.entityId!, b));
   read(`${base}/entities/:entityId/revision-impact`, (a, p) => service.revisionImpact(a, p.projectId!, p.entityId!));

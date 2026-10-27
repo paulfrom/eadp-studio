@@ -142,6 +142,7 @@ export class Projects {
       await c.query(`INSERT INTO studio_confirmations(id,project_id,entity_id,version,stage,revision,title,summary,commit_sha,path,sha256,acceptance_kind,initialization_id,source_count) VALUES($1,$2,$3,1,'material',1,$4,$5,$6,$7,$8,'system-provisioned',$9,0)`,
         [confirmationId, projectId, reserved.entityId, GENERAL_SCENARIO_TITLE, GENERAL_SCENARIO_SUMMARY, generalFixed.commitSha, generalFixed.path, generalFixed.sha256, initializationId]);
       await c.query('UPDATE studio_entities SET current_confirmation_id=$3 WHERE project_id=$1 AND id=$2', [projectId, reserved.entityId, confirmationId]);
+      await c.query('INSERT INTO studio_prototypes(id,project_id,creator_id) VALUES($1,$2,$3)', [randomUUID(), projectId, actor.id]);
       current.initializationStatus = 'ready'; current.recognizedHead = input.commitSha; current.revision++;
       await repository.saveProject(c, current);
       await repository.remember(c, projectId, actor, 'project.initialize', input, current);

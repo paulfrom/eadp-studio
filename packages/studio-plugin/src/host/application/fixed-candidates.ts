@@ -13,7 +13,7 @@ import type { StudioStore } from './state.ts'
 /** The material or prototype input, optionally bound to a recorded confirmation task. */
 export interface FixedCandidateRequest {
   entityId: string
-  purpose: 'material' | 'prototype'
+  purpose: 'material'
   expectedHash?: string
   projectId?: string
   task?: TaskView
@@ -24,7 +24,6 @@ export interface FixedCandidateRequest {
 export interface FixedCandidateDependencies {
   entity(entityId: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView }>
   designTask(remote: ProjectState, entity: EntityView): Promise<TaskView>
-  prototypeTask(remote: ProjectState, entity: EntityView): Promise<TaskView>
   owned(entity: EntityView): Promise<OccupationToken>
   identity(projectId: string): Promise<{ name: string; email: string }>
   pruneEvidence(task: TaskView): Promise<void>
@@ -38,22 +37,20 @@ export class FixedCandidates {
   async content(request: FixedCandidateRequest) {
     const projectId = request.projectId ?? request.task?.projectId
     let context = await this.deps.entity(request.entityId, projectId)
-    const task = request.task ?? await (request.purpose === 'prototype'
-      ? this.deps.prototypeTask(context.remote, context.entity)
-      : this.deps.designTask(context.remote, context.entity))
+    const task = request.task ?? await this.deps.designTask(context.remote, context.entity)
     context = await this.deps.entity(request.entityId, context.remote.project.id)
     const { remote, entity } = context, token = await this.deps.owned(entity)
     await this.requireTask(task, remote, entity, token, request.purpose)
     const draft = await this.currentMaterialDraft(task, entity)
     if (request.expectedHash && draft.sha256 !== request.expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
-    if (request.purpose === 'material') await assertSingleIdentityBlock(task.worktree, draft.path)
+    await assertSingleIdentityBlock(task.worktree, draft.path)
     // The snapshot starts from the task HEAD; target files are bound by their own hashes.
     const head = (await this.ports.git.state(task.worktree)).head
     let paths: string[], allowedPaths: string[]
     const confirmations: Array<Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>> = []
     const prepareBase = { idempotencyKey: request.operationId ?? randomUUID(), entityId: entity.id, token, expectedHead: remote.project.recognizedHead! }
     const drafts = [{ entity, draft }]
-    if (request.purpose === 'material') {
+    {
       checkMaterial(draft)
       if (entity.kind === 'scenario') {
         const contextBytes = await readFile(await containedFile(task.worktree, 'CONTEXT.md')).catch(error => {
@@ -73,15 +70,8 @@ export class FixedCandidates {
       allowedPaths = [...new Set([...paths, ...replaced])]
       // The fixed commit is filled in after the snapshot; review binds the content hash.
       for (const value of drafts) confirmations.push({ entityId: value.entity.id, expectedRevision: value.entity.revision, fixed: { commitSha: '', path: value.draft.path, sha256: value.draft.sha256 } })
-    } else {
-      if (entity.kind !== 'requirement' || !entity.current || task.inputHash !== entity.current.fixed.sha256 || draft.sha256 !== entity.current.fixed.sha256) throw new Error('原型输入已失效，请重新确认需求')
-      const committed = head === prepareBase.expectedHead ? [] : await this.ports.git.changedFiles(task.worktree, prepareBase.expectedHead, head)
-      paths = [...new Set([...committed, ...await this.dirtyPaths(task)])]
-      if (!paths.length || paths.some(file => !file.startsWith('原型代码/'))) throw new Error('候选相对当前项目基线没有有效变化或包含本任务范围外提交')
-      allowedPaths = paths
-      confirmations.push({ entityId: entity.id, expectedRevision: entity.revision, fixed: entity.current.fixed })
     }
-    const stage = request.purpose === 'prototype' ? 'prototype' as const : 'material' as const
+    const stage = 'material' as const
     const input = { ...prepareBase, stage, confirmations }
     return { remote, entity, task, draft, drafts, paths, allowedPaths, confirmations, input,
       inputHash: digest(reviewInputText(input, entity)),
@@ -94,20 +84,12 @@ export class FixedCandidates {
     const content = request.fixedInput ? await this.restoreInput(current, request.fixedInput) : current
     const { task, draft, entity, remote } = content
     let candidateSha: string, paths = content.paths, allowedPaths = content.allowedPaths, checks: CheckEvidence
-    if (request.purpose === 'material') {
-      await this.deps.pruneEvidence(task)
-      const allowed = new Set(allowedPaths)
-      candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), allowedPaths, '固定材料 ' + entity.id)).sha
-      for (const relative of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, relative)
-      checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialChecks(candidateSha, value.draft).checks) }
-      for (const value of content.confirmations) value.fixed.commitSha = candidateSha
-    } else {
-      const allowed = request.fixedInput ? (file: string) => allowedPaths.includes(file) : (file: string) => file.startsWith('原型代码/')
-      const candidate = await this.candidateSha(task, content.input.expectedHead, allowed, [], '固定原型 ' + entity.id)
-      candidateSha = candidate.sha
-      if (!request.fixedInput) { paths = candidate.changed; allowedPaths = paths }
-      checks = await this.ports.checks(task, candidateSha)
-    }
+    await this.deps.pruneEvidence(task)
+    const allowed = new Set(allowedPaths)
+    candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), allowedPaths, '固定材料 ' + entity.id)).sha
+    for (const relative of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, relative)
+    checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialChecks(candidateSha, value.draft).checks) }
+    for (const value of content.confirmations) value.fixed.commitSha = candidateSha
     const prepare = { ...content.input, sourceSha: candidateSha, candidateSha, allowedPaths, checks }
     const review: ReviewCandidate = { projectId: remote.project.id, entityId: entity.id, purpose: request.purpose, head: content.snapshot.head, inputHash: content.inputHash, files: content.snapshot.files, paths, task, candidateSha }
     return { task, draft, prepare, confirmations: content.confirmations, review }
@@ -149,9 +131,9 @@ export class FixedCandidates {
 
   /** A recorded task cannot be replaced by another session or a newly acquired occupation. */
   private async requireTask(task: TaskView, remote: ProjectState, entity: EntityView, token: OccupationToken, purpose: FixedCandidateRequest['purpose']): Promise<void> {
-    const expectedPurpose = purpose === 'prototype' ? 'prototype' : entity.kind === 'handoff' ? 'handoff' : 'material'
+    const expectedPurpose = entity.kind === 'handoff' ? 'handoff' : 'material'
     const registered = (await this.store.read()).tasks.some(value => value.projectId === task.projectId && value.entityId === task.entityId && value.worktree === task.worktree && value.sessionId === task.sessionId && value.purpose === task.purpose && value.inputHash === task.inputHash)
-    if (!registered || task.projectId !== remote.project.id || task.entityId !== entity.id || task.purpose !== expectedPurpose || path.basename(task.worktree) !== token.taskId || entity.occupation?.purpose !== (purpose === 'prototype' ? 'prototype' : 'design')) throw new Error('原任务现场与当前材料占用不一致，请保留现场并重新核对')
+    if (!registered || task.projectId !== remote.project.id || task.entityId !== entity.id || task.purpose !== expectedPurpose || path.basename(task.worktree) !== token.taskId || entity.occupation?.purpose !== 'design') throw new Error('原任务现场与当前材料占用不一致，请保留现场并重新核对')
   }
 
   materialChecks(candidateSha: string, draft: MaterialDraft): CheckEvidence {

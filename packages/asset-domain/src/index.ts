@@ -1,4 +1,4 @@
-import { isBuiltinScenarioMetadata, isConfirmedMaterialMetadata, isProjectManifest, type BuiltinScenarioMetadata, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
+import { isConfirmedMaterialMetadata, isProjectManifest, type BuiltinScenarioMetadata, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
 
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 409, public readonly details?: unknown) { super(message); }
@@ -118,17 +118,6 @@ export function validatePrerequisites(entityId: string, prerequisites: Prerequis
     visiting.delete(id); visited.add(id);
   }
   visit(entityId);
-}
-export function prototypeBindings(entity: EntityView, entities: EntityView[]) {
-  requireCondition(entity.kind === 'requirement' && entity.current && entity.confirmationStatus === 'confirmed', 'MATERIAL_REQUIRED', 'A confirmed requirement is required before prototype production');
-  const metadata = entity.current.metadata;
-  requireCondition(isBuiltinScenarioMetadata(metadata) || !metadata.applicability, 'REQUIREMENT_NOT_APPLICABLE', 'The current requirement version is explicitly not applicable');
-  return entity.prerequisites.map(p => {
-    const prerequisite = entities.find(e => e.id === p.requirementId);
-    const completion = prerequisite?.completions?.find(c => c.version === p.version);
-    requireCondition(completion, 'PREREQUISITE_INCOMPLETE', 'Required prerequisite version has not been accepted as completed', 409, p);
-    return { requirementId: p.requirementId, version: p.version, confirmationId: completion.confirmationId, integrationSha: completion.integrationSha };
-  });
 }
 export const GENERAL_SCENARIO_TITLE = '通用场景';
 export const GENERAL_SCENARIO_SUMMARY = '项目内置通用场景，用于关联暂不归属具体业务场景的需求。';

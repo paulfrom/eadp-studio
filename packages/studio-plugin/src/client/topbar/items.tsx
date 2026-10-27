@@ -54,7 +54,10 @@ export function topbarItems(faces: TopbarFaces, context: TopbarContext): TopbarI
   const items: TopbarItem[] = [
     { id: 'new-session', label: '新建会话', primary: true, title: '回到宿主原生界面，开始一个新会话', run: () => faces.startSession() },
   ]
-  if (faces.state.preview) items.push({ id: 'preview', label: '● 本地原型 ↗', href: faces.state.preview.url, title: '在新窗口打开本地原型' })
+  const selectedTaskId = faces.state.prototypeQueue?.selectedTaskId
+  const selectedTask = faces.state.prototypeQueue?.items.find(task => task.prototypeTaskId === selectedTaskId && task.projectId === faces.state.project?.id)
+  const preview = faces.state.prototypePreviews?.find(item => item.prototypeTaskId === selectedTask?.prototypeTaskId)
+  if (preview) items.push({ id: 'preview', label: '● 本地原型 ↗', href: preview.url, title: '在新窗口打开当前事项的原型预览' })
   items.push({
     id: 'view',
     label: '视图',

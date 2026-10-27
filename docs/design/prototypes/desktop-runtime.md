@@ -1,6 +1,6 @@
 # 原型桌面与 Host 运行时技术设计
 
-状态：2026-10-26 技术设计草案，整体设计待用户最终确认；本文件不表示源码已实现或桌面已验收。
+状态：2026-10-27 技术设计草案，整体设计待用户最终确认；本文件不表示源码已实现或桌面已验收。
 
 范围：项目原型界面、协作事项、原生会话、私有工程、检查预览、精确确认与失败恢复。
 沿用固定 DSH、现有专用 Host/client 插件及随包原型模板，不升级宿主、不开放任意终端。本轮补充拟增加 CodeMirror 6、独立锁定的稳定版 Playwright 及其配对 Chromium，详见[技术选型与本地浏览器验证](technology-and-browser-validation.md)；不能继续声称桌面零新增依赖。协同服务新增的受限 Git 验证工具见[协同契约](collaboration-contract.md#61-后台验证候选树)。
@@ -44,7 +44,7 @@
 | --- | --- | --- |
 | `openPrototype` | projectId、可选 prototypeTaskId | 返回项目原型投影或本人事项；只读，不认领。 |
 | `preparePrototypeInstruction` | projectId、关注需求／文件、意图 | 返回可编辑指令草稿及拟授权范围，不发送模型。 |
-| `startPrototypeCollaboration` | projectId、operationId、明确指令、拟授权范围 | Host 校验并建立事项、token、私有 worktree 和原生会话。 |
+| `startPrototypeCollaboration` | projectId、operationId、明确指令、拟授权范围 | Host 保存真实指令及跨步骤 operation，领取、授权并准备现场；无其他运行事项则直接派发，有运行事项则入队保存首次指令，不派发。 |
 | `extendPrototypeDevelopment` | prototypeTaskId、operationId、明确扩范围指令、目标完整开发集合 | 后台按需求 ID 原子扩领，全成或回滚；成功返回完整 claim token 集合、claimsDigest 及新任务 revision，再允许新增业务写入。 |
 | `continuePrototypeCollaboration` | prototypeTaskId、operationId、指令 | 校验活动 token 后发送到原会话，不新建事项。 |
 | `restorePrototypeSession` | prototypeTaskId | 核对事项与现场后恢复原生会话，不自动重发未知消息。 |
@@ -53,7 +53,10 @@
 | `reorderPrototypeQueue` | operationId、稳定事项引用的完整顺序 | 校验本人本机队列后持久化顺序；不重新授权、不启动下一项。 |
 | `pausePrototypeQueueItem` | prototypeTaskId、operationId | 保存恢复位置，取消当前模型并等待 settled；保留事项及全部开发 claim。 |
 | `resumePrototypeQueueItem` | prototypeTaskId、operationId、明确继续指令 | 核对现场、未知操作及有效 claim 后，在原会话开始新一轮；不重发历史未知请求。 |
-| `readPrototypeFile` | 工程引用、相对路径 | 返回正文、hash、只读／保护属性；二进制返回元信息。 |
+| `listPrototypeDirectory` | 工程引用、相对目录、cursor、limit | 返回受控子项、只读／保护属性、工程与观察版本、截断及下一游标；不递归遍历客户端路径。 |
+| `searchPrototypeFiles` | 工程引用、文字 query、相对范围、cursor、limit | 在同一受控文件集内搜索，返回路径、行列、有限片段与文件 hash；不执行 shell 或任意正则。 |
+| `readPrototypeDiff` | 工程引用、Host 发放的比较基准、相对范围、cursor、limit | 返回真实文件增删改及受限文本 hunks、两侧 hash 和截断信息；不接受任意 ref 或磁盘路径。 |
+| `readPrototypeFile` | 工程引用、相对路径、可选行范围 | 返回受限正文、hash、只读／保护属性、工程与观察版本；二进制仅返回允许展示的元信息。 |
 | `savePrototypeFile` | prototypeTaskId、path、expectedHash、正文 | 比较磁盘 hash 后原子保存；冲突返回当前 hash 与读取入口。 |
 | `checkPrototype` | 工程引用、operationId | 返回受控工程检查 operation，不认领、不触发模型。 |
 | `startPrototypePreview` | 工程引用、operationId | 必要时受控安装／检查后启动对应实例，不触发模型。 |
@@ -120,6 +123,9 @@ worktree 路径限定在账号／项目的受管根目录，使用 prototypeTask
 切换前取消当前生成并等待 settled；未知在途调用先核对，不启动第二个针对同现场的写入。
 重排只改变本地顺序与队列 revision，不改变后台 task revision／claimsDigest，不扩大 scope，也不将此前授权解释为自动继续授权。
 
+首次指令入队与派发（R11，待整体确认）：Host 在账号串行入口内先保存用户动作、指令及固定 messageOperationId，再完成创建、初始 claims／scope 和现场准备。当前没有其他运行事项且无未收敛执行时，首次明确发送直接派发，不要求第二次继续；已有运行事项时，另一事项创建成功即持久入队，首次指令保持 pending，当前执行不被抢占。创建／扩领失败保留输入及恢复操作，不把尚未创建成功的操作伪装为有效事项队列项。
+待开始项通过用户手动选择并继续才派发原来保存的首次指令，沿用原 messageOperationId；选择本身不发送，也不要求用户重输该指令。新增补充意图单独保存，不改变原待投递请求或重用其键。调度锁内重新核对当前运行及授权，防止两个同时发送争抢执行槽。准备现场失败保留已创建事项与占用，通过原 operation 补齐，不另领一项。模型结束、刷新及重启均不自动派发 pending 首次指令；重启须用户手动继续，已经 sending 的指令先核对投递，不当作 pending 重发。跨步骤记录与 token 接续见[协同契约 §7.1](collaboration-contract.md#71-一次实现指令的跨步骤恢复r08待整体确认)。
+
 复用账号隔离 StudioStore，新增本地 taskQueue 与 currentSelectedTask，不另建分布式队列或 Redis／BullMQ。
 每项只保存恢复需要的有限元数据；代码正文、模型历史和后台事实分别留在原有责任层。
 
@@ -179,6 +185,12 @@ Host 进入关闭阶段后停止接收新的开始／切换／写入命令；在
 方案沿用持久状态机、原生会话日志及 Git worktree 的成熟分工，不把模型输出历史当业务队列。
 上游缓存中原生 conversation 按 session 保存 localStorage 草稿，原生持久化以 flush 为耐久屏障，崩溃开放轮次以 interrupted 收尾；这些源码能力仍须在当前装配版本验证，不承诺最后事件完整或原请求自动续跑。
 
+### 4.4 原生恢复能力的未知边界（待固定宿主验证）
+
+messageOperationId 是 Host 的业务身份，不因写入本地记录就成为 DSH 已支持的幂等消息键。PT03 事项与原生队列的实现和验收须分别核实：创建 session 的可靠身份与结果查询、发送请求与原生日志消息 ID 的稳定关联、ack 的确切含义和耐久位置、事件 seq 重放范围、取消是否涵盖在途工具并达到 settled、flush 成功所覆盖的内容，以及 resume 是否可能重放执行。请求被接收、模型已结束、日志已落盘是不同事实。
+若固定宿主只能恢复历史而不能证明某消息未发出，则该消息保持 unknown，展示历史及诊断定位，不自动重发、不用新 session 或新 messageOperationId 绕过。仅在可信协议事实证明未投递且旧调用已收敛时，才可恢复原发送步骤；确认已投递则标记该步完成，后续新的继续指令另开 turn。取消请求返回不等于 settled，取消未知时不能抢占执行槽开启另一实现。若不能证明 flush 耐久或 session 创建结果，明确相应恢复能力未验证，不承诺无损退出或静默补建；这是技术能力缺口，不增加业务确认按钮替代。
+本节仅列待验证契约，不声称已有原生 ack／message ID 注入或可靠查询 API；直接按设计在 PT03 中实现并核对这些能力，不设独立技术验证前置环节。实现中发现固定宿主不能满足目标时，记录证据、受影响契约和未完成项；涉及改变既定路线或业务决定时再提请用户决定，不能实现猜测协议或将缺口记为验收通过。
+
 ## 5. AI 上下文与实际读取证据
 
 原型会话读取当前工程、当前指令和本人可读的项目材料，不要求选定唯一需求及固定版本。
@@ -209,6 +221,16 @@ AI 写入与用户保存使用同一范围校验、文件并发控制及同目�
 扩大代码范围由用户明确实现指令授权，Host 推导同一事项的 scope 更新并记录 revision，不增加每轮许可弹窗。
 该指令不得扩展到模板维护、shell 或 Git 权限；无法从明确指令确定范围时才询问缺少的业务信息。
 保留现有文件工具 guard 及子 Agent 相同目录继承；未知工具默认拒绝，不向预览页面暴露 Host 命令。
+
+### 6.1 目录、搜索与 diff 的受控读取（R12，待整体确认）
+
+四类查询共用 Host 文件解析器、工程归属与过滤规则；每次请求校验账号／项目和工程引用，只读 baseline 绑定 baselineId／commitSha，事项绑定 prototypeTaskId／generation／磁盘观察标识。返回工程来源、实际版本／观察标识、各文件内容 hash 与完整／截断标记；可变事项不是全工程原子快照，不把查询时间或 Git HEAD 当脏工程版本。分页游标绑定查询和观察版本，变化时返回工程已变化并要求重查，不拼接新旧页。目录／搜索列表不产生“正文已读”证据，diff 仅记录实际返回的两侧片段。
+
+所有路径须为规范相对路径，拒绝绝对路径、`..`、NUL、逃逸符号链接和受管根外目标；拒绝 Git 元数据、凭据和秘密文件，排除依赖、缓存与构建产物目录。过滤先于目录投影、内容搜索和 diff，不能借文件名、错误、片段或删除侧正文泄漏被过滤内容。保护但可读的模板文件可标记只读；保护写入和保密读取不能混为一项权限。读取过程重新校验解析后的对象，拒绝遍历中替换链接造成的逃逸。
+
+提议统一上限：目录每页最多 200 项，搜索每页最多 100 处、query 最多 200 字且只作文字匹配；单文件正文最多 1 MiB，超过时仅返回元信息或显式行范围；单次正文／diff 响应最多 1 MiB，diff 每页最多 100 文件和 2000 行。Host 同时限制总扫描文件数与执行时间，达到上限返回 truncated、原因及可用继续入口，不以部分结果宣称“无匹配／无变化”。二进制、超限或不可读项不返回伪正文；超限文件的行范围读取仍受单次字节上限约束。具体常量在实现与 shared 契约同处定义，不由客户端取消限制。
+
+diff 比较基准由 Host 提供：事项可比较登记的 sourceBaseHead／明确选择的已接受基线与当前磁盘成果；认可快照只比较本人有权读取的固定已接受版本。返回 base／target 的准确身份、增加／删除／修改／重命名标记和两侧 hash；删除侧、重命名前路径同样经过过滤，不执行外部 diff driver／textconv。未保存编辑缓冲由编辑器明确标为本地草稿，不能混入磁盘 diff 或基线变化卡；空 diff 与截断／过滤／错误分别表达。客户端不通过 Node、任意磁盘遍历或任意 Git ref 绕过此服务。
 
 ## 7. 工程检查与预览实例
 
@@ -241,7 +263,7 @@ AI 写入与用户保存使用同一范围校验、文件并发控制及同目�
 
 工具集合限定定位、点击、填写、选择、按键、等待、可见内容断言、DOM／可访问性快照、截图和诊断读取；Host execution guard 按当前会话及该集合精确放行，继续拒绝任意代码执行、文件访问、安装、任意 CDP endpoint 和跨任务 target。读取截图须走原生附件存储及支持图像模型；模型不支持图像时明确“未看图”，不把截图生成当成视觉核对。
 
-本地验证按具体需求用例运行，记录操作、预期和实际、截图、console/pageerror、允许／拒绝网络记录及 trace。内存 requestMock 的调用不产生真实 HTTP，不能伪造为 HAR 请求。新浏览器须另装默认拒绝的网络围栏，不能假定继承 Electron session 的保护。完整流程、分发成本和最小 POC 见[选型与浏览器验证](technology-and-browser-validation.md)。
+本地验证按具体需求用例运行，记录操作、预期和实际、截图、console/pageerror、允许／拒绝网络记录及 trace。内存 requestMock 的调用不产生真实 HTTP，不能伪造为 HAR 请求。新浏览器须另装默认拒绝的网络围栏，不能假定继承 Electron session 的保护。完整流程、分发成本及 PT05B 实现与验收要求见[选型与浏览器验证](technology-and-browser-validation.md)。
 
 ## 8. 精确候选、集成与恢复
 
@@ -268,6 +290,7 @@ AI 解决后以最新认可头归一新 source，再构造候选、重新检查�
 撤销一次提交但保留事项调用新增 `POST /integrations/:id/abort`；不把单次 integration 中止等同于事项取消。
 stable 已为 candidate 时不能当作尚未推送而取消，先查原接受结果；abort 后晚到的 push 仍须按实际 ref 与操作记录 reconcile。
 integration prepared 期间禁止变更正式事项的需求关联或授权 scope；先解决原集成，再受控更新事项。
+无代码变化处理（R09，待整体确认）沿用[协同契约 §6](collaboration-contract.md#6-事务顺序与并发集成)：只查看既有基线时仍为 active 并保留全部 claims，界面说明事项仍在开发；明确选择结束才调用 cancel，核对未决集成后保留现场并释放全部占用，不制造 accepted 或相同代码新基线。
 后台 accepted 才更新原型基线并结束事项；各需求完成状态保持独立，不能由集成代码推断。
 accepted 后本机主检出同步、会话释放、预览处理和现场收尾分别记录结果，失败独立重试。
 未接受、取消或授权失效事项不自动删除；唯一草稿、未合入代码与会话定位必须保留。
@@ -296,7 +319,10 @@ accepted 后本机主检出同步、会话释放、预览处理和现场收尾�
 
 ## 10. 后续实现验证边界
 
+按设计工作包直接开发，真实能力核对与相应实现、失败恢复及验收同步进行：PT03 覆盖固定宿主会话与队列，PT04 覆盖编辑器与文件，PT05 覆盖内嵌预览，PT05B 覆盖受管浏览器与发行装配；不另设独立技术验证前置阶段。各工作包未完成的真实运行检查保留为未验收，不能以局部检查替代 PT08 的完整桌面闭环。
+
 先覆盖事项多轮接续、跨需求草稿读取说明、文件并发保存、保护区拒绝、检查证据失效与实例隔离。
+补充 R08／R11：逐步注入创建／扩领响应丢失、扩领成功但 scope 失败、scope 成功而现场失败、发送前后崩溃及两次并发首次发送，核对原操作键、完整 claims、新 revision、保留指令和无重复派发；有运行事项入队后，轮次结束与重启均不自动派发。补充 R09 的无变化查看仍占用与明确结束走 cancel，补充 R12 的路径逃逸、过滤、分页中变更、超限截断、二进制及删除侧过滤；这些均为后续验证要求，本轮未执行。
 再覆盖干净合并重检、冲突重新确认、推送后响应丢失、token 撤销、重启恢复和 accepted 后收尾失败。
 最终按当前交付版本完成真实桌面 → 原生真实模型 → Host → 指定协同服务 → Git／持久化闭环。
 协同联调固定现有配置指向的 `100.119.183.44` 服务；本设计不授权远端修改或产品运行。

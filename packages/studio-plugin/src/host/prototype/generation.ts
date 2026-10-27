@@ -5,15 +5,15 @@ import { sha256, verifyPrototypeContract } from './template.js';
 export interface PrototypeTaskIdentity {
   prototypeRoot: string;
   manifestPath: string;
-  assetId: string;
-  requirementId: string;
+  projectId: string;
+  prototypeTaskId: string;
   sessionId: string;
   sourceSha: string;
 }
 
 export interface PrototypeRuleBinding {
-  assetId: string;
-  requirementId: string;
+  projectId: string;
+  prototypeTaskId: string;
   sessionId: string;
   sourceSha: string;
   prototypeRoot: string;
@@ -34,8 +34,8 @@ export interface PrototypeRuleLoader {
 }
 
 export async function loadPrototypeRules(input: PrototypeTaskIdentity, loader: PrototypeRuleLoader): Promise<PrototypeRuleBinding> {
-  if (![input.assetId, input.requirementId, input.sessionId].every((value) => value.trim()) || !/^[a-f\d]{40}$/.test(input.sourceSha)) {
-    throw new Error('Rules require a fixed source commit, asset, requirement and official session');
+  if (![input.projectId, input.prototypeTaskId, input.sessionId].every((value) => value.trim()) || !/^[a-f\d]{40}$/.test(input.sourceSha)) {
+    throw new Error('Rules require a project, prototype task, source commit and official session');
   }
   const prototypeRoot = await realpath(input.prototypeRoot);
   const manifest = await verifyPrototypeContract(prototypeRoot, input.manifestPath);
@@ -46,7 +46,7 @@ export async function loadPrototypeRules(input: PrototypeTaskIdentity, loader: P
   if (!receipt.loaded || receipt.sessionId !== input.sessionId || receipt.sha256 !== rulesSha256 || !receipt.entrypoint) {
     throw new Error('DSH did not acknowledge the exact template rules; generation is blocked');
   }
-  return { assetId: input.assetId, requirementId: input.requirementId, sessionId: input.sessionId,
+  return { projectId: input.projectId, prototypeTaskId: input.prototypeTaskId, sessionId: input.sessionId,
     sourceSha: input.sourceSha, prototypeRoot, templateVersion: manifest.version, rulesSha256,
     entrypoint: receipt.entrypoint, loadedAt: new Date().toISOString() };
 }
@@ -54,7 +54,7 @@ export async function loadPrototypeRules(input: PrototypeTaskIdentity, loader: P
 export async function assertRuleBinding(input: PrototypeTaskIdentity, binding: PrototypeRuleBinding): Promise<void> {
   const manifest = await verifyPrototypeContract(input.prototypeRoot, input.manifestPath);
   if (binding.prototypeRoot !== await realpath(input.prototypeRoot) || binding.templateVersion !== manifest.version ||
-      binding.assetId !== input.assetId || binding.requirementId !== input.requirementId || binding.sessionId !== input.sessionId ||
+      binding.projectId !== input.projectId || binding.prototypeTaskId !== input.prototypeTaskId || binding.sessionId !== input.sessionId ||
       binding.sourceSha !== input.sourceSha || !binding.entrypoint ||
       binding.rulesSha256 !== sha256(await readFile(resolve(input.prototypeRoot, 'AGENT.md')))) {
     throw new Error('Template rule binding is stale or belongs to a different task');

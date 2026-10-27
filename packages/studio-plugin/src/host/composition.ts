@@ -1,10 +1,11 @@
 import path from 'node:path'
+import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
-import type { CheckEvidence, ProjectState } from '@eadp/contracts'
+import type { CheckEvidence, ProjectPrototypeView, ProjectState } from '@eadp/contracts'
 import { StudioApplication } from './application/studio.ts'
 import { StudioStore } from './application/state.ts'
 import type { HostPorts } from './application/ports.ts'
@@ -54,32 +55,37 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   let app: StudioApplication
   const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'))
   const checkResults = new Map<string, PrototypeCheckResult>()
-  let preview: PrototypePreview | undefined
-  const prototypeInput = async (task: TaskView, sourceSha?: string): Promise<PrototypeTaskIdentity> => ({ prototypeRoot: path.join(task.worktree, '原型代码'), manifestPath, assetId: task.entityId, requirementId: task.entityId, sessionId: task.sessionId, sourceSha: sourceSha ?? (await git.state(task.worktree)).head })
-  const bind = async (task: TaskView, sourceSha?: string) => {
-    const input = await prototypeInput(task, sourceSha)
-    await sessions.open(task, `仅实现当前需求 ${task.entityId}，固定输入 SHA-256 ${task.inputHash}。发现规则冲突时停止并请求作者修订。`, input)
-    return { input, binding: await sessions.bind(task, input) }
+  const previews = new Map<string, PrototypePreview>()
+  const availablePort = async (): Promise<number> => new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') { server.close(); reject(new Error('无法分配预览端口')); return }
+      server.close(error => error ? reject(error) : resolve(address.port))
+    })
+  })
+  const prototypeInput = async (task: TaskView, sourceSha?: string): Promise<PrototypeTaskIdentity> => ({ prototypeRoot: path.join(task.worktree, '原型代码'), manifestPath, projectId: task.projectId, prototypeTaskId: task.entityId, sessionId: task.sessionId, sourceSha: sourceSha ?? (await git.state(task.worktree)).head })
+  const stopPreview = async (sessionId?: string) => {
+    const owned = sessionId ? [...previews.entries()].filter(([id]) => id === sessionId) : [...previews.entries()]
+    for (const [id, preview] of owned) { previews.delete(id); await preview.stop() }
   }
-  const stopPreview = async () => { if (preview) { const owned = preview; preview = undefined; await owned.stop() } }
   const runChecks = async (task: TaskView, sourceSha: string): Promise<CheckEvidence> => {
     checkResults.delete(task.sessionId)
     try {
-      await stopPreview()
-      const { input, binding } = await bind(task, sourceSha)
-      await installPrototypeDependencies(runtime, input, binding)
-      const result = await runPrototypeChecks(runtime, input, binding)
-      const current = await startPrototypePreview(runtime, input, binding, result, 4173)
-      preview = current
-      const browserHash = await checkStaticPreview(`${current.url}/`)
+      const input = await prototypeInput(task, sourceSha)
+      await installPrototypeDependencies(runtime, input)
+      const result = await runPrototypeChecks(runtime, input)
+      const current = await startPrototypePreview(runtime, input, result, await availablePort())
+      let browserHash: string
+      try { browserHash = await checkStaticPreview(`${current.url}/`) } finally { await current.stop() }
       checkResults.set(task.sessionId, result)
       return { candidateSha: sourceSha, passed: true, checks: [
         { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify(result)) },
         { name: 'mock', passed: true, evidenceHash: browserHash },
         { name: 'browser', passed: true, evidenceHash: browserHash },
-        { name: 'relations', passed: true, evidenceHash: digest(`${task.entityId}:${task.inputHash}`) },
       ] }
-    } catch (error) { checkResults.delete(task.sessionId); await stopPreview(); throw error }
+    } catch (error) { checkResults.delete(task.sessionId); throw error }
   }
   const publication = new PublicationService({
     authority: {
@@ -89,10 +95,11 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
       },
       current: async projectId => {
         const state = await api.request<ProjectState>('GET', `/v1/projects/${projectId}`)
-        const baseline = state.baselines.find(b => b.id === state.project.currentBaselineId)
+        const prototype = await api.request<ProjectPrototypeView>('GET', `/v1/projects/${projectId}/prototype`)
+        const baseline = state.baselines.find(b => b.id === prototype.currentBaselineId)
         if (!baseline) throw new Error('项目没有已确认原型基线')
         if (!state.project.recognizedHead) throw new Error('项目尚未完成初始化')
-        return { projectId, assetId: baseline.entityId, baselineId: baseline.id, commitSha: baseline.commitSha, completionEvidence: [baseline.confirmationId], acceptedHead: state.project.recognizedHead! }
+        return { projectId, prototypeId: baseline.prototypeId, baselineId: baseline.id, commitSha: baseline.commitSha, acceptanceId: baseline.acceptanceId, acceptedHead: state.project.recognizedHead! }
       },
     },
     build: async (baseline: PublicationBaseline) => {
@@ -102,30 +109,31 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
       const operationId = crypto.randomUUID()
       const worktree = path.join(store.directory, 'publication', operationId)
       await git.createWorktree(project.directory, worktree, `publication/${operationId}`, baseline.commitSha)
-      const task: TaskView = { projectId: project.id, entityId: baseline.assetId, purpose: 'prototype', sessionId: `studio-publication-${operationId}`, inputHash: baseline.commitSha, worktree }
+      const task: TaskView = { projectId: project.id, entityId: baseline.prototypeId, purpose: 'prototype', sessionId: `studio-publication-${operationId}`, inputHash: baseline.commitSha, worktree }
       try { await runChecks(task, baseline.commitSha) }
-      catch (error) { await stopPreview(); throw error }
-      return { directory: path.join(worktree, '原型代码/dist'), dispose: async () => { await stopPreview(); await git.removeWorktree(project.directory, worktree) } }
+      catch (error) { await stopPreview(task.sessionId); throw error }
+      return { directory: path.join(worktree, '原型代码/dist'), dispose: async () => { await stopPreview(task.sessionId); await git.removeWorktree(project.directory, worktree) } }
     },
-    ...(config.publication ? { target: new SshPublicationTarget(runtime, { ...config.publication, credentials, authority: () => api.request('POST', `/v1/projects/${config.publication!.projectId}/publication-authorizations`, { idempotencyKey: crypto.randomUUID() }) }) } : {}),
+    ...(config.publication ? { target: new SshPublicationTarget(runtime, { ...config.publication, credentials, authority: baselineId => api.request('POST', `/v1/projects/${config.publication!.projectId}/publication-authorizations`, { baselineId }) }) } : {}),
   })
   const ports: HostPorts = {
-    workspaceRoot, git,
+    workspaceRoot, prototypeManifestPath: manifestPath, git,
     gitLocal: (args, cwd) => git.local(cwd, args),
     login: (username, password) => auth.login(username, password), logout: () => auth.logout(),
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
-    prompt: (id, text) => sessions.prompt(id, text), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
+    prompt: (id, text, operationId) => sessions.prompt(id, text, operationId), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
     preview: async task => {
         try {
-          const { input, binding } = await bind(task)
+          const input = await prototypeInput(task)
           const result = checkResults.get(task.sessionId)
           if (!result) throw new Error('请先运行工程检查并验证静态页面')
-          await stopPreview(); preview = await startPrototypePreview(runtime, input, binding, result, 4173)
-          await checkStaticPreview(`${preview.url}/`)
-          return { url: preview.url }
-        } catch (error) { checkResults.delete(task.sessionId); await stopPreview(); throw error }
+          const next = await startPrototypePreview(runtime, input, result, await availablePort())
+          try { await checkStaticPreview(`${next.url}/`) } catch (error) { await next.stop(); throw error }
+          await stopPreview(task.sessionId); previews.set(task.sessionId, next)
+          return { url: next.url }
+        } catch (error) { checkResults.delete(task.sessionId); throw error }
     }, stopPreview,
     publication: async action => {
       const local = await store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目')

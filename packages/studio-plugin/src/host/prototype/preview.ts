@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { ManagedProcess, PlatformRuntime } from '../adapters/platform/runtime.js';
 import type { PrototypeCheckResult } from './checks.js';
 import { assertCurrentPrototypeChecks } from './checks.js';
-import type { PrototypeRuleBinding, PrototypeTaskIdentity } from './generation.js';
+import type { PrototypeTaskIdentity } from './generation.js';
 
 export interface PrototypePreview {
   url: string;
@@ -13,9 +13,9 @@ export interface PrototypePreview {
   stop(): Promise<void>;
 }
 
-export async function startPrototypePreview(runtime: PlatformRuntime, input: PrototypeTaskIdentity, binding: PrototypeRuleBinding,
+export async function startPrototypePreview(runtime: PlatformRuntime, input: PrototypeTaskIdentity,
   checks: PrototypeCheckResult, port: number, signal?: AbortSignal): Promise<PrototypePreview> {
-  await assertCurrentPrototypeChecks(input, binding, checks);
+  await assertCurrentPrototypeChecks(input, checks);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid loopback preview port');
   const instance = randomUUID();
   const process = await runtime.start('pnpm', ['run', 'preview', '--', '--port', String(port), '--instance', instance], {

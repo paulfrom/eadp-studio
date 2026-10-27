@@ -1,6 +1,6 @@
 # 原型技术选型与本地浏览器验证
 
-状态：2026-10-26 技术设计草案，整体设计待用户最终确认；本文不表示依赖已安装、产品已实现或桌面已验收。
+状态：2026-10-27 技术设计草案，整体设计待用户最终确认；本文不表示依赖已安装、产品已实现或桌面已验收。
 范围：成熟组件复用、代码编辑、受管浏览器、业务验证与证据；不升级固定 DSH，不启动或安装产品。
 业务边界沿用[原型技术设计](technical-design.md)、[桌面运行时](desktop-runtime.md)及[协同契约](collaboration-contract.md)。
 
@@ -25,10 +25,53 @@
 后端依赖见 [collaboration-api/package.json](../../../apps/collaboration-api/package.json) 与 [contracts/package.json](../../../packages/contracts/package.json)。
 根工程和模板 lock 当前没有 Playwright、Puppeteer 或 Monaco；固定 DSH 上游包含的测试／实验依赖不等于 Studio 已安装和启用这些能力。
 
+## 1.1 R03：内嵌承载候选与证据边界
+
+内嵌承载实施提案：优先以 Electron 主进程持有的 `WebContentsView` 承载原型，挂入桌面主窗口的内容视图；原型在自己的 WebContents 中作为顶层文档加载，不作为工作台 DOM 的 iframe。该提案随 PT05 的预览实例和 PT07 的工作台画布开发实现并验证，尚未成为已实现能力或整份设计的用户确认。
+
+| 候选 | 判断与依据 |
+| --- | --- |
+| `WebContentsView` | 首选验证。官方提供主进程创建、`contentView.addChildView` 和 `setBounds` 模式；适合由主进程集中控制 URL、session、布局及销毁。原生视图与 DOM 的遮挡、裁剪和焦点衔接需要实测。 |
+| DOM iframe | 不采用当前模拟稿路径。模板 `preview.mjs` 的 `frame-ancestors 'none'` 拒绝被嵌入，`frame-src 'none'` 禁止原型再嵌子页面；不可通过删除这些限制把模拟稿变为产品。 |
+| `BrowserView` | 不作为新增长期维护方案；官方已将其弃用并以 `WebContentsView` 替换。 |
+| `<webview>` | 不作为本次首选。官方提示其渲染、导航和事件稳定性风险；现有其他用途的 guest 能力不代表原型可复用相同身份和权限。 |
+| 独立窗口／外部浏览器 | 保留同构建人工查看入口，不能替代业务要求的内嵌画布，也不能用它宣布内嵌承载验证通过。 |
+
+成熟模式依据：[WebContentsView 官方 API](https://www.electronjs.org/docs/latest/api/web-contents-view)、[BrowserView 弃用说明](https://www.electronjs.org/docs/latest/api/browser-view)、[webview 警告](https://www.electronjs.org/docs/latest/api/webview-tag)。官方现行文档只支撑候选选择，固定发行运行时是否满足全部行为须在对应开发工作包中验证。
+
+2026-10-27 只读源码核对：
+
+- [release.lock.json](../../../apps/desktop-distribution/release.lock.json) 固定 DSH commit `687f282e8625c6b8d11ff58211a90524be2e4317`、包声明 `0.2.1-rc.2`，源归档 SHA-256 为 `157903b22c2881d3678d846755afe957a48df834e747deda805a1195ce25a146`。其中历史 Windows 构建记录不是本轮内嵌证据。
+- [studio-browser-check.ts](../../../apps/desktop-distribution/build/studio-browser-check.ts) 当前创建隐藏、独立 session 的 `BrowserWindow`，拒绝弹窗并检查 Mock／网络保护；它不是工作台画布。[studio-browser-edits.mjs](../../../apps/desktop-distribution/build/studio-browser-edits.mjs) 将此检查接到 Host 子进程消息，不提供内嵌布局接口。
+- [preview.ts](../../../packages/studio-plugin/src/host/prototype/preview.ts) 启动受管 pnpm 静态进程，核对 ready 与 instance；[preview.mjs](../../../packages/studio-plugin/assets/prototype-template/scripts/preview.mjs) 保留上述 CSP、精确 Host 和 dist 真实路径限制。服务就绪不证明内嵌成功。
+- 忽略缓存 `.local/upstream/dsh/apps/desktop/package.json` 声明 Electron `^44.7.0`，缓存 `pnpm-lock.yaml` 解析为 `44.7.0`；缓存仅用于只读线索。当前实际桌面二进制的 Electron／Chromium 版本、安装包标识、维护改动装配结果均未知，实现验证必须从运行时记录，不能用缓存或范围声明推定。
+
+### 隔离与生命周期提案
+
+主进程适配维护在 `apps/desktop-distribution/build/`，Host 的工程／预览实例管理留在 `host/prototype/`。工作台只申请挂载当前 Host 分配的预览及提交可见画布矩形，不能传入任意 URL、session、preload、WebContents ID 或脚本。主进程核对发送者属于主应用、当前选中项目／事项或只读基线、previewId／generation／buildHash；页面本身没有这条控制通道。
+
+每个预览实例使用独立非持久 session；显式 `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`、`webSecurity: true`，不配置 preload，不注入工作台 bridge／凭据，不开启嵌套 webview、插件或不安全混合内容。先安装默认拒绝的请求、导航、重定向、弹窗、权限和下载处理，再加载 Host 分配的精确 loopback origin；只加载当前静态产物，原型内部路由也不能离开该 origin。保留 server CSP 与 guard，不复用工作台登录 session；页面调用 Node、preload、IPC、工作台命令或请求其他端口均须在负向样本中失败。此处是待实测的分层约束，不宣称操作系统级隔离。
+
+原生视图位置不受 DOM CSS 自然裁剪。工作台通过布局变化报告画布边界；主进程校验有限数值、窗口内范围、可见性及递增布局序号，转换为当前内容区域坐标后设置 bounds，不能覆盖侧栏、输入区或诊断控件。窗口 resize、缩放、DPI／跨屏、侧栏折叠、设备宽度和放大均重新同步。不可见、切到代码、打开覆盖画布的核对面板／弹窗或最小化时先隐藏／移除视图，防止盖住工作台；恢复时重新核对实例再挂载。设备切换只调整真实 viewport，不把缩放图片当响应式验证。焦点离开画布须可回到工作台输入；Tab、中文输入、快捷键、Escape 和鼠标拖动都纳入 PT05／PT07 的实现验证。
+
+切换需求只定位页面，不切换工程；切换事项／基线时卸载旧视图，再核对新实例。隐藏画布本身不停止受管预览；用户停止、预览重启、事项结束或窗口退出时，先使旧 generation 的挂载／导航请求失效，再移除视图、显式关闭其 WebContents、清理 session 及监听器，最后按实例停止所属进程。其他事项和唯一草稿不受影响。源码变化可继续显示带旧构建提示的产物，不能静默替换来源。崩溃、加载超时或渲染进程退出显示实际失败，重试创建新视图；重开恢复工程和选择，不复用旧 WebContents、session 或活令牌。外开只能由工作台显式打开同一预览实例／buildHash，不接受原型页面发起的任意外开。
+
+### PT05／PT07：内嵌承载实现验证（未执行）
+
+| 样本／操作 | 必须观察及记录的结果 |
+| --- | --- |
+| 固定发行树与当前桌面启动 | 记录源码 HEAD＋工作区差异、DSH commit、维护装配输入、包／ASAR hash、`process.versions`、平台架构；未知字段保持未知。确认实际 API 存在后再创建视图，不静默升级 DSH 或 Electron。 |
+| 当前模板真实 dist 与原生画布 | 记录 source/buildHash、previewId／generation、实例 ready；保留 CSP 时加载成功，页面及 Mock 可操作；外开核对同实例同构建。 |
+| 调整布局、显示遮挡及输入 | 窄窗、设备宽度、放大、侧栏、核对面板、代码切换、缩放／DPI／跨屏和最小化恢复；截图与实际 bounds、焦点／中文输入／快捷键结果对应。 |
+| 恶意页面与监听 sink | 尝试工作台 bridge／IPC、Node、外站、其他 loopback 端口、重定向、子 frame、弹窗、下载、WS／SW；记录拒绝事件及 sink 实收数量，不只看页面抛错。 |
+| 停止、切换、崩溃、重启和恢复 | 旧 generation 控制被拒绝、子 WebContents／session／监听器及所属进程回收；其他实例不受影响，草稿保留，重新打开不自动启动模型或恢复旧能力。 |
+
+内嵌承载尚未运行真实宿主、未创建原生视图、未连接协同服务；本轮只补设计及只读核对。上述样本随 PT05／PT07 开发执行，不设独立技术预研阶段。API 类型存在、静态 HTML、隐藏窗口检查、单测或缓存锁版本均不能关闭 R03。待确认项为固定宿主 API 与布局集成可行性、主应用发送者及视图控制契约、真实输入／遮挡行为和资源回收结果。若失败，回到承载设计说明证据与影响，不降级为全局放宽 CSP、不静默换 API 或升级宿主；局部实现验证即使通过也不等于 PT08 的真实桌面业务闭环验收。
+
 ## 2. 编辑器选型与保存边界
 
 采用 CodeMirror 6 的 `state`、`view`、`commands`、`search`、`lang-javascript`、`lang-css`、`lang-json` 和 `merge` 模块。
-JavaScript 语言模块开启 JSX／TypeScript 支持；CSS／Less、JSON 的实际语法覆盖在 POC 检查，不把语法着色称为完整语言服务。
+JavaScript 语言模块开启 JSX／TypeScript 支持；CSS／Less、JSON 的实际语法覆盖在 PT04／PT05B 编辑器开发中验证，不把语法着色称为完整语言服务。
 React 层只管理 EditorView 生命周期、文件选择、文档版本、脏状态、保存及差异数据，不重新实现编辑、搜索或合并视图。
 当前官方核实的 `@codemirror/view` 为 6.43.15、`@codemirror/merge` 为 6.12.3，许可证为 MIT；其余模块在实施时统一解析并提交精确 lock。
 依赖不得在产品运行时解析 `latest`；完成模块兼容验证后，把实际完整版本和许可写入发行清单。
@@ -58,7 +101,7 @@ Playwright 自带匹配 Chromium 可减少跨版本故障；不得据此声称�
 安装包必须包含所需浏览器文件；校验失败明确阻止浏览器功能，不自动换版本、使用系统 Chrome 或偷偷下载。
 必须验证 Windows 签名、杀毒扫描、安装／卸载、离线启动和包体增量；尚未实测，不虚报体积或安装结果。
 Chromium 及其第三方许可、Playwright Apache-2.0 与 notices 随包分发，并记录升级和漏洞维护责任。
-此次新增 runtime 属于明确的发行依赖变化，需独立完成固定版本 POC，再进入实现和安装包验收。
+此次新增 runtime 属于明确的发行依赖变化，随 PT05B 实现固定版本装配、运行和安装分发验证，并纳入 PT08 当前安装包的真实桌面验收。
 
 发布前依赖核对入口：
 
@@ -73,7 +116,7 @@ Chromium 及其第三方许可、Playwright Apache-2.0 与 notices 随包分发�
 复用固定 DSH `browser-use-runtime` 的 `mountSessionMcp`、`SessionResources`、stdio-MCP，以及 Session、工具和附件生命周期。
 在受维护的 `apps/desktop-distribution/build/` 装配代码及 Studio 原型适配层接入一个专用受限浏览器服务；不修改 `.local/upstream` 冒充维护成果。
 服务内部调用 Playwright 成熟 API；MCP 只承载受限命令、结果和附件，不另造 DOM 选择器协议、轮询等待或浏览器控制引擎。
-现有上游 wrapper 仍是实验 API，固定版本的创建、恢复、取消、释放和附件 POC 通过前，不能称为可交付能力。
+现有上游 wrapper 仍是实验 API；固定版本的创建、恢复、取消、释放和附件随 PT03／PT05B 开发验证，完成实现及 PT08 真实桌面验收前，不能称为可交付能力。
 
 浏览器按需创建，原型会话可离线打开和继续讨论，不以浏览器初始化成功作为会话创建／恢复的强制条件。
 未创建浏览器时，检查状态明确返回“未运行”；用户要求验证时再由 Host 启动，失败返回实际诊断并保留工程现场。
@@ -161,16 +204,16 @@ Host 固定当前事项、候选源码、构建和 Mock 版本，用受管 pnpm 
 源码、构建、Mock、测试集合或浏览器组合变化后，相关证据标记过期并说明差异；仅重新打开页面不能恢复旧通过状态。
 未执行、取消、超时和未覆盖分别记录，不用聚合绿灯掩盖局部缺口；诊断详情在输出／诊断入口展示，不占业务操作主界面。
 
-## 9. 最低 POC 与交付边界
+## 9. 开发工作包验证与交付边界
 
-以下六项属于新能力的最低技术验证，结果应提供命令、版本、样本和实际附件，不能由静态设计代替。
+以下验证直接纳入对应开发工作包，不设独立 POC 阶段或以其作为开发前置条件。结果应提供命令、版本、样本和实际附件，不能由静态设计代替；最终由 PT08 完成当前交付版本的真实桌面闭环验收。
 
-1. 真实业务用例：在同一固定产物完成第 7 节适用流程，locator／expect／截图／trace 可追溯，并区分 Electron 保护检查结果。
-2. 两任务隔离：并行事项各自预览、工具 scope 和状态独立；串用 scope、target、附件或其他 loopback 端口被拒绝。
-3. 恶意负向 sink：真实监听验证外站／重定向／其他端口／WS／SW／iframe／弹窗／下载等拒绝路径，并列出未测路径。
-4. 取消和恢复：取消／预览重启／构建变化后旧能力立即无效；对话可离线恢复，按需创建新浏览器，不复用旧活状态。
-5. 干净机离线：安装包自带受管 Chromium，在无用户 Chrome、无首次下载条件下启动；记录签名、杀毒、许可证及真实包体增量。
-6. 截图进原生模型：图片由附件 store 进入真实原生会话，支持图片的模型完成可核对的页面观察；非图像路线明确“未看图”。
+1. PT05B／PT07 真实业务用例：在同一固定产物完成第 7 节适用流程，locator／expect／截图／trace 可追溯，并区分 Electron 保护检查结果。
+2. PT03／PT05／PT05B 两任务隔离：并行事项各自预览、工具 scope 和状态独立；串用 scope、target、附件或其他 loopback 端口被拒绝。
+3. PT05／PT05B 恶意负向 sink：真实监听验证外站／重定向／其他端口／WS／SW／iframe／弹窗／下载等拒绝路径，并列出未测路径。
+4. PT03／PT05／PT05B 取消和恢复：取消／预览重启／构建变化后旧能力立即无效；对话可离线恢复，按需创建新浏览器，不复用旧活状态。
+5. PT05B 安装分发：安装包自带受管 Chromium，在无用户 Chrome、无首次下载条件下启动；记录签名、杀毒、许可证及真实包体增量。
+6. PT03／PT05B 截图进原生模型：图片由附件 store 进入真实原生会话，支持图片的模型完成可核对的页面观察；非图像路线明确“未看图”。
 
-POC 通过只允许确认该固定技术组合可实施；正式交付仍需当前安装包、真实 Electron 业务桌面和指定协同服务的完整闭环。
-本文未实施依赖、浏览器服务、编辑器或 runtime lock，也未执行上述 POC；不能据此报告原型功能完成或生产就绪。
+各工作包局部检查只记录对应实现的验证结果；PT08 须使用当前安装包、真实 Electron 业务桌面、原生会话及真实模型（涉及 AI 时）、Host、指定协同服务 `100.119.183.44`、Git／持久化和桌面结果完成闭环，并覆盖相关中断、失败与恢复。未执行的部分明确记为“未验收”。
+本文未实施依赖、浏览器服务、编辑器或 runtime lock，也未执行上述实现验证与最终真实桌面验收；不能据此报告原型功能完成或生产就绪。

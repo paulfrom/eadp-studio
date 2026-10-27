@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-export interface PublicationBaseline { projectId: string; assetId: string; baselineId: string; commitSha: string; completionEvidence: string[]; acceptedHead: string }
+export interface PublicationBaseline { projectId: string; prototypeId: string; baselineId: string; commitSha: string; acceptanceId: string; acceptedHead: string }
 export interface PublicationArtifact { baseline: PublicationBaseline; buildId: string; sha256: string; files: { path: string; sha256: string; bytes: string }[] }
 export interface PublicationRecord { operationId: string; phase: 'shareable' | 'revoked' | 'failed' | 'unknown'; baselineId?: string; commitSha?: string; artifactSha256?: string; url?: string; message?: string }
 export interface PublicationTarget {
@@ -25,7 +25,7 @@ export class PublicationService {
     const target = this.target()
     await this.options.authority.authorize(projectId, 'publish')
     const baseline = await this.options.authority.current(projectId)
-    if (!baseline.baselineId || !/^[a-f0-9]{40}$/.test(baseline.commitSha) || !baseline.completionEvidence.length || !/^[a-f0-9]{40}$/.test(baseline.acceptedHead)) throw new Error('当前项目尚无可发布的已确认原型基线。')
+    if (!baseline.baselineId || !/^[a-f0-9]{40}$/.test(baseline.commitSha) || !baseline.acceptanceId || !/^[a-f0-9]{40}$/.test(baseline.acceptedHead)) throw new Error('当前项目尚无可发布的已确认原型基线。')
     const build = await this.options.build(baseline)
     try {
       const files: PublicationArtifact['files'] = []

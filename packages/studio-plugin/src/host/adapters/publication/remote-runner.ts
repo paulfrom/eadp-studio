@@ -68,7 +68,7 @@ async function run(){
   const authorityResponse=await fetch(q.authorityUrl,{headers:{Authorization:'Bearer '+q.authorityToken},redirect:'error',signal:AbortSignal.timeout(15000)});
   if(!authorityResponse.ok)throw Error('authority');
   const latest=await authorityResponse.json();
-  if(latest.projectId!==baseline.projectId||latest.assetId!==baseline.assetId||latest.baselineId!==baseline.baselineId||latest.commitSha!==baseline.commitSha||latest.acceptedHead!==baseline.acceptedHead||!latest.completionEvidence?.length||JSON.stringify(latest.completionEvidence)!==JSON.stringify(baseline.completionEvidence))throw Error('stale baseline');
+  if(latest.projectId!==baseline.projectId||latest.prototypeId!==baseline.prototypeId||latest.baselineId!==baseline.baselineId||latest.commitSha!==baseline.commitSha||latest.acceptedHead!==baseline.acceptedHead||!latest.acceptanceId||latest.acceptanceId!==baseline.acceptanceId)throw Error('stale baseline');
  };
  await checkAuthority();
  const stageName='.upload-'+q.operationId, stage=path.join(root,stageName);let replaced=false;
@@ -80,7 +80,7 @@ async function run(){
    const target=path.join(stage,file.path);await fs.mkdir(path.dirname(target),{recursive:true});await fs.writeFile(target,bytes,{flag:'wx',mode:0o644});
   }
   if(hash(JSON.stringify(a.files.map(({path,sha256})=>({path,sha256}))))!==a.sha256)throw Error('manifest checksum');
-  const descriptor={operationId:q.operationId,projectId:baseline.projectId,assetId:baseline.assetId,baselineId:baseline.baselineId,commitSha:baseline.commitSha,buildId:a.buildId,artifactSha256:a.sha256,files:a.files.map(({path,sha256})=>({path,sha256}))};
+  const descriptor={operationId:q.operationId,projectId:baseline.projectId,prototypeId:baseline.prototypeId,baselineId:baseline.baselineId,commitSha:baseline.commitSha,buildId:a.buildId,artifactSha256:a.sha256,files:a.files.map(({path,sha256})=>({path,sha256}))};
   await fs.writeFile(path.join(stage,'studio-publication.json'),JSON.stringify(descriptor),{flag:'wx',mode:0o644});
   let previous;try{previous=await fs.readlink(current)}catch(e){if(e.code!=='ENOENT')throw e}
   if(previous&&!/^\.upload-[a-f0-9-]{36}$/.test(previous))throw Error('unmanaged current');

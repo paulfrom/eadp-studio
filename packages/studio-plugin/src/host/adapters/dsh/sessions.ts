@@ -10,8 +10,9 @@ import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
+import type { PrototypeConversationMessage } from '../../../shared/prototype.ts'
 import { findMaterialFile } from '../assets/materials.ts'
-import { inheritStudioExecutionScope, registerStudioExecutionScope } from '../platform/execution-guard.js'
+import { inheritStudioExecutionScope, registerStudioExecutionScope, updateStudioWriteScope } from '../platform/execution-guard.js'
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.js'
 import { readTemplateManifest } from '../../prototype/template.js'
 
@@ -56,6 +57,10 @@ export class DshTaskSessions {
     const replay = task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
     if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
     if (this.handles.has(task.sessionId)) {
+      if (input) {
+        const handle = this.handles.get(task.sessionId)!
+        updateStudioWriteScope(handle.agent, (task.writePaths ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`), (task.writePaths ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`))
+      }
       if (input) await this.bind(task, input)
       if (this.durableSessions.has(task.sessionId)) {
         const inspection = await this.ctx.sessionController.inspect(task.sessionId as SessionId)
@@ -114,8 +119,8 @@ export class DshTaskSessions {
         const manifest = await readTemplateManifest(this.manifestPath)
         scope.effect(() => registerStudioExecutionScope(task.worktree, {
           readRoot: task.worktree,
-          writablePaths: (manifest.contract.writablePrefixes ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
-          writablePrefixes: (manifest.contract.writablePrefixes ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
+          writablePaths: (task.writePaths ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
+          writablePrefixes: (task.writePaths ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
           protectedPaths: manifest.contract.protectedPaths.map(p => `原型代码/${p}`),
         }, agent), 'studio: prototype file boundary')
         const binding = await loadPrototypeRules(input, { load: async request => {
@@ -187,16 +192,36 @@ export class DshTaskSessions {
     } })
     this.bindings.set(task.sessionId, binding); return binding
   }
-  async prompt(sessionId: string, text: string): Promise<void> {
+  async prompt(sessionId: string, text: string, operationId?: string): Promise<void> {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error('任务会话尚未恢复')
-    if (this.durableSessions.has(sessionId)) {
-      const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
-      const delivered = inspection.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task'
-        && event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n') === text)
+    if (operationId || this.durableSessions.has(sessionId)) {
+      const inspection = operationId ? await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined) : await this.ctx.sessionController.inspect(sessionId as SessionId)
+      const delivered = inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task'
+        && (operationId ? event.data.source.operationId === operationId : event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n') === text))
       if (delivered) return
     }
-    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task' } }))
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task', ...(operationId ? { operationId } : {}) } }))
+  }
+  /** A missing log entry does not prove that an in-flight request was not delivered. */
+  async inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'unknown'> {
+    const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined)
+    return inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task' && event.data.source.operationId === operationId) ? 'delivered' : 'unknown'
+  }
+  async readPrototypeConversation(sessionId: string): Promise<PrototypeConversationMessage[]> {
+    const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
+    const messages: PrototypeConversationMessage[] = []
+    for (const event of inspection.events) {
+      if (event.type === 'user/message') {
+        if (event.data.source.kind !== 'studio-task' && event.data.source.kind !== 'user') continue
+        const text = event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+        if (text) messages.push({ sequence: event.seq, role: 'user', text })
+      } else if (event.type === 'assistant/message') {
+        const text = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
+        if (text) messages.push({ sequence: event.seq, role: 'assistant', text, ...(event.data.interrupted ? { interrupted: true } : {}) })
+      }
+    }
+    return messages
   }
   /** Use the same cancellation command as DSH's native conversation surface. */
   async cancel(sessionId: string): Promise<void> {
@@ -216,4 +241,4 @@ export class DshTaskSessions {
   }
   async dispose(): Promise<void> { this.releaseOutput(); this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
 }
-declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task' } } }
+declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task'; operationId?: string } } }

@@ -259,6 +259,24 @@ export class WorkspaceGit {
     }
     return paths
   }
+  /** Read tracked and untracked changes against a fixed base without diff drivers or renames. */
+  async prototypeWorkingChanges(root: string, baseSha: string): Promise<Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>> {
+    const tracked = await this.command(root, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-status', '-z', fixedSha(baseSha), '--', '原型代码'])
+    const fields = tracked.stdout ? tracked.stdout.split('\0') : []
+    if (fields.length && fields.pop() !== '') throw new Error('Git 工程差异结果不完整。')
+    if (fields.length % 2) throw new Error('Git 工程差异结果无效。')
+    const changes = new Map<string, 'added' | 'modified' | 'deleted'>()
+    for (let index = 0; index < fields.length; index += 2) {
+      const status = fields[index]!, file = gitRelativePath(fields[index + 1]!)
+      if (!file.startsWith('原型代码/')) continue
+      changes.set(file.slice('原型代码/'.length), status === 'A' ? 'added' : status === 'D' ? 'deleted' : 'modified')
+    }
+    const untracked = await this.command(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', '原型代码'])
+    const files = untracked.stdout ? untracked.stdout.split('\0') : []
+    if (files.length && files.pop() !== '') throw new Error('Git 未跟踪文件列表不完整。')
+    for (const file of files.map(gitRelativePath)) if (file.startsWith('原型代码/')) changes.set(file.slice('原型代码/'.length), 'added')
+    return [...changes].map(([path, status]) => ({ path, status })).sort((left, right) => left.path.localeCompare(right.path))
+  }
   async commitFiles(root: string, files: readonly string[], message: string, identity: GitIdentity): Promise<string> {
     if (!files.length || !message.trim() || message.length > 500) throw new Error('Git 提交信息无效。')
     validateIdentity(identity)

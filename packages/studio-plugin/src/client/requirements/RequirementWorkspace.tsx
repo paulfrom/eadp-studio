@@ -23,13 +23,14 @@ interface WorkspaceProps {
   registerFlush(flush?: () => Promise<boolean>): void;
   onOpenMaterial?(entity: EntityView): void;
   onOpenScenario(entityId: string): void;
+  onOpenPrototype(entityId: string): void;
 }
 /**
  * Requirement page: the AI conversation beside the requirement document. Owns
  * the draft and recovery choices; confirmation submits the complete current
  * input so the Host can save and continue the same confirmation flow.
  */
-export function RequirementWorkspace({ workspace, entity, state, faces, busy, call, registerFlush, onOpenScenario, onOpenMaterial }: WorkspaceProps) {
+export function RequirementWorkspace({ workspace, entity, state, faces, busy, call, registerFlush, onOpenScenario, onOpenMaterial, onOpenPrototype }: WorkspaceProps) {
   const [collapsed, setCollapsed] = useState(false)
   const documentFocus = useMaterialDocumentFocus(collapsed)
   const [confirmationOpen, setConfirmationOpen] = useState(false)
@@ -186,6 +187,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   return <div className={layout.frame}><div ref={documentFocus.panes} className={`${css.scenarioWorkspace} ${layout.panes} ${collapsed ? css.scenarioCollapsed : ''}`}>
     <section className={css.chatPanel} aria-label="需求对话">
       <MaterialWorkspaceHeader entity={entity} sessions={sessions} activeSessionId={task?.sessionId} locked={locked} readOnly={workspace.readOnly} reviewCount={workspace.writeProposal?.status === 'pending' ? workspace.writeProposal.changes.length : 0} onReview={() => setReviewRequested(value => value + 1)} onConfirm={() => setConfirmationOpen(true)} onRefresh={actions.refresh} onNewSession={actions.newSession} onSelectSession={actions.selectSession} onTemplates={actions.openTemplates} />
+      <div className={css.panelActions}><button onClick={() => onOpenPrototype(entity.id)}>进入项目原型</button></div>
       {workspace.readOnly && <div className={css.panelNotice}>
         <span>确认人 #{workspace.confirmedBy ?? entity.current?.confirmedBy} · {workspace.confirmedAt ?? entity.current?.confirmedAt}</span>
         <button disabled={busy || confirming} onClick={actions.startRevision}>开始修订需求</button>

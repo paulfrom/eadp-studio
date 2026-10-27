@@ -12,6 +12,7 @@ export interface MergeConflictResult { content?: string; delete?: true }
 
 export interface HostPorts {
   workspaceRoot: string
+  prototypeManifestPath?: string
   git: WorkspaceGit
   gitLocal(args: readonly string[], cwd: string): Promise<string>
   login(username: string, password: string): Promise<StudioIdentity>
@@ -19,7 +20,9 @@ export interface HostPorts {
   account(): Promise<StudioUser | undefined>
   installTemplate(destination: string): Promise<void>
   session(task: TaskView, rules: string): Promise<string>
-  prompt(sessionId: string, text: string): Promise<void>
+  prompt(sessionId: string, text: string, operationId?: string): Promise<void>
+  inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'unknown'>
+  readPrototypeConversation(sessionId: string): Promise<import('../../shared/prototype.ts').PrototypeConversationMessage[]>
   /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */
   compareConsistency?(input: ConsistencyModelInput, signal: AbortSignal): Promise<string>
   /** One-shot short-text inference with no Agent tools, Session persistence, or Git access. */
@@ -32,8 +35,8 @@ export interface HostPorts {
   readScenarioSource?(source: { path: string; name: string }): Promise<ScenarioSourceRead>
   checks(task: TaskView, sourceSha: string): Promise<CheckEvidence>
   preview(task: TaskView): Promise<{ url: string }>
-  stopPreview(): Promise<void>
-  publication(action: 'publish' | 'revokePublication', baseline?: { id: string; commitSha: string }): Promise<void>
+  stopPreview(sessionId?: string): Promise<void>
+  publication(action: 'publish' | 'revokePublication'): Promise<void>
 }
 export function initialMetadata(entity: { id: string; kind: MaterialMetadata['kind']; title: string; templateId?: string; templateRef?: FixedReference }, scenarioIds: string[] = [], sources: Array<{ projectId: string; entityId: string; version: number }> = []): MaterialMetadata {
   const shared = { entityId: entity.id, kind: entity.kind, title: entity.title,

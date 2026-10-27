@@ -10,7 +10,7 @@ export interface SshPublicationOptions {
   host: string; port: number; username: string; knownHostKey: string; root: string; url: string
   node: string; flock: string; credentials: SecretStore; credentialKey: `publication-${string}`
   /** A backend-scoped token that can only read this project's current accepted baseline. */
-  authority: () => Promise<{ url: string; token: string }>
+  authority: (baselineId: string) => Promise<{ url: string; token: string }>
   access: 'public' | 'restricted'
 }
 interface PublicationCredentials { privateKey: string; accessHeaders?: Record<string, string> }
@@ -26,18 +26,20 @@ export class SshPublicationTarget implements PublicationTarget {
   }
   publish(operationId: string, artifact: PublicationArtifact, expected: PublicationBaseline): Promise<PublicationRecord> {
     if (artifact.baseline.baselineId !== expected.baselineId || artifact.baseline.commitSha !== expected.commitSha) throw new Error('发布固定基线不一致。')
-    return this.execute({ action: 'publish', operationId, artifact })
+    return this.execute({ action: 'publish', operationId, artifact }, expected.baselineId)
   }
   query(operationId?: string): Promise<PublicationRecord> { return this.execute({ action: 'query', ...(operationId ? { operationId } : {}) }) }
   revoke(operationId: string, expectedArtifactSha256: string): Promise<PublicationRecord> { return this.execute({ action: 'revoke', operationId, expectedArtifactSha256 }) }
-  private async execute(request: Record<string, unknown>): Promise<PublicationRecord> {
+  private async execute(request: Record<string, unknown>, baselineId?: string): Promise<PublicationRecord> {
     if (request.operationId !== undefined && !/^[a-f0-9-]{36}$/.test(String(request.operationId))) throw new Error('发布操作标识无效。')
     const credentials = await this.options.credentials.read(this.options.credentialKey) as PublicationCredentials | undefined
     if (!credentials?.privateKey || !credentials.privateKey.startsWith('-----BEGIN OPENSSH PRIVATE KEY-----')) throw new Error('独立发布授权尚未配置。')
     if (this.options.access === 'restricted' && !Object.keys(credentials.accessHeaders ?? {}).length) throw new Error('受限站点缺少实际访问验证授权。')
-    const authority = await this.options.authority()
-    const authorityUrl = new URL(authority.url)
-    if (!['http:', 'https:'].includes(authorityUrl.protocol) || authorityUrl.username || authorityUrl.password || !authority.token) throw new Error('基线读取授权无效。')
+    const authority = baselineId ? await this.options.authority(baselineId) : undefined
+    if (authority) {
+      const authorityUrl = new URL(authority.url)
+      if (!['http:', 'https:'].includes(authorityUrl.protocol) || authorityUrl.username || authorityUrl.password || !authority.token) throw new Error('基线读取授权无效。')
+    }
     const temporary = await mkdtemp(path.join(tmpdir(), 'eadp-publication-'))
     try {
       const key = path.join(temporary, 'identity')
@@ -46,7 +48,7 @@ export class SshPublicationTarget implements PublicationTarget {
       await writeFile(known, `[${this.options.host}]:${this.options.port} ${this.options.knownHostKey}\n${this.options.host} ${this.options.knownHostKey}\n`, { mode: 0o600 })
       const command = `${quote(this.options.flock)} -x -w 15 ${quote(path.posix.join(this.options.root, '.publish.lock'))} ${quote(this.options.node)} -e ${quote(REMOTE_PUBLICATION_RUNNER)}`
       const output = await this.runtime.run('ssh', ['-F', process.platform === 'win32' ? 'NUL' : '/dev/null', '-T', '-p', String(this.options.port), '-i', key, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none', '-o', 'StrictHostKeyChecking=yes', '-o', `UserKnownHostsFile=${known}`, '-o', 'GlobalKnownHostsFile=none', '-o', 'ClearAllForwardings=yes', '-o', 'ConnectTimeout=15', `${this.options.username}@${this.options.host}`, command], {
-        cwd: temporary, timeoutMs: 600_000, input: JSON.stringify({ ...request, root: this.options.root, url: this.options.url, authorityUrl: authority.url, authorityToken: authority.token, access: this.options.access, accessHeaders: credentials.accessHeaders ?? {} }), maxOutputBytes: 64 * 1024,
+        cwd: temporary, timeoutMs: 600_000, input: JSON.stringify({ ...request, root: this.options.root, url: this.options.url, authorityUrl: authority?.url, authorityToken: authority?.token, access: this.options.access, accessHeaders: credentials.accessHeaders ?? {} }), maxOutputBytes: 64 * 1024,
       }).catch(() => undefined)
       if (!output) return { operationId: String(request.operationId ?? 'unknown'), phase: 'unknown', message: '远端操作结果未知，请先查询当前站点。' }
       const record = JSON.parse(output.stdout) as PublicationRecord

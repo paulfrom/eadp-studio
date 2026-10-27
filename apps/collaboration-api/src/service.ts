@@ -12,6 +12,10 @@ import * as integration from './modules/integration.js';
 import * as reuse from './modules/reuse.js';
 import * as repairs from './modules/repairs.js';
 import * as templates from './modules/templates.js';
+import * as prototypes from './modules/prototypes.js';
+import * as prototypeIntegration from './modules/prototype-integration.js';
+import * as prototypeReuse from './modules/prototype-reuse.js';
+import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, ReleasePrototypeTaskRequest, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest } from '@eadp/contracts';
 import { visibleEntity } from './modules/visibility.js';
 
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
@@ -76,12 +80,104 @@ export class CollaborationService {
   }
   async createProject(actor: Actor, input: CreateProjectRequest) { return this.projects.create(actor, input); }
   async initializeProject(actor: Actor, projectId: string, input: InitializeProjectRequest) { return this.projects.initialize(actor, projectId, input); }
+  async prototype(actor: Actor, projectId: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, async c => prototypes.projectPrototype(c, await repository.project(c, projectId), actor));
+  }
+  async prototypeTask(actor: Actor, projectId: string, taskId: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => prototypes.getTask(c, projectId, taskId, actor));
+  }
+  async createPrototypeTask(actor: Actor, projectId: string, input: CreatePrototypeTaskRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, 'prototype.task.create', input, (c, project, all) => prototypes.createTask(c, project, all, actor, input));
+  }
+  async extendPrototypeClaims(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeClaimsRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.task.claims:${taskId}`, input, (c, _project, all) => prototypes.extendClaims(c, projectId, all, actor, taskId, input));
+  }
+  async updatePrototypeReferences(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeReferencesRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.task.references:${taskId}`, input, (c, _project, all) => prototypes.updateReferences(c, projectId, all, actor, taskId, input));
+  }
+  async updatePrototypeScope(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeScopeRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.task.scope:${taskId}`, input, c => prototypes.updateScope(c, projectId, actor, taskId, input));
+  }
+  async cancelPrototypeTask(actor: Actor, projectId: string, taskId: string, input: CancelPrototypeTaskRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.task.cancel:${taskId}`, input, async c => ({ ...(await prototypes.endTask(c, projectId, actor, taskId, 'cancelled', input)), gitRecovery: 'unknown' as const }));
+  }
+  async releasePrototypeTask(actor: Actor, projectId: string, taskId: string, input: ReleasePrototypeTaskRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.task.release:${taskId}`, input, async c => ({ ...(await prototypes.endTask(c, projectId, actor, taskId, 'released', input)), gitRecovery: 'unknown' as const }));
+  }
+  async prototypeBaselines(actor: Actor, projectId: string, limit: number, offset: number) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => prototypeIntegration.baselines(c, projectId, limit, offset));
+  }
+  async prototypeAdoptions(actor: Actor, projectId: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => prototypeReuse.list(c, projectId));
+  }
+  async adoptPrototype(actor: Actor, projectId: string, input: PrototypeAdoptRequest) {
+    await this.authorize(actor, projectId, true); await this.authorize(actor, input.source.projectId);
+    return this.mutate(actor, projectId, 'prototype.reuse.adopt', input, c => prototypeReuse.adopt(c, projectId, actor, input), [input.source.projectId]);
+  }
+  async prototypeAdoptionSuccess(actor: Actor, projectId: string, id: string, input: PrototypeAdoptionSuccessRequest) {
+    await this.authorize(actor, projectId, true);
+    return this.mutate(actor, projectId, `prototype.reuse.success:${id}`, input, c => prototypeReuse.success(c, projectId, id, actor, input));
+  }
+  async prototypeIntegration(actor: Actor, projectId: string, id: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, c => prototypeIntegration.getIntegration(c, projectId, id, actor));
+  }
+  private async inspectPrototypeCandidate(project: ProjectView, input: PrototypeIntegrationRequest) {
+    const prefix = `/projects/${project.gitlabProjectId}/repository`;
+    const expectedPrefix = `refs/heads/studio-private/${input.token.prototypeTaskId}/`;
+    requireCondition(input.sourceRef.startsWith(expectedPrefix) && input.sourceRef.endsWith('/source') && input.candidateRef === `${input.sourceRef.slice(0, -'/source'.length)}/candidate`, 'INVALID_SOURCE_REF', 'Source and candidate refs must belong to this task and operation', 422);
+    const [sourceRef, candidateRef, source, candidate] = await Promise.all([
+      this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.sourceRef)}`),
+      this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.candidateRef)}`),
+      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.sourceSha}`),
+      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.candidateSha}`),
+    ]);
+    requireCondition(sourceRef.id === input.sourceSha && candidateRef.id === input.candidateSha && source.id === input.sourceSha && candidate.id === input.candidateSha && source.parent_ids.length === 1 && source.parent_ids[0] === input.sourceBaseHead, 'SOURCE_CANDIDATE_MISMATCH', 'Uploaded refs and source parent must match the confirmed source', 409);
+    if (input.derivation.kind === 'author-confirmed') requireCondition(input.sourceBaseHead === input.expectedHead && input.candidateSha === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Direct candidates must be the confirmed source', 409);
+    else requireCondition(candidate.parent_ids.length === 2 && candidate.parent_ids[0] === input.expectedHead && candidate.parent_ids[1] === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Merged candidate must retain the expected head and source as parents', 409);
+    type Diff = { old_path: string; new_path: string; too_large?: boolean; collapsed?: boolean };
+    type Compare = { compare_timeout?: boolean; compare_same_ref?: boolean; diffs: Diff[] };
+    const compare = async (from: string, to: string) => this.gitlab.json<Compare>(`${prefix}/compare?from=${from}&to=${to}&straight=true`);
+    const [sourceDiff, candidateDiff] = await Promise.all([compare(input.sourceBaseHead, input.sourceSha), compare(input.expectedHead, input.candidateSha)]);
+    for (const diff of [sourceDiff, candidateDiff]) requireCondition(!diff.compare_timeout && !diff.compare_same_ref && diff.diffs.length > 0 && diff.diffs.every(item => !item.too_large && !item.collapsed && input.allowedPaths.includes(item.old_path) && input.allowedPaths.includes(item.new_path)), 'CANDIDATE_PATH_SCOPE', 'Source and candidate changes must be complete and within the declared scope', 422);
+  }
+  async preparePrototypeIntegration(actor: Actor, projectId: string, input: PrototypeIntegrationRequest) {
+    const project = await this.authorize(actor, projectId, true), action = 'prototype.integration.prepare';
+    const previous = await this.replay(actor, projectId, action, input); if (previous.found) return previous.result;
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch differs from the recognized head', 409);
+    await this.inspectPrototypeCandidate(project, input);
+    return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.prepare(c, current, actor, input));
+  }
+  async completePrototypeIntegration(actor: Actor, projectId: string, id: string, input: CompletePrototypeIntegrationRequest) {
+    const project = await this.authorize(actor, projectId, true), action = `prototype.integration.complete:${id}`;
+    const previous = await this.replay(actor, projectId, action, input); if (previous.found) return previous.result;
+    const operation = await this.transact(actor, c => prototypeIntegration.getIntegration(c, projectId, id, actor));
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === operation.candidateSha, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch has not reached the prepared candidate', 409);
+    return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.complete(c, current, actor, id, input));
+  }
+  async abortPrototypeIntegration(actor: Actor, projectId: string, id: string, input: AbortPrototypeIntegrationRequest) {
+    const project = await this.authorize(actor, projectId, true), action = `prototype.integration.abort:${id}`;
+    const previous = await this.replay(actor, projectId, action, input); if (previous.found) return previous.result;
+    const operation = await this.transact(actor, c => prototypeIntegration.getIntegration(c, projectId, id, actor));
+    requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === operation.expectedHead, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch changed; reconcile the integration before aborting', 409);
+    return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.abort(c, current, actor, id, input));
+  }
   async state(actor: Actor, projectId: string): Promise<ProjectState> {
     return this.transact(actor, async c => {
       await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       const project = await repository.project(c, projectId), entities = await repository.entities(c, projectId);
       const integrations = (await repository.listIntegrations(c, projectId)).map(integration.publicIntegration);
-      const baselines = await repository.listBaselines(c, projectId);
+      const baselines = await prototypeIntegration.baselines(c, projectId);
       return { project, entities: entities.map(entity => visibleEntity(entity, actor)), integrations, baselines };
     });
   }
@@ -206,7 +302,6 @@ export class CollaborationService {
       const sourceProject = await this.authorize(actor, source.projectId);
       const version = await this.transact(actor, c => reuse.fixedVersion(c, source.projectId, source.entityId, source.version));
       await this.content.verify(actor, sourceProject.gitlabProjectId, version.fixed, { entityId: source.entityId, kind: version.metadata.kind });
-      if (input.stage === 'prototype') continue;
       const inherited = await this.transact(actor, async c => {
         const all = await repository.entities(c, projectId), value = repository.entity(all, confirmation.entityId);
         if (value.current?.metadata.sources.some(s => canonical(s) === canonical(source))) return true;
@@ -287,8 +382,9 @@ export class CollaborationService {
     return this.transact(actor, async c => {
       const current = await repository.project(c, projectId, true);
       repository.assertProjectReady(current);
-      requireCondition(current.currentBaselineId === input.baselineId && current.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Publication requires the current accepted prototype baseline');
-      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
+      const prototype = await prototypes.projectPrototype(c, current, actor);
+      requireCondition(prototype.currentBaselineId === input.baselineId && current.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Publication requires the current accepted prototype baseline');
+      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' UNION ALL SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
       const grant = this.publication.issue(projectId, input.baselineId, current.recognizedHead, actor.id);
       await repository.audit(c, projectId, actor, 'publication.authorized', { baselineId: input.baselineId, acceptedHead: current.recognizedHead, expiresAt: grant.expiresAt });
       return grant;
@@ -301,11 +397,12 @@ export class CollaborationService {
     return this.transact(actor, async c => {
       const project = await repository.project(c, projectId, true);
       repository.assertProjectReady(project);
-      requireCondition(project.currentBaselineId === claims.baselineId && project.recognizedHead === claims.acceptedHead, 'PUBLICATION_CONTEXT_CHANGED', 'The accepted baseline or integration head changed; request a new publication authorization');
-      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
-      const baseline = await repository.baseline(c, projectId, claims.baselineId);
+      const prototype = await prototypes.projectPrototype(c, project, actor);
+      requireCondition(prototype.currentBaselineId === claims.baselineId && project.recognizedHead === claims.acceptedHead, 'PUBLICATION_CONTEXT_CHANGED', 'The accepted baseline or integration head changed; request a new publication authorization');
+      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' UNION ALL SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
+      const baseline = (await prototypeIntegration.baselines(c, projectId)).find(item => item.id === claims.baselineId);
       requireCondition(baseline, 'BASELINE_NOT_FOUND', 'Accepted baseline was not found', 404);
-      return { baselineId: baseline.id, commitSha: baseline.commitSha, acceptedHead: project.recognizedHead, completionEvidence: baseline.confirmationId };
+      return { baselineId: baseline.id, commitSha: baseline.commitSha, acceptedHead: project.recognizedHead, completionEvidence: baseline.acceptanceId };
     });
   }
   async submitComparison(actor: Actor, projectId: string, input: SubmitConsistencyComparisonRequest) {
@@ -360,8 +457,9 @@ export class CollaborationService {
     const url = new URL(input.url); requireCondition(['https:', 'http:'].includes(url.protocol) && !url.username && !url.password, 'INVALID_DEPLOYMENT_URL', 'Deployment URL must be an HTTP(S) URL without credentials', 422);
     requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Reconcile the stable branch before publishing');
     return this.mutate(actor, projectId, 'deployment.record', input, async (c, p) => {
-      requireCondition(p.currentBaselineId === input.baselineId && p.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Only the current accepted prototype baseline can be published');
-      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
+      const prototype = await prototypes.projectPrototype(c, p, actor);
+      requireCondition(prototype.currentBaselineId === input.baselineId && p.recognizedHead === project.recognizedHead, 'CURRENT_BASELINE_REQUIRED', 'Only the current accepted prototype baseline can be published');
+      requireCondition((await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' UNION ALL SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND status='prepared'", [projectId])).rowCount === 0, 'INTEGRATION_PENDING', 'Pending integration must be reconciled before publishing');
       p.deployment = { baselineId: input.baselineId, url: input.url, artifactSha256: input.artifactSha256, deployedAt: repository.now() }; await repository.saveProject(c, p); return p.deployment;
     });
   }

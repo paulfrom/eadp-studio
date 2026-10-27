@@ -1,4 +1,4 @@
-import { canonical, prototypeBindings, requireCondition } from '@eadp/asset-domain';
+import { requireCondition } from '@eadp/asset-domain';
 import type { ClaimRequest, EntityView, OccupationToken, OccupationView, ReleaseRequest, UpdateRelationsRequest } from '@eadp/contracts';
 import { validatePrerequisites } from '@eadp/asset-domain';
 import { finishOccupationRepairs } from './repairs.js';
@@ -16,9 +16,8 @@ export async function claim(c: Transaction, projectId: string, all: EntityView[]
   requireCondition(!value.builtinKey, 'BUILTIN_SCENARIO_IMMUTABLE', 'The built-in general scenario cannot be occupied or edited', 409);
   requireCondition(value.revision === input.expectedRevision, 'REVISION_CONFLICT', 'Entity revision has changed');
   requireCondition(!value.occupation, 'ALREADY_OCCUPIED', 'Entity already has an active persistent occupation');
-  const bindings = input.purpose === 'prototype' ? prototypeBindings(value, all) : [];
   value.revision++; value.generation++; value.taskStatus = 'active';
-  const occupation: OccupationView = { occupationId: newId(), generation: value.generation, taskId: input.taskId, clientId: input.clientId, expectedRevision: value.revision, entityId: id, ownerId: actor.id, purpose: input.purpose, inputVersion: value.materialVersion, prerequisiteBindings: bindings, createdAt: now() };
+  const occupation: OccupationView = { occupationId: newId(), generation: value.generation, taskId: input.taskId, clientId: input.clientId, expectedRevision: value.revision, entityId: id, ownerId: actor.id, purpose: input.purpose, inputVersion: value.materialVersion, createdAt: now() };
   value.occupation = occupation;
   await saveOccupation(c, projectId, occupation);
   await saveEntity(c, projectId, value);
@@ -44,7 +43,6 @@ export async function finishOccupation(c: Transaction, projectId: string, all: E
 export function checkBoundInputs(value: EntityView, all: EntityView[]) {
   const occupation = value.occupation;
   requireCondition(occupation && occupation.inputVersion === value.materialVersion, 'INPUT_CHANGED', 'Task material input has changed');
-  if (occupation.purpose === 'prototype') requireCondition(canonical(prototypeBindings(value, all)) === canonical(occupation.prerequisiteBindings), 'PREREQUISITE_CHANGED', 'Bound prerequisite completion evidence has changed');
 }
 export async function updateRelations(c: Transaction, projectId: string, all: EntityView[], id: string, actor: Actor, input: UpdateRelationsRequest) {
   const value = entity(all, id); const occupation = assertOccupation(value, input.token, actor);

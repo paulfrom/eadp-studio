@@ -109,7 +109,7 @@ export class GitIntegrations {
   private prepare(operation: PendingOperation): MaterialIntegrationRequest {
     const request = operation.prepare
     if (!isMaterialIntegrationRequest(request) || request.idempotencyKey !== operation.id || request.entityId !== operation.entityId || request.candidateSha !== operation.candidateSha || request.expectedHead !== operation.expectedHead || canonical(request.token) !== canonical(operation.token)) throw new Error('原集成请求与固定候选记录不一致')
-    if (operation.task.projectId !== operation.projectId || operation.task.entityId !== operation.entityId || path.basename(operation.task.worktree) !== request.token.taskId || (request.stage === 'prototype' ? operation.task.purpose !== 'prototype' : !['material', 'handoff'].includes(operation.task.purpose))) throw new Error('原集成请求与任务占用身份不一致')
+    if (operation.task.projectId !== operation.projectId || operation.task.entityId !== operation.entityId || path.basename(operation.task.worktree) !== request.token.taskId || !['material', 'handoff'].includes(operation.task.purpose)) throw new Error('原集成请求与任务占用身份不一致')
     if (request.confirmations.length !== 1 || request.confirmations[0]!.entityId !== operation.entityId || request.confirmations[0]!.fixed.path !== operation.fixedPath || request.confirmations[0]!.fixed.sha256 !== operation.sha256 || request.stage === 'material' && request.confirmations[0]!.fixed.commitSha !== request.candidateSha) throw new Error('原集成请求未包含精确固定材料')
     return request
   }

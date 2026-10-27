@@ -3,9 +3,9 @@ import { ScenarioTemplates } from './scenario-templates.ts'
 import { ScenarioRepairs } from './scenario-repairs.ts'
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import { canonical, prototypeBindings } from '@eadp/asset-domain'
+import { canonical } from '@eadp/asset-domain'
 import path from 'node:path'
-import type { NamespaceView, EntityOccupancyView, EntityView, FixedReference, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, MaterialMetadata } from '@eadp/contracts'
+import type { NamespaceView, EntityOccupancyView, EntityView, FixedReference, FixedVersion, IntegrationView, MaterialIntegrationRequest, OccupationToken, ProjectState, ProjectView, PrototypeBaselineView, MaterialMetadata } from '@eadp/contracts'
 import type { Candidate, ConfirmationChoice, MaterialDraft, ProjectProgressReply, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
 import { digest, findMaterialFile, parseMaterial, readMaterial, saveMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
@@ -28,8 +28,8 @@ import type { ConsistencyCommand } from '../../shared/consistency.ts'
 import type { RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
 import { candidateBusinessEvidence } from './requirement-candidate-content.ts'
 import { readRequirementSource } from './requirement-sources.ts'
+import { PrototypeCollaboration } from './prototype-collaboration.ts'
 
-const prototypeRules = '按已确认需求完成原型；发现冲突时保留代码并要求作者修订需求，不得自行确认。'
 const key = (): string => randomUUID()
 const confirmationChoice = (choice: ConfirmationChoice): ConfirmationChoice => choice.method === 'direct' ? { method: 'direct' } : { method: 'ai-assisted', reviewId: choice.reviewId, authorDisposition: choice.authorDisposition }
 const sameSource = (left: { projectId: string; entityId: string; version: number }, right: { projectId: string; entityId: string; version: number }) => left.projectId === right.projectId && left.entityId === right.entityId && left.version === right.version
@@ -50,6 +50,7 @@ export class StudioApplication {
   private projection: Promise<StudioState> | undefined
   private readonly requirementRecoveries = new Set<string>()
   private previewState: StudioState['preview']
+  private readonly prototypePreviews = new Map<string, { prototypeTaskId: string; url: string }>()
   private namespaces: NamespaceView[] = []
   private readonly reviews: AuthorReviews
   private readonly projects: ProjectWorkspaces
@@ -63,14 +64,15 @@ export class StudioApplication {
   private readonly candidateMerges: CandidateMerges
   private readonly integrations: GitIntegrations
   private readonly confirmations: MaterialConfirmations
+  private readonly prototypeCollaboration: PrototypeCollaboration
   private lastState: StudioState | undefined
-  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress); this.reviews = new AuthorReviews(store, ports)
+  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.prototypeCollaboration = new PrototypeCollaboration(store, api, ports); this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress); this.reviews = new AuthorReviews(store, ports)
     this.maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => this.projects.syncMain(projectId, commit), release: task => this.releaseTask(task) })
     this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
     this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
     this.fixedCandidates = new FixedCandidates(store, ports, {
       entity: (id, projectId) => this.entity(id, projectId), designTask: (remote, entity) => this.designTask(remote, entity),
-      prototypeTask: (remote, entity) => this.prototypeTask(remote, entity), owned: entity => this.requireOwned(entity),
+      owned: entity => this.requireOwned(entity),
       identity: projectId => this.identity(projectId), pruneEvidence: task => this.scenarios.sources.pruneEvidence(task),
     })
     this.candidateMerges = new CandidateMerges(store, ports, {
@@ -156,6 +158,38 @@ export class StudioApplication {
   private async execute(command: Exclude<StudioCommand, { action: 'state' }>): Promise<StudioReply> {
     let sessionId: string | undefined
     if (command.action !== 'login' && command.action !== 'logout') await this.requireAccount()
+    if (command.action === 'readPrototypeBuffer') return { ok: true, state: await this.state(), prototypeBuffer: await this.prototypeCollaboration.readBuffer(command.prototypeTaskId, command.path) }
+    if (command.action === 'savePrototypeBuffer') { await this.prototypeCollaboration.saveBuffer(command.operationId, command.buffer); return { ok: true, state: await this.state() } }
+    if (command.action === 'clearPrototypeBuffer') { await this.prototypeCollaboration.clearBuffer(command.prototypeTaskId, command.path, command.expectedContent); return { ok: true, state: await this.state() } }
+    if (command.action === 'readPrototypeDiff') return { ok: true, state: await this.state(), prototypeFiles: await this.prototypeCollaboration.diff(command) }
+    if (command.action === 'listPrototypeDirectory' || command.action === 'searchPrototypeFiles' || command.action === 'readPrototypeFile' || command.action === 'savePrototypeFile') {
+      const prototypeFiles = command.action === 'savePrototypeFile' ? await this.prototypeCollaboration.saveFile(command) : await this.prototypeCollaboration.fileService.read(await this.prototypeCollaboration.fileWorkspace(command.prototypeTaskId), command)
+      return { ok: true, state: await this.state(), prototypeFiles }
+    }
+    if (command.action === 'startPrototypeCollaboration') { await this.prototypeCollaboration.start(command); return { ok: true, state: await this.state() } }
+    if (command.action === 'continuePrototypeCollaboration' || command.action === 'extendPrototypeDevelopment') { await this.prototypeCollaboration.continue(command); return { ok: true, state: await this.state() } }
+    if (command.action === 'selectPrototypeQueueItem') { await this.prototypeCollaboration.select(command.prototypeTaskId); return { ok: true, state: await this.state() } }
+    if (command.action === 'resumePrototypeQueueItem') { await this.prototypeCollaboration.resumeQueued(command.prototypeTaskId); return { ok: true, state: await this.state() } }
+    if (command.action === 'queryPrototypeMessage') { await this.prototypeCollaboration.queryMessage(command.prototypeTaskId); return { ok: true, state: await this.state() } }
+    if (command.action === 'readPrototypeConversation') return { ok: true, state: await this.state(), prototypeConversation: await this.prototypeCollaboration.conversation(command.prototypeTaskId) }
+    if (command.action === 'readPrototypeQueue') return { ok: true, state: await this.state() }
+    if (command.action === 'savePrototypeInstructionDraft') { await this.prototypeCollaboration.saveDraft(command.operationId, command.draft); return { ok: true, state: await this.state() } }
+    if (command.action === 'checkProjectPrototype' || command.action === 'startProjectPrototypePreview') {
+      const task = await this.prototypeCollaboration.task(command.prototypeTaskId)
+      const sha = (await this.ports.git.state(task.worktree)).head
+      await this.ports.checks(task, sha)
+      if (command.action === 'startProjectPrototypePreview') {
+        const preview = await this.ports.preview(task)
+        this.prototypePreviews.set(command.prototypeTaskId, { prototypeTaskId: command.prototypeTaskId, url: preview.url })
+      }
+      return { ok: true, state: await this.state() }
+    }
+    if (command.action === 'stopProjectPrototypePreview') {
+      const sessionId = await this.prototypeCollaboration.sessionId(command.prototypeTaskId)
+      if (sessionId) await this.ports.stopPreview(sessionId)
+      this.prototypePreviews.delete(command.prototypeTaskId)
+      return { ok: true, state: await this.state() }
+    }
     if (command.action === 'readRequirementSource') {
       const { remote, entity } = await this.entity(command.entityId)
       const requirementSource = await readRequirementSource(remote.project.id, entity, command.sourceEntityId, command.expectedVersion, {
@@ -169,7 +203,7 @@ export class StudioApplication {
     switch (command.action) {
       case 'login': {
         await this.comparisons.dispose(); this.lastState = undefined
-        await this.ports.stopPreview(); this.previewState = undefined; this.namespaces = []
+        await this.ports.stopPreview(); this.previewState = undefined; this.prototypePreviews.clear(); this.namespaces = []
         const identity = await this.ports.login(command.username, command.password)
         this.store.useUser(identity.user.id)
         // Login's contract is authentication, not a full projection: the reply
@@ -178,7 +212,7 @@ export class StudioApplication {
         // full state right after.
         return { ok: true, state: { connected: true, account: identity.user, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] } }
       }
-      case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.lastState = undefined; this.namespaces = [] } break }
+      case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.prototypePreviews.clear(); this.lastState = undefined; this.namespaces = [] } break }
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
@@ -195,15 +229,10 @@ export class StudioApplication {
       }
       case 'startSession': {
         const { remote, entity } = await this.entity(command.entityId)
-        if (command.purpose === 'prototype') {
-          const task = await this.prototypeTask(remote, entity)
-          sessionId = await this.ports.session(task, prototypeRules)
-        } else {
-          if ((entity.kind === 'scenario' || entity.kind === 'requirement') && entity.current && !entity.occupation) throw new Error('已确认材料只读，请显式开始修订')
-          const task = await this.designTask(remote, entity)
-          const draft = await readMaterial(task.worktree, entity.kind, entity.id)
-          sessionId = await this.ports.session(task, this.materialRules(draft))
-        }
+        if ((entity.kind === 'scenario' || entity.kind === 'requirement') && entity.current && !entity.occupation) throw new Error('已确认材料只读，请显式开始修订')
+        const task = await this.designTask(remote, entity)
+        const draft = await readMaterial(task.worktree, entity.kind, entity.id)
+        sessionId = await this.ports.session(task, this.materialRules(draft))
         break
       }
       case 'restoreSession': sessionId = await this.restoreSession(command.sessionId); break
@@ -222,11 +251,6 @@ export class StudioApplication {
         } else await this.confirmReviewedCandidate(command.entityId, 'material', command, command.expectedHash)
         break
       }
-      case 'claimPrototype': { const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); sessionId = await this.ports.session(task, prototypeRules); break }
-      case 'checkPrototype': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const sha = (await this.ports.git.state(task.worktree)).head; await this.ports.checks(task, sha); break }
-      case 'startPreview': { this.previewState = undefined; const { remote, entity } = await this.entity(command.entityId); const task = await this.prototypeTask(remote, entity); const result = await this.ports.preview(task); this.previewState = { entityId: entity.id, url: result.url }; break }
-      case 'stopPreview': await this.ports.stopPreview(); this.previewState = undefined; break
-      case 'confirmPrototype': await this.confirmReviewedCandidate(command.entityId, 'prototype', command); break
       case 'releaseOccupation': {
         const { remote, entity } = await this.entity(command.entityId)
         const token = await this.requireOwned(entity)
@@ -243,15 +267,11 @@ export class StudioApplication {
       case 'retryOperation': {
         const local = await this.store.read(), matching = local.operations.filter(op => op.id === command.operationId)
         const operation = matching.find(op => op.projectId === local.selectedProjectId) ?? (matching.length === 1 ? matching[0] : undefined)
-        const startup = local.tasks.find(task => task.prototypeStart?.id === command.operationId)
         const confirmation = local.scenarios.find(record => record.materialConfirmations?.some(value => value.operationId === command.operationId || value.integrationId === command.operationId))
         const confirmed = confirmation?.materialConfirmations?.find(value => value.operationId === command.operationId || value.integrationId === command.operationId)
         if (confirmation && confirmed) await this.confirmations.retry(confirmation.entityId, confirmed.operationId, confirmation.projectId)
         else if (operation) this.integrations.schedule(operation)
-        else if (startup) {
-          if (startup.prototypeStart?.status === 'unknown') throw new Error('原型启动答复未知，请恢复原会话核对，不能重复发送')
-          this.schedulePrototypeStartup(startup, this.store.accountId!)
-        } else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
+        else { const adoption = local.adoptions.find(op => op.id === command.operationId); const reservation = local.materialReservations.find(op => op.id === command.operationId)
             const repairAuthorization = local.scenarios.find(record => record.projectId === local.selectedProjectId && record.repairAuthorization?.request.idempotencyKey === command.operationId)
             const repairEvent = local.scenarioRepairs.find(record => record.projectId === local.selectedProjectId && (record.pending?.idempotencyKey === command.operationId || record.recoverPending?.idempotencyKey === command.operationId))
             const templateBinding = local.scenarios.find(record => record.projectId === local.selectedProjectId && (record.templateBinding?.request.idempotencyKey === command.operationId || record.templateBinding?.application?.operationId === command.operationId))
@@ -287,8 +307,8 @@ export class StudioApplication {
         await this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/receipts`), { idempotencyKey: key(), confirmationId: entity.current.confirmationId, note: command.note }); break
       }
       case 'publish': case 'revokePublication': {
-        const { remote } = await this.selected(); const baseline = remote.baselines.find(b => b.id === remote.project.currentBaselineId)
-        await this.ports.publication(command.action, baseline); break
+        await this.selected()
+        await this.ports.publication(command.action); break
       }
     }
     const state = await this.state()
@@ -470,7 +490,6 @@ export class StudioApplication {
       if (original) this.scheduleAcceptedWork(operation, operation.accepted, original)
     }
     for (const operation of local.operations) if (operation.accountId === account.id && allowed.has(operation.projectId)) this.integrations.recover(operation)
-    for (const task of local.tasks) if (allowed.has(task.projectId) && task.prototypeStart && task.prototypeStart.status !== 'sent') this.schedulePrototypeStartup(task, account.id)
     const projectTemplates = remote?.project.initializationStatus === 'ready' ? await this.templates.catalog(remote.project) : undefined
     const tasks = local.tasks.filter(task => task.projectId === selected?.id)
     const drafts: MaterialDraft[] = []
@@ -506,7 +525,9 @@ export class StudioApplication {
       .flatMap(record => record.materialConfirmations ?? [])
       .filter(value => value.phase !== 'accepted' && value.phase !== 'superseded' && value.integrationId)
       .map(value => value.integrationId!))
-    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces,
+    const prototypeQueue = await this.prototypeCollaboration.view()
+    const prototypeBaselines = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeBaselineView[]>('GET', this.route(selected.id, '/prototype/baselines?limit=100&offset=0')) : undefined
+    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}),
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
         // record the account can no longer read cannot be finished, so it stops being a task
@@ -526,7 +547,6 @@ export class StudioApplication {
           const save = this.scenarios.requirementSaves.view(record), confirmation = this.confirmations.view(record, local.operations)
           return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? confirmation!.phase, message: save?.message ?? confirmation!.message }] : []
         }),
-        ...tasks.filter(task => task.prototypeStart && task.prototypeStart.status !== 'sent').map(task => ({ id: task.prototypeStart!.id, entityId: task.entityId, phase: 'prototype-startup', message: task.prototypeStart!.message ?? '材料已确认，原型启动等待恢复' })),
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
       ] }
     if (selected) await this.scheduleRequirementRecoveries(selected.id)
@@ -554,6 +574,8 @@ export class StudioApplication {
   }
   /** Reopen an existing task before the native client can promote its persisted Session. */
   private async restoreSession(sessionId: string): Promise<string> {
+    const prototypeSession = await this.prototypeCollaboration.restoreSession(sessionId)
+    if (prototypeSession) return prototypeSession
     const local = await this.store.read()
     const repair = local.scenarioRepairs.find(value => value.task.sessionId === sessionId && value.projectId === local.selectedProjectId)
     if (repair) {
@@ -562,22 +584,19 @@ export class StudioApplication {
       return this.ports.session(repair.task, '只读场景修复助手，由Host执行受控写入和确认。')
     }
     const task = local.tasks.find(value => value.sessionId === sessionId && value.projectId === local.selectedProjectId)
-    if (!task || !['material', 'handoff', 'prototype', 'split'].includes(task.purpose)) throw new Error('未找到当前项目可恢复的工作台任务')
+    if (!task || !['material', 'handoff', 'split'].includes(task.purpose)) throw new Error('未找到当前项目可恢复的工作台任务')
     if (task.purpose === 'split') { await this.candidates.resume(task.sessionId); return task.sessionId }
     const { remote, entity } = await this.entity(task.entityId)
     if (entity.kind === 'scenario' && task.purpose === 'material') return this.scenarios.selectSession(entity.id, sessionId)
-    const expectedPurpose = task.purpose === 'prototype' ? 'prototype' : entity.kind === 'handoff' ? 'handoff' : 'material'
-    if (task.purpose !== expectedPurpose || task.purpose === 'prototype' && entity.kind !== 'requirement') throw new Error('会话任务类型与当前资产不一致')
+    const expectedPurpose = entity.kind === 'handoff' ? 'handoff' : 'material'
+    if (task.purpose !== expectedPurpose) throw new Error('会话任务类型与当前资产不一致')
     const token = await this.requireOwned(entity)
     const occupation = entity.occupation!
-    const expectedOccupation = task.purpose === 'prototype' ? 'prototype' : 'design'
-    if (occupation.purpose !== expectedOccupation || occupation.inputVersion !== entity.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
+    if (occupation.purpose !== 'design' || occupation.inputVersion !== entity.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
     if (path.resolve(task.worktree) !== path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)) throw new Error('会话现场与当前任务占用不一致')
-    if (task.inputHash !== (entity.current?.fixed.sha256 ?? '') || task.purpose === 'prototype' && !entity.current) throw new Error('需求或材料已修订，旧会话输入已失效')
-      if (task.purpose === 'prototype' && canonical(prototypeBindings(entity, remote.entities.filter(isEntityView))) !== canonical(occupation.prerequisiteBindings)) throw new Error('前置需求固定完成依据已变化，旧原型会话输入已失效')
+    if (task.inputHash !== (entity.current?.fixed.sha256 ?? '')) throw new Error('材料已修订，旧会话输入已失效')
     const draft = await readMaterial(task.worktree, entity.kind, entity.id)
-    if (task.purpose === 'prototype' && draft.sha256 !== task.inputHash) throw new Error('原型现场需求与固定输入不一致')
-    return this.ports.session(task, task.purpose === 'prototype' ? prototypeRules : this.materialRules(draft))
+    return this.ports.session(task, this.materialRules(draft))
   }
   private async identity(projectId?: string) {
     const account = await this.requireAccount()
@@ -680,38 +699,12 @@ export class StudioApplication {
     if (claimed) void this.scenarios.statusReports.report({ projectId: remote.project.id, entityId: entity.id, trigger: 'occupation-start', worktree: task.worktree, baseHead: remote.project.recognizedHead! })
     return task
   }
-  private async prototypeTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
-    if (entity.kind !== 'requirement' || !entity.current) throw new Error('请先确认唯一需求材料')
-    const accountId = this.store.accountId, directory = this.store.directory
-    if (!accountId) throw new Error('请登录后打开任务')
-    const local = await this.taskAccount(accountId, () => this.store.read())
-    if (entity.occupation?.purpose === 'design') {
-      const token = await this.taskAccount(accountId, () => this.requireOwned(entity))
-      await this.taskAccount(accountId, () => this.api.request('POST', this.route(remote.project.id, `/entities/${entity.id}/cancel`), { idempotencyKey: key(), token, reason: '设计材料已确认，转入原型生产' }))
-      entity = (await this.taskAccount(accountId, () => this.entity(entity.id, remote.project.id))).entity
-    }
-    if (!entity.occupation) entity = await this.taskAccount(accountId, () => this.api.request<EntityView>('POST', this.route(remote.project.id, `/entities/${entity.id}/claim`), { idempotencyKey: key(), expectedRevision: entity.revision, taskId: key(), clientId: local.clientId, purpose: 'prototype' }))
-    const token = await this.taskAccount(accountId, () => this.requireOwned(entity))
-    if (entity.occupation!.purpose !== 'prototype') throw new Error('当前占用属于其他任务类型')
-    const existing = local.tasks.find(t => t.projectId === remote.project.id && t.entityId === entity.id && t.purpose === 'prototype' && path.basename(t.worktree) === token.taskId)
-    if (existing) {
-      if (existing.inputHash !== entity.current!.fixed.sha256) throw new Error('需求已修订；旧原型现场已保留，请重新认领并绑定新输入')
-      return existing
-    }
-    const project = local.projects.find(p => p.id === remote.project.id)!
-    if (!project) throw new Error('原项目未在本机登记')
-    await this.taskAccount(accountId, () => this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!))
-    const worktree = path.join(directory, 'worktrees', project.id, token.taskId)
-    await this.taskAccount(accountId, () => this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/prototype-${token.generation}`, remote.project.recognizedHead!))
-    const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: 'prototype', inputHash: entity.current!.fixed.sha256, worktree }
-    local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === 'prototype')); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save()); return task
-  }
   private materialRules(draft: MaterialDraft): string {
     if (draft.metadata.kind === 'scenario') return '你是场景设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，禁止直接写入文件、修改Git或确认。场景只确认业务流程完整：触发条件、角色、主要路径、必要分支及业务结果；金额阈值、字段和计算口径等细节留待需求确认，不作为场景阻断项。资料与引用仅提醒，可依据当前正文和用户明确答复，不强制外部附件。每次调用须以Host提供的当前Markdown、固定模板和实际已读资料为准。'
     if (draft.metadata.kind === 'requirement') return '你是需求设计助手。使用 grilling 逐问推进需求设计，用 domain-modeling 沉淀术语与决策；普通对话只归纳结论与提问，不写正文、不直接修改文件或确认。以Host提供的当前需求、已接受场景依据和实际已读资料为准，缺业务答案时提问。'
     return `你正在整理 ${draft.metadata.kind} ${draft.entityId}。仅编辑 ${draft.path}；保留 eadp-metadata 身份。实际业务依据、核心业务规则、验收条件缺失时提出问题，不编造；核心待澄清项阻断确认，非阻断项明确限制和不适用范围。不得自行确认、释放占用、修改Git/模板规则或执行shell。作者通过工作台确认。当前材料哈希 ${draft.sha256}。`
   }
-  private async confirmReviewedCandidate(entityId: string, purpose: 'material' | 'prototype', choice: ConfirmationChoice, expectedHash?: string) {
+  private async confirmReviewedCandidate(entityId: string, purpose: 'material', choice: ConfirmationChoice, expectedHash?: string) {
     const snapshot = await this.fixedCandidates.prepare({ entityId, purpose, ...(expectedHash ? { expectedHash } : {}) })
     const authority = await this.reviews.confirmation(confirmationChoice(choice), snapshot.review)
     await this.integrations.submit(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map(value => ({ ...value, readHash: value.fixed.sha256, ...authority, authorConfirmed: true as const })) })
@@ -749,12 +742,6 @@ export class StudioApplication {
       if (entity.kind === 'scenario') {
         const record = await this.scenarios.record(entity.id, operation.projectId)
         record.splitOffered = true; this.scenarios.stopObservation(task); await this.store.save()
-      } else if (entity.kind === 'requirement') {
-        const id = `prototype:${operation.projectId}:${operation.id}`
-        if (task.prototypeStart && task.prototypeStart.id !== id) throw new Error('原任务已有另一版本的原型启动记录，请核对原现场')
-        task.prototypeStart ??= { id, confirmationId: entity.current.confirmationId, fixed: structuredClone(entity.current.fixed), status: 'pending' }
-        await this.store.save()
-        this.schedulePrototypeStartup(task, operation.accountId)
       }
     })
     for (const adoptionId of operation.adoptionIds ?? []) schedule(`adoption-success:${adoptionId}`, async () => {
@@ -770,7 +757,6 @@ export class StudioApplication {
       adoption.success ??= { idempotencyKey: adoption.id + '-success-' + confirmationId, targetConfirmationId: confirmationId }
       await this.store.save(); await this.resumeAdoption(adoption)
     })
-    if (integration.baselineId) schedule('handoff', () => this.generateHandoff(integration.baselineId!))
   }
   private async requireTaskAccount(accountId: number): Promise<void> {
     if (!this.store.scoped || this.store.accountId !== accountId) throw new Error('账号已变化，任务现场保留供原账号恢复')
@@ -786,42 +772,6 @@ export class StudioApplication {
     await this.requireTaskAccount(accountId)
     return result
   }
-  private schedulePrototypeStartup(task: TaskView, accountId: number): void {
-    const startup = task.prototypeStart
-    if (!startup || startup.status === 'sent' || startup.status === 'unknown') return
-    this.lane.schedule(`${accountId}:${task.projectId}:${startup.id}`, () => this.startAcceptedPrototype(task, accountId))
-  }
-  /** Startup records an external send before attempting it; an unknown send is never repeated blindly. */
-  private async startAcceptedPrototype(owner: TaskView, accountId: number): Promise<void> {
-    const startup = owner.prototypeStart!
-    await this.requireTaskAccount(accountId)
-    if (startup.status === 'sent') return
-    if (startup.status === 'opening' || startup.status === 'sending' || startup.status === 'unknown') {
-      startup.status = 'unknown'; startup.message = '原型启动答复未知，请恢复原会话核对，不能自动重复发送'
-      await this.store.save(); return
-    }
-    try {
-      const { remote, entity } = await this.entity(owner.entityId, owner.projectId)
-      await this.requireTaskAccount(accountId)
-      if (!entity.current || entity.current.confirmationId !== startup.confirmationId || canonical(entity.current.fixed) !== canonical(startup.fixed)) throw new Error('需求已修订，原型启动仍绑定原确认版本，请核对当前选择')
-      if (entity.occupation?.purpose === 'design') throw new Error('当前已有新的设计占用，请保留修订现场并显式选择后续原型任务')
-      const task = await this.prototypeTask(remote, entity)
-      await this.requireTaskAccount(accountId)
-      startup.task = { projectId: task.projectId, entityId: task.entityId, purpose: task.purpose, sessionId: task.sessionId, inputHash: task.inputHash, worktree: task.worktree }
-      startup.status = 'opening'; await this.store.save()
-      await this.ports.session(task, prototypeRules)
-      await this.requireTaskAccount(accountId)
-      startup.status = 'sending'; await this.store.save()
-      await this.ports.prompt(task.sessionId, `开始实现已确认需求 ${entity.id}，输入哈希 ${startup.fixed.sha256}。`)
-      await this.requireTaskAccount(accountId)
-      startup.status = 'sent'; delete startup.message; await this.store.save()
-    } catch (error) {
-      await this.requireTaskAccount(accountId)
-      startup.status = ['opening', 'sending', 'sent'].includes(startup.status) ? 'unknown' : 'blocked'
-      startup.message = error instanceof Error ? error.message : '原型启动等待恢复'
-      await this.store.save(); throw error
-    }
-  }
   /** Settle this machine once an integration is accepted; the reply never waits for it. */
   private scheduleMaintenance(task: TaskView, commit: string): void {
     this.lane.schedule(`maintenance:${task.worktree}`, () => this.maintenance.settle(task, commit))
@@ -836,6 +786,7 @@ export class StudioApplication {
   acceptSessionOutput(sessionId: string, output: SessionOutput): Promise<void> {
     const result = this.queue.then(async () => {
       if (!this.store.scoped || (await this.ports.account())?.id !== this.store.accountId) return
+      if (await this.prototypeCollaboration.accept(sessionId, output)) return
       if (output.kind === 'source-read') { await this.acceptSourceRead(sessionId, output); return }
       if (await this.candidateMerges.accept(sessionId, output)) return
       if (await this.repairs.accept(sessionId, output)) return
@@ -895,27 +846,26 @@ export class StudioApplication {
   private async generateHandoff(baselineId: string) {
     const { remote } = await this.selected(); const baseline = remote.baselines.find(b => b.id === baselineId)
     if (!baseline) throw new Error('基线不存在或尚未被接受')
-    const source = remote.entities.find((value): value is EntityView => isEntityView(value) && value.id === baseline.entityId)
-    if (!source) throw new Error('基线需求不可见')
-    // The handoff is a named material too: its title carries the requirement and baseline version, never an ID.
-    const title = `交接 ${source.title} v${baseline.version}`
+    const title = `原型交接 v${baseline.sequence}`
     const existing = remote.entities.find((e): e is EntityView => isEntityView(e) && e.kind === 'handoff' && e.title === title)
     const entity = existing ?? await this.api.request<EntityView>('POST', this.route(remote.project.id, '/entities'), { idempotencyKey: key(), kind: 'handoff', title })
     const fresh = await this.entity(entity.id); const task = await this.designTask(fresh.remote, fresh.entity)
-    if (!task.handoff) { task.handoff = { baselineId: baseline.id, entityId: baseline.entityId, version: baseline.version, commitSha: baseline.commitSha, status: 'pending' }; await this.store.save() }
+    if (!task.handoff) { task.handoff = { baselineId: baseline.id, sequence: baseline.sequence, commitSha: baseline.commitSha, status: 'pending' }; await this.store.save() }
     const handoff = task.handoff
-    if (handoff.baselineId !== baseline.id || handoff.commitSha !== baseline.commitSha || handoff.entityId !== baseline.entityId || handoff.version !== baseline.version) throw new Error('交接任务已绑定其他固定基线')
+    if (handoff.baselineId !== baseline.id || handoff.commitSha !== baseline.commitSha || handoff.sequence !== baseline.sequence) throw new Error('交接任务已绑定其他固定基线')
     if (handoff.status === 'sent') return
     try {
       let draft: MaterialDraft
       try { draft = await readMaterial(task.worktree, 'handoff', entity.id) }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-        const metadata = { ...initialMetadata(entity), referencedAssets: [{ projectId: remote.project.id, entityId: source.id, version: baseline.version }] }
-        draft = await saveMaterial(task.worktree, metadata, '# ' + entity.title + '\n\n## 固定资料\n\n需求 ' + source.id + '，材料版本 ' + baseline.version + '，代码 ' + baseline.commitSha + '。\n\n## 核心业务规则\n\n待根据固定需求整理。\n\n## 验收条件\n\n待根据固定需求整理。\n\n## 交付内容、限制与待澄清\n\n请结合固定材料补充。\n')
+        const metadata = initialMetadata(entity)
+        if (metadata.kind !== 'handoff') throw new Error('交接材料身份不正确')
+        metadata.prototypeBaseline = { baselineId: baseline.id, commitSha: baseline.commitSha }
+        draft = await saveMaterial(task.worktree, metadata, '# ' + entity.title + '\n\n## 固定资料\n\n原型基线 ' + baseline.id + '，代码 ' + baseline.commitSha + '。\n\n## 核心业务规则\n\n待根据固定需求整理。\n\n## 验收条件\n\n待根据固定需求整理。\n\n## 交付内容、限制与待澄清\n\n请结合固定材料补充。\n')
       }
       await this.ports.session(task, this.materialRules(draft))
-      await this.ports.prompt(task.sessionId, '基于已接受基线 ' + baseline.id + '（代码 ' + baseline.commitSha + '）读取固定需求，整理可阅读交接清单 ' + draft.path + '：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。')
+      await this.ports.prompt(task.sessionId, '基于已接受基线 ' + baseline.id + '（代码 ' + baseline.commitSha + '）结合基线关联需求和原型代码，整理可阅读交接清单 ' + draft.path + '：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。')
       handoff.status = 'sent'; delete task.error; await this.store.save()
     } catch (error) { handoff.status = 'failed'; task.error = error instanceof Error ? error.message : '交接清单请求未完成'; await this.store.save(); throw error }
   }

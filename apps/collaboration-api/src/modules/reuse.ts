@@ -23,7 +23,6 @@ export async function eligibility(c: Transaction, projectId: string, all: Entity
 export async function adopt(c: Transaction, targetProjectId: string, all: EntityView[], actor: Actor, input: AdoptRequest): Promise<AdoptionRecord> {
   const source = await fixedVersion(c, input.source.projectId, input.source.entityId, input.source.version);
   requireCondition(source.reuse.enabled, 'REUSE_DISABLED', 'Selected source version is not eligible for new adoption', 409, { reason: source.reuse.reason });
-  requireCondition(input.scope !== 'prototype-package' || source.prototypeBaselineId, 'SOURCE_BASELINE_REQUIRED', 'Prototype package adoption requires an accepted completion baseline');
   const target = entity(all, input.targetEntityId);
   requireCondition(target.occupation?.ownerId === actor.id && target.occupation.taskId === input.targetTaskId && target.kind === source.metadata.kind, 'TARGET_TASK_REQUIRED', 'Adoption must bind the current owned target task of the same asset kind');
   requireCondition(!(input.source.projectId === targetProjectId && input.source.entityId === target.id), 'SELF_ADOPTION', 'Asset cannot adopt itself');
@@ -35,7 +34,6 @@ export async function adoptionSuccess(c: Transaction, projectId: string, id: str
   const value = await getAdoption(c, projectId, id);
   const accepted = await confirmation(c, projectId, input.targetConfirmationId);
   requireCondition(accepted.event.entityId === value.targetEntityId, 'TARGET_CONFIRMATION_REQUIRED', 'Target confirmation must identify the adopted target');
-  requireCondition(value.scope !== 'prototype-package' || accepted.stage === 'prototype', 'TARGET_BASELINE_REQUIRED', 'Prototype adoption succeeds only after accepted prototype completion');
   const target = await fixedVersion(c, projectId, value.targetEntityId, accepted.event.version);
   requireCondition(target.metadata.sources.some(s => s.projectId === value.source.projectId && s.entityId === value.source.entityId && s.version === value.source.version), 'SOURCE_EVIDENCE_REQUIRED', 'Accepted target material must retain the exact adopted source');
   value.status = 'succeeded'; value.targetConfirmationId = input.targetConfirmationId; value.targetVersion = target.version; value.succeededAt = now();

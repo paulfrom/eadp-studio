@@ -1,7 +1,7 @@
 import { canonical, requireCondition, validatePrerequisites } from '@eadp/asset-domain';
 import { createHash } from 'node:crypto';
 import { reviewInputText } from '@eadp/contracts';
-import type { BaselineView, ConfirmationEvent, ConfirmationInput, EntityView, FixedVersion, IntegrationView, MaterialMetadata, PrepareIntegrationRequest, ProjectView } from '@eadp/contracts';
+import type { ConfirmationEvent, ConfirmationInput, EntityView, FixedVersion, IntegrationView, MaterialMetadata, PrepareIntegrationRequest, ProjectView } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import * as repository from '../persistence/repository.js';
@@ -40,24 +40,27 @@ function validateConfirmation(project: ProjectView, all: EntityView[], prospecti
   requireCondition(value.revision === confirmation.expectedRevision && metadata.kind === value.kind, 'CONFIRMATION_REVISION_CONFLICT', 'Confirmation entity, kind and revision must match');
   requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);
   if (value.kind === 'scenario' || value.kind === 'requirement') requireCondition(value.templateId === metadata.templateId && canonical(value.templateRef) === canonical(metadata.templateRef), 'TEMPLATE_BINDING_CHANGED', 'Material confirmation must bind its selected fixed template');
-  if (input.stage === 'prototype') {
-    requireCondition(value.current && value.completedVersion !== value.materialVersion && canonical(value.current.metadata) === canonical(metadata) && canonical(value.current.fixed) === canonical(confirmation.fixed), 'PROTOTYPE_INPUT_CHANGED', 'Prototype completion must bind its confirmed requirement material');
-  } else {
-    if (value.kind !== 'requirement') requireCondition(metadata.prerequisites.length === 0 && metadata.scenarioIds.length === 0, 'INVALID_RELATIONS', 'Only requirements may declare scenarios and prerequisites', 422);
-    for (const scenarioId of metadata.scenarioIds) {
-      const scenario = repository.entity(prospective, scenarioId);
-      requireCondition(scenario.kind === 'scenario', 'SCENARIO_SOURCE_REQUIRED', 'Requirement sources must identify scenarios');
-    }
-    value.scenarioIds = metadata.scenarioIds; value.prerequisites = metadata.prerequisites;
+  if (value.kind !== 'requirement') requireCondition(metadata.prerequisites.length === 0 && metadata.scenarioIds.length === 0, 'INVALID_RELATIONS', 'Only requirements may declare scenarios and prerequisites', 422);
+  for (const scenarioId of metadata.scenarioIds) {
+    const scenario = repository.entity(prospective, scenarioId);
+    requireCondition(scenario.kind === 'scenario', 'SCENARIO_SOURCE_REQUIRED', 'Requirement sources must identify scenarios');
   }
+  value.scenarioIds = metadata.scenarioIds; value.prerequisites = metadata.prerequisites;
   validateSources(project, value, all, metadata);
   for (const reference of metadata.referencedAssets) {
     requireCondition(reference.projectId === project.id && reference.entityId !== value.id, 'INVALID_MANIFEST_REFERENCE', 'Manifest references must identify other fixed assets in this project');
     const referenced = repository.entity(all, reference.entityId);
     requireCondition(reference.version > 0 && reference.version <= referenced.materialVersion, 'FIXED_REFERENCE_UNAVAILABLE', 'Manifest fixed version is not currently available');
-    if (value.kind === 'baseline' || value.kind === 'handoff') requireCondition(referenced.completions?.some(completion => completion.version === reference.version), 'COMPLETED_REFERENCE_REQUIRED', 'Baseline and handoff manifests can only aggregate accepted completed requirements');
   }
-  if (value.kind === 'baseline' || value.kind === 'handoff') requireCondition(metadata.referencedAssets.length > 0, 'EMPTY_MANIFEST', 'Baseline and handoff require accepted fixed references');
+  if (value.kind === 'baseline') requireCondition(metadata.referencedAssets.length > 0, 'EMPTY_MANIFEST', 'Baseline requires accepted fixed references');
+}
+async function validateHandoffBaselines(c: Transaction, projectId: string, materials: VerifiedMaterials): Promise<void> {
+  for (const metadata of materials.values()) {
+    if (metadata.kind !== 'handoff' || !metadata.prototypeBaseline) continue;
+    const reference = metadata.prototypeBaseline;
+    const baseline = await c.query('SELECT id FROM studio_prototype_baselines WHERE project_id=$1 AND id=$2 AND commit_sha=$3', [projectId, reference.baselineId, reference.commitSha]);
+    requireCondition(baseline.rowCount, 'BASELINE_REFERENCE_INVALID', 'Handoff baseline and commit do not identify the same accepted prototype');
+  }
 }
 export function validateIntegration(project: ProjectView, all: EntityView[], actor: Actor, input: PrepareIntegrationRequest, materials: VerifiedMaterials): EntityView | undefined {
   requireCondition(project.recognizedHead === input.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized integration head changed; rebuild and recheck the candidate');
@@ -66,7 +69,7 @@ export function validateIntegration(project: ProjectView, all: EntityView[], act
     return;
   }
   const root = repository.entity(all, input.entityId), occupation = assertOccupation(root, input.token, actor);
-  requireCondition(input.stage === 'prototype' ? occupation.purpose === 'prototype' : occupation.purpose === 'design', 'OCCUPATION_PURPOSE_MISMATCH', 'Integration stage does not match occupation purpose');
+  requireCondition(occupation.purpose === 'design', 'OCCUPATION_PURPOSE_MISMATCH', 'Material integration requires a design occupation');
   checkBoundInputs(root, all);
   requireCondition(input.confirmations.length === 1 && input.confirmations[0]!.entityId === root.id, 'SINGLE_ENTITY_REQUIRED', 'Integration confirms exactly its occupied entity', 422);
   const prospective = structuredClone(all);
@@ -80,8 +83,10 @@ async function validateRepairs(c: Transaction, projectId: string, all: EntityVie
 }
 export async function prepare(c: Transaction, project: ProjectView, all: EntityView[], actor: Actor, input: PrepareIntegrationRequest, materials: VerifiedMaterials): Promise<IntegrationView> {
   const root = validateIntegration(project, all, actor, input, materials);
+  await validateHandoffBaselines(c, project.id, materials);
   await validateRepairs(c, project.id, all, input, actor);
   const pending = (await repository.listIntegrations(c, project.id)).filter(operation => operation.status === 'prepared');
+  requireCondition((await c.query("SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND status='prepared'", [project.id])).rowCount === 0, 'INTEGRATION_PENDING', 'A prototype integration is pending');
   const occupationId = root?.occupation?.occupationId;
   requireCondition(pending.every(operation => !!occupationId && operation.occupationId === occupationId), 'INTEGRATION_PENDING', 'An integration is pending; query and reconcile it before accepting another');
   if (pending.length) await repository.abortIntegrations(c, project.id, occupationId);
@@ -100,31 +105,19 @@ async function confirmMaterial(c: Transaction, projectId: string, value: EntityV
   await repository.saveConfirmation(c, projectId, { event, version, method: input, stage: 'material', integrationId });
   await repository.saveEntity(c, projectId, value); return event;
 }
-async function completePrototype(c: Transaction, project: ProjectView, root: EntityView, actor: Actor, operation: StoredIntegration, input: MaterialRequest): Promise<string> {
-  const eventId = repository.newId(), baseline: BaselineView = { id: repository.newId(), entityId: root.id, version: root.materialVersion, commitSha: input.candidateSha, confirmationId: eventId, createdAt: repository.now() };
-  const confirmation = input.confirmations[0]!;
-  await repository.saveConfirmation(c, project.id, { event: { id: eventId, projectId: project.id, entityId: root.id, version: root.materialVersion, fixed: confirmation.fixed, revision: root.revision + 1, confirmedBy: actor.id, confirmedAt: repository.now() }, baseline, method: confirmation, stage: 'prototype', integrationId: operation.id });
-  await repository.insertBaseline(c, project.id, baseline);
-  root.completions = [...(root.completions ?? []), { version: root.materialVersion, confirmationId: eventId, integrationSha: input.candidateSha, baselineId: baseline.id }];
-  root.completedVersion = root.materialVersion; root.current!.prototypeBaselineId = baseline.id; root.completionConfirmationId = eventId; root.completedIntegrationSha = input.candidateSha;
-  project.currentBaselineId = baseline.id; operation.baselineId = baseline.id;
-  return eventId;
-}
 export async function complete(c: Transaction, project: ProjectView, all: EntityView[], actor: Actor, operation: StoredIntegration, materials: VerifiedMaterials): Promise<IntegrationView> {
   requireCondition(operation.status === 'prepared', 'INTEGRATION_NOT_PENDING', 'Integration is not pending');
   requireCondition(operation.ownerId === actor.id, 'INTEGRATION_OWNER_REQUIRED', 'Only the integration author can complete the prepared operation', 403);
   const input = operation.request, root = validateIntegration(project, all, actor, input, materials);
+  await validateHandoffBaselines(c, project.id, materials);
   await validateRepairs(c, project.id, all, input, actor);
   const ids: string[] = [];
   if (input.stage !== 'template') {
     requireCondition(root, 'ROOT_CONFIRMATION_REQUIRED', 'Material integration requires its occupied entity');
-    if (input.stage === 'prototype') ids.push(await completePrototype(c, project, root, actor, operation, input));
-    else {
-      const confirmation = input.confirmations[0]!;
-      const value = repository.entity(all, confirmation.entityId);
-      const event = await confirmMaterial(c, project.id, value, confirmation, materialFor(confirmation, materials), actor, value.id === root.id, operation.id); ids.push(event.id);
-      if (confirmation.confirmationMethod === 'ai-repair') await completeRepair(c, confirmation.repairTaskId, actor);
-    }
+    const confirmation = input.confirmations[0]!;
+    const value = repository.entity(all, confirmation.entityId);
+    const event = await confirmMaterial(c, project.id, value, confirmation, materialFor(confirmation, materials), actor, value.id === root.id, operation.id); ids.push(event.id);
+    if (confirmation.confirmationMethod === 'ai-repair') await completeRepair(c, confirmation.repairTaskId, actor);
     await finishOccupation(c, project.id, all, root, 'completed', actor);
   }
   operation.status = 'accepted'; if (input.stage !== 'template') operation.confirmationIds = ids;

@@ -139,11 +139,10 @@ export class GitLabContent {
   async verifyCandidate(actor: Reader, gitlabProjectId: number, input: PrepareIntegrationRequest): Promise<Map<string, MaterialMetadata>> {
     await this.gitlab.authorize(actor, gitlabProjectId);
     requireCondition(input.checks.candidateSha === input.candidateSha, 'CHECK_CANDIDATE_MISMATCH', 'Check evidence must bind the exact candidate');
-    const requiredChecks = input.stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : input.stage === 'template' ? ['templates'] : ['materials', 'relations'];
+    const requiredChecks = input.stage === 'template' ? ['templates'] : ['materials', 'relations'];
     requireCondition(requiredChecks.every(name => input.checks.checks.some(c => c.name === name && c.passed)), 'CHECKS_REQUIRED', 'Required checks have not passed', 422, { requiredChecks });
     for (const path of input.allowedPaths) {
       repositoryPath(path);
-      if (input.stage === 'prototype') requireCondition(path.startsWith('原型代码/'), 'PROTOTYPE_PATH_SCOPE', 'Prototype integration can only change prototype source files', 422);
       if (input.stage === 'template') requireCondition(path === 'project.assets.json' || path === PROJECT_CONTEXT_PATH || /^\.template\/[A-Za-z0-9][A-Za-z0-9_.-]*\.md$/.test(path), 'TEMPLATE_PATH_SCOPE', 'Template publication can only change the project catalog, template files and project context', 422);
       if (input.stage === 'material') requireCondition(path.includes('/') || path === PROJECT_CONTEXT_PATH, 'MATERIAL_PATH_SCOPE', 'Material integrations may only change related files below project directories or the project CONTEXT.md', 422);
     }
@@ -165,15 +164,14 @@ export class GitLabContent {
     const declaredPaths = new Set<string>();
     for (const confirmation of input.confirmations) {
       requireCondition(confirmation.readHash === confirmation.fixed.sha256, 'READ_HASH_MISMATCH', 'Confirmation must bind the final material hash', 422);
-      if (input.stage !== 'prototype') requireCondition(confirmation.fixed.commitSha === input.candidateSha && input.allowedPaths.includes(confirmation.fixed.path), 'FIXED_CANDIDATE_MISMATCH', 'Every confirmed document must bind a candidate path');
+      requireCondition(confirmation.fixed.commitSha === input.candidateSha && input.allowedPaths.includes(confirmation.fixed.path), 'FIXED_CANDIDATE_MISMATCH', 'Every confirmed document must bind a candidate path');
       const metadata = await this.verify(actor, gitlabProjectId, confirmation.fixed);
       requireCondition(metadata.entityId === confirmation.entityId && !materials.has(metadata.entityId), 'CONFIRMATION_IDENTITY_MISMATCH', 'Every confirmation must identify one distinct fixed material', 422);
-      if (input.stage === 'prototype') await this.verify(actor, gitlabProjectId, { ...confirmation.fixed, commitSha: input.candidateSha }, { entityId: metadata.entityId, kind: metadata.kind });
       materials.set(metadata.entityId, metadata);
       declaredPaths.add(confirmation.fixed.path);
       for (const file of [...metadata.businessEvidence.flatMap(e => e.files), ...(metadata.files ?? [])]) declaredPaths.add(file.path);
     }
-    if (input.stage !== 'prototype') {
+    {
       const materialPaths = new Set(input.confirmations.map(confirmation => confirmation.fixed.path));
       // A title edit renames the material, so the candidate removes the previous path of a confirmed entity.
       const materialPathPattern = /^(?:场景|需求|交接)\//;

@@ -1,6 +1,6 @@
 # 项目原型协同契约技术设计草案：新协议提案，尚未整体确认或实现
 
-状态：2026-10-26。本文承接已确认的 Q1—Q8，供整体技术设计审阅；以下接口、类型和表结构均为提案，不是现有能力。
+状态：2026-10-27。本文承接已确认的 Q1—Q8，供整体技术设计审阅；以下接口、类型和表结构均为提案，不是现有能力。
 本轮按“同一需求不能由两人同时开发”的追问补充开发互斥方案，不代表整体技术方案已确认；开发占用只约束业务开发权，不固定单需求材料版本，也不恢复前置完成门禁。
 主入口：[技术设计](technical-design.md)；业务交互：[原型工作台](../03-prototypes.md)；材料规则：[需求协同](../02-requirements.md)。
 本轮只写设计，不修改产品源码、SQL、运行状态或远端数据；产品完整闭环仍未验收。
@@ -148,7 +148,7 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 1. 用户发送实施指令，Host 解析已有需求真实 ID；后台验证权限及 writeScope/policyHash，在项目短事务中登记 task、唯一 branch、代次、参考范围和全部非空初始开发 claims。已有任一需求被别的任务领取则全部回滚；成功后 Host 按 startHead 创建个人 worktree。只读探索不创建可写任务。
 2. 多轮实现只写本分支；用户指令进入可写执行前，Host 校验当前 task 及全部开发 claims，扩范围先完成原子扩领。开发 claim 不要求占用或确认需求材料，也不检查前置需求完成；材料改版提示差异，不释放 claim 或允许按新版本另领同一 requirementId。
 3. Host 保留多轮任务分支历史，从后台登记的 sourceBaseHead（初始 startHead，或经验证的冲突重确认基头）与用户看到的精确工程树归一构造新单提交 source；第一父=sourceBaseHead，原型树与作者所见一致，非原型树来自基头。作者确认该 sourceSha 与 confirmationId，不重写原任务分支历史；先持久化并上传不可变 source ref，确认远端对象可读，再进入合并。
-   若当前授权代码与已有基线无变化，提示打开既有基线；不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。
+   若当前授权代码与已有基线无变化，提示打开既有基线；不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。以下为 R09 待整体确认的处理提案：查看既有基线不发 prepare／complete，任务保持 active、全部 claims 保留，界面说明“无代码变化，事项仍在开发”。用户明确选择结束事项才走既有 cancel，核对未决集成后关闭全部 claims、保留现场；不新增 no-change 状态、伪 acceptance 或伪基线。无既有基线时只说明无可接受代码变化，不伪造打开目标。
 4. Host 获取 recognizedHead 作为 expectedHead；若等于 sourceBaseHead，author-confirmed 的 candidate=source；否则合并 expectedHead/source，保留原 source 授权并全量重检新 candidate。冲突后先登记最新 head 为新 sourceBaseHead，在其上归一新 source 并由用户重新确认。
 5. 候选生成后上传其不可变 candidate ref，复核原 source ref；两个对象均按 SHA 可见后才 prepare，API 验证权限、稳定头、父关系、路径、合并树与当前证据。source 先于合并上传，因此冲突发生在 prepare 前时，source-base 接口也能读取并独立验证原源码，不依赖尚未存在的集成；全程不会先推进 stable。
 6. API 在项目短事务锁项目行，再读 task，校验 active、owner/client/generation/revision、expectedHead 和幂等键；核对完整开发集合、每项 claimId／generation／active／task 归属及 claimsDigest；项目无其他 prepared 才写 prepared，并冻结该 claim 集合。
@@ -181,7 +181,7 @@ Git 以 GPLv2 许可的独立进程运行，不新增 npm 包或把 Git 链接�
 author-confirmed 分支只在 sourceBaseHead=expectedHead 时使用：candidateSha=sourceSha，验证完整 diff 均在持久授权范围内，再验证新确认与当前工程证据；冲突解决新 source 使用此路径，不套用旧冲突 source 的 clean 算法。
 冲突解决时 Host 在最新 head 上固定包含已解决内容的新 source，由用户重新确认；该 derivation 与新 confirmationId 一起保存，旧确认不能用来接受新增解决代码。
 Host 必须采用同版本、同策略的原型子树三方合并，回填完整候选时其余树来自 expectedHead；不能用 Host 声明代替后台独立计算。author-confirmed 分支也核验非原型区域与 expectedHead 一致。
-实施前须核实并冻结可用 Git 版本及 merge-tree 行为，部署隔离验证器；限制对象数／字节、进程并发、CPU、内存、磁盘与超时，使用非特权身份和受限临时目录，禁 hooks/custom merge driver/仓库配置执行，不在数据库事务中运行。
+PT02 后台候选验证工作包中须锁定可用 Git 版本、实现隔离验证器，并在该工作包验收时核对 merge-tree 行为及 Windows／Linux 样本一致性；限制对象数／字节、进程并发、CPU、内存、磁盘与超时，使用非特权身份和受限临时目录，禁 hooks/custom merge driver/仓库配置执行，不在数据库事务中运行。
 操作成功、失败及超时均终止子进程并销毁临时对象，崩溃遗留须受管清理；仅留 SHA、策略版本、退出状态和有限控制摘要。此新增工具未安装、未验收，维护和权限隔离有真实成本；缺失时停止验证，不提供信任 Host 的 fallback。
 
 ## 7. fencing、分叉与未知结果恢复
@@ -203,6 +203,20 @@ complete 已接受但响应丢失：原幂等键返回原 baseline；新 key 查
 同 key 换 actor、action 或请求字节指纹返回 IDEMPOTENCY_CONFLICT；新候选、新范围或重新确认用新 key，旧记录只读。
 同一作者确认遇到干净合并重试可关联同 confirmationId；真正成果变更必须重新确认，不能把旧用户授权延伸到 AI 新写的业务代码。
 没有本地现场时后台只能报告任务及接受事实，不能声称已恢复全部会话、未提交文件或检查进程。
+
+### 7.1 一次实现指令的跨步骤恢复（R08，待整体确认）
+
+复用 Host 既有 operation 持久记录串联真实用户动作，不增加后台工作流。父 operation 保存 userActionId、账号／client／project／task 身份、原始明确指令的本地引用、规范化目标开发集合与 scope、policyHash、固定子操作键、messageOperationId、已完成步骤及 nextAction。指令正文只在账号隔离的本地状态保存，不传入后台操作摘要；各 HTTP 子操作仍按自己的原请求字节和幂等键校验。
+
+| 步骤 | 外部动作前必须落盘 | 成功后的检查点及恢复 |
+| --- | --- | --- |
+| 创建／扩领 | 原 token（已有事项时）、完整目标集合、真实用户动作与固定 create／claim key | 保存返回任务、完整 claims／digest 和新 token，再进入下一步；未知先查原 key 和当前事实，不发另一创建请求。初次 create 已原子核验初始 scope，无须重复更新。 |
+| 更新 write-scope（需要时） | 扩领返回的新 token、目标 scope／policy 和固定 scope key | 使用上一成功步骤的新 revision；落盘返回 scope 与新 token 后再准入写入。扩领成功而 scope 失败保留已经领取的全部需求，只补 scope；不回滚 claims、不按较小范围悄悄发送原指令。 |
+| 准备现场与会话 | 已获授权任务身份、固定 branch／worktree 定位、会话创建尝试及可核对标识 | 分别保存现场、sessionId 和恢复结果；崩溃核对既有对象，不覆盖现场或静默多建会话。原生创建是否可可靠核对，须在 PT03 的固定宿主适配实现和恢复验收中核实；当前尚未验证。 |
+| 入队／派发 | 原始指令引用、同一 messageOperationId、队列位置及派发阶段 | 仅在当前 task、完整 claims 与 scope 两项授权均核对有效，且本机串行执行槽可用时发送；发送前持久化 sending，按原生可信回执判定投递。队列规则见桌面运行时 §4.1。 |
+
+已成功的步骤不因后续失败重跑。恢复时先读当前任务事实；其他操作已改变 revision 时，不把历史响应 token 写回当前许可，也不修改原请求后沿用旧 key。先结清原步骤结果，再按当前事实补齐尚未满足的授权；确需形成新请求时保存其独立 key、原因及与原动作的关系，不以新 key 绕过未知结果或重复领取。新业务意图是新的用户动作，不能覆盖原恢复记录。
+父操作未完成不代表后端整体失败或整体回滚；界面保留指令并说明停在领取、授权、现场、排队或投递核对中的哪一步，技术 key／token 仅入诊断。用户可重试未完步骤或明确结束事项；不会因恢复失败自动 cancel。首次指令投递未知不能用“继续”创建替代消息，需先核对原 messageOperationId；原生能力边界见桌面运行时 §4.4。
 
 ## 8. SQL 替换清单与不变量
 
@@ -259,6 +273,8 @@ Host 可在本地记录本轮实际读到的 requirementId、草稿／已确认�
 本文不新增部署目标、远端启停、流水线或生产发布授权；部署实施与真实产物校验仍属于原发布职责和后续验收范围。
 
 ## 10. 实施验证要求
+
+直接按设计工作包实施，将能力验证并入实现与验收，不设置独立技术验证前置环节。PT01 覆盖领域、存储与并发不变量，PT02 覆盖固定 Git 及隔离候选验证器，PT03 覆盖原生会话与跨步骤恢复，PT06 覆盖确认集成及下游；PT08 汇总当前交付版本的完整桌面闭环证据。以下为待执行要求，不能据此声称能力已实现或已验收。
 
 契约检查覆盖额外字段拒绝、跨项目范围、token 重放、旧材料占用冒充开发 claim、遗漏／伪造 claimsDigest、幂等换输入、伪造 scope／用户动作／合并树与旧检查证据；拒绝活动开发范围缩减，不能只测正常请求。
 数据库检查覆盖两人抢同需求、同用户双任务互斥、R1＋R2 对 R2＋R3 全领或回滚、扩领冲突无部分占用、参考读取不占用、材料版本变化不绕过互斥、prepare/complete 双重 claims fencing、release/complete 竞争、同候选重复完成、延迟约束整体回滚及材料头推进后基线不变。

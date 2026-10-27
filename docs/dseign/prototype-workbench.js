@@ -239,6 +239,83 @@ export default function Suppliers() {
       ['10:25:05', 'ready', '工程检查通过：typecheck / lint / build / mock / browser'],
     ],
   };
+  // Each simulated item owns a separate in-memory scene; page reload deliberately resets it.
+  const initialScene = structuredClone(state);
+  const initialFiles = Object.fromEntries(Object.entries(files).map(([id, file]) => [id, file.text]));
+  const items = [
+    { id: 'DEMO-01', title: '订单体验完善', phase: '待用户核对', claims: ['REQ-0012'], firstInstruction: '', sent: true, scene: null },
+    { id: 'DEMO-02', title: '供应商查询优化', phase: '待开始', claims: ['REQ-0014'], firstInstruction: '实现供应商类别筛选，并保留无匹配结果的提示。', sent: false, scene: null },
+  ];
+  let selectedItem = items[0], nextItem = 3;
+  let externalApprovalOccupied = true;
+  let taskNotice = '';
+  let expansionFailed = false;
+  function saveScene() {
+    selectedItem.scene = { state: structuredClone({ ...state, drawer: null, pendingAction: null }),
+      files: Object.fromEntries(Object.entries(files).map(([id, file]) => [id, file.text])),
+      chat: $('chat-scroll').innerHTML, input: $('chat-input').value };
+  }
+  function switchItem(id) {
+    const item = items.find((entry) => entry.id === id); if (!item || item === selectedItem) return;
+    guardUnsaved(() => {
+      saveScene(); ++runtimeToken; ++checkToken;
+      selectedItem = item;
+      const scene = item.scene;
+      Object.keys(state).forEach((key) => { delete state[key]; });
+      Object.assign(state, structuredClone(scene?.state || { ...initialScene, runtime: 'stopped', checks: 'stale', checkRevision: 0, previewRevision: 0 }));
+      Object.entries(scene?.files || initialFiles).forEach(([key, text]) => { files[key].text = text; });
+      $('chat-scroll').innerHTML = scene?.chat || '<div class="conversation-end">此事项尚未发送首次实现指令 · 模拟现场</div>';
+      $('chat-input').value = scene?.input || '';
+      taskNotice = ''; expansionFailed = false;
+      closeDrawer(); renderChrome(); renderEditor(); mountPreview();
+      toast('已切换独立模拟现场；未启动模型或发送指令。');
+    });
+  }
+  function renderItemContext() {
+    $('task-label').textContent = `${selectedItem.title} · ${selectedItem.phase}`;
+    $('task-context').textContent = `模拟现场 · 开发 ${selectedItem.claims.join('、')} · 源码 r${state.revision} / 预览 r${state.previewRevision}`;
+    document.querySelector('.session-line').innerHTML = `<span class="status-dot"></span>模拟会话 · ${selectedItem.id}<span>${selectedItem.phase}</span>`;
+  }
+  function renderItems() {
+    const running = items.find((item) => item.phase === '正在执行');
+    $('drawer-body').innerHTML = `<div class="drawer-notice">事项、领取与队列均为本页内存模拟；刷新整页重置。切换只查看现场，继续才模拟执行；暂停不释放开发占用。</div>
+      <section class="drawer-section"><h3 style="margin-top:20px">我的事项与队列</h3><div class="item-list">${items.map((item, index) => `<article class="item-row ${item === selectedItem ? 'selected' : ''}"><div><strong>${index + 1}. ${escapeHTML(item.title)}</strong><span class="tag">${item.phase}</span></div><p>${item.claims.join('、')} · ${item.sent ? '首次指令已发送（模拟）' : '首次指令已排队，尚未发送'}</p>${!item.sent ? `<p>已保存指令：${escapeHTML(item.firstInstruction)}</p>` : ''}<button class="subtle-button" data-action="item-switch" data-value="${item.id}" ${item === selectedItem ? 'disabled' : ''}>${item === selectedItem ? '当前现场' : '查看现场'}</button></article>`).join('')}</div></section>
+      <section class="drawer-section"><h3>当前事项</h3><p>${escapeHTML(selectedItem.title)} · ${selectedItem.phase}</p><div class="collection-actions"><button class="primary-button" data-action="item-continue" ${selectedItem.phase === '正在执行' ? 'disabled' : ''}>${selectedItem.sent ? '继续当前事项' : '发送已排队实现指令'}</button><button class="subtle-button" data-action="item-pause" ${selectedItem.phase !== '正在执行' ? 'disabled' : ''}>暂停</button></div><p>${running ? `当前执行：${escapeHTML(running.title)}。切换现场不会自动切换执行项。` : '当前没有执行中的事项，队列不会自动开始。'}</p></section>
+      <section class="drawer-section"><h3>准备另一个事项</h3><label for="queue-instruction">首次实现指令</label><textarea id="queue-instruction" class="item-instruction" rows="3" placeholder="明确说明希望实现的内容"></textarea><label for="queue-requirement">实际开发需求（模拟样本）</label><select id="queue-requirement" class="diff-file-select"><option value="REQ-0013">REQ-0013 审批记录 · 陈明开发中</option><option value="REQ-0014">REQ-0014 供应商目录 · 本人事项已占用</option></select><button class="subtle-button" data-action="item-enqueue">发送实现指令并尝试入队（模拟）</button><button class="text-button" data-action="item-enqueue-retry">演示陈明释放后重试入队</button><p>有执行事项时入队等待，否则首次发送直接模拟执行。失败保留指令，不创建可写事项；查看需求和普通讨论不领取开发权。</p></section>
+      <section class="drawer-section"><h3>扩展当前开发范围</h3><p>尝试扩领审批记录：先模拟占用冲突，再可切换到对方已释放的恢复样本。原占用和现场始终保留，不发送实现消息。</p><button class="subtle-button" data-action="item-expand">尝试扩领 REQ-0013（模拟）</button>${expansionFailed ? '<button class="text-button" data-action="item-expand-retry">演示对方释放后重试</button>' : ''}</section><div id="item-notice" class="drawer-notice warning" role="status" ${taskNotice ? '' : 'hidden'}>${escapeHTML(taskNotice)}</div>`;
+  }
+  function continueItem() {
+    const running = items.find((item) => item.phase === '正在执行' && item !== selectedItem);
+    if (running) { taskNotice = `请先暂停「${running.title}」再继续；已排队指令仍保留，未发送。`; renderItems(); return; }
+    if (!selectedItem.sent) {
+      const message = document.createElement('article'); message.className = 'message user-message';
+      message.innerHTML = `<div class="message-author">你 · 排队实现指令（模拟发送）</div><p>${escapeHTML(selectedItem.firstInstruction)}</p>`;
+      $('chat-scroll').append(message); selectedItem.sent = true;
+    }
+    selectedItem.phase = '正在执行'; taskNotice = '正在执行仅为交互状态，无模型请求或代码写入；可暂停，其他事项不会自动开始。';
+    renderChrome(); renderItems();
+  }
+  function enqueueItem() {
+    const input = $('queue-instruction'); const instruction = input.value.trim();
+    if (!instruction) { input.focus(); taskNotice = '请先填写明确的首次实现指令。'; $('item-notice').hidden = false; $('item-notice').textContent = taskNotice; return; }
+    const requirement = $('queue-requirement').value;
+    const existing = items.find((item) => item.claims.includes(requirement));
+    if (existing || (requirement === 'REQ-0013' && externalApprovalOccupied)) {
+      const owner = existing ? `林晓 · ${existing.title}` : '陈明 · 审批流程优化';
+      taskNotice = `${requirement} 已由 ${owner} 开发（模拟）。未创建事项，未发送指令；输入已保留，可继续查看参考材料。`;
+      $('item-notice').hidden = false; $('item-notice').textContent = taskNotice; return;
+    }
+    guardUnsaved(() => {
+      const item = { id: `DEMO-${String(nextItem++).padStart(2, '0')}`, title: '审批体验调整', phase: '待开始', claims: [requirement], firstInstruction: instruction, sent: false, scene: null };
+      items.push(item);
+      if (items.some((entry) => entry.phase === '正在执行')) {
+        taskNotice = '已领取并入队（模拟），首次指令保留、尚未发送；当前事项继续执行。'; renderChrome(); renderItems();
+      } else {
+        switchItem(item.id); continueItem(); openDrawer('tasks');
+        taskNotice = '首次发送已直接开始模拟执行；没有额外的继续步骤，没有真实模型请求。'; renderItems();
+      }
+    });
+  }
   const checkNames = ['typecheck', 'lint', 'build', 'mock', 'browser'];
   const checkDetails = ['类型检查', '代码规范', '原型构建', 'Mock 数据与请求', '页面启动与路由'];
   const reviewTexts = ['采购订单：搜索、状态筛选与空态符合使用习惯，金额计算与草稿编辑规则清晰。', '审批记录：订单编号、处理节点、人员与意见能够相互追溯。', '供应商目录：名称、采购类别、联系人与可用状态便于查阅。', '跨需求体验：订单、审批与供应商页面导航一致，异常反馈和恢复操作连贯。'];
@@ -247,6 +324,7 @@ export default function Suppliers() {
   function addLog(message, kind = 'ready') { state.logs.push([new Date().toLocaleTimeString('zh-CN', { hour12: false }), kind, message]); if (state.output === 'runtime') renderOutput(); }
   function canConfirm() { return !state.editing && state.checks === 'passed' && state.checkRevision === state.revision; }
   function renderChrome() {
+    renderItemContext();
     $('preview-pane').hidden = state.mode !== 'preview'; $('code-pane').hidden = state.mode !== 'code';
     ['preview', 'code'].forEach((mode) => { $(mode + '-tab').setAttribute('aria-selected', String(state.mode === mode)); $(mode + '-tab').tabIndex = state.mode === mode ? 0 : -1; });
     $('ai-panel').hidden = state.aiCollapsed; $('show-ai').hidden = !state.aiCollapsed;
@@ -368,10 +446,11 @@ export default function Suppliers() {
     if (state.submitting) { toast('模拟提交进行中，请稍候。'); return; }
     lastFocus = document.activeElement; state.drawer = kind; $('more-menu').hidden = true; $('more-button').setAttribute('aria-expanded', 'false');
     $('drawer').hidden = false; $('drawer-backdrop').hidden = false;
-    const titles = { confirm: '确认当前原型', collection: '需求集合', diagnostics: '诊断信息', diff: '本轮变更对比', demo: '演示状态', guide: '从实现到业务核对', stage: '项目阶段' };
+    const titles = { confirm: '确认当前原型', collection: '需求集合', diagnostics: '诊断信息', diff: '本轮变更对比', demo: '演示状态', guide: '从实现到业务核对', stage: '项目阶段', tasks: '我的事项与队列' };
     $('drawer-title').textContent = titles[kind] || '工作台'; $('drawer-eyebrow').textContent = kind === 'confirm' ? '采购协同原型 · 3 项需求' : '采购协同平台 / 交互原型';
     $('drawer-footer').innerHTML = '';
-    if (kind === 'confirm') renderConfirm();
+    if (kind === 'tasks') renderItems();
+    else if (kind === 'confirm') renderConfirm();
     else if (kind === 'collection') renderCollection();
     else if (kind === 'diff') renderDiff();
     else if (kind === 'demo') renderDemo();
@@ -392,7 +471,7 @@ export default function Suppliers() {
     $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">同一个项目原型覆盖这 3 项需求。这里帮助你定位相关页面和代码，不切换独立原型，也不重建当前会话。</div></section><div class="requirement-collection">${requirements.map((item) => `<article class="collection-item"><div><span class="code-chip">${item.id}</span><h3>${item.name}</h3></div><p>${item.description}</p><div class="collection-actions"><button class="subtle-button" data-action="collection-preview" data-value="${item.route}">${icon('eye')}查看页面</button><button class="subtle-button" data-action="collection-code" data-value="${item.file}">${icon('code')}定位代码</button></div></article>`).join('')}</div><section class="drawer-section" style="margin-top:22px"><p>需求集合提供业务上下文。可以跨需求查看与持续调整整个项目原型，无需先选定需求范围。</p></section>`;
   }
   function renderDiagnostics() {
-    $('drawer-body').innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>工程检查</dt><dd>修订 ${state.checkRevision} / ${state.checks}</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>任务占用</dt><dd>项目原型任务 · 林晓 · 模拟占用</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
+    $('drawer-body').innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>工程检查</dt><dd>修订 ${state.checkRevision} / ${state.checks}</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>事项／现场</dt><dd>${selectedItem.id} · scene-${selectedItem.id}（模拟）</dd><dt>会话／分支</dt><dd>session-${selectedItem.id} / demo/${selectedItem.id}（模拟）</dd><dt>开发占用</dt><dd>${selectedItem.claims.join("、")} · 林晓 · 模拟占用</dd><dt>认可来源</dt><dd>recognized-demo-a1；仅示意，非真实 Git SHA</dd><dt>预览实例</dt><dd>preview-${selectedItem.id}-r${state.previewRevision}（模拟）</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
   }
   function renderDiff(id = state.activeFile || 'page') {
     const file = files[id];
@@ -596,6 +675,13 @@ export default function Suppliers() {
     closeDrawer(); state.aiCollapsed = false; $('workspace-body').classList.add('ai-expanded'); renderChrome(); $('chat-input').focus(); toast('问题已放入 AI 输入草稿，尚未发送。');
   }
   const actions = {
+    'item-switch': (control) => switchItem(control.dataset.value),
+    'item-continue': continueItem,
+    'item-enqueue': enqueueItem,
+    'item-enqueue-retry': () => { externalApprovalOccupied = false; enqueueItem(); },
+    'item-pause': () => { selectedItem.phase = '已暂停'; taskNotice = '已暂停模拟执行；原开发占用保留，没有自动开始下一项。'; renderChrome(); renderItems(); },
+    'item-expand': () => { if (selectedItem.claims.includes('REQ-0013')) { taskNotice = '当前事项已持有 REQ-0013，无需重复扩领。'; renderItems(); return; } expansionFailed = true; taskNotice = '扩领失败：REQ-0013 由陈明开发中（模拟）。原开发范围、源码和会话保留，审批材料仍可只读参考。'; renderItems(); },
+    'item-expand-retry': () => { const existing = items.find((item) => item !== selectedItem && item.claims.includes('REQ-0013')); if (existing) { taskNotice = `扩领失败：REQ-0013 仍由本人事项「${existing.title}」开发。原范围保留。`; renderItems(); return; } externalApprovalOccupied = false; if (!selectedItem.claims.includes('REQ-0013')) selectedItem.claims.push('REQ-0013'); expansionFailed = false; taskNotice = '恢复样本：对方已释放，扩领成功（模拟）。仅更新开发范围，未自动发消息或修改代码。'; renderChrome(); renderItems(); },
     drawer: (control) => openDrawer(control.dataset.value), 'close-drawer': closeDrawer,
     mode: (control) => guardUnsaved(() => setMode(control.dataset.value)),
     'open-file': (control) => openFile(control.dataset.value), 'close-file': (control) => closeFile(control.dataset.value),

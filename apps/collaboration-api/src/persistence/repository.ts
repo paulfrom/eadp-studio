@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, DomainError, requireCondition } from '@eadp/asset-domain';
 import { isBuiltinScenarioMetadata } from '@eadp/contracts';
-import type { BaselineView, BuiltinScenarioMetadata, ComparisonFailure, ConfirmationEvent, ConfirmationInput, ConsistencyComparisonFilter, ConsistencyComparisonView, ConsistencyConflictView, ConsistencyContextView, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, MaterialStatusReportFilter, MaterialStatusReportView, MaterialStatusTrigger, OccupationView, ProjectView, ReserveEntityRequest, SubmitConsistencyComparisonRequest, SubmitMaterialStatusReportRequest } from '@eadp/contracts';
+import type { BuiltinScenarioMetadata, ComparisonFailure, ConfirmationEvent, ConfirmationInput, ConsistencyComparisonFilter, ConsistencyComparisonView, ConsistencyConflictView, ConsistencyContextView, EntityView, FixedReference, FixedVersion, IntegrationView, LegacyFixedVersion, MaterialMetadata, MaterialStatusReportFilter, MaterialStatusReportView, MaterialStatusTrigger, OccupationView, ProjectView, ReserveEntityRequest, SubmitConsistencyComparisonRequest, SubmitMaterialStatusReportRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { AdoptionRecord } from '../modules/reuse.js';
 import type { StoredIntegration } from '../modules/integration.js';
@@ -44,7 +44,6 @@ function snapshot(row: Row, prefix: 'creator' | 'last_editor') {
 }
 function projectView(row: Row): Omit<ProjectView, 'generalScenario'> {
   return { id: String(row.id), gitlabProjectId: Number(row.gitlab_project_id), repositoryUrl: String(row.repository_url), stableBranch: String(row.stable_branch), name: String(row.name), namespaceId: Number(row.namespace_id), namespacePath: String(row.namespace_path), initializationStatus: row.state === 'ready' ? 'ready' : 'pending', recognizedHead: row.recognized_head as string | null, revision: Number(row.revision),
-    ...(row.current_baseline_id ? { currentBaselineId: String(row.current_baseline_id) } : {}),
     ...(row.deployment_url ? { deployment: { baselineId: String(row.deployment_baseline_id), url: String(row.deployment_url), artifactSha256: String(row.deployment_artifact_sha256), deployedAt: date(row.deployed_at) } } : {}),
   };
 }
@@ -63,7 +62,7 @@ export async function listProjects(c: Transaction): Promise<ProjectView[]> {
   return result;
 }
 export async function saveProject(c: Transaction, value: ProjectView) {
-  await c.query(`UPDATE studio_projects SET name=$2,stable_branch=$3,revision=$4,recognized_head=$5,state=CASE WHEN $6 THEN 'ready'::studio_project_state ELSE state END,current_baseline_id=$7,deployment_baseline_id=$8,deployment_url=$9,deployment_artifact_sha256=$10,deployed_at=$11,last_editor_id=$12,last_editor_account=$13,last_editor_name=$14,last_edited_date=clock_timestamp() WHERE id=$1`, [value.id, value.name, value.stableBranch, value.revision, value.recognizedHead, value.initializationStatus === 'ready', value.currentBaselineId ?? null, value.deployment?.baselineId ?? null, value.deployment?.url ?? null, value.deployment?.artifactSha256 ?? null, value.deployment?.deployedAt ?? null, ...actorFields()]);
+  await c.query(`UPDATE studio_projects SET name=$2,stable_branch=$3,revision=$4,recognized_head=$5,state=CASE WHEN $6 THEN 'ready'::studio_project_state ELSE state END,deployment_baseline_id=$7,deployment_url=$8,deployment_artifact_sha256=$9,deployed_at=$10,last_editor_id=$11,last_editor_account=$12,last_editor_name=$13,last_edited_date=clock_timestamp() WHERE id=$1`, [value.id, value.name, value.stableBranch, value.revision, value.recognizedHead, value.initializationStatus === 'ready', value.deployment?.baselineId ?? null, value.deployment?.url ?? null, value.deployment?.artifactSha256 ?? null, value.deployment?.deployedAt ?? null, ...actorFields()]);
 }
 export interface EntityNumber { id: string; sequence: number; code: string }
 /** Commit a stable allocation before business writes so rollback never recycles a number. */
@@ -98,7 +97,6 @@ export async function entities(c: Transaction, projectId: string): Promise<Entit
   const files = (await c.query<{ entity_id: string; path: string }>('SELECT entity_id,path FROM studio_entity_files WHERE project_id=$1 ORDER BY path', [projectId])).rows;
   const sources = (await c.query<Row>('SELECT s.entity_id,f.entity_id AS scenario_id,f.version FROM studio_entity_scenario_sources s JOIN studio_confirmations f ON f.id=s.scenario_confirmation_id WHERE s.project_id=$1', [projectId])).rows;
   const occupations = (await c.query<Row>('SELECT * FROM studio_occupations WHERE project_id=$1 AND active', [projectId])).rows;
-  const baselines = await listBaselines(c, projectId);
   const result: EntityView[] = [];
   for (const row of rows) {
     const id = String(row.id), occupation = occupations.find(o => o.entity_id === id);
@@ -110,12 +108,6 @@ export async function entities(c: Transaction, projectId: string): Promise<Entit
       const resolved = await currentVersion(c, projectId, id, value.materialVersion);
       if (resolved.current) value.current = resolved.current;
       if (resolved.legacy) value.legacyCurrent = resolved.legacy;
-    }
-    const completions = baselines.filter(b => b.entityId === id).map(b => ({ version: b.version, confirmationId: b.confirmationId, integrationSha: b.commitSha, baselineId: b.id }));
-    if (completions.length) {
-      value.completions = completions;
-      const last = completions.reduce((a, b) => a.version > b.version ? a : b);
-      value.completedVersion = last.version; value.completionConfirmationId = last.confirmationId; value.completedIntegrationSha = last.integrationSha;
     }
     result.push(value);
   }
@@ -144,8 +136,7 @@ export async function saveEntity(c: Transaction, projectId: string, value: Entit
   if (value.occupation) await saveOccupation(c, projectId, value.occupation);
 }
 async function occupationView(c: Transaction, row: Row): Promise<OccupationView> {
-  const inputs = (await c.query<Row>('SELECT * FROM studio_occupation_inputs WHERE occupation_id=$1', [row.id])).rows;
-  return { occupationId: String(row.id), entityId: String(row.entity_id), generation: Number(row.generation), ownerId: Number(row.owner_id), purpose: row.purpose as OccupationView['purpose'], taskId: String(row.task_id), clientId: String(row.client_id), expectedRevision: Number(row.expected_revision), inputVersion: Number(row.input_version), createdAt: date(row.created_date), prerequisiteBindings: inputs.map(r => ({ requirementId: String(r.requirement_id), version: Number(r.version), confirmationId: String(r.confirmation_id), integrationSha: String(r.integration_sha) })) };
+  return { occupationId: String(row.id), entityId: String(row.entity_id), generation: Number(row.generation), ownerId: Number(row.owner_id), purpose: row.purpose as OccupationView['purpose'], taskId: String(row.task_id), clientId: String(row.client_id), expectedRevision: Number(row.expected_revision), inputVersion: Number(row.input_version), createdAt: date(row.created_date) };
 }
 export async function saveOccupation(c: Transaction, projectId: string, value: OccupationView, active = true, finishStatus?: 'aborted' | 'completed') {
   const updated = await c.query('UPDATE studio_occupations SET expected_revision=$3,active=$4,finish_status=$5,last_editor_id=$6,last_editor_account=$7,last_editor_name=$8,last_edited_date=clock_timestamp() WHERE id=$1 AND project_id=$2 RETURNING id', [value.occupationId, projectId, value.expectedRevision, active, finishStatus ?? null, ...actorFields()]);
@@ -153,7 +144,6 @@ export async function saveOccupation(c: Transaction, projectId: string, value: O
     requireCondition(context().actor.id === value.ownerId, 'OCCUPATION_OWNER_REQUIRED', 'A new occupation must be created by its authenticated owner', 403);
     await c.query(`INSERT INTO studio_occupations(id,project_id,entity_id,generation,owner_id,purpose,task_id,client_id,expected_revision,input_version,active,finish_status,${auditColumns},created_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$13,$14,$15,$16)`, [value.occupationId, projectId, value.entityId, value.generation, value.ownerId, value.purpose, value.taskId, value.clientId, value.expectedRevision, value.inputVersion, active, finishStatus ?? null, ...actorFields(), value.createdAt]);
   }
-  for (const input of value.prerequisiteBindings) await c.query(`INSERT INTO studio_occupation_inputs(occupation_id,requirement_id,version,confirmation_id,integration_sha,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, [value.occupationId, input.requirementId, input.version, input.confirmationId, input.integrationSha, ...actorFields()]);
 }
 export async function updateOccupation(c: Transaction, projectId: string, id: string, active: boolean, finishStatus?: 'aborted' | 'completed') {
   await c.query('UPDATE studio_occupations SET active=$3,finish_status=$4,last_editor_id=$5,last_editor_account=$6,last_editor_name=$7,last_edited_date=clock_timestamp() WHERE project_id=$1 AND id=$2', [projectId, id, active, finishStatus ?? null, ...actorFields()]);
@@ -163,12 +153,12 @@ export async function abortIntegrations(c: Transaction, projectId: string, occup
 }
 export async function saveIntegration(c: Transaction, projectId: string, value: StoredIntegration) {
   const request = stripMaterial(value.request);
-  await c.query(`INSERT INTO studio_integrations(id,project_id,scope,entity_id,occupation_id,status,source_sha,expected_head,candidate_sha,allowed_paths,request,expected_project_revision,baseline_id,${auditColumns},created_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$14,$15,$16,$17) ON CONFLICT(id) DO UPDATE SET status=excluded.status,baseline_id=excluded.baseline_id,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [value.id, projectId, value.stage, value.entityId ?? null, value.occupationId ?? null, value.status, value.sourceSha, value.expectedHead, value.candidateSha, value.request.allowedPaths, request, value.request.stage === 'template' ? value.request.expectedProjectRevision : null, value.baselineId ?? null, ...actorFields(), value.createdAt]);
+  await c.query(`INSERT INTO studio_integrations(id,project_id,scope,entity_id,occupation_id,status,source_sha,expected_head,candidate_sha,allowed_paths,request,expected_project_revision,${auditColumns},created_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$13,$14,$15,$16) ON CONFLICT(id) DO UPDATE SET status=excluded.status,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [value.id, projectId, value.stage, value.entityId ?? null, value.occupationId ?? null, value.status, value.sourceSha, value.expectedHead, value.candidateSha, value.request.allowedPaths, request, value.request.stage === 'template' ? value.request.expectedProjectRevision : null, ...actorFields(), value.createdAt]);
   for (const id of value.confirmationIds ?? []) await c.query('INSERT INTO studio_integration_confirmations(integration_id,confirmation_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [value.id, id]);
 }
 async function integrationView(c: Transaction, row: Row): Promise<StoredIntegration> {
   const confirmations = (await c.query<{ confirmation_id: string }>('SELECT confirmation_id FROM studio_integration_confirmations WHERE integration_id=$1 ORDER BY confirmation_id', [row.id])).rows.map(r => r.confirmation_id);
-  return { id: String(row.id), ...(row.entity_id ? { entityId: String(row.entity_id) } : {}), ...(row.occupation_id ? { occupationId: String(row.occupation_id) } : {}), ownerId: Number(row.creator_id), status: row.status as IntegrationView['status'], sourceSha: String(row.source_sha), expectedHead: String(row.expected_head), candidateSha: String(row.candidate_sha), stage: row.scope as IntegrationView['stage'], createdAt: date(row.created_date), request: row.request as StoredIntegration['request'], ...(row.baseline_id ? { baselineId: String(row.baseline_id) } : {}), ...(confirmations.length ? { confirmationIds: confirmations } : {}) } as StoredIntegration;
+  return { id: String(row.id), ...(row.entity_id ? { entityId: String(row.entity_id) } : {}), ...(row.occupation_id ? { occupationId: String(row.occupation_id) } : {}), ownerId: Number(row.creator_id), status: row.status as IntegrationView['status'], sourceSha: String(row.source_sha), expectedHead: String(row.expected_head), candidateSha: String(row.candidate_sha), stage: row.scope as IntegrationView['stage'], createdAt: date(row.created_date), request: row.request as StoredIntegration['request'], ...(confirmations.length ? { confirmationIds: confirmations } : {}) } as StoredIntegration;
 }
 export async function getIntegration(c: Transaction, projectId: string, id: string): Promise<StoredIntegration> {
   const row = (await c.query<Row>('SELECT * FROM studio_integrations WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
@@ -186,7 +176,7 @@ export async function listIntegrations(c: Transaction, projectId: string): Promi
  */
 const legacyMaterialCodes = new Set(['INVALID_MATERIAL', 'INVALID_MANIFEST', 'INVALID_MATERIAL_PATH', 'CORE_UNRESOLVED', 'SCENARIO_SOURCE_REQUIRED', 'TEMPLATE_IDENTITY_MISMATCH', 'TEMPLATE_REFERENCE_MISMATCH', 'EVIDENCE_PATH_SCOPE', 'EVIDENCE_RANGE_INVALID', 'FILE_REFERENCE_CONFLICT', 'SELF_REFERENCE']);
 async function versionRows(c: Transaction, projectId: string, entityId: string, version?: number): Promise<Row[]> {
-  return (await c.query<Row>("SELECT f.*,e.enabled,e.reason,b.id AS baseline_id FROM studio_confirmations f LEFT JOIN studio_eligibility e USING(project_id,entity_id,version) LEFT JOIN studio_baselines b USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
+  return (await c.query<Row>("SELECT f.*,e.enabled,e.reason FROM studio_confirmations f LEFT JOIN studio_eligibility e USING(project_id,entity_id,version) WHERE f.project_id=$1 AND f.entity_id=$2 AND f.stage='material' AND ($3::integer IS NULL OR f.version=$3) ORDER BY f.version DESC", [projectId, entityId, version ?? null])).rows;
 }
 function fixedReference(row: Row): FixedReference { return { commitSha: String(row.commit_sha), path: String(row.path), sha256: String(row.sha256) }; }
 async function fixedVersionOf(projectId: string, row: Row): Promise<FixedVersion> {
@@ -197,7 +187,7 @@ async function fixedVersionOf(projectId: string, row: Row): Promise<FixedVersion
     ...(builtin ? { builtin: true } : {}),
     confirmationId: String(row.id), confirmedBy: Number(row.creator_id ?? 0), confirmedAt: date(row.created_date), title: String(row.title), summary: String(row.summary), applicability: row.applicability as 'applicable' | 'not-applicable', ...(row.applicability_reason ? { applicabilityReason: String(row.applicability_reason) } : {}), ...(row.read_hash ? { readHash: String(row.read_hash) } : {}),
     // 内置场景无 studio_eligibility 行：系统预置版本不提供复用资格
-    reuse: builtin ? { enabled: false, reason: 'Built-in scenario is provisioned by initialization' } : { enabled: Boolean(row.enabled), reason: String(row.reason) }, ...(row.baseline_id ? { prototypeBaselineId: String(row.baseline_id) } : {}) };
+    reuse: builtin ? { enabled: false, reason: 'Built-in scenario is provisioned by initialization' } : { enabled: Boolean(row.enabled), reason: String(row.reason) } };
 }
 export async function versions(c: Transaction, projectId: string, entityId: string, version?: number): Promise<FixedVersion[]> {
   const result: FixedVersion[] = [];
@@ -219,7 +209,7 @@ export async function fixedVersion(c: Transaction, projectId: string, entityId: 
   const value = (await versions(c, projectId, entityId, version))[0];
   requireCondition(value, 'FIXED_VERSION_NOT_FOUND', 'Accepted fixed material version was not found', 404); return value;
 }
-export async function saveConfirmation(c: Transaction, projectId: string, input: { event: ConfirmationEvent; version?: FixedVersion; baseline?: BaselineView; method: ConfirmationInput; stage: 'material' | 'prototype'; integrationId: string }) {
+export async function saveConfirmation(c: Transaction, projectId: string, input: { event: ConfirmationEvent; version?: FixedVersion; method: ConfirmationInput; stage: 'material'; integrationId: string }) {
   const { event, version, method } = input;
   const metadata = version?.metadata ?? await loadMaterial(projectId, event.fixed);
   requireCondition(!isBuiltinScenarioMetadata(metadata), 'INVALID_BUILTIN_SCENARIO', 'Built-in general scenario is provisioned by initialization, not user confirmation', 422);
@@ -246,14 +236,6 @@ export async function confirmation(c: Transaction, projectId: string, id: string
 }
 export async function setEligibility(c: Transaction, projectId: string, entityId: string, version: number, enabled: boolean, reason: string) {
   await c.query(`INSERT INTO studio_eligibility(project_id,entity_id,version,enabled,reason,${auditColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$6,$7,$8) ON CONFLICT(project_id,entity_id,version) DO UPDATE SET enabled=excluded.enabled,reason=excluded.reason,last_editor_id=excluded.last_editor_id,last_editor_account=excluded.last_editor_account,last_editor_name=excluded.last_editor_name,last_edited_date=clock_timestamp()`, [projectId, entityId, version, enabled, reason, ...actorFields()]);
-}
-function baselineView(row: Row): BaselineView { return { id: String(row.id), entityId: String(row.entity_id), version: Number(row.version), commitSha: String(row.commit_sha), confirmationId: String(row.confirmation_id), createdAt: date(row.created_date) }; }
-export async function listBaselines(c: Transaction, projectId: string): Promise<BaselineView[]> { return (await c.query<Row>('SELECT * FROM studio_baselines WHERE project_id=$1 ORDER BY created_date,id', [projectId])).rows.map(baselineView); }
-export async function baseline(c: Transaction, projectId: string, id: string): Promise<BaselineView> {
-  const value = (await listBaselines(c, projectId)).find(v => v.id === id); requireCondition(value, 'BASELINE_NOT_FOUND', 'Accepted baseline was not found', 404); return value;
-}
-export async function insertBaseline(c: Transaction, projectId: string, value: BaselineView) {
-  await c.query(`INSERT INTO studio_baselines(id,project_id,entity_id,version,commit_sha,confirmation_id,${actorColumns},created_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [value.id, projectId, value.entityId, value.version, value.commitSha, value.confirmationId, ...actorFields(), value.createdAt]);
 }
 function adoptionView(row: Row): AdoptionRecord {
   return { id: String(row.id), source: { projectId: String(row.source_project_id), entityId: String(row.source_entity_id), version: Number(row.source_version) }, targetProjectId: String(row.target_project_id), targetEntityId: String(row.target_entity_id), targetTaskId: String(row.target_task_id), scope: row.scope as AdoptionRecord['scope'], adjustmentSummary: String(row.adjustment_summary), actorId: Number(row.creator_id), acceptedAt: date(row.created_date), status: row.status as AdoptionRecord['status'], ...(row.target_confirmation_id ? { targetConfirmationId: String(row.target_confirmation_id), targetVersion: Number(row.target_version), succeededAt: date(row.succeeded_at) } : {}) };

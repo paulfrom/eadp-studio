@@ -49,9 +49,9 @@
 -- 枚举类型：全部状态字段的唯一权威定义
 -- ============================================================
 
-CREATE TYPE studio_confirmation_stage AS ENUM ('material','prototype');
+CREATE TYPE studio_confirmation_stage AS ENUM ('material');
 CREATE TYPE studio_acceptance_kind AS ENUM ('user-confirmed','system-provisioned');
-CREATE TYPE studio_adoption_scope AS ENUM ('material-package','prototype-package');
+CREATE TYPE studio_adoption_scope AS ENUM ('material-package');
 CREATE TYPE studio_adoption_status AS ENUM ('accepted','succeeded');
 
 CREATE TYPE studio_entity_kind AS ENUM ('scenario','requirement','baseline','handoff');
@@ -64,14 +64,14 @@ CREATE TYPE studio_task_status AS ENUM ('idle','active','aborted','completed');
 COMMENT ON TYPE studio_task_status IS '任务状态';
 
 -- 材料整理与原型生产分别占用当前资产。
-CREATE TYPE studio_occupation_purpose AS ENUM ('design','prototype');
+CREATE TYPE studio_occupation_purpose AS ENUM ('design');
 COMMENT ON TYPE studio_occupation_purpose IS '占用用途';
 
 CREATE TYPE studio_occupation_finish AS ENUM ('aborted','completed');
 COMMENT ON TYPE studio_occupation_finish IS '占用结束方式';
 
 -- 模板使用独立项目受控配置发布，不领取材料占用或确认材料
-CREATE TYPE studio_integration_scope AS ENUM ('material','prototype','template');
+CREATE TYPE studio_integration_scope AS ENUM ('material','template');
 COMMENT ON TYPE studio_integration_scope IS '集成范围';
 
 CREATE TYPE studio_integration_status AS ENUM ('prepared','accepted','aborted');
@@ -193,7 +193,6 @@ CREATE TABLE studio_projects (
   last_editor_account varchar(50) NOT NULL,  -- 项目最后修改人账号快照
   last_editor_name varchar(50) NOT NULL,  -- 项目最后修改人姓名快照
   last_edited_date timestamptz NOT NULL DEFAULT now(),
-  current_baseline_id text,  -- 当前已接受的原型基线ID
   deployment_baseline_id text,  -- 当前部署对应的基线ID
   deployment_url text,
   deployment_artifact_sha256 text CHECK (deployment_artifact_sha256 ~ '^[a-f0-9]{64}$'),  -- 当前部署产物的SHA-256
@@ -229,7 +228,6 @@ COMMENT ON COLUMN studio_projects.last_editor_id IS '最后修改人ID';
 COMMENT ON COLUMN studio_projects.last_editor_account IS '最后修改人账号';
 COMMENT ON COLUMN studio_projects.last_editor_name IS '最后修改人姓名';
 COMMENT ON COLUMN studio_projects.last_edited_date IS '记录最后修改时间';
-COMMENT ON COLUMN studio_projects.current_baseline_id IS '当前基线ID';
 COMMENT ON COLUMN studio_projects.deployment_baseline_id IS '部署基线ID';
 COMMENT ON COLUMN studio_projects.deployment_url IS '当前部署访问地址';
 COMMENT ON COLUMN studio_projects.deployment_artifact_sha256 IS '部署产物散列';
@@ -280,7 +278,6 @@ CREATE TABLE studio_integrations (
   entity_id text,  -- 本次集成的目标材料ID，模板集成为空
   occupation_id text,  -- 目标材料的有效占用ID，模板集成为空
   expected_project_revision integer,  -- 模板发布预期的项目修订号
-  baseline_id text,  -- 原型完成后形成的基线ID
   status studio_integration_status NOT NULL,
   source_sha text NOT NULL CHECK (source_sha ~ '^[a-f0-9]{40}$'),
   expected_head text NOT NULL CHECK (expected_head ~ '^[a-f0-9]{40}$'),  -- 条件更新稳定分支时预期的原分支头
@@ -305,7 +302,6 @@ COMMENT ON COLUMN studio_integrations.scope IS '集成范围';
 COMMENT ON COLUMN studio_integrations.entity_id IS '目标材料ID';
 COMMENT ON COLUMN studio_integrations.occupation_id IS '占用ID';
 COMMENT ON COLUMN studio_integrations.expected_project_revision IS '预期修订号';
-COMMENT ON COLUMN studio_integrations.baseline_id IS '基线ID';
 COMMENT ON COLUMN studio_integrations.status IS '集成操作状态';
 COMMENT ON COLUMN studio_integrations.source_sha IS '本次集成的来源提交';
 COMMENT ON COLUMN studio_integrations.expected_head IS '预期分支头';
@@ -770,36 +766,6 @@ COMMENT ON COLUMN studio_prerequisites.creator_account IS '建立人账号';
 COMMENT ON COLUMN studio_prerequisites.creator_name IS '建立人姓名';
 COMMENT ON COLUMN studio_prerequisites.created_date IS '记录创建时间';
 
--- 原型占用绑定的前置需求已接受完成证据
-CREATE TABLE studio_occupation_inputs (
-  project_id text NOT NULL,
-  occupation_id text NOT NULL,  -- 使用这些前置输入的原型占用ID
-  requirement_id text NOT NULL,
-  version integer NOT NULL CHECK(version>0),  -- 已完成的前置需求材料版本号
-  confirmation_id text NOT NULL,  -- 该前置需求版本的原型完成接受记录ID
-  stage studio_confirmation_stage NOT NULL DEFAULT 'prototype' CHECK (stage = 'prototype'),  -- 前置完成证据阶段，限原型阶段
-  integration_sha text NOT NULL CHECK(integration_sha ~ '^[a-f0-9]{40}$'),  -- 前置需求完成基线对应的已接受集成提交
-  creator_id bigint NOT NULL REFERENCES studio_users(id),  -- 输入绑定记录创建人用户ID
-  creator_account varchar(50) NOT NULL,  -- 输入绑定记录创建人账号快照
-  creator_name varchar(50) NOT NULL,  -- 输入绑定记录创建人姓名快照
-  created_date timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(occupation_id,requirement_id),
-  FOREIGN KEY(project_id,occupation_id) REFERENCES studio_occupations(project_id,id),
-  FOREIGN KEY(project_id,requirement_id,version,stage,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,version,stage,id)
-);
-COMMENT ON TABLE studio_occupation_inputs IS '原型输入证据';
-COMMENT ON COLUMN studio_occupation_inputs.project_id IS '所属项目ID';
-COMMENT ON COLUMN studio_occupation_inputs.occupation_id IS '原型占用ID';
-COMMENT ON COLUMN studio_occupation_inputs.requirement_id IS '已完成的前置需求ID';
-COMMENT ON COLUMN studio_occupation_inputs.version IS '前置版本号';
-COMMENT ON COLUMN studio_occupation_inputs.confirmation_id IS '完成确认ID';
-COMMENT ON COLUMN studio_occupation_inputs.stage IS '证据阶段';
-COMMENT ON COLUMN studio_occupation_inputs.integration_sha IS '完成集成提交';
-COMMENT ON COLUMN studio_occupation_inputs.creator_id IS '绑定创建人ID';
-COMMENT ON COLUMN studio_occupation_inputs.creator_account IS '创建人账号';
-COMMENT ON COLUMN studio_occupation_inputs.creator_name IS '创建人姓名';
-COMMENT ON COLUMN studio_occupation_inputs.created_date IS '记录创建时间';
-
 -- 固定材料版本的复用资格与停用原因
 CREATE TABLE studio_eligibility (
   project_id text NOT NULL,
@@ -833,38 +799,6 @@ COMMENT ON COLUMN studio_eligibility.last_editor_account IS '最后修改人账�
 COMMENT ON COLUMN studio_eligibility.last_editor_name IS '最后修改人姓名';
 COMMENT ON COLUMN studio_eligibility.last_edited_date IS '记录最后修改时间';
 
--- 单需求原型完成后接受的固定集成基线
-CREATE TABLE studio_baselines (
-  id text PRIMARY KEY,
-  project_id text NOT NULL,
-  entity_id text NOT NULL,
-  version integer NOT NULL CHECK(version>0),  -- 本次原型完成对应的需求材料版本号
-  commit_sha text NOT NULL CHECK(commit_sha ~ '^[a-f0-9]{40}$'),  -- 已接受的原型完成集成提交，可不同于材料固定提交
-  confirmation_id text NOT NULL UNIQUE REFERENCES studio_confirmations(id),  -- 本次原型完成接受记录ID
-  creator_id bigint NOT NULL REFERENCES studio_users(id),  -- 原型完成提交人用户ID
-  creator_account varchar(50) NOT NULL,  -- 原型完成提交人账号快照
-  creator_name varchar(50) NOT NULL,  -- 原型完成提交人姓名快照
-  created_date timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY(project_id,entity_id) REFERENCES studio_entities(project_id,id),
-  UNIQUE(project_id,entity_id,version),
-  UNIQUE(project_id,entity_id,version,confirmation_id,commit_sha)
-);
-COMMENT ON TABLE studio_baselines IS '原型完成基线';
-COMMENT ON COLUMN studio_baselines.id IS '原型完成基线ID';
-COMMENT ON COLUMN studio_baselines.project_id IS '所属项目ID';
-COMMENT ON COLUMN studio_baselines.entity_id IS '已完成的需求ID';
-COMMENT ON COLUMN studio_baselines.version IS '材料版本号';
-COMMENT ON COLUMN studio_baselines.commit_sha IS '完成集成提交';
-COMMENT ON COLUMN studio_baselines.confirmation_id IS '完成接受ID';
-COMMENT ON COLUMN studio_baselines.creator_id IS '原型提交人ID';
-COMMENT ON COLUMN studio_baselines.creator_account IS '提交人账号';
-COMMENT ON COLUMN studio_baselines.creator_name IS '提交人姓名';
-COMMENT ON COLUMN studio_baselines.created_date IS '记录创建时间';
-
-ALTER TABLE studio_occupation_inputs ADD FOREIGN KEY(project_id,requirement_id,version,confirmation_id,integration_sha)
-  REFERENCES studio_baselines(project_id,entity_id,version,confirmation_id,commit_sha);
-ALTER TABLE studio_projects ADD FOREIGN KEY(current_baseline_id) REFERENCES studio_baselines(id);
-ALTER TABLE studio_integrations ADD FOREIGN KEY(baseline_id) REFERENCES studio_baselines(id);
 -- 集成操作与其接受确认记录的关联
 CREATE TABLE studio_integration_confirmations (
   integration_id text NOT NULL REFERENCES studio_integrations(id),
@@ -981,14 +915,6 @@ ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_integratio
 ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,entity_id,integration_id) REFERENCES studio_integrations(project_id,entity_id,id);
 ALTER TABLE studio_confirmations DROP CONSTRAINT studio_confirmations_repair_task_id_fkey;
 ALTER TABLE studio_confirmations ADD FOREIGN KEY(project_id,entity_id,repair_task_id) REFERENCES studio_repair_tasks(project_id,entity_id,id);
-ALTER TABLE studio_baselines ADD UNIQUE(project_id,id);
-ALTER TABLE studio_baselines DROP CONSTRAINT studio_baselines_confirmation_id_fkey;
-ALTER TABLE studio_baselines ADD FOREIGN KEY(project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
-ALTER TABLE studio_projects DROP CONSTRAINT studio_projects_current_baseline_id_fkey;
-ALTER TABLE studio_projects ADD FOREIGN KEY(id,current_baseline_id) REFERENCES studio_baselines(project_id,id);
-ALTER TABLE studio_integrations DROP CONSTRAINT studio_integrations_baseline_id_fkey;
-ALTER TABLE studio_integrations ADD FOREIGN KEY(project_id,baseline_id) REFERENCES studio_baselines(project_id,id);
-ALTER TABLE studio_projects ADD FOREIGN KEY(id,deployment_baseline_id) REFERENCES studio_baselines(project_id,id);
 ALTER TABLE studio_handoff_receipts DROP CONSTRAINT studio_handoff_receipts_confirmation_id_fkey;
 ALTER TABLE studio_handoff_receipts ADD FOREIGN KEY(project_id,entity_id,confirmation_id) REFERENCES studio_confirmations(project_id,entity_id,id);
 ALTER TABLE studio_adoptions DROP CONSTRAINT studio_adoptions_target_confirmation_id_fkey;
@@ -1288,17 +1214,7 @@ BEGIN
       WHERE i.id=NEW.integration_id AND i.project_id=NEW.project_id AND i.entity_id=NEW.entity_id AND
         i.status='accepted' AND (NEW.stage<>'material' OR i.candidate_sha=NEW.commit_sha) AND i.scope::text=NEW.stage::text
     ) THEN RAISE EXCEPTION 'confirmation requires its own accepted integration and material candidate commit'; END IF;
-    IF NEW.stage='prototype' THEN
-      IF NOT EXISTS (
-        SELECT 1 FROM studio_confirmations m WHERE m.project_id=NEW.project_id AND m.entity_id=NEW.entity_id AND
-          m.version=NEW.version AND m.stage='material' AND m.commit_sha=NEW.commit_sha AND m.path=NEW.path AND m.sha256=NEW.sha256
-      ) THEN RAISE EXCEPTION 'prototype completion must bind its accepted material version fixed reference'; END IF;
-      IF NOT EXISTS (
-        SELECT 1 FROM studio_baselines b JOIN studio_integrations i ON i.id=NEW.integration_id
-        WHERE b.project_id=NEW.project_id AND b.entity_id=NEW.entity_id AND b.version=NEW.version AND
-          b.confirmation_id=NEW.id AND b.commit_sha=i.candidate_sha
-      ) THEN RAISE EXCEPTION 'prototype completion requires its accepted integration baseline'; END IF;
-    END IF;
+
   END IF;
   PERFORM studio_assert_confirmation_sources(NEW.id);
   RETURN NEW;
@@ -1499,16 +1415,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM studio_entities WHERE project_id=NEW.project_id AND id=NEW.entity_id AND kind='requirement') THEN
       RAISE EXCEPTION 'only requirements may define prerequisite relations';
     END IF;
-  ELSIF NOT EXISTS (
-    SELECT 1 FROM studio_occupations o JOIN studio_entities e ON e.project_id=o.project_id AND e.id=o.entity_id
-    WHERE o.id=NEW.occupation_id AND o.purpose='prototype' AND e.kind='requirement'
-  ) THEN RAISE EXCEPTION 'prototype input must bind an accepted completion and prototype occupation'; END IF;
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER studio_prerequisite_reference BEFORE INSERT OR UPDATE ON studio_prerequisites
-  FOR EACH ROW EXECUTE FUNCTION studio_check_prerequisite_reference();
-CREATE TRIGGER studio_occupation_input_reference BEFORE INSERT OR UPDATE ON studio_occupation_inputs
   FOR EACH ROW EXECUTE FUNCTION studio_check_prerequisite_reference();
 
 -- 冲突及涉及材料数量随对比封存，接受后不能再补。
@@ -1556,18 +1467,132 @@ CREATE TRIGGER studio_conflict_entity_immutable BEFORE UPDATE OR DELETE ON studi
 CREATE TRIGGER studio_status_report_immutable BEFORE UPDATE OR DELETE ON studio_material_status_reports
   FOR EACH ROW EXECUTE FUNCTION studio_forbid_mutation();
 
--- 前置生产输入引用的基线必须对应同一需求版本的真实完成接受与集成提交。
-CREATE FUNCTION studio_check_baseline_acceptance() RETURNS trigger AS $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM studio_confirmations c
-    JOIN studio_integrations i ON i.id=c.integration_id AND i.project_id=c.project_id AND i.entity_id=c.entity_id
-    JOIN studio_entities e ON e.project_id=c.project_id AND e.id=c.entity_id
-    WHERE c.id=NEW.confirmation_id AND c.project_id=NEW.project_id AND c.entity_id=NEW.entity_id AND c.version=NEW.version AND
-      c.stage='prototype' AND e.kind='requirement' AND i.status='accepted' AND i.scope='prototype' AND i.candidate_sha=NEW.commit_sha
-  ) THEN RAISE EXCEPTION 'baseline must bind an accepted requirement completion and its integration commit'; END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE CONSTRAINT TRIGGER studio_baseline_acceptance AFTER INSERT OR UPDATE ON studio_baselines
-  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION studio_check_baseline_acceptance();
+-- 项目原型身份与独立事项。材料占用和原型开发权使用不同的代次与生命周期。
+CREATE TABLE studio_prototypes (
+  id text PRIMARY KEY,
+  project_id text NOT NULL UNIQUE REFERENCES studio_projects(id),
+  current_baseline_id text,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  created_date timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (project_id,id)
+);
+CREATE TABLE studio_prototype_tasks (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  prototype_id text NOT NULL,
+  owner_id bigint NOT NULL REFERENCES studio_users(id),
+  client_id text NOT NULL,
+  generation integer NOT NULL CHECK (generation > 0),
+  revision integer NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  status text NOT NULL CHECK (status IN ('active','cancelled','released','accepted')),
+  title text NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+  branch text NOT NULL,
+  start_head text NOT NULL CHECK (start_head ~ '^[a-f0-9]{40}$'),
+  source_base_head text NOT NULL CHECK (source_base_head ~ '^[a-f0-9]{40}$'),
+  write_scope text[] NOT NULL,
+  policy_hash text NOT NULL CHECK (policy_hash ~ '^[a-f0-9]{64}$'),
+  claims_digest text NOT NULL CHECK (claims_digest ~ '^[a-f0-9]{64}$'),
+  instruction jsonb NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (project_id,prototype_id) REFERENCES studio_prototypes(project_id,id),
+  UNIQUE (project_id,id), UNIQUE (project_id,branch)
+);
+CREATE TABLE studio_prototype_development_claims (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  task_id text NOT NULL,
+  requirement_id text NOT NULL,
+  generation integer NOT NULL CHECK (generation > 0),
+  active boolean NOT NULL DEFAULT true,
+  ended_reason text,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  FOREIGN KEY (project_id,requirement_id) REFERENCES studio_entities(project_id,id),
+  UNIQUE (project_id,task_id,requirement_id), UNIQUE (project_id,requirement_id,generation)
+);
+CREATE UNIQUE INDEX studio_one_active_prototype_requirement_claim
+  ON studio_prototype_development_claims(project_id,requirement_id) WHERE active;
+CREATE TABLE studio_prototype_task_references (
+  project_id text NOT NULL,
+  task_id text NOT NULL,
+  requirement_id text NOT NULL,
+  PRIMARY KEY (project_id,task_id,requirement_id),
+  FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  FOREIGN KEY (project_id,requirement_id) REFERENCES studio_entities(project_id,id)
+);
+
+CREATE TABLE studio_prototype_integrations (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  prototype_id text NOT NULL,
+  task_id text NOT NULL,
+  owner_id bigint NOT NULL REFERENCES studio_users(id),
+  status text NOT NULL CHECK (status IN ('prepared','accepted','aborted')),
+  source_sha text NOT NULL CHECK (source_sha ~ '^[a-f0-9]{40}$'),
+  expected_head text NOT NULL CHECK (expected_head ~ '^[a-f0-9]{40}$'),
+  candidate_sha text NOT NULL CHECK (candidate_sha ~ '^[a-f0-9]{40}$'),
+  request jsonb NOT NULL,
+  created_date timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (project_id,prototype_id) REFERENCES studio_prototypes(project_id,id),
+  FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  UNIQUE (project_id,id)
+);
+CREATE UNIQUE INDEX studio_one_prepared_prototype_integration ON studio_prototype_integrations(project_id) WHERE status='prepared';
+CREATE TABLE studio_prototype_acceptances (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  prototype_id text NOT NULL,
+  task_id text NOT NULL UNIQUE,
+  integration_id text NOT NULL UNIQUE,
+  confirmation_id text NOT NULL,
+  source_sha text NOT NULL,
+  candidate_sha text NOT NULL,
+  confirmed_by bigint NOT NULL REFERENCES studio_users(id),
+  accepted_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (project_id,prototype_id) REFERENCES studio_prototypes(project_id,id),
+  FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  FOREIGN KEY (project_id,integration_id) REFERENCES studio_prototype_integrations(project_id,id),
+  UNIQUE(project_id,id)
+);
+CREATE TABLE studio_prototype_baselines (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  prototype_id text NOT NULL,
+  sequence integer NOT NULL CHECK (sequence > 0),
+  acceptance_id text NOT NULL UNIQUE,
+  commit_sha text NOT NULL CHECK (commit_sha ~ '^[a-f0-9]{40}$'),
+  FOREIGN KEY (project_id,prototype_id) REFERENCES studio_prototypes(project_id,id),
+  FOREIGN KEY (project_id,acceptance_id) REFERENCES studio_prototype_acceptances(project_id,id),
+  UNIQUE(project_id,id), UNIQUE(prototype_id,sequence)
+);
+CREATE TABLE studio_prototype_acceptance_requirements (
+  project_id text NOT NULL, acceptance_id text NOT NULL, requirement_id text NOT NULL,
+  PRIMARY KEY(project_id,acceptance_id,requirement_id),
+  FOREIGN KEY(project_id,acceptance_id) REFERENCES studio_prototype_acceptances(project_id,id),
+  FOREIGN KEY(project_id,requirement_id) REFERENCES studio_entities(project_id,id)
+);
+CREATE TABLE studio_prototype_baseline_requirements (
+  project_id text NOT NULL, baseline_id text NOT NULL, requirement_id text NOT NULL,
+  PRIMARY KEY(project_id,baseline_id,requirement_id),
+  FOREIGN KEY(project_id,baseline_id) REFERENCES studio_prototype_baselines(project_id,id),
+  FOREIGN KEY(project_id,requirement_id) REFERENCES studio_entities(project_id,id)
+);
+ALTER TABLE studio_prototypes ADD FOREIGN KEY(project_id,current_baseline_id) REFERENCES studio_prototype_baselines(project_id,id);
+ALTER TABLE studio_projects ADD FOREIGN KEY(id,deployment_baseline_id) REFERENCES studio_prototype_baselines(project_id,id);
+CREATE TABLE studio_prototype_adoptions (
+  id text PRIMARY KEY,
+  source_project_id text NOT NULL,
+  source_baseline_id text NOT NULL,
+  target_project_id text NOT NULL,
+  target_task_id text NOT NULL,
+  adjustment_summary text NOT NULL,
+  status studio_adoption_status NOT NULL,
+  target_baseline_id text,
+  creator_id bigint NOT NULL REFERENCES studio_users(id),
+  created_date timestamptz NOT NULL DEFAULT now(),
+  succeeded_at timestamptz,
+  FOREIGN KEY(source_project_id,source_baseline_id) REFERENCES studio_prototype_baselines(project_id,id),
+  FOREIGN KEY(target_project_id,target_task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  FOREIGN KEY(target_project_id,target_baseline_id) REFERENCES studio_prototype_baselines(project_id,id)
+);

@@ -6,7 +6,7 @@ interface GuardExecution { readonly name: string; readonly arguments: unknown; r
 const FILE_TOOLS = new Set(['read', 'read_image', 'write', 'edit', 'glob', 'grep'])
 const CONTROL_TOOLS = new Set(['ask_user_question', 'todo_write', 'update_plan', 'set_todo', 'list_agents', 'spawn_agent', 'send_message', 'wait_agent', 'close_agent'])
 export interface StudioExecutionPolicy { readRoot: string; readPaths?: () => readonly string[]; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[] }
-interface ExecutionScope { readonly cwd: string; readonly policy: StudioExecutionPolicy; active: boolean; readonly parent?: ExecutionScope }
+interface ExecutionScope { readonly cwd: string; policy: StudioExecutionPolicy; active: boolean; readonly parent?: ExecutionScope }
 const scopes = new WeakMap<StudioExecutionAgent, ExecutionScope>()
 export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy, agent: StudioExecutionAgent): () => void {
   const key = canonical(cwd)
@@ -24,6 +24,13 @@ export function registerStudioExecutionScope(cwd: string, policy: StudioExecutio
   const binding: ExecutionScope = { cwd: key, policy: prepared, active: true }
   scopes.set(agent, binding)
   return () => { binding.active = false; if (scopes.get(agent) === binding) scopes.delete(agent) }
+}
+/** Replace the live task's write scope after the Host has recorded its updated authorization. */
+export function updateStudioWriteScope(agent: StudioExecutionAgent, paths: readonly string[], prefixes: readonly string[]): void {
+  const scope = scopes.get(agent)
+  if (!scope || !active(scope)) throw new Error('会话没有有效的任务写入范围')
+  scope.policy.writablePaths = paths.map(relativePolicyPath)
+  scope.policy.writablePrefixes = prefixes.map(relativePolicyPath)
 }
 function active(binding: ExecutionScope): boolean { return binding.active && (!binding.parent || active(binding.parent)) }
 /** Only the Host's verified live registry parent/child edge may call this. */
