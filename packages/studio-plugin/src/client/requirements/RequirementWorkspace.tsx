@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ConfirmationChoice, EntityView, MaterialMetadata, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
+import type { ConfirmationChoice, EntityView, StudioCommand, StudioReply, StudioState } from '../../shared/studio.ts'
 import type { ScenarioSource, ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { StudioProps } from '../studio/StudioPanel.tsx'
 import { MaterialConversation } from '../components/MaterialConversation.tsx'
@@ -61,19 +61,17 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
       throw new Error(result && !result.ok ? result.message : '本地保存失败，当前输入已保留。')
     }
     const saved = result.state.requirement
-    if (saved.conflict) throw new Error('文件出现并发修改，请选择恢复方案。')
     if (saved.requirementSave && !saved.requirementSave.documentSaved) throw new Error(saved.requirementSave.message)
     return saved.draft
   }, registerWorkspaceFlush)
-  useEffect(() => { if (workspace.conflict) buffer.receive(workspace.conflict.actual) }, [buffer, workspace.conflict])
   const restoredOperations = useRef(new Set<string>())
   useEffect(() => {
     const pending = workspace.requirementSave
     if (!pending?.input || restoredOperations.current.has(pending.operationId)) return
     restoredOperations.current.add(pending.operationId)
     const current = buffer.getSnapshot()
-    if (!current.dirty && !current.saving) buffer.restoreInput(pending.input, workspace.conflict?.actual)
-  }, [buffer, workspace.requirementSave, workspace.conflict])
+    if (!current.dirty && !current.saving) buffer.restoreInput(pending.input)
+  }, [buffer, workspace.requirementSave])
   const flush = useCallback(async (): Promise<boolean> => {
     if (metadataForm.current && !metadataForm.current.validate()) { setRecoveryError('请修正业务字段后继续保存。'); setRecoveryDeferred(false); return false }
     const saved = await buffer.flush()
@@ -83,24 +81,23 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   const execute = useCallback(async (command: StudioCommand | ((hash: string) => StudioCommand), flushFirst = true) => {
     if (flushFirst && !await flush()) return undefined
     const result = await call(typeof command === 'function' ? command(buffer.getSnapshot().sha256) : command)
-    if (result?.ok && result.state.requirement?.entityId === entity.id && !result.state.requirement.conflict) buffer.receive(result.state.requirement.draft)
+    if (result?.ok && result.state.requirement?.entityId === entity.id) buffer.receive(result.state.requirement.draft)
     return result
   }, [buffer, call, entity.id, flush])
-  const receiveSaved = useCallback((result: StudioReply | undefined, input?: DraftInput, resolvedHash?: string) => {
+  const receiveSaved = useCallback((result: StudioReply | undefined, input?: DraftInput) => {
     if (!result?.ok || result.state.requirement?.entityId !== entity.id) {
       buffer.finishWrite()
       setRecoveryError(result && !result.ok ? result.message : '保存结果尚未核对，请重试或稍后继续。')
       return undefined
     }
     const saved = result.state.requirement
-    if (saved.conflict) buffer.receive(saved.conflict.actual)
-    else if (!saved.requirementSave || saved.requirementSave.documentSaved) {
-      if (input) buffer.acknowledge(saved.draft, input, resolvedHash)
+    if (!saved.requirementSave || saved.requirementSave.documentSaved) {
+      if (input) buffer.acknowledge(saved.draft, input)
       else buffer.receive(saved.draft)
     }
     buffer.finishWrite()
     if (!saved.requirementSave && !saved.confirmationRecovery) {
-      setRecoveryError(buffer.getSnapshot().dirty || buffer.getSnapshot().conflict ? '本次提交已处理，期间的新输入仍已保留，请核对后继续。' : '')
+      setRecoveryError(buffer.getSnapshot().dirty ? '本次提交已处理，期间的新输入仍已保留，请核对后继续。' : '')
       setConfirmationChoice(undefined)
     }
     return saved
@@ -118,28 +115,9 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
     } finally { buffer.finishWrite(); setConfirming(false) }
   }, [buffer, call, entity.id, entity.occupation, operationId, receiveSaved])
   const continuingConfirmation = !!confirmationChoice || !!workspace.confirmationRecovery
-  const resolve = useCallback(async (body: string, metadata: MaterialMetadata, actualHash: string, external = false) => {
-    if (!external && metadataForm.current && !metadataForm.current.validate()) { setRecoveryError('请修正合并内容的业务字段后继续。'); setEditRequested(value => value + 1); return }
-    setRecoveryDeferred(false); setConfirming(true)
-    try {
-      await buffer.prepareWrite()
-      if (external) {
-        const actual = buffer.getSnapshot().conflict
-        if (!actual || actual.sha256 !== actualHash) { setRecoveryError('外部版本已变化，请重新核对恢复选择。'); return }
-        buffer.accept(actual); metadataForm.current?.accept(actual.metadata)
-      }
-      const result = await call({ action: 'resolveRequirementConflict', entityId: entity.id, body, metadata, expectedHash: actualHash, operationId: operationId('resolve', { body, metadata, actualHash }) })
-      const saved = receiveSaved(result, { body, metadata }, actualHash)
-      if (saved && !saved.conflict && (!saved.requirementSave || saved.requirementSave.documentSaved) && continuingConfirmation) {
-        if (buffer.getSnapshot().dirty || buffer.getSnapshot().conflict) { setRecoveryError('期间出现了新的输入或文件变化，请核对后继续确认。'); return }
-        await confirm(confirmationChoice ?? { method: 'direct' })
-      }
-    } finally { buffer.finishWrite(); setConfirming(false) }
-  }, [buffer, call, entity.id, operationId, receiveSaved, continuingConfirmation, confirmationChoice, confirm])
   const retryRecovery = useCallback(async () => {
     setRecoveryDeferred(false)
     const current = buffer.getSnapshot()
-    if (current.conflict) { setRecoveryError('请选择要保留的内容，或编辑合并后继续。'); return }
     const original = workspace.requirementSave?.operationId ?? workspace.confirmationRecovery?.operationId
     const originalInput = workspace.requirementSave?.input
     const confirmationVersionChanged = !workspace.requirementSave && workspace.confirmationRecovery?.expectedHash && workspace.confirmationRecovery.expectedHash !== current.sha256
@@ -167,7 +145,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
     else if (metadataForm.current?.validate() ?? true) {
       await buffer.prepareWrite()
       const input = buffer.getSnapshot()
-      receiveSaved(await call({ action: 'saveRequirement', entityId: entity.id, operationId: crypto.randomUUID(), body: input.body, metadata: input.metadata, expectedHash: input.sha256 }), input)
+      receiveSaved(await call({ action: 'saveRequirement', entityId: entity.id, operationId: crypto.randomUUID(), body: input.body, metadata: input.metadata }), input)
     }
   }, [buffer, call, entity.id, receiveSaved, continuingConfirmation, confirmationChoice, confirm])
   const actions = useMemo(() => ({
@@ -199,9 +177,9 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   const task = sessions.find(session => session.sessionId === workspace.activeSessionId)
   const review = state.reviews.filter(item => item.entityId === entity.id && item.purpose === 'material').at(-1)
   const materialSources = state.materialSources?.find(value => value.entityId === entity.id)
-  const locked = busy || confirming || !!snapshot.conflict
+  const locked = busy || confirming
   const hasRecovery = !!workspace.requirementSave || !!workspace.confirmationRecovery
-  const recoveryMessage = workspace.requirementSave?.message || workspace.confirmationRecovery?.message || recoveryError || (!snapshot.conflict ? snapshot.error : '')
+  const recoveryMessage = workspace.requirementSave?.message || workspace.confirmationRecovery?.message || recoveryError || snapshot.error
   deferredInputPreserved.current = recoveryDeferred && (workspace.requirementSave?.input
     ? sameDraftInput(snapshot, workspace.requirementSave.input)
     : !!workspace.confirmationRecovery && !snapshot.dirty || !!workspace.requirementSave?.documentSaved && !snapshot.dirty)
@@ -220,7 +198,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
             <p role="alert">{recoveryMessage}</p>
             {workspace.requirementSave?.documentSaved && <p>正文已保存，剩余更新仍待完成。</p>}
             <div className={css.actionBar}>
-              {!snapshot.conflict && !workspace.readOnly && <button disabled={busy || confirming} onClick={() => void retryRecovery()}>{continuingConfirmation ? '重试保存并继续确认' : '核对并重试保存'}</button>}
+              {!workspace.readOnly && <button disabled={busy || confirming} onClick={() => void retryRecovery()}>{continuingConfirmation ? '重试保存并继续确认' : '核对并重试保存'}</button>}
               {(workspace.requirementSave?.reason === 'occupation' || workspace.readOnly) && <button disabled={busy || confirming} onClick={() => void reclaim()}>核对并重新取得编辑权</button>}
               <button disabled={busy || confirming} onClick={() => { setEditRequested(value => value + 1); setRecoveryDeferred(false) }}>{workspace.readOnly ? '查看保留的输入' : '修改内容或关系'}</button>
               <button disabled={busy || confirming} onClick={() => setRecoveryDeferred(true)}>稍后继续</button>
@@ -240,7 +218,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
       </MaterialConversation>
       <p className={layout.composerHint}>Enter 发送 · Shift + Enter 换行 · 助手建议经审阅后写入正文</p>
     </section>
-    <RequirementSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.requirements} entities={entities} projectId={state.project!.id} candidates={state.candidates} busy={busy || confirming} call={call} metadataForm={metadataForm} onFlush={flush} onCollapse={() => setCollapsed(true)} onResolve={resolve} onOpenScenario={onOpenScenario} confirming={confirming} continueConfirmation={continuingConfirmation} editRequested={editRequested}>
+    <RequirementSpecPanel entity={entity} draft={workspace.draft} buffer={buffer} snapshot={snapshot} workspace={workspace} templates={state.projectTemplates?.requirements} entities={entities} projectId={state.project!.id} candidates={state.candidates} busy={busy || confirming} call={call} metadataForm={metadataForm} onFlush={flush} onCollapse={() => setCollapsed(true)} onOpenScenario={onOpenScenario} confirming={confirming} editRequested={editRequested}>
     </RequirementSpecPanel>
     {collapsed && <aside className={layout.restore}><button ref={documentFocus.restore} aria-label="展开需求文档" onClick={() => setCollapsed(false)}>‹ 文档预览</button></aside>}
   </div>

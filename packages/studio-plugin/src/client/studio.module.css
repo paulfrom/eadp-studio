@@ -558,10 +558,9 @@
 .sectionHead small { margin-left: auto; color: var(--text-3); font-size: 10.5px; }
 
 .specPanel > .dockCard { flex-shrink: 0; max-height: 45%; overflow-y: auto; margin: 0 12px 10px; }
-.conflictPanel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); border-radius: 8px; background: var(--warn-soft); font-size: 11.5px; }
-.conflictPanel strong { color: var(--warn); }
-.conflictCopies { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-.conflictCopies textarea { width: 100%; min-width: 0; }
+.externalNotice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); border-radius: 8px; background: var(--warn-soft); font-size: 11px; }
+.externalNotice > span { flex: 1 1 16rem; min-width: 0; color: var(--warn); line-height: 1.7; }
+.externalNotice button { padding: 3px 8px; font-size: 10.5px; }
 .evidencePanel { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 11px; }
 .evidencePanel > p { color: var(--text-2); line-height: 1.8; }
 .evidencePanel label { margin-top: 8px; }
@@ -575,7 +574,6 @@
 .sourceCard > strong { font-size: 11.5px; }
 .sourceCard > small { color: var(--text-3); font: 10px var(--mono); }
 @media (max-width: 1100px) { .scenarioWorkspace { flex-direction: column; overflow: auto; padding: 0 12px 12px; } .chatPanel, .specPanel { flex: 0 0 auto; min-height: 420px; } .chatDock { max-height: none; } }
-@media (max-width: 900px) { .conflictCopies { grid-template-columns: minmax(0, 1fr); } }
 
 .catalogToolbar { flex-wrap: wrap; }
 .catalogToolbar .search { flex: 1 1 220px; }

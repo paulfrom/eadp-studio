@@ -8,7 +8,6 @@ export interface ScenarioGate {
   /** Invalid formal citations the author can explicitly exclude without deleting local source files. */
   invalidEvidenceIndexes?: number[];
 }
-export interface ScenarioConflict { expectedHash: string; actual: MaterialDraft; localBody: string; localMetadata: MaterialMetadata; savedPath: string }
 /** Exact chapter change offered for explicit review before a local write. */
 export interface ScenarioWriteChange { id: string; title: string; kind: 'added' | 'changed' | 'removed'; before: string; after: string; addedLines: number; removedLines: number }
 /** Host-created proposal; the model may only supply conclusions, evidence IDs and the full body. */
@@ -65,7 +64,7 @@ export interface ScenarioWorkspace {
   confirmationRecovery?: { operationId: string; phase: string; message: string; expectedHash?: string };
   mergeNotice?: string;
   settlement: ScenarioSettlementView;
-  sessions: TaskView[]; activeSessionId?: string; conflict?: ScenarioConflict;
+  sessions: TaskView[]; activeSessionId?: string;
   repair?: RepairTaskView & { question?: string; message?: string; sessionId?: string };
   impact?: Array<EntityView | EntityOccupancyView>; git?: { dirty: boolean; branch: string; head: string };
   confirmedBy?: number; confirmedAt?: string; splitOffered?: boolean;
@@ -75,10 +74,9 @@ export type ScenarioCommand =
   | { action: 'openScenario'; entityId: string }
   | { action: 'scenarioRevisionImpact'; entityId: string }
   | { action: 'startScenarioRevision'; entityId: string; expectedRevision: number }
-  | { action: 'saveScenario'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
+  | { action: 'saveScenario'; entityId: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'resolveScenarioWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string; selectedChangeIds?: string[] }
   | { action: 'undoScenarioWrite'; entityId: string; operationId: string; expectedHash: string }
-  | { action: 'resolveScenarioConflict'; entityId: string; expectedHash: string; operationId: string; body: string; metadata: MaterialMetadata }
   | { action: 'newScenarioSession'; entityId: string }
   | { action: 'selectScenarioSession'; entityId: string; sessionId: string }
   | { action: 'splitScenario'; entityId: string }

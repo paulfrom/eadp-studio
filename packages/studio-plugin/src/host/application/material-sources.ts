@@ -142,7 +142,7 @@ export class MaterialSources {
       const businessEvidence = await archiveSelectedEvidence(task.worktree, records, records.map(r => r.source.id))
       record.localEvidencePaths = [...new Set([...(record.localEvidencePaths ?? []), ...businessEvidence.flatMap(evidence => evidence.files.map(file => file.path))])]
       await this.store.save()
-      await new ScenarioDocumentService(this.store.directory).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, { ...draft.metadata, businessEvidence }), body: draft.body, expectedHash: draft.sha256, operationId: randomUUID() })
+      await new ScenarioDocumentService(this.store.directory).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, { ...draft.metadata, businessEvidence }), body: draft.body, operationId: randomUUID() })
     } catch (error) {
       Object.assign(source, previous)
       await this.store.save()

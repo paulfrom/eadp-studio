@@ -6,7 +6,7 @@ import test from 'node:test'
 import type { MaterialMetadata } from '../../packages/contracts/src/index.ts'
 import type { ScenarioSource } from '../../packages/studio-plugin/src/shared/scenarios.ts'
 import { digest, materialText, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
-import { ScenarioDocumentConflictError, ScenarioDocumentService, checkScenarioDocument, invalidScenarioEvidenceIndexes, scenarioFileErrors } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
+import { ScenarioDocumentService, checkScenarioDocument, invalidScenarioEvidenceIndexes, scenarioFileErrors } from '../../packages/studio-plugin/src/host/application/scenario-documents.ts'
 import { archiveSelectedEvidence } from '../../packages/studio-plugin/src/host/application/scenario-evidence.ts'
 
 const templateRef = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) }
@@ -31,7 +31,7 @@ test('precise body whitespace survives save and reopen; the file hash covers all
 
 test('same operation survives service restart and returns the original result, while a reused ID rejects changed input', async t => {
   const { root, localRoot, draft, service } = await fixture(t)
-  const input = { root, metadata: draft.metadata, body: '新正文', expectedHash: draft.sha256, operationId: 'save-one' }
+  const input = { root, metadata: draft.metadata, body: '新正文', operationId: 'save-one' }
   const [first, repeated] = await Promise.all([service.save(input), service.save(input)])
   assert.deepEqual(first, repeated)
   assert.deepEqual(await new ScenarioDocumentService(localRoot).save(input), first)
@@ -40,32 +40,22 @@ test('same operation survives service restart and returns the original result, w
   assert.deepEqual(await readdir(root), ['场景'])
 })
 
-test('concurrent writes serialize by file; losing writer keeps both external and local content outside the worktree', async t => {
+test('concurrent writes serialize by file and each keeps its own receipt', async t => {
   const { root, draft, service } = await fixture(t)
-  const outcomes = await Promise.allSettled(['甲', '乙'].map((body, index) => service.save({ root, metadata: draft.metadata, body, expectedHash: draft.sha256, operationId: `save-${index}` })))
-  assert.equal(outcomes.filter(result => result.status === 'fulfilled').length, 1)
-  const rejected = outcomes.find(result => result.status === 'rejected') as PromiseRejectedResult
-  assert.ok(rejected.reason instanceof ScenarioDocumentConflictError)
-  const conflict = rejected.reason as ScenarioDocumentConflictError
-  // Which writer reaches the queue first is not observable; the loser must keep both versions.
-  const external = conflict.conflict?.actual.body, local = conflict.conflict?.localBody
-  assert.deepEqual(new Set([external, local]), new Set(['甲', '乙']))
-  assert.equal(await readFile(conflict.savedPaths.external, 'utf8'), materialText(draft.metadata, external!))
-  assert.equal(await readFile(conflict.savedPaths.local, 'utf8'), materialText(draft.metadata, local!))
-  assert.equal(conflict.savedPaths.local.startsWith(`${root}/`), false)
-  assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, external)
+  const bodies = ['甲', '乙']
+  const results = await Promise.all(bodies.map((body, index) => service.save({ root, metadata: draft.metadata, body, operationId: `save-${index}` })))
+  assert.deepEqual(results.map(result => result.body), bodies)
+  // The last write through the queue is the file's content; both receipts stay replayable.
+  assert.ok(bodies.includes((await readMaterial(root, 'scenario', draft.entityId)).body))
+  assert.deepEqual(await readdir(root), ['场景'])
 })
 
-test('an invalid external file is retained with the local input and never overwritten', async t => {
+test('a document the author has not seen is replaced by the write they saved', async t => {
   const { root, draft, service } = await fixture(t)
-  await writeFile(path.join(root, draft.path), '损坏的外部文件')
-  await assert.rejects(service.save({ root, metadata: draft.metadata, body: '未保存输入', expectedHash: draft.sha256, operationId: 'save-invalid' }), asyncError => {
-    assert.ok(asyncError instanceof ScenarioDocumentConflictError)
-    assert.equal(asyncError.conflict, undefined)
-    assert.equal(asyncError.actualHash, digest('损坏的外部文件'))
-    return true
-  })
-  assert.equal(await readFile(path.join(root, draft.path), 'utf8'), '损坏的外部文件')
+  await writeFile(path.join(root, draft.path), materialText(draft.metadata, '外部文件内容'))
+  const saved = await service.save({ root, metadata: draft.metadata, body: '用户保存的正文', operationId: 'save-over-external' })
+  assert.equal(saved.body, '用户保存的正文')
+  assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, '用户保存的正文')
 })
 
 test('formal evidence archives only explicit selected versions with original bytes and read scope', async t => {
@@ -101,24 +91,22 @@ test('business checks do not infer completeness from titles or text length; opti
   const { draft } = await fixture(t, '## 自定义范围\n甲\n## 判断\n乙')
   const formal = { label: '确认依据', reference: 'source:approved', files: [{ path: '.eadp/evidence/hash/original.txt', sha256: 'd'.repeat(64) }], ranges: [{ path: '.eadp/evidence/hash/original.txt', startLine: 1, endLine: 1 }] }
   const ready = { ...draft, metadata: { ...draft.metadata, flowComplete: true, businessEvidence: [formal] } }
-  const input = { draft: ready, expectedHash: ready.sha256, hasPermission: true, hasOccupation: true }
+  const input = { draft: ready, hasPermission: true, hasOccupation: true }
   const result = checkScenarioDocument(input)
   assert.equal(result.passed, true)
   assert.equal(result.groups.find(group => group.id === 'template')!.status, 'disabled')
   assert.equal(checkScenarioDocument({ ...input, structureCheck: true, templateBody: '## 判断\n## 自定义范围\n```md\n## 示例章节\n```' }).passed, true)
   assert.equal(checkScenarioDocument({ ...input, structureCheck: true, templateBody: '## 缺少的章' }).passed, false)
-  for (const changed of [{ expectedHash: 'e'.repeat(64) }, { hasPermission: false }, { hasOccupation: false }, { conflict: true }]) assert.equal(checkScenarioDocument({ ...input, ...changed }).passed, false)
+  for (const changed of [{ hasPermission: false }, { hasOccupation: false }]) assert.equal(checkScenarioDocument({ ...input, ...changed }).passed, false)
   assert.equal(checkScenarioDocument({ ...input, draft: { ...ready, metadata: { ...ready.metadata, flowComplete: false } } }).passed, false)
 })
 
-test('requirement evidence metadata uses the same serialized expected-hash writer and preserves the losing version', async t => {
+test('requirement evidence metadata uses the same serialized expected-hash writer and keeps one title', async t => {
   const f = await fixture(t), requirement: MaterialMetadata = { entityId: 'requirement-one', kind: 'requirement', title: '审批需求', templateId: 'default', templateRef, scenarioIds: ['scene'], sources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], businessEvidence: [], openQuestions: [], coreRulesPresent: false, acceptanceCriteriaPresent: false, referencedAssets: [] }
   const draft = await saveMaterial(f.root, requirement, '需求正文')
-  const outcomes = await Promise.allSettled(['甲', '乙'].map((title, index) => f.service.save({ root: f.root, metadata: { ...requirement, title }, body: draft.body, expectedHash: draft.sha256, operationId: `requirement-${index}` })))
-  assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1)
-  const failed = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult
-  assert.ok(failed.reason instanceof ScenarioDocumentConflictError)
-  assert.deepEqual(new Set([failed.reason.conflict.actual.metadata.title, failed.reason.conflict.localMetadata.title]), new Set(['甲', '乙']))
+  const saved = await Promise.all(['甲', '乙'].map((title, index) => f.service.save({ root: f.root, metadata: { ...requirement, title }, body: draft.body, operationId: `requirement-${index}` })))
+  assert.deepEqual(saved.map(value => (value.metadata as MaterialMetadata).title), ['甲', '乙'])
+  assert.equal(saved[1]!.path, (await readMaterial(f.root, 'requirement', requirement.entityId)).path)
   assert.equal((await readMaterial(f.root, 'requirement', requirement.entityId)).body, draft.body)
   assert.equal((await readdir(path.join(f.root, '需求'))).length, 1)
 })
@@ -127,7 +115,7 @@ test('requirement evidence metadata uses the same serialized expected-hash write
 test('a complete scenario can confirm with an amount threshold left to requirements and no uploaded evidence', async t => {
   const { draft } = await fixture(t, '提交申请 → 按金额进入审批 → 通过后执行，拒绝后退回。阈值在需求确认。')
   const ready = { ...draft, metadata: { ...draft.metadata, flowComplete: true, openQuestions: [{ blocking: false, limitation: '审批金额阈值待需求明确', excludedScope: '具体阈值与计算口径' }] } }
-  const input = { draft: ready, expectedHash: ready.sha256, hasPermission: true, hasOccupation: true }
+  const input = { draft: ready, hasPermission: true, hasOccupation: true }
   const checked = checkScenarioDocument(input)
   assert.equal(checked.passed, true)
   assert.equal(checked.groups.find(group => group.id === 'evidence')!.status, 'warning')
@@ -144,10 +132,10 @@ test('broken formal references are identified for explicit hash-bound removal wi
   const draft = await saveMaterial(f.root, { ...f.draft.metadata, flowComplete: true, businessEvidence: [...evidence, missing] }, f.draft.body)
   const indexes = await invalidScenarioEvidenceIndexes(f.root, draft)
   assert.deepEqual(indexes, [0, 1])
-  const checked = checkScenarioDocument({ draft, expectedHash: draft.sha256, hasPermission: true, hasOccupation: true, fileErrors: await scenarioFileErrors(f.root, draft), invalidEvidenceIndexes: indexes })
+  const checked = checkScenarioDocument({ draft, hasPermission: true, hasOccupation: true, fileErrors: await scenarioFileErrors(f.root, draft), invalidEvidenceIndexes: indexes })
   assert.equal(checked.passed, true)
   assert.deepEqual(checked.groups.find(group => group.id === 'evidence')!.invalidEvidenceIndexes, [0, 1])
-  const next = await f.service.save({ root: f.root, metadata: { ...draft.metadata, businessEvidence: draft.metadata.businessEvidence.filter((_, index) => !indexes.includes(index)) }, body: draft.body, expectedHash: draft.sha256, operationId: 'exclude-invalid' })
+  const next = await f.service.save({ root: f.root, metadata: { ...draft.metadata, businessEvidence: draft.metadata.businessEvidence.filter((_, index) => !indexes.includes(index)) }, body: draft.body, operationId: 'exclude-invalid' })
   assert.notEqual(next.sha256, draft.sha256)
   assert.equal(next.body, draft.body)
   assert.deepEqual(await scenarioFileErrors(f.root, next), [])

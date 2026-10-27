@@ -1,17 +1,15 @@
 import { realpath } from 'node:fs/promises'
-import path from 'node:path'
 import { canonical } from '@eadp/asset-domain'
 import { isMaterialMetadata, type EntityView, type MaterialMetadata, type OccupationToken, type ProjectState, type UpdateEntityRequest, type UpdateRelationsRequest } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
 import type { RequirementSaveView, RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
-import type { ScenarioConflict } from '../../shared/scenarios.ts'
 import { digest, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError, type CollaborationClient } from '../adapters/collaboration/client.ts'
-import { ScenarioDocumentConflictError, sameTemplate, type ScenarioDocumentService } from './scenario-documents.ts'
+import { sameTemplate, type ScenarioDocumentService } from './scenario-documents.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { StudioStore } from './state.ts'
 
-type SaveCommand = Extract<RequirementWorkspaceCommand, { action: 'saveRequirement' | 'resolveRequirementConflict' }>
+type SaveCommand = Extract<RequirementWorkspaceCommand, { action: 'saveRequirement' }>
 type SaveContext = { remote: ProjectState; entity: EntityView; task: TaskView }
 type Phase = RequirementSaveView['phase']
 type Reason = RequirementSaveView['reason']
@@ -27,7 +25,7 @@ export interface RequirementSaveOperation {
   relations?: RemoteStep<UpdateRelationsRequest>; relationsAccepted?: boolean;
   document?: MaterialDraft; directory?: RemoteStep<UpdateEntityRequest>;
 }
-export interface RequirementSaveOwner { requirementSaves?: RequirementSaveOperation[]; conflict?: ScenarioConflict }
+export interface RequirementSaveOwner { requirementSaves?: RequirementSaveOperation[] }
 interface Dependencies {
   context(entityId: string, projectId?: string): Promise<SaveContext>
   owned(entity: EntityView): Promise<OccupationToken>
@@ -46,7 +44,7 @@ const last = (owner: RequirementSaveOwner): RequirementSaveOperation | undefined
 const identifier = (value: string): void => { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value)) throw new Error('需求保存操作 ID 无效') }
 const stepId = (operationId: string, phase: 'relations' | 'directory'): string => `${digest(operationId)}-${phase}`
 
-/** Owns requirement saves, including remote receipts, file conflicts and directory-only recovery. */
+/** Owns requirement saves, including remote receipts and directory-only recovery. */
 export class RequirementSaves {
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly deps: Dependencies) {}
 
@@ -105,6 +103,7 @@ export class RequirementSaves {
   }
   private async persist(operation: RequirementSaveOperation): Promise<void> { this.scope(operation); await this.store.save() }
   private route(operation: RequirementSaveOperation, suffix: string): string { return `/v1/projects/${encodeURIComponent(operation.projectId)}${suffix}` }
+  /** Reads back the document this save wrote; a missing or unreadable file stops the published directory. */
   private async read(operation: RequirementSaveOperation): Promise<MaterialDraft> {
     try { return await readMaterial(operation.root!, 'requirement', operation.entityId) }
     catch (error) { throw new SaveProblem('invalid', `本地材料无法读取，请保留输入并修复文件后继续：${error instanceof Error ? error.message : '文件不可用'}`) }
@@ -127,28 +126,17 @@ export class RequirementSaves {
     const expected = operation.directory?.accepted?.revision ?? operation.relations?.accepted?.revision ?? operation.occupation?.expectedRevision
     if (token.expectedRevision !== expected) throw new SaveProblem('occupation', '需求在本次保存之外发生了变更，请核对当前版本后继续')
   }
-  private async prepare(owner: RequirementSaveOwner, operation: RequirementSaveOperation): Promise<void> {
+  private async prepare(operation: RequirementSaveOperation): Promise<void> {
     const { request } = operation
-    if (!isMaterialMetadata(request.metadata) || request.metadata.kind !== 'requirement' || request.metadata.entityId !== operation.entityId || !/^[a-f0-9]{64}$/.test(request.expectedHash) || typeof request.body !== 'string' || request.body.length > 1_000_000) throw new SaveProblem('invalid', '需求材料身份、内容或预期版本无效，请核对当前输入')
+    if (!isMaterialMetadata(request.metadata) || request.metadata.kind !== 'requirement' || request.metadata.entityId !== operation.entityId || typeof request.body !== 'string' || request.body.length > 1_000_000) throw new SaveProblem('invalid', '需求材料身份或内容无效，请核对当前输入')
     const context = await this.context(operation), metadata = request.metadata
     if (!context.entity.templateRef || metadata.templateId !== context.entity.templateId || !sameTemplate(metadata.templateRef, context.entity.templateRef)) throw new SaveProblem('invalid', '编辑期间需求模板固定，请核对当前需求的模板')
-    if (owner.conflict && request.action !== 'resolveRequirementConflict') throw new SaveProblem('conflict', '外部版本与当前输入均已保留，请选择采用的内容或合并后继续')
     operation.root ??= await realpath(context.task.worktree)
     operation.occupation ??= structuredClone(context.token)
     const currentMetadata = await syncProjectContext(operation.root, metadata)
     if (operation.metadata && canonical(operation.metadata) !== canonical(currentMetadata)) throw new SaveProblem('invalid', '项目上下文已变化，请核对当前材料后重新保存')
     operation.metadata ??= structuredClone(currentMetadata)
     await this.persist(operation)
-    const draft = await this.read(operation)
-    if (operation.document) {
-      if (draft.sha256 !== operation.document.sha256) throw new SaveProblem('conflict', '正文在保存后发生变化，请选择当前内容后继续保存')
-    } else if (draft.sha256 !== request.expectedHash) {
-      // The document receipt also recovers a process stopped just after its rename.
-      const recovered = await this.deps.documents().save({ root: operation.root, metadata: operation.metadata, body: request.body, expectedHash: request.expectedHash, operationId: operation.operationId })
-      if (recovered.sha256 !== draft.sha256) throw new SaveProblem('conflict', '当前文件已不同于原保存结果，请核对两份内容后继续')
-      operation.document = recovered
-      await this.persist(operation)
-    }
   }
   private async lookup<T extends UpdateEntityRequest | UpdateRelationsRequest>(operation: RequirementSaveOperation, phase: 'relations' | 'directory', step: RemoteStep<T>): Promise<boolean> {
     if (step.accepted) return true
@@ -191,8 +179,6 @@ export class RequirementSaves {
     if (await this.lookup(operation, phase, step)) return
     const context = await this.context(operation)
     if (context.token.expectedRevision !== step.request.token.expectedRevision) throw new SaveProblem('occupation', '需求版本已变化，原请求尚未被接受，请核对后重新保存')
-    const draft = await this.read(operation)
-    if (draft.sha256 !== (operation.document?.sha256 ?? operation.request.expectedHash)) throw new SaveProblem('conflict', '材料在请求前发生变化，请选择当前内容后继续')
     const result = await this.api.request<EntityView>('PUT', this.route(operation, `/entities/${encodeURIComponent(operation.entityId)}${phase === 'relations' ? '/relations' : ''}`), step.request)
     this.scope(operation)
     this.accepted(operation, phase, step, result)
@@ -212,23 +198,21 @@ export class RequirementSaves {
     operation.relationsAccepted = true
     await this.persist(operation)
   }
-  private async writeDocument(owner: RequirementSaveOwner, operation: RequirementSaveOperation): Promise<void> {
+  private async writeDocument(operation: RequirementSaveOperation): Promise<void> {
     if (!operation.document) {
       operation.phase = 'document'
       await this.persist(operation)
       this.revision(operation, (await this.context(operation)).token)
       if (canonical(await syncProjectContext(operation.root!, operation.request.metadata)) !== canonical(operation.metadata)) throw new SaveProblem('invalid', '项目上下文在保存期间变化，请核对后重新保存')
-      operation.document = await this.deps.documents().save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, expectedHash: operation.request.expectedHash, operationId: operation.operationId })
+      operation.document = await this.deps.documents().save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: operation.operationId })
       await this.persist(operation)
     }
-    delete owner.conflict
   }
   private async writeDirectory(operation: RequirementSaveOperation): Promise<void> {
     operation.phase = 'directory'
     await this.persist(operation)
     const { entity, token } = await this.context(operation), metadata = operation.request.metadata
-    const current = await this.read(operation)
-    if (current.sha256 !== operation.document!.sha256) throw new SaveProblem('conflict', '正文在保存后发生变化，请选择当前内容后继续')
+    await this.ensureDocument(operation)
     if (operation.directory) await this.remote(operation, 'directory', operation.directory)
     else if (metadata.title !== entity.title || metadata.summary !== undefined && metadata.summary !== entity.summary) {
       this.revision(operation, token)
@@ -237,41 +221,33 @@ export class RequirementSaves {
       await this.remote(operation, 'directory', operation.directory)
     }
     this.revision(operation, (await this.context(operation)).token)
-    if ((await this.read(operation)).sha256 !== operation.document!.sha256) throw new SaveProblem('conflict', '正文在目录请求期间发生变化，请选择当前内容后继续')
     operation.status = 'applied'; operation.message = '需求已保存'
     await this.persist(operation)
     this.deps.applied?.(operation)
   }
+  /** Re-asserts the submitted document when the file moved after this save wrote it, so the published title and the material stay one version. */
+  private async ensureDocument(operation: RequirementSaveOperation): Promise<void> {
+    if ((await this.read(operation)).sha256 === operation.document!.sha256) return
+    operation.document = await this.deps.documents().save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: `${operation.operationId}-reassert` })
+    await this.persist(operation)
+  }
   private async run(owner: RequirementSaveOwner, operation: RequirementSaveOperation): Promise<void> {
     try {
-      await this.prepare(owner, operation)
+      await this.prepare(operation)
       await this.reconcilePrevious(owner, operation)
       await this.writeRelations(operation)
-      await this.writeDocument(owner, operation)
+      await this.writeDocument(operation)
       await this.writeDirectory(operation)
     } catch (error) {
       this.scope(operation)
       let reason: Reason = 'network'
-      if (error instanceof ScenarioDocumentConflictError) {
-        reason = 'conflict'
-        if (error.conflict) owner.conflict = error.conflict
-      } else if (error instanceof SaveProblem) reason = error.reason
+      if (error instanceof SaveProblem) reason = error.reason
       else if (error instanceof CollaborationError) reason = /OCCUPATION|REVISION|LOGIN|PERMISSION|FORBIDDEN|ACCESS/.test(error.code) || error.status === 401 || error.status === 403 ? 'occupation' : error.status >= 500 || error.status === 429 || error.status === 408 ? 'network' : operation.phase === 'relations' ? 'relations' : 'invalid'
       else if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^(ENOENT|EACCES|ENOSPC|EROFS)$/.test(error.code)) reason = 'invalid'
       else if (error instanceof Error && /占用|编辑权|只读|occupation/i.test(error.message)) reason = 'occupation'
       else if (error instanceof Error && /同一.*操作|模板|身份|上下文/.test(error.message)) reason = 'invalid'
-      let message = error instanceof Error ? error.message : '保存尚未完成，请选择恢复方式'
-      if (reason === 'conflict' && !(error instanceof ScenarioDocumentConflictError) && operation.root && operation.metadata) {
-        try {
-          const actual = await this.read(operation)
-          // Both inputs live in the durable recovery record, outside the business worktree.
-          owner.conflict = { expectedHash: operation.document?.sha256 ?? operation.request.expectedHash, actual, localBody: operation.request.body, localMetadata: operation.metadata, savedPath: path.join(this.store.directory, 'studio-state.json') }
-        } catch (readError) {
-          reason = 'invalid'; message = readError instanceof Error ? readError.message : '材料无法读取，请保留输入并修复文件后继续'
-        }
-      }
       operation.reason = reason; operation.status = reason === 'network' ? 'pending' : 'recovery'
-      operation.message = message
+      operation.message = error instanceof Error ? error.message : '保存尚未完成，请选择恢复方式'
       await this.persist(operation)
     }
   }

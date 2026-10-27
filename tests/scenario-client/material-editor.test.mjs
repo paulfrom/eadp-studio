@@ -11,9 +11,8 @@ const compiled = ts.transpileModule(source.replace(/^import .+\r?\n/gm, '').repl
 const createElement = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) })
 const sourceHelpers = ts.transpileModule((await readFile(path.join(repo, 'packages/studio-plugin/src/client/requirements/scenario-sources.ts'), 'utf8')).replace(/^import .+\r?\n/gm, '').replace(/\bexport /g, ''), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText.replace(/^export \{\};?\s*$/gm, '')
 const { ordinaryScenarioSources, removeScenarioSource, updateScenarioSources } = new Function(`${sourceHelpers}; return { ordinaryScenarioSources, removeScenarioSource, updateScenarioSources }`)()
-const Component = new Function('ordinaryScenarioSources', 'removeScenarioSource', 'updateScenarioSources', 'React', 'useState', 'useEffect', 'useRef', 'useCallback', 'useDraftBuffer', 'css', `${compiled}; return MaterialEditor`)(
-  ordinaryScenarioSources, removeScenarioSource, updateScenarioSources, { createElement }, initial => [initial, () => {}], () => {}, value => ({ current: value }), value => value,
-  draft => ({ buffer: { edit: value => edits.push(value) }, snapshot: { ...draft, dirty: false, saving: false, error: '' } }),
+const Component = new Function('ordinaryScenarioSources', 'removeScenarioSource', 'updateScenarioSources', 'React', 'useState', 'useEffect', 'useRef', 'useCallback', 'useDraftBuffer', 'ExternalFileNotice', 'css', `${compiled}; return MaterialEditor`)(
+  ordinaryScenarioSources, removeScenarioSource, updateScenarioSources, { createElement }, initial => [initial, () => {}], () => {}, value => ({ current: value }), value => value, draft => ({ buffer: { edit: value => edits.push(value) }, snapshot: { ...draft, dirty: false, saving: false, error: '', externalUpdates: [] } }), () => null,
   new Proxy({}, { get: (_, key) => key }),
 )
 const edits = []

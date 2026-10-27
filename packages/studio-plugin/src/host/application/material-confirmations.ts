@@ -28,13 +28,15 @@ export interface MaterialConfirmationOperation {
   phase: 'saving' | 'checking' | 'syncing' | 'fixed' | 'integrating' | 'accepted' | 'recovery' | 'superseded';
   savedHash?: string; input?: FixedCandidateInput; candidate?: PreparedCandidate; prepare?: MaterialIntegrationRequest;
   integrationId?: string; accepted?: IntegrationView; message?: string; mergeNote?: MergeNote;
+  /** Facts the confirmation continued past instead of reporting as an error. */
+  notice?: string;
   /** Remote commits and files this confirmation merged before fixing its candidate. */
   merge?: RemoteMergeReport;
   /** Host-owned content the flow repaired without changing the author's body. */
   recovered?: string;
 }
 export interface MaterialInspectionRequest {
-  projectId: string; entity: EntityView; task?: TaskView; draft?: MaterialDraft; expectedHash?: string;
+  projectId: string; entity: EntityView; task?: TaskView; draft?: MaterialDraft;
 }
 export interface MaterialInspection extends ReturnType<typeof checkScenarioDocument> { draft: MaterialDraft; templateBody: string; readOnly: boolean }
 interface Dependencies {
@@ -52,8 +54,8 @@ const steps: Partial<Record<MaterialConfirmationOperation['phase'], string>> = {
   fixed: '正在固定候选版本', integrating: '已提交，正在等待协同后台接受', recovery: '确认尚未完成',
 }
 /** One user-facing line for the phase a confirmation is actually in. */
-export function confirmationStep(operation: Pick<MaterialConfirmationOperation, 'phase' | 'message' | 'mergeNote' | 'merge' | 'recovered'>): string {
-  const parts = [operation.message ?? steps[operation.phase] ?? '请按选择恢复确认']
+export function confirmationStep(operation: Pick<MaterialConfirmationOperation, 'phase' | 'message' | 'notice' | 'mergeNote' | 'merge' | 'recovered'>): string {
+  const parts = [operation.notice, operation.message ?? steps[operation.phase] ?? '请按选择恢复确认'].filter((part): part is string => !!part)
   if (operation.merge) parts.push(describeMerge(operation.merge))
   if (operation.recovered) parts.push(operation.recovered)
   return parts.join('；')
@@ -97,8 +99,8 @@ export class MaterialConfirmationChecks {
     if (!template) return undefined
     const templateBody = Buffer.from(template).toString('utf8')
     const inspectFiles = task && (!readOnly || recovering(owner))
-    const checked = checkScenarioDocument({ draft, expectedHash: input.expectedHash ?? draft.sha256,
-      hasPermission: !!account, hasOccupation: !!occupied, conflict: !!owner.conflict,
+    const checked = checkScenarioDocument({ draft,
+      hasPermission: !!account, hasOccupation: !!occupied,
       structureCheck: local.scenarioStructureCheck, templateBody,
       fileErrors: inspectFiles ? await scenarioFileErrors(task.worktree, draft) : [],
       invalidEvidenceIndexes: inspectFiles ? await invalidScenarioEvidenceIndexes(task.worktree, draft) : [] })
@@ -111,7 +113,7 @@ export class MaterialConfirmationChecks {
 
   async inspectTask(task: TaskView, draft: MaterialDraft): Promise<MaterialInspection> {
     const { entity } = await this.workspaces.deps.entity(task.entityId, task.projectId)
-    const inspection = await this.inspect({ projectId: task.projectId, entity, task, draft, expectedHash: draft.sha256 })
+    const inspection = await this.inspect({ projectId: task.projectId, entity, task, draft })
     if (!inspection) throw new Error('所选模板固定版本正在后台同步，请稍后重试')
     return inspection
   }
@@ -167,17 +169,19 @@ export class MaterialConfirmations {
     if (entity.occupation?.purpose !== 'design') throw new Error('材料确认需要当前有效设计占用，不能自动重新认领')
     const task = await this.deps.designTask(remote, entity)
     await this.account(accountId)
-    const captured = structuredClone(request)
-    // Hash-only commands refer to an already saved draft; keep its exact input
-    // so an external edit cannot erase the author's original recovery choice.
+    const captured = structuredClone(request), reconciliation: string[] = []
+    // Hash-only commands refer to an already saved draft. The author's exact
+    // input wins over any later file change, which the merge or save recovery
+    // below reconciles instead of rejecting.
     if (captured.body === undefined) {
       const draft = await readMaterial(task.worktree, entity.kind, entity.id)
       await this.account(accountId)
-      if (draft.sha256 !== request.expectedHash) throw new Error('文件已变化，请核对当前内容后重新确认')
+      if (draft.sha256 !== request.expectedHash) reconciliation.push('文件在确认前发生变化，已按当前文件与最新保存输入继续')
       captured.body = draft.body; captured.metadata = structuredClone(draft.metadata)
     }
     const operation: MaterialConfirmationOperation = { operationId: request.operationId, accountId, projectId: remote.project.id, entityId: entity.id,
-      request: captured, fingerprint, task: structuredClone(task), occupation: identity(token), phase: 'saving' }
+      request: captured, fingerprint, task: structuredClone(task), occupation: identity(token), phase: 'saving',
+      ...(reconciliation.length ? { notice: reconciliation.join('；') } : {}) }
     if (previous && previous.phase !== 'accepted') previous.phase = 'superseded'
     ;(owner.materialConfirmations ??= []).push(operation)
     await this.store.save()
@@ -270,7 +274,7 @@ export class MaterialConfirmations {
     const text = await readFile(await containedFile(task.worktree, draft.path), 'utf8')
     if (identityBlockCount(text) === 1) return draft
     const saved = await this.workspaces.documents.save({ root: task.worktree, metadata: draft.metadata, body: draft.body,
-      expectedHash: draft.sha256, operationId: `${operation.operationId}-identity` })
+      operationId: `${operation.operationId}-identity` })
     operation.recovered = '已移除正文中重复的材料身份块'
     return saved
   }
@@ -332,7 +336,7 @@ export class MaterialConfirmations {
     const metadata = { ...withContext, ...(files ? { files } : {}), businessEvidence }
     if (canonical(metadata) === canonical(draft.metadata)) return draft
     const saved = await this.workspaces.documents.save({ root: task.worktree, metadata, body: draft.body,
-      expectedHash: draft.sha256, operationId: `${operation.operationId}-remote-merge` })
+      operationId: `${operation.operationId}-remote-merge` })
     operation.recovered = '已纳入远端更新的关联文件与正式依据'
     return saved
   }
@@ -365,31 +369,26 @@ export class MaterialConfirmations {
         return
       }
       const { entity, task, remote } = await this.context(operation), { request } = operation
-      let draft: MaterialDraft, savedInPlace = false
       if (entity.kind === 'requirement' && request.body !== undefined && request.metadata) {
         await this.workspaces.requirementSaves.save({ action: 'saveRequirement', entityId: entity.id, operationId: operation.operationId,
-          expectedHash: request.expectedHash, body: request.body, metadata: request.metadata }, operation.projectId)
+          body: request.body, metadata: request.metadata }, operation.projectId)
         const pending = this.workspaces.requirementSaves.view(owner)
         if (pending) { operation.phase = 'saving'; operation.message = pending.message; await this.store.save(); return }
-        const saved = this.workspaces.requirementSaves.result(owner, operation.operationId)
-        if (!saved) throw new Error('本次完整保存尚未完成，请按当前选择恢复')
-        draft = saved; savedInPlace = true
-      } else {
-        draft = await readMaterial(task.worktree, entity.kind, entity.id)
+        if (!this.workspaces.requirementSaves.result(owner, operation.operationId)) throw new Error('本次完整保存尚未完成，请按当前选择恢复')
       }
+      // The confirmation always fixes the file's current bytes, whatever moved them last.
+      let draft = await readMaterial(task.worktree, entity.kind, entity.id)
       draft = await this.alignIdentity(operation, task, draft)
       const aligned = await this.alignRemote(operation, task, remote, draft)
       if (!aligned) return
       if (aligned.merged) { delete operation.input; delete operation.candidate }
       draft = aligned.draft
-      // The requirement save was bound to its own expected hash and exact
-      // receipt; only a hash-only material command refers to an existing file.
-      if (!savedInPlace && draft.sha256 !== request.expectedHash) {
-        if (!aligned.merged) throw new Error('文件已变化，请选择当前内容、外部版本或合并后继续确认')
-        request.expectedHash = draft.sha256
-      }
-      operation.savedHash = draft.sha256; operation.phase = 'checking'; delete operation.message; await this.store.save()
-      const inspection = await this.workspaces.confirmationChecks.inspect({ projectId: operation.projectId, entity, task, expectedHash: draft.sha256 })
+      // The confirmation always fixes the bytes it just read: workbench saves,
+      // external edits and the remote alignment all move the hash legitimately,
+      // so the later checks run against these bytes instead of a stale hash.
+      operation.savedHash = draft.sha256; operation.phase = 'checking'; delete operation.message
+      await this.store.save()
+      const inspection = await this.workspaces.confirmationChecks.inspect({ projectId: operation.projectId, entity, task })
       if (!inspection) throw new Error('所选模板固定版本正在后台同步，请稍后重试')
       if (!inspection.passed) throw new Error(inspection.groups.filter(gate => gate.status === 'blocked').flatMap(gate => gate.messages).join('；'))
       const candidateRequest = { projectId: operation.projectId, entityId: operation.entityId,

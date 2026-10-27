@@ -82,7 +82,7 @@ export function MaterialWorkspaceStatus({ entity, workspace, snapshot, task, con
       <summary>运行详情</summary>
       <dl>
         <div><dt>编辑人</dt><dd>{entity.occupation ? `#${entity.occupation.ownerId}` : '无设计占用'}</dd></div>
-        <div><dt>本地文件</dt><dd>{snapshot.conflict ? '存在冲突' : snapshot.saving ? '正在保存' : snapshot.error ? '保存失败' : snapshot.dirty ? '未保存' : '已保存'}</dd></div>
+        <div><dt>本地文件</dt><dd>{snapshot.saving ? '正在保存' : snapshot.error ? '保存失败' : snapshot.dirty ? '未保存' : snapshot.externalUpdates.length ? '已加载外部更新' : '已保存'}</dd></div>
         <div><dt>当前会话</dt><dd>{task ? task.sessionId.slice(0, 12) : '尚未创建'}</dd></div>
         {workspace.repair && <div><dt>修复轮次</dt><dd>{workspace.repair.roundsUsed} / 3 · {workspace.repair.status}</dd></div>}
         {workspace.git && <div><dt>Git</dt><dd>{workspace.git.branch} · {workspace.git.head.slice(0, 8)}</dd></div>}

@@ -175,42 +175,29 @@ test('one confirmation saves the selected input before accepting its exact hash'
   assert.equal((await f.store.read()).operations[0]!.phase, 'accepted', '原型启动失败不改变材料接受事实')
 })
 
-test('a conflict offers recovery and a new explicit selection continues the confirmation with new relations', async t => {
-  const f = await fixture(t), external = await saveMaterial(f.root, f.draft.metadata, '外部修改')
+test('a file changed outside the workbench is saved and confirmed with the submitted input', async t => {
+  const f = await fixture(t)
+  await saveMaterial(f.root, f.draft.metadata, '外部修改')
   const first = await f.app.command(f.command('initial-confirmation'))
   assert.equal(first.ok, true)
-  assert.equal(f.confirmed.length, 0)
-  assert.ok(first.ok && first.state.requirement?.confirmationRecovery)
-  assert.ok(first.ok && first.state.requirement?.conflict)
-  assert.equal(first.ok && first.state.requirement?.requirementSave?.input?.body, '用户当前正文')
-  assert.equal(first.ok && first.state.requirement?.draft.sha256, external.sha256)
-  const metadata = { ...external.metadata, scenarioIds: ['new-scene'], sources: [{ projectId: 'project', entityId: 'new-scene', version: 1 }] }
-  await f.app.command({ action: 'resolveRequirementConflict', entityId: f.entity.id, expectedHash: external.sha256, operationId: 'resolve-current', body: '用户合并正文', metadata })
-  const current = await readMaterial(f.root, 'requirement', f.entity.id)
-  const next = await f.app.command(f.command('confirm-current', current, current.body, current.metadata))
-  assert.equal(next.ok, true)
   await f.app.settle()
   assert.equal(f.confirmed.length, 1)
-  assert.equal(f.confirmed[0]!.body, '用户合并正文')
-  assert.deepEqual(f.confirmed[0]!.metadata.scenarioIds, ['new-scene'])
-  const original = (await f.store.read()).scenarios[0]!.requirementSaves![0]!
-  assert.equal(original.request.body, '用户当前正文')
-  assert.equal(original.status, 'superseded')
+  assert.deepEqual(f.confirmed[0]!.body, '用户当前正文')
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '用户当前正文')
 })
 
-test('restart exposes unwritten input separately from the actual external file and its hash', async t => {
-  const f = await fixture(t), external = await saveMaterial(f.root, f.draft.metadata, '磁盘上的外部内容')
-  await f.app.command(f.command('unwritten-confirmation', f.draft, '原来尚未写入的用户内容'))
+test('a confirmation writes its submitted body over an externally edited file and keeps it after a restart', async t => {
+  const f = await fixture(t)
+  await saveMaterial(f.root, f.draft.metadata, '磁盘上的外部内容')
+  await f.app.command(f.command('unwritten-confirmation', f.draft, '用户提交的正文'))
   await f.app.dispose()
   const restarted = new StudioStore(f.stateRoot); restarted.useUser(1)
   const app = f.create(restarted)
   const reply = await app.command({ action: 'openRequirement', entityId: f.entity.id })
   assert.equal(reply.ok, true)
-  assert.equal(reply.ok && reply.state.requirement?.draft.body, '磁盘上的外部内容')
-  assert.equal(reply.ok && reply.state.requirement?.draft.sha256, external.sha256)
-  assert.equal(reply.ok && reply.state.requirement?.requirementSave?.input?.body, '原来尚未写入的用户内容')
-  assert.ok(reply.ok && reply.state.requirement?.confirmationRecovery)
-  assert.equal(f.confirmed.length, 0)
+  assert.equal(reply.ok && reply.state.requirement?.draft.body, '用户提交的正文')
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '用户提交的正文')
+  assert.equal(f.confirmed.length, 1)
 })
 
 test('a directory-only failure survives restart and automatically resumes the original confirmation', async t => {
@@ -232,14 +219,13 @@ test('a directory-only failure survives restart and automatically resumes the or
   assert.equal(new Set(f.writes.map(write => write.key)).size, 1, 'directory recovery reuses the original exact request')
 })
 
-test('automatic directory recovery leaves projection readable and pauses for new external content', async t => {
+test('automatic directory recovery keeps the projection readable and confirms the current file', async t => {
   const f = await fixture(t)
   f.directoryFailure(true)
   await f.app.command(f.command('waiting-directory', f.draft, '用户正文', { ...f.draft.metadata, title: '等待目录' }))
   await f.app.settle()
   let release!: () => void, entered!: () => void
   const gate = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { entered = resolve })
-  let disposal: Promise<void> | undefined
   f.directoryFailure(false); f.directoryWait(async () => { entered(); await gate })
   try {
     await f.app.command({ action: 'state' })
@@ -248,12 +234,14 @@ test('automatic directory recovery leaves projection readable and pauses for new
     assert.equal(reply.ok, true)
     const current = await readMaterial(f.root, 'requirement', f.entity.id)
     await saveMaterial(f.root, current.metadata, '新的外部编辑')
-  } finally { disposal = f.app.dispose(); release() }
-  await disposal
-  assert.equal((f.app as unknown as { scenarios: { observer?: unknown } }).scenarios.observer, undefined)
-  assert.equal(f.confirmed.length, 0)
+  } finally { release() }
+  await f.app.settle()
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '新的外部编辑')
-  assert.equal((await f.store.read()).scenarios[0]!.requirementSaves!.at(-1)!.status, 'recovery')
+  assert.equal((await f.store.read()).scenarios[0]!.requirementSaves!.at(-1)!.status, 'applied')
+  assert.equal(f.confirmed.length, 1)
+  assert.equal(f.confirmed[0]!.body, '新的外部编辑', 'the edited file is the content that gets confirmed')
+  await f.app.dispose()
+  assert.equal((f.app as unknown as { scenarios: { observer?: unknown } }).scenarios.observer, undefined)
 })
 
 test('lost occupation offers recovery without silently reacquiring editing rights', async t => {

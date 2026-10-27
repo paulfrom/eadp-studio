@@ -26,7 +26,7 @@ export class ScenarioRepairs {
     if (existing && ['active', 'paused'].includes(existing.view.status)) throw new Error('当前修复尚未结束，请先核对或撤销')
     const { entity, task } = await w.editable(command.entityId), draft = await readMaterial(task.worktree, 'scenario', entity.id)
     if (record.observationError) throw new Error(record.observationError)
-    if (record.conflict || draft.sha256 !== command.expectedHash) throw new Error('文件冲突或阅读版本已变化，请先核对')
+    if (draft.sha256 !== command.expectedHash) throw new Error('正文已变化，请核对当前内容后重新开始修复')
     record.repairAuthorization = {
       request: { idempotencyKey: command.userActionId, token: await w.deps.owned(entity), userActionId: command.userActionId, startHash: draft.sha256 },
       task: { ...task, sessionId: `studio-${randomUUID()}`, purpose: 'review', scenarioRepair: true }, status: 'pending',
@@ -183,7 +183,7 @@ export class ScenarioRepairs {
       if (!isMaterialMetadata(candidate)) throw new Error('修复候选的业务质量项或待澄清项无效')
       const metadata = await syncProjectContext(task.worktree, candidate)
       const before = await this.workspaces.confirmationChecks.inspectTask(task, draft)
-      const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, expectedHash: draft.sha256, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
+      const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
       const after = await this.workspaces.confirmationChecks.inspectTask(task, next)
       const priorIssues = before.groups.filter(g => g.status === 'blocked').flatMap(g => g.messages), remainingIssues = after.groups.filter(g => g.status === 'blocked').flatMap(g => g.messages)
       const improved = after.passed || remainingIssues.length < priorIssues.length || priorIssues.some(issue => !remainingIssues.includes(issue))

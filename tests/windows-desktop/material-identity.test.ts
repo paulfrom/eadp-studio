@@ -33,7 +33,7 @@ test('an existing draft with obsolete quality fields is identified then rejected
   const localRoot = await mkdtemp(path.join(tmpdir(), 'eadp-material-identity-local-'))
   t.after(() => rm(localRoot, { recursive: true, force: true }))
   const service = new ScenarioDocumentService(localRoot)
-  await assert.rejects(service.save({ root, metadata: metadata(), body: '不得自动替换作者草稿', expectedHash: digest(bytes), operationId: 'invalid-original' }), (error: NodeJS.ErrnoException) => error.code === 'INVALID_MATERIAL')
+  await assert.rejects(service.save({ root, metadata: metadata(), body: '不得自动替换作者草稿', operationId: 'invalid-original' }), (error: NodeJS.ErrnoException) => error.code === 'INVALID_MATERIAL')
   assert.equal(await readFile(path.join(root, relative), 'utf8'), bytes)
   assert.deepEqual(await readdir(path.join(root, '场景')), ['作者草稿.md'])
 })

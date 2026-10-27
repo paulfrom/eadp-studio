@@ -45,8 +45,8 @@ export const RequirementMetadataForm = forwardRef<RequirementMetadataFormHandle,
   const values = useRef({ evidence, questions }); values.current = { evidence, questions }
   const synced = useRef(fieldsJson(snapshot.metadata))
   const validity = useRef(onValidityChange); validity.current = onValidityChange
-  // External edits (gates checklist, conflict resolution, projection refresh)
-  // replace the text only while the user's input still parses.
+  // External edits and projection refreshes replace the text only while the
+  // user's input still parses.
   useEffect(() => {
     const current = fieldsJson(snapshot.metadata)
     if (current === synced.current || invalid) return

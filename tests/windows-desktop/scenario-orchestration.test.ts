@@ -222,7 +222,7 @@ test('a scenario draft save writes the local file without touching the backend e
   const f = await fixture(t)
   const draft = await readMaterial(f.root, 'scenario', 'scene')
   f.workspaces.deps.entity = async () => { throw new Error('协同后端暂时无法访问 GitLab，请稍后重试。') }
-  await f.workspaces.save({ action: 'saveScenario', entityId: 'scene', metadata: { ...draft.metadata, title: '改名后的场景' }, body: '## 范围\n改名后的正文\n## 规则\n待补充', expectedHash: draft.sha256, operationId: 'draft-save' })
+  await f.workspaces.save({ action: 'saveScenario', entityId: 'scene', metadata: { ...draft.metadata, title: '改名后的场景' }, body: '## 范围\n改名后的正文\n## 规则\n待补充', operationId: 'draft-save' })
   const saved = await readMaterial(f.root, 'scenario', 'scene')
   assert.equal(saved.body, '## 范围\n改名后的正文\n## 规则\n待补充')
   assert.equal(saved.metadata.title, '改名后的场景')
@@ -561,7 +561,7 @@ test('excluding broken formal evidence retains imported originals and refuses to
   f.ports.gitLocal = async () => ''
   await f.workspaces.sources.selectSource({ action: 'selectScenarioSource', entityId: 'scene', sourceId: 'evidence', selected: true, formal: true })
   const draft = await readMaterial(f.root, 'scenario', 'scene'), archived = draft.metadata.businessEvidence[0]!.files
-  await f.workspaces.save({ action: 'saveScenario', entityId: 'scene', body: draft.body, metadata: { ...draft.metadata, businessEvidence: [] }, expectedHash: draft.sha256, operationId: 'exclude-formal' })
+  await f.workspaces.save({ action: 'saveScenario', entityId: 'scene', body: draft.body, metadata: { ...draft.metadata, businessEvidence: [] }, operationId: 'exclude-formal' })
   await rm(originalPath)
   await assert.rejects(f.workspaces.sources.pruneEvidence(f.task), /原始资料无法核实/)
   assert.equal(await readFile(path.join(f.root, archived[0]!.path), 'utf8'), '业务依据')

@@ -538,18 +538,19 @@ test('scenario confirmation fixes only the scenario material and leaves related 
   assert.ok(request.confirmations.every(item => item.fixed.commitSha === candidate))
 })
 
-test('a blocked scenario confirmation retains its original saved input after an external correction', async t => {
+test('a blocked scenario confirmation continues on the corrected file after a retry', async t => {
   const f = await fixture(t, 'scenario'), app = f.app()
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
   const blocked = await saveMaterial(f.worktree, { ...draft.metadata, flowComplete: false }, '作者原始正文\n' + body)
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: blocked.sha256, method: 'direct' })).ok, false)
   const original = f.local.scenarios.find(record => record.entityId === f.value.id)!.materialConfirmations![0]!
   assert.equal(original.phase, 'recovery'); assert.equal(original.request.body, blocked.body)
-  await saveMaterial(f.worktree, { ...blocked.metadata, flowComplete: true }, '外部修正正文\n' + body)
+  const corrected = await saveMaterial(f.worktree, { ...blocked.metadata, flowComplete: true }, blocked.body)
   await app.command({ action: 'retryOperation', operationId: original.operationId }); await app.settle()
-  assert.equal(original.request.body, blocked.body); assert.equal(original.request.metadata!.kind === 'scenario' && original.request.metadata!.flowComplete, false)
-  assert.equal(original.request.expectedHash, blocked.sha256); assert.equal(original.phase, 'recovery')
-  assert.equal(f.calls.prepared.length, 0, 'an old confirmation cannot silently adopt the externally corrected bytes')
+  assert.equal(original.request.body, blocked.body, 'the submitted input stays the recorded request')
+  assert.equal(original.phase, 'accepted')
+  assert.equal(f.calls.prepared.length, 1)
+  assert.equal(f.calls.prepared[0]!.confirmations[0]!.readHash, corrected.sha256, 'the file the author corrected is what gets confirmed')
 })
 
 

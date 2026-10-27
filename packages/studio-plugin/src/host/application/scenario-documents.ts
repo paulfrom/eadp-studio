@@ -4,21 +4,16 @@ import path from 'node:path'
 import { canonical, validateMaterialMetadata } from '@eadp/asset-domain'
 import { isMaterialMetadata, type FixedReference, type MaterialMetadata } from '@eadp/contracts'
 import type { MaterialDraft } from '../../shared/studio.ts'
-import type { ScenarioConflict, ScenarioGate } from '../../shared/scenarios.ts'
+import type { ScenarioGate } from '../../shared/scenarios.ts'
 import { atomicWriteFile, containedFile, digest, findMaterialFile, materialTargetPath, materialText, parseMaterial, readMaterial, unidentifiedMaterialFile } from '../adapters/assets/materials.ts'
 
 export function sameTemplate(a: FixedReference, b: FixedReference): boolean { return a.commitSha === b.commitSha && a.path === b.path && a.sha256 === b.sha256 }
 
-interface SaveInput { root: string; metadata: MaterialMetadata; body: string; expectedHash: string; operationId: string }
-interface TemplateBindingInput { root: string; kind: 'scenario'; entityId: string; templateId: string; templateRef: FixedReference; expectedHash: string; operationId: string }
+/** One complete document write; the caller's body and metadata are its whole content. */
+interface SaveInput { root: string; metadata: MaterialMetadata; body: string; operationId: string }
+interface TemplateBindingInput { root: string; kind: 'scenario'; entityId: string; templateId: string; templateRef: FixedReference; operationId: string }
 interface Receipt { fingerprint: string; result: MaterialDraft; committed: boolean }
 const queues = new Map<string, Promise<unknown>>()
-
-/** Carries both preserved inputs so the UI can offer an explicit merge without losing either version. */
-export class ScenarioDocumentConflictError extends Error {
-  readonly code = 'SCENARIO_DOCUMENT_CONFLICT'
-  constructor(readonly conflict: ScenarioConflict | undefined, readonly savedPaths: { external: string; local: string }, readonly actualHash: string) { super('材料文件已被外部修改，两份内容已保留，请解决冲突后再继续') }
-}
 
 async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
   const previous = queues.get(key) ?? Promise.resolve()
@@ -51,7 +46,7 @@ export class ScenarioDocumentService {
     return serialized(`${root}\0${input.entityId}`, async () => {
       const current = await readMaterial(root, input.kind, input.entityId)
       if (current.metadata.kind !== input.kind) throw new Error('模板绑定材料身份无效')
-      return this.write({ root, metadata: { ...current.metadata, templateId: input.templateId, templateRef: input.templateRef }, body: current.body, expectedHash: input.expectedHash, operationId: input.operationId }, true)
+      return this.write({ root, metadata: { ...current.metadata, templateId: input.templateId, templateRef: input.templateRef }, body: current.body, operationId: input.operationId }, true)
     })
   }
 
@@ -73,25 +68,18 @@ export class ScenarioDocumentService {
     return undefined
   }
 
-  private async preserveConflict(input: SaveInput, external: Buffer, relative: string): Promise<never> {
-    const store = await this.localStore(input.root)
-    const prefix = `conflicts/${input.metadata.entityId}/${randomUUID()}`
-    const savedPaths = { external: await containedFile(store, `${prefix}/external.md`, true), local: await containedFile(store, `${prefix}/local.md`, true) }
-    await atomicWriteFile(savedPaths.external, external)
-    await atomicWriteFile(savedPaths.local, materialText(input.metadata, input.body))
-    let actual: MaterialDraft | undefined
-    try { actual = parseMaterial(external, relative) } catch { /* Preserve malformed external edits before reporting the conflict. */ }
-    throw new ScenarioDocumentConflictError(actual ? { expectedHash: input.expectedHash, actual, localBody: input.body, localMetadata: input.metadata, savedPath: path.join(store, prefix) } : undefined, savedPaths, digest(external))
-  }
-
+  /**
+   * Writes one complete document. The caller's body and metadata are the
+   * authority: a file that moved on since the author read it is replaced, and
+   * the editor keeps whatever it replaced recoverable for the author.
+   */
   private async write(input: SaveInput, explicitTemplateBinding = false): Promise<MaterialDraft> {
-    if (input.metadata.kind !== 'scenario' && input.metadata.kind !== 'requirement' || !isMaterialMetadata(input.metadata) || !/^[a-f0-9]{64}$/.test(input.expectedHash)) throw new Error('材料保存身份或预期版本无效')
+    if (input.metadata.kind !== 'scenario' && input.metadata.kind !== 'requirement' || !isMaterialMetadata(input.metadata)) throw new Error('材料保存身份无效')
     operationId(input.operationId)
-    const fingerprint = digest(canonical({ metadata: input.metadata, body: input.body, expectedHash: input.expectedHash, explicitTemplateBinding }))
+    const fingerprint = digest(canonical({ metadata: input.metadata, body: input.body, explicitTemplateBinding }))
     const repeated = await this.receipt(input.root, input.metadata.entityId, input.operationId, fingerprint)
     if (repeated) return repeated
     const current = await this.currentMaterialFile(input)
-    if (digest(current.bytes) !== input.expectedHash) return this.preserveConflict(input, current.bytes, current.relative)
     const currentFile = await containedFile(input.root, current.relative)
     const parsed = parseMaterial(current.bytes, current.relative)
     if (parsed.metadata.kind !== input.metadata.kind || (parsed.metadata.kind !== 'scenario' && parsed.metadata.kind !== 'requirement')) throw new Error('材料保存身份无效')
@@ -103,14 +91,9 @@ export class ScenarioDocumentService {
     const temporary = `${relative}.${randomUUID()}.tmp`
     const temporaryFile = await containedFile(input.root, temporary, true)
     const receiptFile = await containedFile(await this.localStore(input.root), this.receiptPath(input.metadata.entityId, input.operationId), true)
-    // Prepare both files before the final comparison; serialization also prevents competing Host writes.
     try {
       await atomicWriteFile(temporaryFile, text)
-      const latest = await readFile(currentFile)
-      if (digest(latest) !== input.expectedHash) return this.preserveConflict(input, latest, current.relative)
       await atomicWriteFile(receiptFile, JSON.stringify({ fingerprint, result, committed: false } satisfies Receipt))
-      const beforeRename = await readFile(currentFile)
-      if (digest(beforeRename) !== input.expectedHash) return this.preserveConflict(input, beforeRename, current.relative)
       await rename(temporaryFile, target)
       // A title edit moves the material; the previous name must not survive as a second document.
       if (currentFile !== target) await rm(currentFile, { force: true })
@@ -133,8 +116,8 @@ export class ScenarioDocumentService {
 }
 
 export interface ScenarioCheckInput {
-  draft: MaterialDraft; expectedHash: string; hasPermission: boolean; hasOccupation: boolean;
-  conflict?: boolean; structureCheck?: boolean; templateBody?: string; fileErrors?: readonly string[]; invalidEvidenceIndexes?: number[];
+  draft: MaterialDraft; hasPermission: boolean; hasOccupation: boolean;
+  structureCheck?: boolean; templateBody?: string; fileErrors?: readonly string[]; invalidEvidenceIndexes?: number[];
 }
 /** Groups fixed checks separately from the optional, local template preference. */
 export function checkScenarioDocument(input: ScenarioCheckInput): { hash: string; passed: boolean; groups: ScenarioGate[] } {
@@ -148,10 +131,9 @@ export function checkScenarioDocument(input: ScenarioCheckInput): { hash: string
   business.push(...metadata.openQuestions.filter(question => question.blocking).map(question => question.limitation))
   if (!metadata.businessEvidence.length) evidence.push(metadata.kind === 'scenario' ? '尚未选定正式资料；不影响场景确认' : '请选定并归档真实业务依据')
   try { validateMaterialMetadata(metadata.kind === 'scenario' ? { ...metadata, flowComplete: true, openQuestions: [] } : { ...metadata, coreRulesPresent: true, acceptanceCriteriaPresent: true, openQuestions: [] }) } catch (error) { evidence.push(error instanceof Error ? error.message : '资料与引用无效') }
-  if (draft.sha256 !== input.expectedHash) version.push('当前文件已不是用户阅读的版本')
+  // The confirmed bytes are always the file's current bytes, so only the author's rights are fixed here.
   if (!input.hasPermission) version.push('当前用户没有确认权限')
   if (!input.hasOccupation) version.push('当前用户没有有效设计占用')
-  if (input.conflict) version.push('文件冲突尚未解决')
   if (input.structureCheck) {
     if (input.templateBody === undefined) template.push('无法读取所选模板固定版本')
     else {

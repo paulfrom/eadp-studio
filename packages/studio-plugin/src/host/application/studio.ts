@@ -214,8 +214,8 @@ export class StudioApplication {
         if (entity.kind === 'requirement') {
           const { task } = await this.scenarios.editable(entity.id)
           const draft = await readMaterial(task.worktree, 'requirement', entity.id)
-          if (draft.sha256 !== command.expectedHash) throw new Error('当前需求不是用户阅读的版本，请核对当前内容后确认')
-          await this.confirmations.confirm({ entityId: command.entityId, operationId: key(), expectedHash: command.expectedHash, body: draft.body, metadata: draft.metadata, choice: confirmationChoice(command) })
+          // The confirmation fixes the file's current bytes, so a hash that moved on is not a conflict.
+          await this.confirmations.confirm({ entityId: command.entityId, operationId: key(), expectedHash: draft.sha256, body: draft.body, metadata: draft.metadata, choice: confirmationChoice(command) })
         } else if (entity.kind === 'scenario') {
           const operation = await this.confirmations.confirm({ entityId: command.entityId, operationId: key(), expectedHash: command.expectedHash, choice: confirmationChoice(command) })
           if (operation.phase === 'recovery') throw new Error(operation.message)
@@ -351,10 +351,10 @@ export class StudioApplication {
     return { ok: true, state: { ...state, consistencyTasks: await this.comparisons.views(project.id), consistencyLatest: this.comparisons.latestViews(project.id) }, ...(comparisons ? { comparisons } : {}) }
   }
   private async executeScenario(command: StudioCommand): Promise<string | undefined> {
-    if (['openRequirement', 'startRequirementRevision', 'saveRequirement', 'resolveRequirementConflict', 'retryRequirementSave', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'newRequirementSession', 'selectRequirementSession'].includes(command.action)) return this.executeRequirement(command as RequirementWorkspaceCommand)
+    if (['openRequirement', 'startRequirementRevision', 'saveRequirement', 'retryRequirementSave', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'newRequirementSession', 'selectRequirementSession'].includes(command.action)) return this.executeRequirement(command as RequirementWorkspaceCommand)
     switch (command.action) {
       case 'openScenario': await this.scenarios.open(command.entityId); break
-      case 'saveScenario': case 'resolveScenarioConflict': await this.repairs.checkConcurrent(command.entityId); await this.scenarios.save(command); await this.repairs.checkConcurrent(command.entityId); break
+      case 'saveScenario': await this.repairs.checkConcurrent(command.entityId); await this.scenarios.save(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'resolveScenarioWriteProposal': await this.scenarios.resolveWriteProposal(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'undoScenarioWrite': await this.scenarios.undoWrite(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'newScenarioSession': return this.scenarios.newSession(command.entityId)
@@ -396,7 +396,7 @@ export class StudioApplication {
     if (entity.kind !== 'requirement') throw new Error('此操作只适用于需求材料')
     switch (command.action) {
       case 'openRequirement': await this.scenarios.open(entity.id); break
-      case 'saveRequirement': case 'resolveRequirementConflict':
+      case 'saveRequirement':
         await this.scenarios.save(command); break
       case 'resolveRequirementWriteProposal': await this.scenarios.resolveWriteProposal(command); break
       case 'undoRequirementWrite': await this.scenarios.undoWrite(command); break

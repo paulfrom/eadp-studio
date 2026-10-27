@@ -96,19 +96,20 @@ test('the change summary names added, changed and removed chapters, used evidenc
   assert.deepEqual(summarizeWrite('', '## 核心业务规则\n首稿', [], []), { added: ['核心业务规则'], removed: [], changed: [], evidence: [], unanswered: [] })
 })
 
-test('undo is a new hash-checked whole-body write back to the previous body', async t => {
+test('undo is a new whole-body write back to the previous body', async t => {
   const { root, localRoot, draft } = await fixture(t)
   const service = new ScenarioDocumentService(localRoot)
-  const written = await service.save({ root, metadata: draft.metadata, body: '写入后正文', expectedHash: draft.sha256, operationId: 'write-one' })
-  const undone = await service.save({ root, metadata: draft.metadata, body: '旧正文', expectedHash: written.sha256, operationId: 'undo-one' })
+  const written = await service.save({ root, metadata: draft.metadata, body: '写入后正文', operationId: 'write-one' })
+  const undone = await service.save({ root, metadata: draft.metadata, body: '旧正文', operationId: 'undo-one' })
   assert.equal(undone.body, '旧正文')
   assert.equal(undone.sha256, draft.sha256)
-  await assert.rejects(service.save({ root, metadata: draft.metadata, body: '旧正文', expectedHash: written.sha256, operationId: 'undo-two' }), /外部修改/)
+  assert.notEqual(written.sha256, undone.sha256)
+  assert.equal((await readMaterial(root, 'scenario', draft.entityId)).body, '旧正文')
 })
 
 test('consuming the same proposal twice writes once and returns the original result', async t => {
   const { root, localRoot, draft } = await fixture(t)
-  const service = new ScenarioDocumentService(localRoot), input = { root, metadata: draft.metadata, body: '新正文', expectedHash: draft.sha256, operationId: 'proposal-one' }
+  const service = new ScenarioDocumentService(localRoot), input = { root, metadata: draft.metadata, body: '新正文', operationId: 'proposal-one' }
   const [first, repeated] = await Promise.all([service.save(input), service.save(input)])
   assert.deepEqual(first, repeated)
   assert.deepEqual(await service.save(input), first)

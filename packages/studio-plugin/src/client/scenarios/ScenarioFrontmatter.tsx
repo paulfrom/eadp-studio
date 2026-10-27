@@ -32,7 +32,7 @@ export function ScenarioFrontmatter({ entity, buffer, snapshot, readOnly, editin
       <summary>模板绑定设置</summary>
         <label>切换固定模板<select value={templateId || metadata.templateId} onChange={event => setTemplateId(event.target.value)}>{templates.templates.map(item => <option key={item.id} value={item.id}>{item.name}{item.id === templates.defaultTemplateId ? '（项目默认）' : ''}</option>)}</select></label>
         <p className={css.muted}>切换仅更新模板绑定，正文保持原样。</p>
-        <button disabled={busy || !(templateId && templateId !== metadata.templateId) || !!snapshot.conflict} onClick={() => onBindTemplate(templateId)}>切换固定模板</button>
+        <button disabled={busy || !(templateId && templateId !== metadata.templateId)} onClick={() => onBindTemplate(templateId)}>切换固定模板</button>
     </details>}
   </section>
 }

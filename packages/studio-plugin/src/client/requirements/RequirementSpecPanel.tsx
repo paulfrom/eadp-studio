@@ -4,7 +4,7 @@ import type { Candidate, EntityView, MaterialDraft, MaterialMetadata, StudioComm
 import type { ScenarioWorkspace as Workspace } from '../../shared/scenarios.ts'
 import type { DraftBuffer, DraftSnapshot } from '../scenarios/DraftBuffer.ts'
 import { DocumentMeta, DocumentSections, DocumentToolbar } from '../components/MaterialDocument.tsx'
-import { ScenarioConflict } from '../scenarios/ScenarioConflict.tsx'
+import { ExternalFileNotice } from '../scenarios/ExternalFileNotice.tsx'
 import { RequirementMetadataForm, type RequirementMetadataFormHandle } from './RequirementMetadataForm.tsx'
 import { RequirementSourcePanel } from './RequirementSourcePanel.tsx'
 import css from '../studio.module.css'
@@ -41,13 +41,12 @@ function RequirementFrontmatter({ entity, buffer, snapshot, readOnly, templates,
  * Requirement document with collapsible sections, source editing, persistent
  * business-field validation and fixed-source inspection.
  */
-export function RequirementSpecPanel({ entity, draft, buffer, snapshot, workspace, templates, entities, projectId, candidates, busy, call, metadataForm, onFlush, onCollapse, onResolve, onOpenScenario, confirming = false, continueConfirmation = false, editRequested = 0, children }: {
+export function RequirementSpecPanel({ entity, draft, buffer, snapshot, workspace, templates, entities, projectId, candidates, busy, call, metadataForm, onFlush, onCollapse, onOpenScenario, confirming = false, editRequested = 0, children }: {
   entity: EntityView; draft: MaterialDraft; buffer: DraftBuffer; snapshot: DraftSnapshot; workspace: Workspace;
   templates?: TemplateCatalogView | undefined; entities: EntityView[]; projectId: string; candidates: Candidate[];
   busy: boolean; metadataForm: Ref<RequirementMetadataFormHandle>; onFlush(): Promise<boolean>; onCollapse(): void;
   call(command: StudioCommand): Promise<StudioReply | undefined>;
-  onResolve(body: string, metadata: MaterialMetadata, actualHash: string, external?: boolean): void;
-  confirming?: boolean; continueConfirmation?: boolean; editRequested?: number;
+  confirming?: boolean; editRequested?: number;
   onOpenScenario(entityId: string): void; children?: ReactNode;
 }) {
   const [preview, setPreview] = useState(true)
@@ -64,11 +63,11 @@ export function RequirementSpecPanel({ entity, draft, buffer, snapshot, workspac
     : snapshot.error ? snapshot.error
     : snapshot.dirty ? '有未保存输入' : '本地草稿已保存'
   return <section className={css.specPanel} aria-label="需求说明">
-    <DocumentToolbar draft={draft} title={snapshot.metadata.title} body={snapshot.body} preview={preview} syncState={syncState} state={snapshot.error || workspace.requirementSave || workspace.confirmationRecovery ? 'error' : snapshot.dirty || snapshot.saving ? 'pending' : 'synced'} readOnly={workspace.readOnly} saveDisabled={busy || confirming || snapshot.saving || !!snapshot.conflict || !snapshot.dirty} retry={!!snapshot.error} onPreview={setPreview} onSave={() => void onFlush()} onCollapse={onCollapse} />
+    <DocumentToolbar draft={draft} title={snapshot.metadata.title} body={snapshot.body} preview={preview} syncState={syncState} state={snapshot.error || workspace.requirementSave || workspace.confirmationRecovery ? 'error' : snapshot.dirty || snapshot.saving ? 'pending' : 'synced'} readOnly={workspace.readOnly} saveDisabled={busy || confirming || snapshot.saving || !snapshot.dirty} retry={!!snapshot.error} onPreview={setPreview} onSave={() => void onFlush()} onCollapse={onCollapse} />
     <div className={css.specBody}>
       {workspace.readOnly && !recoveryLabel && <div className={doc.confirmed}><span aria-hidden="true">✓</span>已确认为固定版本 v{entity.materialVersion}</div>}
       <DocumentMeta entity={entity} body={snapshot.body} readOnly={workspace.readOnly && !recoveryLabel} confirmedAt={workspace.confirmedAt} recoveryLabel={recoveryLabel} />
-      <ScenarioConflict draft={draft} snapshot={snapshot} busy={busy || workspace.readOnly} onResolve={onResolve} continueConfirmation={continueConfirmation} onEdit={() => setPreview(false)} />
+      <ExternalFileNotice buffer={buffer} snapshot={snapshot} readOnly={workspace.readOnly} />
       {fieldError && <div className={css.reviewError}><p role="alert">{fieldError}</p><button disabled={busy} onClick={() => setFieldsOpen(true)}>修正业务字段</button></div>}
       {preview ? <DocumentSections body={snapshot.body} templateBody={workspace.template.body} materialLabel="需求" /> : <label className={css.bodyLabel}>需求 Markdown<textarea className={css.materialBody} spellCheck={false} readOnly={!editable} aria-label="需求 Markdown 正文" value={snapshot.body} onChange={event => buffer.edit({ body: event.target.value, metadata: snapshot.metadata })} /></label>}
       <details className={doc.fields} open={fieldsOpen} onToggle={event => setFieldsOpen(event.currentTarget.open)}>

@@ -28,9 +28,9 @@ test('debounces 800ms local editing and leaves an unchanged projection out of th
 
 test('serializes writes and flush waits for input made during an in-flight save', async t => {
   let finish: ((value: MaterialDraft) => void) | undefined
-  const calls: Array<{ body: string; hash: string }> = []
+  const calls: Array<{ body: string }> = []
   const buffer = new DraftBuffer(draft(), async input => {
-    calls.push({ body: input.body, hash: input.expectedHash })
+    calls.push({ body: input.body })
     if (calls.length === 1) return new Promise(resolve => { finish = resolve })
     return draft(input.body, 'hash-2')
   })
@@ -41,7 +41,7 @@ test('serializes writes and flush waits for input made during an in-flight save'
   assert.equal(calls.length, 1)
   finish!(draft('第一版', 'hash-1'))
   assert.equal(await saving, true)
-  assert.deepEqual(calls, [{ body: '第一版', hash: 'hash-0' }, { body: '第二版', hash: 'hash-1' }])
+  assert.deepEqual(calls, [{ body: '第一版' }, { body: '第二版' }])
   assert.equal(buffer.getSnapshot().body, '第二版')
   assert.equal(buffer.getSnapshot().sha256, 'hash-2')
 })
@@ -63,22 +63,25 @@ test('failed saves preserve input and reuse the operation identity for an explic
   assert.equal(operations[0], operations[1])
 })
 
-test('external changes preserve both copies and block flush until explicit resolution', async t => {
+test('an external change loads the newest bytes and keeps the replaced input recoverable', async t => {
   let calls = 0
   const buffer = new DraftBuffer(draft(), async input => { calls++; return draft(input.body, 'hash-1') })
   t.after(() => buffer.dispose())
   buffer.edit({ body: '用户未保存输入', metadata })
   buffer.receive(draft('外部修改', 'external-hash'))
-  assert.equal(await buffer.flush(), false)
+  assert.equal(buffer.getSnapshot().body, '外部修改')
+  assert.equal(buffer.getSnapshot().sha256, 'external-hash')
+  assert.equal(buffer.getSnapshot().dirty, false)
+  assert.deepEqual(buffer.getSnapshot().externalUpdates.map(update => update.replaced.body), ['用户未保存输入'])
+  assert.equal(await buffer.flush(), true)
   assert.equal(calls, 0)
+  buffer.undoExternal(buffer.getSnapshot().externalUpdates[0]!)
   assert.equal(buffer.getSnapshot().body, '用户未保存输入')
-  assert.equal(buffer.getSnapshot().conflict?.body, '外部修改')
-  buffer.accept(draft('手工合并', 'merged-hash'))
-  assert.equal(buffer.getSnapshot().conflict, undefined)
-  assert.equal(buffer.getSnapshot().body, '手工合并')
+  assert.equal(buffer.getSnapshot().dirty, true)
+  assert.equal(buffer.getSnapshot().sha256, 'external-hash')
 })
 
-test('a successful in-flight response cannot discard a separately observed external change', async t => {
+test('a successful in-flight response adopts the separately observed external change', async t => {
   let finish: ((value: MaterialDraft) => void) | undefined
   const buffer = new DraftBuffer(draft(), async () => new Promise(resolve => { finish = resolve }))
   t.after(() => buffer.dispose())
@@ -86,8 +89,11 @@ test('a successful in-flight response cannot discard a separately observed exter
   const saving = buffer.flush()
   buffer.receive(draft('并发外部修改', 'external-hash'))
   finish!(draft('本次保存', 'hash-1'))
-  assert.equal(await saving, false)
-  assert.equal(buffer.getSnapshot().conflict?.body, '并发外部修改')
+  assert.equal(await saving, true)
+  assert.equal(buffer.getSnapshot().body, '并发外部修改')
+  assert.equal(buffer.getSnapshot().sha256, 'external-hash')
+  assert.equal(buffer.getSnapshot().dirty, false)
+  assert.deepEqual(buffer.getSnapshot().externalUpdates.map(update => update.replaced.body), ['本次保存'])
 })
 
 test('catalog sequence ordering is numeric and revision status follows the draft state of a confirmed material', () => {
@@ -154,11 +160,10 @@ test('an explicit write acknowledgement preserves later input and an independent
   buffer.edit({ body: '在途的新输入', metadata: { ...metadata, title: '新标题' } })
   buffer.receive(draft('另一个编辑器的正文', 'external-hash'))
   buffer.acknowledge(draft(submitted.body, 'submitted-hash'), submitted)
-  assert.equal(buffer.getSnapshot().body, '在途的新输入')
-  assert.equal(buffer.getSnapshot().metadata.title, '新标题')
-  assert.equal(buffer.getSnapshot().sha256, 'submitted-hash')
-  assert.equal(buffer.getSnapshot().dirty, true)
-  assert.equal(buffer.getSnapshot().conflict?.sha256, 'external-hash')
+  assert.equal(buffer.getSnapshot().body, '另一个编辑器的正文')
+  assert.equal(buffer.getSnapshot().sha256, 'external-hash')
+  assert.equal(buffer.getSnapshot().dirty, false)
+  assert.deepEqual(buffer.getSnapshot().externalUpdates.map(update => update.replaced.body), ['在途的新输入'])
 })
 
 test('restored recovery input keeps the actual file hash and never schedules a save', async t => {
@@ -167,11 +172,10 @@ test('restored recovery input keeps the actual file hash and never schedules a s
   const actual = draft('磁盘实际内容', 'actual-file-hash')
   const buffer = new DraftBuffer(actual, async input => { saves++; return draft(input.body, 'unused') })
   t.after(() => buffer.dispose())
-  buffer.restoreInput({ body: '持久保存操作中的未写入正文', metadata }, actual)
+  buffer.restoreInput({ body: '持久保存操作中的未写入正文', metadata })
   assert.equal(buffer.getSnapshot().body, '持久保存操作中的未写入正文')
   assert.equal(buffer.getSnapshot().sha256, 'actual-file-hash')
   assert.equal(buffer.getSnapshot().dirty, true)
-  assert.equal(buffer.getSnapshot().conflict?.body, actual.body)
   t.mock.timers.tick(1000)
   await Promise.resolve()
   assert.equal(saves, 0)

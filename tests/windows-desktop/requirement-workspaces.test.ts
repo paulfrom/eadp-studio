@@ -150,15 +150,13 @@ test('a backend template rebind stops the next question while the local write ke
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '审批人可以同意申请。')
 })
 
-test('requirement saves preserve conflicting external and unsaved input and accept an explicit resolution at the current hash', async t => {
-  const f = await fixture(t), external = await saveMaterial(f.root, f.draft.metadata, '外部修改')
-  await f.workspaces.save({ action: 'saveRequirement', entityId: f.entity.id, metadata: f.draft.metadata, body: '未保存的用户输入', expectedHash: f.draft.sha256, operationId: 'losing-save' })
-  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '外部修改')
-  assert.equal(f.record.conflict?.localBody, '未保存的用户输入')
-  assert.equal(f.record.conflict?.actual.sha256, external.sha256)
-  await f.workspaces.save({ action: 'resolveRequirementConflict', entityId: f.entity.id, metadata: external.metadata, body: '用户合并两份内容', expectedHash: external.sha256, operationId: 'resolve-conflict' })
-  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '用户合并两份内容')
-  assert.equal(f.record.conflict, undefined)
+test('a requirement save over bytes changed outside the workbench writes the submitted content', async t => {
+  const f = await fixture(t)
+  await saveMaterial(f.root, f.draft.metadata, '外部修改')
+  await f.workspaces.save({ action: 'saveRequirement', entityId: f.entity.id, metadata: f.draft.metadata, body: '用户保存的正文', operationId: 'winning-save' })
+  const saved = await readMaterial(f.root, 'requirement', f.entity.id)
+  assert.equal(saved.body, '用户保存的正文')
+  assert.equal(f.workspaces.requirementSaves.view(f.record), undefined)
 })
 
 test('an accepted requirement context write records the same project file hash on its material package', async t => {

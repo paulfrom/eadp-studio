@@ -60,7 +60,7 @@ function metadata(overrides = {}) {
 }
 function workspace(overrides = {}) {
   return {
-    readOnly: false, conflict: undefined,
+    readOnly: false,
     gates: [
       { id: 'business', label: '业务完整性', status: 'blocked', messages: ['缺少规则'] },
       { id: 'template', label: '模板结构', status: 'passed', messages: [] },
@@ -74,7 +74,7 @@ function entity(overrides = {}) {
   return { id: 'requirement-id', kind: 'requirement', code: 'RQ-0003', title: '采购审批要求', materialVersion: 0, revision: 4, authorId: 7, ...overrides }
 }
 function snapshot(overrides = {}) {
-  return { body: '', metadata: metadata(), sha256: 'b'.repeat(64), dirty: false, saving: false, error: '', conflict: undefined, ...overrides }
+  return { body: '', metadata: metadata(), sha256: 'b'.repeat(64), dirty: false, saving: false, error: '', externalUpdates: [], ...overrides }
 }
 const entities = [
   { id: 'scene-id', kind: 'scenario', code: 'SC-0001', title: '采购流程', materialVersion: 3 },
@@ -261,7 +261,7 @@ test('collapsed requirement fields keep validation mounted and open when correct
 
 test('requirement workspace wires the requirement commands and StudioPanel routes the stage to it', () => {
   const workspaceSource = readFileSync(path.join(client, 'requirements/RequirementWorkspace.tsx'), 'utf8')
-  for (const command of ['saveRequirement', 'resolveRequirementConflict', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'confirmRequirement', 'startRequirementRevision', 'retryRequirementSave', 'newRequirementSession', 'selectRequirementSession', 'openRequirement', 'requestReview', 'setScenarioStructureCheck']) {
+  for (const command of ['saveRequirement', 'resolveRequirementWriteProposal', 'undoRequirementWrite', 'confirmRequirement', 'startRequirementRevision', 'retryRequirementSave', 'newRequirementSession', 'selectRequirementSession', 'openRequirement', 'requestReview', 'setScenarioStructureCheck']) {
     assert.ok(workspaceSource.includes(`action: '${command}'`), `RequirementWorkspace missing ${command}`)
   }
   assert.ok(workspaceSource.includes('metadataForm.current.validate()') || workspaceSource.includes('metadataForm.current?.validate()'), 'flush must validate business fields first')

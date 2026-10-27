@@ -4,7 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { BindTemplateRequest, EntityView, MaterialMetadata, OccupationToken, ProjectState, RepairStartRequest } from '@eadp/contracts'
 import type { MaterialDraft, TaskView } from '../../shared/studio.ts'
-import type { MaterialDecisionQuestionTurn, ScenarioCommand, ScenarioConflict, ScenarioSource, ScenarioWorkspace, ScenarioWriteProposal, ScenarioWriteReceipt } from '../../shared/scenarios.ts'
+import type { MaterialDecisionQuestionTurn, ScenarioCommand, ScenarioSource, ScenarioWorkspace, ScenarioWriteProposal, ScenarioWriteReceipt } from '../../shared/scenarios.ts'
 import type { RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
 import { containedFile, atomicWriteFile, digest, findMaterialFile, materialText, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationError, type CollaborationClient } from '../adapters/collaboration/client.ts'
@@ -31,13 +31,13 @@ export interface MaterialTemplateBinding {
   application?: { operationId: string; expectedHash: string };
 }
 type DesignCommand = ScenarioCommand | RequirementWorkspaceCommand
-type SaveCommand = Extract<DesignCommand, { action: 'saveScenario' | 'resolveScenarioConflict' | 'saveRequirement' | 'resolveRequirementConflict' }>
+type SaveCommand = Extract<DesignCommand, { action: 'saveScenario' | 'saveRequirement' }>
 type ResolveWriteCommand = Extract<DesignCommand, { action: 'resolveScenarioWriteProposal' | 'resolveRequirementWriteProposal' }>
 type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | 'undoRequirementWrite' }>
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
 export interface ScenarioRecord {
-  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; conflict?: ScenarioConflict; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
   /** Explains why the latest model proposal could not become an actionable write. */
   writeProposalError?: string;
   requirementSaves?: RequirementSaveOperation[];
@@ -201,7 +201,7 @@ export class ScenarioWorkspaces {
       ...(decisionQuestions ? { decisionQuestions } : {}), ...(activeSessionId && record.decisionQuestionErrors?.[activeSessionId] ? { decisionQuestionsError: record.decisionQuestionErrors[activeSessionId] } : {}),
       ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceIds: record.writeProposal.evidenceIds, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
       ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
-      ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && !record.conflict && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(!readOnly && record.conflict ? { conflict: record.conflict } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
+      ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
       ...(mergeNoticeFor(record) ? { mergeNotice: mergeNoticeFor(record)! } : {}),
       ...(confirmation ? { confirmationRecovery: { operationId: confirmation.operationId, phase: confirmation.phase, message: confirmationStep(confirmation), ...(confirmation.savedHash ? { expectedHash: confirmation.savedHash } : {}) } } : {}),
@@ -272,13 +272,12 @@ export class ScenarioWorkspaces {
       }
       context = await this.editable(entityId, binding.projectId)
       if (context.entity.kind !== binding.kind || occupationKey(await this.deps.owned(context.entity)) !== occupationKey(request.token) || context.entity.templateId !== request.templateId || !context.entity.templateRef || !sameTemplate(context.entity.templateRef, request.templateRef)) throw new Error('后台材料绑定已变化，请核对原模板操作')
-      await this.documents.bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, expectedHash: application.expectedHash, operationId: application.operationId })
+      await this.documents.bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, operationId: application.operationId })
       binding.status = 'applied'; delete binding.message
-      delete record.writeProposal; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt; delete record.conflict
+      delete record.writeProposal; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt
       await this.store.save()
     } catch (error) {
       binding.message = error instanceof Error ? error.message : '模板绑定结果待核对'
-      if (error && typeof error === 'object' && 'conflict' in error && error.conflict) record.conflict = error.conflict as ScenarioConflict
       await this.store.save(); throw error
     }
   }
@@ -288,19 +287,12 @@ export class ScenarioWorkspaces {
    * never touches backend state and keeps working while collaboration is down.
    */
   async save(command: SaveCommand): Promise<void> {
-    if (command.action === 'saveRequirement' || command.action === 'resolveRequirementConflict') return this.requirementSaves.save(command)
-    const task = await this.liveTask(command.entityId), record = await this.record(command.entityId), draft = await this.localMaterial(task)
+    if (command.action === 'saveRequirement') return this.requirementSaves.save(command)
+    const task = await this.liveTask(command.entityId), draft = await this.localMaterial(task)
     if (command.metadata.kind !== draft.metadata.kind || command.metadata.entityId !== draft.entityId) throw new Error('材料身份不能通过编辑改变')
     if (command.metadata.templateId !== draft.metadata.templateId || !command.metadata.templateRef || !draft.metadata.templateRef || !sameTemplate(command.metadata.templateRef, draft.metadata.templateRef)) throw new Error('材料模板绑定不能通过编辑改变')
-    if (record.conflict && command.action !== 'resolveScenarioConflict') throw new Error('请先解决外部修改冲突')
     this.observe(task, draft.path)
-    try {
-      await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, expectedHash: command.expectedHash, operationId: command.operationId })
-      delete record.conflict; await this.store.save()
-    } catch (error) {
-      if (error && typeof error === 'object' && 'conflict' in error && error.conflict) { record.conflict = error.conflict as ScenarioConflict; await this.store.save(); return }
-      throw error
-    }
+    await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, operationId: command.operationId })
   }
   /**
    * Consumes a proposal only on an explicit user decision. Every bound version
@@ -339,7 +331,6 @@ export class ScenarioWorkspaces {
       if (!evidenceIds.every(id => proposal.evidenceIds.includes(id)) || evidenceIds.length !== proposal.evidenceIds.length) throw new Error('依据集合已变化，写入提议已作废，请重新提问')
       return this.resolveContextProposal(task, proposal, command.selectedChangeIds)
     }
-    if (record.conflict) throw new Error('请先解决文件冲突')
     const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
     // A process may stop after the file was replaced and before the record said so.
@@ -359,11 +350,9 @@ export class ScenarioWorkspaces {
     }
     await this.store.save()
     try {
-      await this.documents.save({ root: task.worktree, metadata, body, expectedHash: draft.sha256, operationId: proposal.id })
+      await this.documents.save({ root: task.worktree, metadata, body, operationId: proposal.id })
     } catch (error) {
-      delete record.writeReceipt
-      if (error && typeof error === 'object' && 'conflict' in error && error.conflict) { record.conflict = error.conflict as ScenarioConflict; await this.store.save(); return }
-      await this.store.save(); throw error
+      delete record.writeReceipt; await this.store.save(); throw error
     }
     proposal.status = 'consumed'; proposal.operationId = proposal.id; await this.store.save()
   }
@@ -383,7 +372,7 @@ export class ScenarioWorkspaces {
       // The confirmation package must carry the new hash; writing it here avoids a manual save step.
       const draft = await this.localMaterial(task)
       const metadata = await syncProjectContext(task.worktree, draft.metadata)
-      if (digest(materialText(metadata, draft.body)) !== draft.sha256) await this.documents.save({ root: task.worktree, metadata, body: draft.body, expectedHash: draft.sha256, operationId: `${proposal.id}-context` })
+      if (digest(materialText(metadata, draft.body)) !== draft.sha256) await this.documents.save({ root: task.worktree, metadata, body: draft.body, operationId: `${proposal.id}-context` })
     } catch (error) {
       // Never leave a written context whose package hash was not recorded.
       if (current.bytes) await atomicWriteFile(target, current.bytes)
@@ -397,16 +386,10 @@ export class ScenarioWorkspaces {
     const task = await this.liveTask(command.entityId), record = await this.record(command.entityId), receipt = record.writeReceipt
     if (!receipt || receipt.operationId !== command.operationId) throw new Error('没有可撤销的整篇写入')
     if (receipt.undone) return
-    if (record.conflict) throw new Error('请先解决文件冲突')
     const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
     if (draft.sha256 !== receipt.afterHash || command.expectedHash !== draft.sha256) throw new Error('正文已变化，无法撤销本次写入，请先处理当前编辑')
-    try {
-      await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, expectedHash: draft.sha256, operationId: `${receipt.operationId}-undo` })
-    } catch (error) {
-      if (error && typeof error === 'object' && 'conflict' in error && error.conflict) { record.conflict = error.conflict as ScenarioConflict; await this.store.save(); return }
-      throw error
-    }
+    await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, operationId: `${receipt.operationId}-undo` })
     receipt.undone = true; await this.store.save()
   }
   async newSession(entityId: string): Promise<string> {

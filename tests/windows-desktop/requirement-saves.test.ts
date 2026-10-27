@@ -77,7 +77,7 @@ async function fixture(t: { after(work: () => Promise<unknown>): unknown }) {
     documents: () => new ScenarioDocumentService(scoped.directory),
   })
   const saves = create(store)
-  const command = (operationId = 'save', changes: Partial<MaterialMetadata> = {}, body = '用户正文') => ({ action: 'saveRequirement' as const, entityId: entity.id, expectedHash: draft.sha256, operationId, metadata: { ...metadata(), ...changes } as MaterialMetadata, body })
+  const command = (operationId = 'save', changes: Partial<MaterialMetadata> = {}, body = '用户正文') => ({ action: 'saveRequirement' as const, entityId: entity.id, operationId, metadata: { ...metadata(), ...changes } as MaterialMetadata, body })
   t.after(() => rm(parent, { recursive: true, force: true }))
   return { root, store, local, localRoot, draft, entity, owner, saves, requests, lookups, receipts, command, create,
     loseResponse(stage: Stage) { lose = stage }, failRequests(stage?: Stage) { fail = stage }, unavailable(value: boolean) { unavailable = value },
@@ -128,40 +128,25 @@ test('template validation and existing conflicts happen before relation changes'
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '原始正文')
 })
 
-test('an already changed file preserves both inputs without first accepting remote relations', async t => {
-  const f = await fixture(t), external = await saveMaterial(f.root, metadata(), '外部正文')
-  await f.saves.save(f.command('old-hash', metadata('scene-b')))
-  assert.equal(f.requests.length, 0)
-  assert.equal(f.saves.view(f.owner)!.reason, 'conflict')
-  assert.equal(f.owner.conflict?.actual.sha256, external.sha256)
-  assert.equal(f.owner.conflict?.localBody, '用户正文')
-})
-
-test('an unresolved conflict cannot be bypassed by sending a new ordinary save', async t => {
+test('a file changed outside the workbench is replaced by the save the author submitted', async t => {
   const f = await fixture(t)
-  f.owner.conflict = { expectedHash: f.draft.sha256, actual: f.draft, localBody: '待合并正文', localMetadata: metadata(), savedPath: f.store.directory }
-  await f.saves.save(f.command('skip-conflict', metadata('scene-b')))
-  assert.equal(f.saves.view(f.owner)!.reason, 'conflict')
-  assert.equal(f.requests.length, 0)
-  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '原始正文')
+  await saveMaterial(f.root, metadata(), '外部正文')
+  const input = f.command('changed-file', metadata('scene-b'))
+  await f.saves.save(input)
+  assert.equal(f.saves.view(f.owner), undefined)
+  assert.equal(f.requests.filter(value => value.stage === 'relations').length, 1)
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, input.body)
+  assert.deepEqual(f.entity.scenarioIds, ['scene-b'])
 })
 
-test('accepted relations survive a file conflict and a fresh user choice can continue with a different source', async t => {
-  const f = await fixture(t), original = f.command('partial', metadata('scene-b'))
+test('accepted relations survive a file change; the submitted document stays the saved version', async t => {
+  const f = await fixture(t), input = f.command('accepted-relations', metadata('scene-b'))
   f.duringRelations(async () => { await saveMaterial(f.root, metadata(), '外部编辑') })
-  await f.saves.save(original)
+  await f.saves.save(input)
   assert.deepEqual(f.entity.scenarioIds, ['scene-b'])
-  assert.equal(f.saves.view(f.owner)!.reason, 'conflict')
-  assert.equal(f.owner.conflict?.localBody, original.body)
-  const external = await readMaterial(f.root, 'requirement', f.entity.id)
-  await f.saves.save({ ...f.command('merged', metadata('scene-c'), '用户合并后的正文'), action: 'resolveRequirementConflict', expectedHash: external.sha256 })
-  assert.deepEqual(f.entity.scenarioIds, ['scene-c'])
-  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '用户合并后的正文')
-  assert.equal(f.owner.conflict, undefined)
-  assert.equal(f.owner.requirementSaves![0]!.status, 'superseded')
-  assert.deepEqual(f.owner.requirementSaves![0]!.request, original)
-  assert.ok(f.owner.requirementSaves![0]!.relations!.accepted)
   assert.equal(f.saves.view(f.owner), undefined)
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, input.body)
+  assert.ok(f.owner.requirementSaves![0]!.relations!.accepted)
 })
 
 test('a lost relations reply is reconciled through its exact receipt before continuing', async t => {
@@ -243,31 +228,38 @@ test('a process stopped after the document rename recovers its existing file rec
   assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).sha256, actual.sha256)
 })
 
-for (const change of ['content', 'occupation'] as const) test(`directory recovery stops for a changed ${change} and retains user recovery choices`, async t => {
-  const f = await fixture(t), input = f.command(`changed-${change}`, { title: '更新标题' })
+test('directory recovery re-asserts a changed document and still publishes its title', async t => {
+  const f = await fixture(t), input = f.command('changed-content', { title: '更新标题' })
   f.failRequests('directory')
   await f.saves.save(input)
-  if (change === 'content') await saveMaterial(f.root, input.metadata, '恢复前的新编辑')
-  else f.entity.occupation!.generation++
+  await saveMaterial(f.root, input.metadata, '恢复前的新编辑')
+  f.failRequests()
+  await f.saves.retry(f.entity.id, input.operationId)
+  assert.equal(f.saves.view(f.owner), undefined)
+  assert.equal(f.entity.title, '更新标题')
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, input.body)
+})
+
+test('directory recovery stops for a changed occupation and retains user recovery choices', async t => {
+  const f = await fixture(t), input = f.command('changed-occupation', { title: '更新标题' })
+  f.failRequests('directory')
+  await f.saves.save(input)
+  f.entity.occupation!.generation++
   f.failRequests()
   await f.saves.retry(f.entity.id, input.operationId)
   assert.equal(f.saves.view(f.owner)!.status, 'recovery')
-  assert.equal(f.saves.view(f.owner)!.reason, change === 'content' ? 'conflict' : 'occupation')
+  assert.equal(f.saves.view(f.owner)!.reason, 'occupation')
   assert.equal(f.requests.length, 1, 'the stale directory request is not retried')
   assert.deepEqual(await f.saves.automatic('project'), [])
-  if (change === 'content') {
-    assert.equal(f.owner.conflict?.actual.body, '恢复前的新编辑')
-    assert.equal(f.owner.conflict?.localBody, input.body)
-  }
 })
 
-test('a document changed during directory submission remains a recoverable partial success', async t => {
+test('a document changed during directory submission still completes its save', async t => {
   const f = await fixture(t), input = f.command('directory-race', { title: '更新标题' })
   f.duringDirectory(async () => { await saveMaterial(f.root, input.metadata, '请求期间的编辑') })
   await f.saves.save(input)
   assert.equal(f.entity.title, '更新标题')
-  assert.equal(f.saves.result(f.owner, input.operationId), undefined)
-  assert.equal(f.saves.view(f.owner)!.reason, 'conflict')
+  assert.equal(f.saves.view(f.owner), undefined)
+  assert.equal((await readMaterial(f.root, 'requirement', f.entity.id)).body, '请求期间的编辑')
   assert.ok(f.owner.requirementSaves![0]!.directory!.accepted)
 })
 

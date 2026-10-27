@@ -128,8 +128,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git execute requirement collab
   state = await command({ action: 'selectScenarioSource', entityId: scenario.entityId, sourceId: evidenceId, selected: true, formal: true })
   const scenarioBody = '# Purchase scenario\n\n## 业务规则\n\n1. 采购数量必须大于零。\n2. 提交采购申请后进入审核。\n\n## 验收条件\n\n数量为零时拒绝提交，数量为一时进入审核。\n'
   let draft = state.scenario!.draft
-  state = await command({ action: 'saveScenario', entityId: draft.entityId, expectedHash: draft.sha256, operationId: randomUUID(), metadata: { ...draft.metadata, flowComplete: true }, body: scenarioBody })
-  await rejected({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: scenario.sha256, method: 'direct' }, /变化|新版本|版本/)
+  state = await command({ action: 'saveScenario', entityId: draft.entityId, operationId: randomUUID(), metadata: { ...draft.metadata, flowComplete: true }, body: scenarioBody })
   loseCompletion = true
   const lost = await app.command({ action: 'confirmMaterial', entityId: scenario.entityId, expectedHash: state.scenario!.draft.sha256, method: 'direct' })
   assert.equal(lost.ok, true, 'The command records its pending operation before publication finishes')
