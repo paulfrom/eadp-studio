@@ -75,3 +75,23 @@
 5. `get_architecture`：架构概览。
 
 字符串、配置及非代码文档可用 `rg`；图工具不可用或覆盖不足时，回退 `rg`、文件搜索和源码读取，不因工具缺失阻断工作。
+
+# 项目硬性约定：DSH 桌面插件增强
+
+## 必读技能
+- 开发或修改任何插件代码前，必须先读取并遵循 .dsh/skills/creating-dsh-plugins/SKILL.md。
+- 涉及 Client 半边（UI / 渲染层）开发时，必须核对官方双面插件（dual-face）契约，不得猜测 slot、service 或 API 签名。
+
+## 增强边界（组合优先，禁止覆盖）
+- 本项目是官方桌面插件的增强层。必须通过官方暴露的 slot、service、patch 或 seam 机制扩展。
+- 严禁覆盖、篡改或假设官方插件的内部实现。如果官方接口不足以实现需求，停下来标记为 blocked-upstream 并说明缺什么，不得自行 hack。
+- Client 半边运行在零本地文件系统权限的沙箱中，不得直接调用 Node API 或读取本地文件。
+
+## 工具 API 硬规则（来自权威技能）
+- defineTool 的 output（schema + render）是必填项，缺失即不合规。
+- 参数 schema 中不存在 required 数组；必填用 required: true，非必填省略 required，禁止使用 required: false。
+- 对象 schema 必须显式声明 additionalProperties。
+
+## 代码提交门禁
+- 提交前必须通过项目 lint 检查。
+- 涉及 cordis.patch.yml 的修改，必须显式声明依赖的 service 与 slot，不允许隐式依赖。

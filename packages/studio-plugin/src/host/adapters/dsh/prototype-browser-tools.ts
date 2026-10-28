@@ -29,10 +29,11 @@ export class PrototypeBrowserTools {
   private async provider(task: TaskView, signal: AbortSignal): Promise<PrototypeBrowserProvider> {
     const existing = this.runs.get(task.sessionId)
     if (existing) return existing.pending
-    if (!this.options.runtime) throw new Error(this.options.unavailable ?? '受信浏览器运行时尚未随产品安装')
+    const runtime = this.options.runtime
+    if (!runtime) throw new Error(this.options.unavailable ?? '受信浏览器运行时尚未随产品安装')
     const validationRunId = randomUUID(), scope = await this.current(task, validationRunId)
     const record: BrowserRun = { task, pending: PrototypeBrowserProvider.open({
-      scope, current: () => this.options.scope(task, validationRunId), runtime: this.options.runtime!, headless: true, signal,
+      scope, current: () => this.options.scope(task, validationRunId), runtime, headless: true, signal,
       attach: (current, kind, bytes) => this.options.attachments.attach(current, kind, bytes),
       captureTrace: (current, write) => this.options.attachments.captureTrace(current, write),
     }) }
@@ -66,15 +67,26 @@ export class PrototypeBrowserTools {
         expected: { type: 'string' },
         durationMs: { type: 'integer', description: 'trace 时长，100–5000 ms。' },
       },
-      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      output: {
+        schema: { type: 'object', properties: { result: { type: 'string', required: true } }, additionalProperties: false },
+        render: (_args, value) => [{ type: 'text', text: value.result }],
+      },
       execute: async (args, exec) => {
         if (exec.agent !== agent) throw new Error('浏览器能力只对所属原型会话开放')
         exec.signal.throwIfAborted()
         const provider = await this.provider(task, exec.signal)
-        const command = { action: args.action, ...(args.route !== undefined ? { route: args.route } : {}), ...(args.target !== undefined ? { target: args.target } : {}),
-          ...(args.value !== undefined ? { value: args.value } : {}), ...(args.key !== undefined ? { key: args.key } : {}), ...(args.state !== undefined ? { state: args.state } : {}),
-          ...(args.condition !== undefined ? { condition: args.condition } : {}), ...(args.expected !== undefined ? { expected: args.expected } : {}), ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}) } as PrototypeBrowserCommand
-        return JSON.stringify(await provider.execute(command, exec.signal))
+        const command = {
+          action: args.action,
+          ...(args.route !== undefined ? { route: args.route } : {}),
+          ...(args.target !== undefined ? { target: args.target } : {}),
+          ...(args.value !== undefined ? { value: args.value } : {}),
+          ...(args.key !== undefined ? { key: args.key } : {}),
+          ...(args.state !== undefined ? { state: args.state } : {}),
+          ...(args.condition !== undefined ? { condition: args.condition } : {}),
+          ...(args.expected !== undefined ? { expected: args.expected } : {}),
+          ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}),
+        } as PrototypeBrowserCommand
+        return { result: JSON.stringify(await provider.execute(command, exec.signal)) }
       },
     }))
   }
@@ -91,6 +103,9 @@ export class PrototypeBrowserTools {
     const ids = [...this.runs.keys()]
     const results = await Promise.allSettled(ids.map(id => this.close(id)))
     const failures = results.filter(result => result.status === 'rejected')
-    if (failures.length) throw new AggregateError(failures.map(result => result.reason), '原型浏览器未能完整关闭')
+    if (failures.length) throw new AggregateError(failures.map((result) => {
+      const reason: unknown = result.reason
+      return reason
+    }), '原型浏览器未能完整关闭')
   }
 }

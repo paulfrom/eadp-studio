@@ -11,13 +11,16 @@ export function registerPrototypeMaterialTools(scope: Context, agent: AgentHandl
     name: 'prototype_requirement_catalog',
     description: '列出当前项目中本人有权读取的需求身份及可用草稿/已确认版本，不读取正文。',
     parameters: {},
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    output: {
+      schema: { type: 'object', properties: { result: { type: 'string', required: true } }, additionalProperties: false },
+      render: (_args, value) => [{ type: 'text', text: value.result }],
+    },
     execute: async (_args, exec) => {
       if (exec.agent !== agent) throw new Error('需求目录只对所属原型会话开放')
       exec.signal.throwIfAborted()
       const value = await materials.catalog(task)
       exec.signal.throwIfAborted()
-      return JSON.stringify(value)
+      return { result: JSON.stringify(value) }
     },
   }))
   scope.tools.register(defineTool({
@@ -29,7 +32,10 @@ export function registerPrototypeMaterialTools(scope: Context, agent: AgentHandl
       startLine: { type: 'integer', description: '正文起始行，从 1 开始。' },
       count: { type: 'integer', description: '本次读取的行数，最多 200。' },
     },
-    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    output: {
+      schema: { type: 'object', properties: { result: { type: 'string', required: true } }, additionalProperties: false },
+      render: (_args, value) => [{ type: 'text', text: value.result }],
+    },
     execute: async (args, exec) => {
       if (exec.agent !== agent) throw new Error('需求正文只对所属原型会话开放')
       exec.signal.throwIfAborted()
@@ -38,7 +44,7 @@ export function registerPrototypeMaterialTools(scope: Context, agent: AgentHandl
       const { content: _content, totalLines: _totalLines, truncated: _truncated, ...receipt } = value
       await materials.record(receipt)
       exec.signal.throwIfAborted()
-      return JSON.stringify(value)
+      return { result: JSON.stringify(value) }
     },
   }))
 }
