@@ -61,8 +61,7 @@ export interface StudioState {
   prototypeBaselines?: PrototypeBaselineView[];
   prototypeAdoptions?: PrototypeAdoptionView[];
   prototypePreviews?: Array<{ prototypeTaskId?: string; baselineId?: string; url: string; identity: PrototypePreviewIdentity }>;
-  /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
-  legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];
+  tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
 }
 export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWorkspaceCommand | PrototypeCollaborationCommand | PrototypeFileCommand

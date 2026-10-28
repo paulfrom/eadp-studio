@@ -282,24 +282,19 @@ async function withoutTemplateCatalog(directory: string): Promise<void> {
   await rm(path.join(directory, '.template'), { recursive: true, force: true })
 }
 
-test('an accepted project whose manifest predates the template catalog opens instead of failing initialization', async () => {
+test('an accepted project whose manifest predates the template catalog is rejected instead of opened', async () => {
   const f = await fixture()
   try {
     await queued(f)
     const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
     await withoutTemplateCatalog(directory)
-    // A rebuilt local record re-adopts the marker-named directory, exactly as the
-    // production case where the accepted manifest has no `scenarioTemplates`.
     await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
     const next = restarted(f)
     try {
       await next.service.open('project-1'); await next.lane.settle()
       const local = await next.store.read()
-      assert.deepEqual(local.projects.map(project => project.directory), [directory], 'the legacy accepted project is opened')
-      assert.equal(local.projectInitializations[0]!.phase, 'ready')
-      assert.equal(local.projectInitializations[0]!.message, undefined, 'opening does not report an invalid manifest')
-      assert.equal(f.counts().initializes, 1, 'the accepted initialization is not sent again')
-      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+      assert.deepEqual(local.projects, [], 'an unsupported contract is not opened')
+      assert.match(local.projectInitializations[0]!.message ?? '', /项目契约版本过旧，不受支持/)
     } finally { await next.lane.settle(); await next.service.dispose() }
   } finally { await f.dispose() }
 })
@@ -312,25 +307,19 @@ async function beforeHandoffDirectory(directory: string): Promise<void> {
   await rm(path.join(directory, '交接'), { recursive: true, force: true })
 }
 
-test('an accepted project whose manifest predates the handoff directory opens instead of failing', async () => {
+test('an accepted project whose manifest predates the handoff directory is rejected instead of opened', async () => {
   const f = await fixture()
   try {
     await queued(f)
     const directory = path.join(f.workspaceRoot, 'users/1/project-project-1')
     await beforeHandoffDirectory(directory)
-    // A rebuilt local record re-adopts the marker-named directory, exactly as the
-    // production case where the accepted project keeps the three business directories.
     await writeFile(path.join(f.storeRoot, 'users/1/studio-state.json'), '{"clientId":1}')
     const next = restarted(f)
     try {
       await next.service.open('project-1'); await next.lane.settle()
       const local = await next.store.read()
-      assert.deepEqual(local.projects.map(project => project.directory), [directory], 'the legacy accepted project is opened')
-      assert.equal(local.selectedProjectId, 'project-1')
-      assert.equal(local.projectInitializations[0]!.phase, 'ready')
-      assert.equal(local.projectInitializations[0]!.message, undefined, 'a three-directory project is not reported as an invalid manifest')
-      assert.equal(f.counts().initializes, 1, 'the accepted initialization is not sent again')
-      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+      assert.deepEqual(local.projects, [], 'a three-directory checkout is not opened')
+      assert.match(local.projectInitializations[0]!.message ?? '', /项目契约版本过旧，不受支持/)
     } finally { await next.lane.settle(); await next.service.dispose() }
   } finally { await f.dispose() }
 })

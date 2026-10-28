@@ -599,15 +599,6 @@ export class StudioApplication {
         if (bytes) drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
       }
     }
-    // Accepted documents from an earlier contract stay displayable: their exact
-    // fixed bytes are read locally and never parsed into an editable draft.
-    const legacyMaterials: Array<{ entityId: string; body: string }> = []
-    if (remote) for (const entity of remote.entities.filter(isEntityView)) {
-      const legacy = entity.legacyCurrent
-      if (!legacy) continue
-      const bytes = await this.projects.localFixed(remote.project.id, legacy.fixed.commitSha, legacy.fixed.path, legacy.fixed.sha256)
-      if (bytes) legacyMaterials.push({ entityId: entity.id, body: Buffer.from(bytes).toString('utf8') })
-    }
     const workspace = remote ? await this.scenarios.snapshot(remote) : undefined
     const scenario = workspace?.draft.metadata.kind === 'scenario' ? workspace : undefined
     const requirement = workspace?.draft.metadata.kind === 'requirement' ? workspace : undefined
@@ -634,7 +625,7 @@ export class StudioApplication {
         // instead of waiting for a retry. The record itself stays, so restored access brings it back.
         .filter(op => op.phase !== 'ready' && (op.projectId === undefined || allowed.has(op.projectId)))
         .map(op => ({ id: op.id, name: op.name, phase: op.phase, ...(op.projectId ? { projectId: op.projectId } : {}), ...(op.message ? { message: op.message } : {}) })),
-      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(projectTemplates ? { projectTemplates } : {}), ...(legacyMaterials.length ? { legacyMaterials } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
+      ...(selected ? { selectedProjectId: selected.id } : {}), ...(remote ? { project: remote.project, collaboration: remote } : {}), ...(projectTemplates ? { projectTemplates } : {}), drafts, tasks, reviews: await this.reviews.views(selected?.id),
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id), ...(this.previewState ? { preview: this.previewState } : {}),
       consistencyTasks: await this.comparisons.views(selected?.id), consistencyLatest: this.comparisons.latestViews(selected?.id),
       pending: [
@@ -663,9 +654,7 @@ export class StudioApplication {
     if (remote.project.initializationStatus !== 'ready' || !remote.project.recognizedHead) throw new Error('项目尚未完成初始化，请先恢复首次提交。')
     return { project, remote }
   }
-  private async entity(entityId: string, projectId?: string) { const context = projectId ? { remote: await this.api.request<ProjectState>('GET', this.route(projectId)), project: (await this.store.read()).projects.find(p => p.id === projectId)! } : await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity || !isEntityView(entity)) throw new Error('资产不存在或不可见'); this.requireCurrentContract(entity); return { ...context, entity } }
-  /** An accepted material from before the current contract stays readable only. */
-  private requireCurrentContract(entity: EntityView): void { if (entity.legacyCurrent) throw new Error('该材料的已接受版本早于当前契约，只能只读查看，不能编辑、确认、复用或发起会话') }
+  private async entity(entityId: string, projectId?: string) { const context = projectId ? { remote: await this.api.request<ProjectState>('GET', this.route(projectId)), project: (await this.store.read()).projects.find(p => p.id === projectId)! } : await this.selected(); const entity = context.remote.entities.find(e => e.id === entityId); if (!entity || !isEntityView(entity)) throw new Error('资产不存在或不可见'); return { ...context, entity } }
   private async requireOwned(entity: EntityView): Promise<OccupationToken> {
     const account = await this.ports.account(); const state = await this.store.read(); const token = entity.occupation
     if (!token || token.ownerId !== account?.id || token.clientId !== state.clientId) throw new Error('此任务需要本人当前客户端的有效占用')

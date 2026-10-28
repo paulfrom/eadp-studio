@@ -52,7 +52,7 @@ export class MaterialSources {
   /** Requirement attachments share scenario storage; fixed evidence is authoritative on a read-only material. */
   async views(remote: ProjectState, drafts: MaterialDraft[]): Promise<Array<{ entityId: string; readOnly: boolean; sources: ScenarioSource[] }>> {
     const local = await this.store.read(), account = await this.ports.account()
-    return Promise.all(remote.entities.filter((entity): entity is EntityView => 'generation' in entity && entity.kind === 'requirement' && !entity.legacyCurrent).map(async entity => {
+    return Promise.all(remote.entities.filter((entity): entity is EntityView => 'generation' in entity && entity.kind === 'requirement').map(async entity => {
       const occupation = entity.occupation
       const owned = !!occupation && occupation.ownerId === account?.id && occupation.clientId === local.clientId && occupation.purpose === 'design'
       const readOnly = !!entity.current && !owned || !!entity.occupation && !owned

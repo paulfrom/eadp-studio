@@ -96,7 +96,6 @@ export function parseProjectManifest(text: string): ProjectManifest {
   try { manifest = JSON.parse(text); } catch { throw new DomainError('INVALID_PROJECT_MANIFEST', 'Project manifest must be valid JSON', 422); }
   requireCondition(isProjectManifest(manifest), 'INVALID_PROJECT_MANIFEST', 'Project manifest does not match the project contract', 422);
   for (const catalog of [manifest.scenarioTemplates, manifest.requirementTemplates]) {
-    if (!catalog) continue;
     requireCondition(new Set(catalog.templates.map(t => t.id)).size === catalog.templates.length && new Set(catalog.templates.map(t => t.path)).size === catalog.templates.length, 'DUPLICATE_TEMPLATE', 'Project template identities and paths must be unique', 422);
     requireCondition(catalog.templates.some(t => t.id === catalog.defaultTemplateId), 'DEFAULT_TEMPLATE_REQUIRED', 'The default template must exist in its catalog', 422);
     for (const template of catalog.templates) {
@@ -104,7 +103,7 @@ export function parseProjectManifest(text: string): ProjectManifest {
       requireCondition(template.path === `.template/${template.id}.md`, 'TEMPLATE_IDENTITY_MISMATCH', 'Template paths must match their stable template IDs', 422);
     }
   }
-  const all = [...(manifest.scenarioTemplates?.templates ?? []), ...(manifest.requirementTemplates?.templates ?? [])];
+  const all = [...manifest.scenarioTemplates.templates, ...manifest.requirementTemplates.templates];
   requireCondition(new Set(all.map(t => t.id)).size === all.length, 'DUPLICATE_TEMPLATE', 'Template identities must be unique across scenario and requirement catalogs', 422);
   return manifest;
 }

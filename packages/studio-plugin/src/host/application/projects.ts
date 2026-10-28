@@ -298,14 +298,14 @@ export class ProjectWorkspaces {
    * @returns the business directories the manifest declares, which the caller must find on disk.
    */
   private checkManifest(value: unknown, project: ProjectView): readonly string[] {
-    if (!isProjectManifest(value)) throw new Error('项目清单无效。')
+    // A manifest outside the current contract is an older project layout; say so
+    // instead of reporting a generic invalid manifest.
+    if (!isProjectManifest(value)) throw new Error('项目契约版本过旧，不受支持。')
     const actual = value as Record<string, unknown>
     // A valid manifest naming another project means this repository is already that project's.
     if (actual.projectId !== project.id) throw new Error(`该 GitLab 仓库的项目清单属于另一个项目（${String(actual.projectId)}），一个仓库只能对应一个后台项目。`)
     for (const [key, expected] of Object.entries(expectedManifest(project)).filter(([key]) => key !== 'scenarioTemplates' && key !== 'requirementTemplates' && key !== 'directories')) if (JSON.stringify(actual[key]) !== JSON.stringify(expected)) throw new Error('项目清单身份与后台登记不一致。')
-    // The declared layout is either the current four directories or the three a
-    // project accepted before the handoff directory existed carries.
-    return (actual.directories as readonly string[])
+    return actual.directories as readonly string[]
   }
   /**
    * Whether the local record still holds the checkout the backend project names.

@@ -27,7 +27,7 @@ export function assertPrototypeClaims(task: PrototypeTaskView, actor: Actor, inp
 function validateRequirements(all: EntityView[], actor: Actor, ids: string[]) {
   for (const id of ids) {
     const entity = all.find(value => value.id === id);
-    requireCondition(entity?.kind === 'requirement' && (entity.authorId === actor.id || entity.current || entity.legacyCurrent), 'INVALID_REQUIREMENT_SCOPE', 'The requirement is not readable in this project', 422);
+    requireCondition(entity?.kind === 'requirement' && (entity.authorId === actor.id || !!entity.current), 'INVALID_REQUIREMENT_SCOPE', 'The requirement is not readable in this project', 422);
   }
 }
 function validateReferences(development: string[], references: string[]) {

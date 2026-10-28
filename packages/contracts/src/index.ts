@@ -63,18 +63,15 @@ export function isFixedManifest(value: unknown): value is FixedManifest { return
 export function isMaterialMetadata(value: unknown): value is MaterialMetadata { return Value.Check(MaterialMetadataSchema, value); }
 export const TemplateCatalogSchema = object({ defaultTemplateId: IdSchema, templates: Type.Array(object({ id: IdSchema, name: text, path: Type.String({ minLength: 1, maxLength: 400 }) }), { minItems: 1, maxItems: 100 }) });
 export type TemplateCatalog = Static<typeof TemplateCatalogSchema>;
-/** Directory layouts declared by accepted project manifests. New projects declare all four. */
-export const ProjectDirectoriesSchema = Type.Union([
-  Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('交接'), Type.Literal('原型代码')]),
-  Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('原型代码')]),
-]);
+/** Directory layout every accepted project manifest declares. */
+export const ProjectDirectoriesSchema = Type.Tuple([Type.Literal('场景'), Type.Literal('需求'), Type.Literal('交接'), Type.Literal('原型代码')]);
 export type ProjectDirectories = Static<typeof ProjectDirectoriesSchema>;
 export const ProjectManifestSchema = object({ schemaVersion: Type.Literal(1), projectId: IdSchema, gitlabProjectId: Type.Integer({ minimum: 1 }), repositoryUrl: text, stableBranch: text,
   directories: ProjectDirectoriesSchema,
-  /** Absent in projects accepted before the template catalogs existed; reading them must not fail. */
-  scenarioTemplates: Type.Optional(TemplateCatalogSchema),
-  /** Requirement template catalog; new initializations must declare it. */
-  requirementTemplates: Type.Optional(TemplateCatalogSchema) });
+  /** Scenario template catalog; every accepted project declares both catalogs. */
+  scenarioTemplates: TemplateCatalogSchema,
+  /** Requirement template catalog; every accepted project declares both catalogs. */
+  requirementTemplates: TemplateCatalogSchema });
 export type ProjectManifest = Static<typeof ProjectManifestSchema>;
 export function isProjectManifest(value: unknown): value is ProjectManifest { return Value.Check(ProjectManifestSchema, value); }
 export const OccupationTokenSchema = object({ occupationId: IdSchema, generation: Type.Integer({ minimum: 1 }), taskId: IdSchema, clientId: IdSchema, expectedRevision: RevisionSchema });
@@ -227,23 +224,11 @@ export interface FixedVersion {
   confirmedBy: number; confirmedAt: string; reuse: { enabled: boolean; reason: string };
   title?: string; summary?: string; applicability?: 'applicable' | 'not-applicable'; applicabilityReason?: string; readHash?: string;
 }
-/**
- * An accepted fixed material whose document predates the current material
- * contract. It is readable and attributable but never edited, confirmed or
- * reused; the accepted bytes stay authoritative in Git.
- */
-export interface LegacyFixedVersion {
-  version: number; fixed: FixedReference; confirmationId: string;
-  confirmedBy: number; confirmedAt: string; title: string; summary?: string;
-  /** Why the document cannot be read under the current contract. */
-  reason: string;
-}
 export interface EntityView {
   id: string; kind: EntityKind; builtinKey?: 'general'; title: string; sequence?: number; code?: string; templateId?: string; templateRef?: FixedReference; summary?: string; creator?: AuditIdentity; lastEditor?: AuditIdentity; revision: number; generation: number;
   materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; taskStatus: 'idle' | 'active' | 'aborted' | 'completed';
   scenarioIds: string[]; scenarioSources?: AssetSource[]; files?: string[]; prerequisites: Prerequisite[]; current?: FixedVersion;
-  /** Set instead of `current` when the accepted document predates the current material contract. */
-  legacyCurrent?: LegacyFixedVersion; authorId: number;
+  authorId: number;
   occupation?: OccupationView;
 }
 export type EntityOccupancyView = Pick<EntityView, 'id' | 'kind' | 'builtinKey' | 'title' | 'summary' | 'sequence' | 'code' | 'creator' | 'lastEditor' | 'authorId' | 'revision' | 'confirmationStatus' | 'materialVersion' | 'taskStatus' | 'occupation'>;

@@ -180,7 +180,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 
 该片段属于完整项目清单，清单本身不写包含自身的 commit hash。模板发布使用 `stage:"template"` 的独立请求分支：`{idempotencyKey,stage,expectedProjectRevision,sourceSha,expectedHead,candidateSha,allowedPaths,checks}`；检查名为 `templates`，只允许 `.template/`、`project.assets.json` 的模板声明以及项目根 `CONTEXT.md` 的变更，不传场景 `entityId`、占用 token 或 confirmations，不确认材料、不产生原型基线。只发布 `CONTEXT.md` 时不需要重复声明模板目录；发布模板仍须声明目录。已有模板身份不能删除，项目身份与四目录声明不能改写。模板 complete 只传 `{idempotencyKey}`。接受之前新默认不共享，结果未知先查询原操作/集成；已确认场景的历史绑定仍可读取。
 
-清单的 `scenarioTemplates` 只对新初始化必填。早于模板目录存在的已接受项目没有该片段：读取其清单不失败，`GET /projects/:id/templates` 返回空目录（`templates: []`、无默认项），此时新建场景以 `PROJECT_TEMPLATES_REQUIRED` 阻断；用户发布模板即按上面的模板分支补齐清单与 `.template/`。详见 [ADR-0006](../../docs/adr/0006-legacy-project-readonly-compatibility.md)。
+清单的 `scenarioTemplates` 与 `requirementTemplates` 均为必填，项目目录固定为四个。缺少任一项、或目录仍为三目录的清单属于过旧契约：打开、导入与初始化一律以「项目契约版本过旧，不受支持」拒绝，不降级读取、不迁移、不回填。详见 [ADR-0009](../../docs/adr/0009-remove-legacy-compatibility.md)。
 
 显式切换模板请求为 `{idempotencyKey,token,templateId,templateRef}`，引用必须在项目已接受 Git 历史中，且路径/hash 与该提交清单的模板身份一致。切换只更新绑定与 revision，不改写正文；进行中的修复授权或待接受确认须先处理。
 

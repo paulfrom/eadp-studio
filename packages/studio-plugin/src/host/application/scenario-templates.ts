@@ -84,10 +84,10 @@ export class ScenarioTemplates {
           op.directory = directory; await this.store.save()
         }
         const manifest = JSON.parse(Buffer.from(await this.projects.readFixed(remote.project.id, op.preview.expectedHead, 'project.assets.json')).toString('utf8')) as unknown
-        if (!isProjectManifest(manifest)) throw new Error('项目清单无效')
+        if (!isProjectManifest(manifest)) throw new Error('项目契约版本过旧，不受支持')
         const property = op.preview.kind === 'scenario' ? 'scenarioTemplates' : 'requirementTemplates'
         const other = op.preview.kind === 'scenario' ? manifest.requirementTemplates : manifest.scenarioTemplates
-        if (other?.templates.some(t => op.preview.templates.some(next => next.id.toLowerCase() === t.id.toLowerCase()))) throw new Error('场景与需求模板必须使用独立标识，不能覆盖另一类模板')
+        if (other.templates.some(t => op.preview.templates.some(next => next.id.toLowerCase() === t.id.toLowerCase()))) throw new Error('场景与需求模板必须使用独立标识，不能覆盖另一类模板')
         manifest[property] = { defaultTemplateId: op.preview.defaultTemplateId, templates: op.preview.templates.map(t => ({ id: t.id, name: t.name, path: `.template/${t.id}.md` })) }
         await mkdir(path.join(directory, '.template'), { recursive: true })
         for (const t of op.preview.templates) await writeFile(await containedFile(directory, `.template/${t.id}.md`, true), t.body, 'utf8')

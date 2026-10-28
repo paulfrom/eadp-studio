@@ -1,6 +1,6 @@
 # 旧契约项目只读兼容：清单模板目录可选，既有固定材料只读
 
-状态：已确认（2026-10-21，用户选择"补齐式兼容"）。适用于 `packages/contracts`、`packages/asset-domain`、`apps/collaboration-api` 与 `packages/studio-plugin` 的读取链路。
+状态：Superseded by [ADR-0009](0009-remove-legacy-compatibility.md)（2026-10-28 移除全部 legacy 兼容路径）。原为已确认（2026-10-21，用户选择"补齐式兼容"）。适用于 `packages/contracts`、`packages/asset-domain`、`apps/collaboration-api` 与 `packages/studio-plugin` 的读取链路。
 
 现场是"测试项目"（`c431ed0f-…`）在后端已 `ready`，本机记录重建后重新打开时报 `项目 待处理：项目清单无效。`。根因不是网络或重试：该项目的清单与固定材料都早于当前契约——清单没有 `scenarioTemplates`、仓库根没有 `.template/`；既有 1 个场景、2 个需求的固定正文缺 `templateRef`、场景带分类、`businessEvidence` 没有归档文件与行范围、需求没有场景来源。后台读取路径又用当前契约校验固定正文（`GitLabContent.verify` → `repository.loadMaterial`），因此连 `GET /v1/projects/:id` 都会失败。由此固定三条契约。
 

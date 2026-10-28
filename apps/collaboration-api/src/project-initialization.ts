@@ -31,8 +31,6 @@ export async function verifyProjectInitialization(gitlab: GitLab, actor: Actor, 
   try { manifest = parseProjectManifest(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
   catch { requireCondition(false, 'INITIALIZATION_MANIFEST_INVALID', 'Project manifest is not valid UTF-8 JSON', 422); }
   requireCondition(record(manifest) && manifest.schemaVersion === 1 && manifest.projectId === project.id && manifest.gitlabProjectId === project.gitlabProjectId && manifest.repositoryUrl === project.repositoryUrl && manifest.stableBranch === project.stableBranch && canonical(manifest.directories) === canonical(directories), 'INITIALIZATION_MANIFEST_MISMATCH', 'Project manifest identity or directory contract differs from its registered project', 422);
-  // 新的初始化必须声明 `.template/` 下随项目版本化的场景与需求模板目录。
-  requireCondition(manifest.scenarioTemplates && manifest.requirementTemplates, 'INITIALIZATION_TEMPLATES_REQUIRED', 'Initialization must declare the project scenario and requirement template catalogs', 422);
   await new GitLabContent(gitlab).loadProjectTemplates(actor, project.gitlabProjectId, commitSha);
   const scenarioEntries = await gitlab.list(`${prefix}/tree?ref=${commitSha}&path=${encodeURIComponent('场景')}`);
   const generalEntry = scenarioEntries.find((entry): entry is Record<string, unknown> => record(entry) && entry.name === '通用场景.md' && entry.type === 'blob');

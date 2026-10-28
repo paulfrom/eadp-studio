@@ -1,6 +1,6 @@
 # 旧项目沿用三目录清单：读旧、新初始化仍严格
 
-状态：已确认（2026-10-23，沿用 [ADR-0006](0006-legacy-project-readonly-compatibility.md) 的"只对已接受项目放宽读取、新初始化保持严格"）。适用于 `packages/contracts`、`packages/asset-domain`、`apps/collaboration-api` 与 `packages/studio-plugin` 的项目清单读取链路。
+状态：Superseded by [ADR-0009](0009-remove-legacy-compatibility.md)（2026-10-28 移除全部 legacy 兼容路径）。原为已确认（2026-10-23，沿用 [ADR-0006](0006-legacy-project-readonly-compatibility.md) 的"只对已接受项目放宽读取、新初始化保持严格"）。适用于 `packages/contracts`、`packages/asset-domain`、`apps/collaboration-api` 与 `packages/studio-plugin` 的清单读取链路。
 
 现场：用户报告项目初始化最后提示 `项目清单无效。`。本机两份真实清单（`training-demo` 的 `46032037-…`、`sei-studio` 的 `d46d348a-…`）都在后台已 `ready`、本机有 `.git` 与目录旁归属标记，但清单 `directories` 只有 `场景`、`需求`、`原型代码` 三项，仓库根也没有 `交接/`。根因是 `4814ab2`（2026-10-22）把项目目录契约由三目录改为四目录，同时改了清单 schema、Host 写入与打开校验、后台初始化校验，却没有处理此前已被后台接受的项目：`isProjectManifest` 直接判清单无效，打开、克隆与新初始化全部止步在这一句。同一批现场还有第二种情况：同一个 GitLab 仓库被登记成第二个后台项目（`4ec1302a-…`），克隆拿到的清单根本不是本项目的，也被同一句"清单无效"掩盖。
 

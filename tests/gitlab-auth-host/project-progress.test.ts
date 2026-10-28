@@ -20,7 +20,7 @@ const directories = ['场景', '需求', '交接', '原型代码']
 async function checkout(directory: string, project: ProjectView): Promise<void> {
   await mkdir(path.join(directory, '.git'), { recursive: true })
   for (const name of directories) await mkdir(path.join(directory, name), { recursive: true })
-  const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] } }
+  const manifest = { schemaVersion: 1, projectId: project.id, gitlabProjectId: project.gitlabProjectId, repositoryUrl: project.repositoryUrl, stableBranch: project.stableBranch, directories, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', path: '.template/default.md' }] }, requirementTemplates: { defaultTemplateId: 'requirement', templates: [{ id: 'requirement', name: '默认需求模板', path: '.template/requirement.md' }] } }
   await writeFile(path.join(directory, 'project.assets.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 }
 

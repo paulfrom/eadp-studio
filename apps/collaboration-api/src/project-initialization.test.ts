@@ -69,8 +69,8 @@ test('manifest identity, encoding, line endings and directory contract are valid
     [Buffer.from(JSON.stringify({ ...manifest, projectId: 'forged' })), 'INITIALIZATION_MANIFEST_MISMATCH'],
     [Buffer.from(JSON.stringify({ ...manifest, repositoryUrl: 'https://attacker.test/repo.git' })), 'INITIALIZATION_MANIFEST_MISMATCH'],
     [Buffer.from(JSON.stringify({ ...manifest, directories: ['场景', '需求'] })), 'INITIALIZATION_MANIFEST_INVALID'],
-    // The three-directory layout stays readable for accepted projects, but a new initialization must still declare all four.
-    [Buffer.from(JSON.stringify({ ...manifest, directories: ['场景', '需求', '原型代码'] })), 'INITIALIZATION_MANIFEST_MISMATCH'],
+    // A three-directory manifest is an older contract: neither a new initialization nor an opened project accepts it.
+    [Buffer.from(JSON.stringify({ ...manifest, directories: ['场景', '需求', '原型代码'] })), 'INITIALIZATION_MANIFEST_INVALID'],
     [Buffer.from('\ufeff{}'), 'INVALID_MANIFEST_ENCODING'],
     [Buffer.from('{}\r\n'), 'INVALID_MANIFEST_ENCODING'],
     [Buffer.from([0xff]), 'INITIALIZATION_MANIFEST_INVALID'],
@@ -94,13 +94,13 @@ test('initialization requires a versioned template directory and readable defaul
 test('a new initialization must declare the scenario template catalog even when .template exists', async () => {
   const { scenarioTemplates: _catalog, ...withoutCatalog } = manifest;
   fixture({ body: Buffer.from(`${JSON.stringify(withoutCatalog)}\n`) });
-  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_TEMPLATES_REQUIRED'));
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_MANIFEST_INVALID'));
 });
 
 test('a new initialization must also declare the requirement template catalog', async () => {
   const { requirementTemplates: _catalog, ...withoutCatalog } = manifest;
   fixture({ body: Buffer.from(`${JSON.stringify(withoutCatalog)}\n`) });
-  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_TEMPLATES_REQUIRED'));
+  await assert.rejects(verifyProjectInitialization(gitlab, actor, project, rootSha), code('INITIALIZATION_MANIFEST_INVALID'));
 });
 
 test('initialization requires the provisioned general scenario document', async () => {

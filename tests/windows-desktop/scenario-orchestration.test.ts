@@ -343,7 +343,7 @@ test('template preview rejects deleting historical identities and publication st
 
 test('template publication builds outside the material worktree and rejects a candidate containing a scene', async t => {
   const f = await fixture(t)
-  const manifest = { schemaVersion: 1, projectId: 'project', gitlabProjectId: 1, repositoryUrl: 'https://git.example/project.git', stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', path: '.template/default.md' }] } }
+  const manifest = { schemaVersion: 1, projectId: 'project', gitlabProjectId: 1, repositoryUrl: 'https://git.example/project.git', stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认', path: '.template/default.md' }] }, requirementTemplates: { defaultTemplateId: 'requirement', templates: [{ id: 'requirement', name: '默认需求', path: '.template/requirement.md' }] } }
   const read = async (_project: string, _sha: string, relative: string) => Buffer.from(relative === 'project.assets.json' ? JSON.stringify(manifest) : templateBody)
   const projects = { localFixed: read, readFixed: read } as unknown as ProjectWorkspaces
   const lane = new BackgroundLane(), directories: string[] = [], staged: string[][] = []

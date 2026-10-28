@@ -14,7 +14,7 @@
     "check:repository": "node scripts/check-repository.mjs",
     "fetch:dsh": "node scripts/fetch-dsh.mjs",
     "test": "node --test tests/scripts/*.test.mjs tests/scenario-client/*.test.mjs",
-    "test:all": "node --import ./apps/collaboration-api/node_modules/tsx/dist/loader.mjs --test tests/scripts/*.test.mjs tests/scenario-client/*.test.mjs tests/scenario-client/*.test.ts tests/gitlab-auth-host/*.test.ts tests/windows-desktop/*.test.mjs tests/windows-desktop/*.test.ts tests/collaboration/*.test.mjs tests/collaboration/*.test.ts"
+    "test:all": "node --import ./apps/collaboration-api/node_modules/tsx/dist/loader.mjs --test tests/scenario-client/*.test.ts tests/gitlab-auth-host/*.test.ts tests/windows-desktop/*.test.ts tests/collaboration/*.test.ts && node --test tests/scripts/*.test.mjs tests/scenario-client/*.test.mjs tests/windows-desktop/*.test.mjs tests/collaboration/*.test.mjs"
   },
   "devDependencies": {
     "lefthook": "^2.2.2"

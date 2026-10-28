@@ -368,29 +368,21 @@ test('template publication preserves historical catalog identities and refuses d
   await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('TEMPLATE_PATH_SCOPE'));
 });
 
-test('a project accepted without template catalogs reads empty catalogs instead of failing', async () => {
-  const f = fixture('material'), { scenarioTemplates: _scenarios, requirementTemplates: _requirements, ...legacy } = f.controls.projectManifest;
-  f.controls.projectManifest = legacy;
-  assert.deepEqual(await f.content.loadProjectTemplates(actor, 7, head), { scenarios: { templates: [] }, requirements: { templates: [] } });
+test('a project accepted without template catalogs is rejected instead of read', async () => {
+  const f = fixture('material'), { scenarioTemplates: _scenarios, requirementTemplates: _requirements, ...withoutCatalogs } = f.controls.projectManifest;
+  f.controls.projectManifest = withoutCatalogs as never;
+  await assert.rejects(f.content.loadProjectTemplates(actor, 7, head), code('INVALID_PROJECT_MANIFEST'));
 });
 
-test('the first template publication may declare the catalog of a project accepted without one', async () => {
-  const f = fixture('material'), input = templateInput(f), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
-  f.controls.projectManifest = legacy;
-  f.controls.candidateManifest = { ...legacy, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: '.template/default.md' }] } };
-  assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
+test('a template publication cannot declare the catalog of a project accepted without one', async () => {
+  const f = fixture('material'), input = templateInput(f), { scenarioTemplates: _catalog, ...withoutCatalogs } = f.controls.projectManifest;
+  f.controls.projectManifest = withoutCatalogs as never;
+  f.controls.candidateManifest = { ...withoutCatalogs, scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: '.template/default.md' }] } } as never;
+  await assert.rejects(f.content.verifyCandidate(actor, 7, input), code('INVALID_PROJECT_MANIFEST'));
 });
 
 test('controlled configuration publication may update only the project CONTEXT.md', async () => {
   const f = fixture('material'), input = templateInput(f);
-  f.controls.candidateDiffs = [f.diff('CONTEXT.md')];
-  input.allowedPaths = ['CONTEXT.md'];
-  assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);
-});
-
-test('a CONTEXT.md-only configuration change does not require republishing a template catalog', async () => {
-  const f = fixture('material'), input = templateInput(f), { scenarioTemplates: _catalog, ...legacy } = f.controls.projectManifest;
-  f.controls.projectManifest = legacy;
   f.controls.candidateDiffs = [f.diff('CONTEXT.md')];
   input.allowedPaths = ['CONTEXT.md'];
   assert.equal((await f.content.verifyCandidate(actor, 7, input)).size, 0);

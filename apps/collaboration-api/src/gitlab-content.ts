@@ -52,10 +52,7 @@ export class GitLabContent {
     await this.gitlab.authorize(actor, gitlabProjectId);
     const manifest = await this.manifest(gitlabProjectId, commitSha);
     requireCondition(manifest.gitlabProjectId === gitlabProjectId, 'PROJECT_MANIFEST_IDENTITY_MISMATCH', 'Template manifest must belong to its GitLab project', 422);
-    const load = async (catalog: TemplateCatalog | undefined): Promise<ProjectTemplates> => {
-      // A project accepted before a catalog existed has none yet; the empty
-      // catalog is a published state, not a read failure.
-      if (!catalog) return { templates: [] };
+    const load = async (catalog: TemplateCatalog): Promise<ProjectTemplates> => {
       const templates: ProjectTemplates['templates'] = [];
       for (const template of catalog.templates) {
         const bytes = await this.file(gitlabProjectId, commitSha, template.path);

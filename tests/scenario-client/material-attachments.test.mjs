@@ -325,7 +325,7 @@ test('a requirement editor displays its fixed template without offering a switch
 })
 
 // Keep these tests on the requirement command boundary; scenario and desktop-caption rendering have their own suites.
-for (const [relative, name] of [['scenarios/ScenarioWorkspace.tsx', 'ScenarioWorkspace'], ['components/StudioTopbar.tsx', 'StudioTopbar'], ['components/LegacyMaterial.tsx', 'LegacyMaterial']]) modules.set(path.join(client, relative), { exports: { [name]: () => null } })
+for (const [relative, name] of [['scenarios/ScenarioWorkspace.tsx', 'ScenarioWorkspace'], ['components/StudioTopbar.tsx', 'StudioTopbar']]) modules.set(path.join(client, relative), { exports: { [name]: () => null } })
 const { StudioPanel } = loadClient('studio/StudioPanel.tsx')
 function requirementPanel(readOnly = false, readComparisons, readSummaries, respond, restore) {
   const element = editableRequirement(async () => {}, () => {})

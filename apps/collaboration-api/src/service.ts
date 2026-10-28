@@ -240,7 +240,6 @@ export class CollaborationService {
     if (input.kind === 'scenario' || input.kind === 'requirement') {
       const catalogs = await this.content.loadProjectTemplates(actor, bound.gitlabProjectId, bound.recognizedHead!);
       const catalog = input.kind === 'scenario' ? catalogs.scenarios : catalogs.requirements;
-      requireCondition(catalog.templates.length > 0, 'PROJECT_TEMPLATES_REQUIRED', `Publish the project ${input.kind} templates before creating a material`, 422);
       const selected = catalog.templates.find(t => t.id === (input.templateId ?? catalog.defaultTemplateId));
       requireCondition(selected, 'TEMPLATE_NOT_FOUND', 'Select an accepted project template', 422);
       requireCondition(!input.templateRef || canonical(input.templateRef) === canonical(selected.fixed), 'TEMPLATE_VERSION_MISMATCH', 'New materials bind the selected accepted project template');

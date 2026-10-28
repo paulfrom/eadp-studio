@@ -9,17 +9,14 @@ const transaction = { query: async () => ({ rows: [row] }) } as unknown as Trans
 const actor = { id: 1, username: 'author', name: 'Author' };
 const read = (loadMaterial: () => Promise<never>) => withContext({ actor, loadMaterial }, () => currentVersion(transaction, 'project', 'entity', 1));
 
-test('an accepted document that violates the current contract becomes a readable-only version', async () => {
-  const result = await read(async () => { throw new DomainError('INVALID_MATERIAL', 'Material metadata does not match the confirmation contract', 422) });
-  assert.equal(result.current, undefined);
-  assert.deepEqual({ version: result.legacy!.version, path: result.legacy!.fixed.path, sha256: result.legacy!.fixed.sha256, title: result.legacy!.title, confirmedBy: result.legacy!.confirmedBy },
-    { version: 1, path: '场景/scenario.md', sha256: 'b'.repeat(64), title: '旧场景', confirmedBy: 1 });
-  assert.match(result.legacy!.reason, /INVALID_MATERIAL/);
+test('an accepted document that violates the current contract is rejected instead of read', async () => {
+  await assert.rejects(read(async () => { throw new DomainError('INVALID_MATERIAL', 'Material metadata does not match the confirmation contract', 422) }),
+    (error: Error) => error instanceof DomainError && error.code === 'INVALID_MATERIAL' && /项目契约版本过旧，不受支持/.test(error.message));
 });
 
-test('an integrity failure still fails the read instead of hiding behind a readable-only version', async () => {
+test('an integrity failure still fails the read and is reported as an unsupported contract', async () => {
   for (const code of ['FILE_HASH_MISMATCH', 'FIXED_FILE_MISSING', 'INVALID_MATERIAL_ENCODING']) {
-    await assert.rejects(read(async () => { throw new DomainError(code, 'fixed content cannot be read', 422) }), new RegExp('fixed content cannot be read'));
+    await assert.rejects(read(async () => { throw new DomainError(code, 'fixed content cannot be read', 422) }), new RegExp('项目契约版本过旧，不受支持'));
   }
 });
 
