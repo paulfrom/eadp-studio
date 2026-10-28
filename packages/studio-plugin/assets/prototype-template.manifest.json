@@ -188,12 +188,6 @@
       "treatment": "utf8-no-bom-lf"
     },
     {
-      "path": "src/favicon.ico",
-      "sourceSha256": "07be4ac418ab8cd57de234c5b0dec75bdef58dd3a59b498907fdeead765e905b",
-      "sha256": "07be4ac418ab8cd57de234c5b0dec75bdef58dd3a59b498907fdeead765e905b",
-      "treatment": "binary-byte-preserved"
-    },
-    {
       "path": "src/global.less",
       "sourceSha256": "87cb3e0734607c0fe06114e60de7d0561a82cf12f5c6c0250ed2bde726c04fe9",
       "sha256": "658c272fb03fd8326251ff8882a6a3768bb6970080ffafa2f1eb7ca80621e701",
@@ -336,7 +330,8 @@
   },
   "version": "eadp-prototype@1.0.0-g0.10",
   "removedFiles": [
-    "config/router.config.ts"
+    "config/router.config.ts",
+    "src/favicon.ico"
   ],
   "contract": {
     "node": "22.22.3",
@@ -375,7 +370,6 @@
       "src/assets/empty.svg",
       "src/assets/item_empty.svg",
       "src/assets/page_empty.svg",
-      "src/favicon.ico",
       "src/global.less",
       "src/layouts/BlankLayout.tsx",
       "src/loading.tsx",

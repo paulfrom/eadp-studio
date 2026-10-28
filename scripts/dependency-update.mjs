@@ -13,7 +13,7 @@
  * distribution must be re-evidenced separately. When the local source already
  * matches the lock this script is a no-op.
  *
- * Usage: node scripts/dependence-update.mjs
+ * Usage: node scripts/dependency-update.mjs
  */
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -34,7 +34,7 @@ const platformLabel = process.platform === 'win32' ? 'windows' : process.platfor
 
 async function main() {
   if (process.argv.length !== 2) {
-    throw new Error('Usage: node scripts/dependence-update.mjs\nThe fixed commit comes from release.lock.json (dsh.commit/dsh.tag); no version argument is accepted.');
+    throw new Error('Usage: node scripts/dependency-update.mjs\nThe fixed commit comes from release.lock.json (dsh.commit/dsh.tag); no version argument is accepted.');
   }
   const lock = JSON.parse(await readFile(lockPath, 'utf8'));
   const { dsh } = lock;
@@ -81,7 +81,7 @@ async function main() {
 
   await mkdir(upstream, { recursive: true });
   const canonicalArchive = path.join(upstream, `dsh-${commit}.tar.gz`);
-  const staging = await mkdtemp(path.join(upstream, '.dependence-update-'));
+  const staging = await mkdtemp(path.join(upstream, '.dependency-update-'));
   let stagedArchive;
   try {
     let archive = canonicalArchive;
@@ -192,4 +192,4 @@ async function main() {
   }
 }
 
-main().catch((error) => { console.error(`dependence-update: ${error.message}`); process.exitCode = 1; });
+main().catch((error) => { console.error(`dependency-update: ${error.message}`); process.exitCode = 1; });

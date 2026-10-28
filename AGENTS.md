@@ -55,7 +55,7 @@
 | `apps/desktop-distribution/build/` | 受维护的桌面发行装配脚本与 DSH 产品改动源码。 |
 | `scripts/` | 开发环境、依赖获取、构建装配和仓库检查脚本。 |
 | `tests/` | 集成与桌面行为验证；`apps/collaboration-api/src/` 另含该后端共置测试。 |
-| `docs/` | `design/` 保存设计文档，`dseign/` 保存界面设计稿，`adr/` 保存架构决策记录。 |
+| `docs/` | `design/` 保存设计文档，`dseign/`（历史拼写）保存界面设计稿，`adr/` 保存架构决策记录。 |
 
 ## 仓库边界
 

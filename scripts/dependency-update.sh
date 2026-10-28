@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Materialize the fixed DSH source recorded in release.lock.json; see scripts/dependence-update.mjs.
+# Materialize the fixed DSH source recorded in release.lock.json; see scripts/dependency-update.mjs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 for tool in node git tar; do
@@ -8,4 +8,4 @@ for tool in node git tar; do
     exit 1
   fi
 done
-exec node scripts/dependence-update.mjs
+exec node scripts/dependency-update.mjs

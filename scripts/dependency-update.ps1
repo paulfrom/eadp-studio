@@ -1,4 +1,4 @@
-# Materialize the fixed DSH source recorded in release.lock.json; see scripts/dependence-update.mjs.
+# Materialize the fixed DSH source recorded in release.lock.json; see scripts/dependency-update.mjs.
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 foreach ($tool in @('node', 'git', 'tar')) {
@@ -7,5 +7,5 @@ foreach ($tool in @('node', 'git', 'tar')) {
     exit 1
   }
 }
-node (Join-Path (Get-Location) 'scripts/dependence-update.mjs')
+node (Join-Path (Get-Location) 'scripts/dependency-update.mjs')
 exit $LASTEXITCODE

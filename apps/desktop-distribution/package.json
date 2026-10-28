@@ -3,9 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "fetch:source": "node ../../scripts/fetch-dsh.mjs"
-  },
   "devDependencies": {
     "extract-zip": "2.0.1"
   }
