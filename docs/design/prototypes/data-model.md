@@ -1,6 +1,6 @@
 # 项目原型数据模型
 
-本页说明当前 [SQL 定义](../../../apps/collaboration-api/db/schema.sql) 中原型相关表的职责与关系；它不代表事务、权限或桌面操作已经运行验收。原型集成与恢复规则以[协同契约](collaboration-contract.md)为准，尚未完成的实现见[工程问题清单](implementation-issues.md)。
+本页说明当前 [SQL 定义](../../../apps/collaboration-api/db/schema.sql) 中原型相关表的职责与关系；它不代表事务、权限或桌面操作已经运行验收。原型集成与恢复规则以[协同契约](collaboration-contract.md)为准，尚未关闭的工程事项见[技术设计](technical-design.md)第 11 节。
 
 ```mermaid
 erDiagram
