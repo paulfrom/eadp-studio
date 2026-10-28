@@ -10,6 +10,18 @@
 
 领域定义见 [CONTEXT.md](../../CONTEXT.md)。本次沿用 [场景修复授权](../adr/0001-scenario-repair-confirmation.md)、[共享投影与读取车道](../adr/0002-workbench-projection-ownership.md)、[独立一致性对比](../adr/0003-user-directed-revision-consistency.md)和[后台 Git 车道](../adr/0005-local-record-rebuild-and-background-git.md)的决定。
 
+### 2026-10-26 材料确认修复的已确认决策
+
+来源：远端提交验收发现的三项缺口（本地 git 状态不记录、待核对卡死无自动恢复出口、远端 head 分叉直接报错）。修复范围、摘要来源与合并方式如下，均已在实现中落地。
+
+| 决策点 | 结论 |
+| --- | --- |
+| 修复范围 | 状态记录、卡死恢复、分叉自动合并三项全做 |
+| 摘要来源 | git 变更机械生成为主，AI 可用时补充语义描述，总长 ≤500 字 |
+| 冲突处理 | AI 直接产出合并结果，不要求用户二次确认 |
+| 状态记录时机 | 只在动作点记录（占用开始、保存成功、确认提交前），不做持续观察 |
+| 合并方案 | git 三路合并（merge commit），非重放式 |
+
 ## 当前摩擦
 
 - `StudioApplication.validateDesignConfirmation` 改写当前选中材料并读取完整工作区投影，再次检查投影已经检查过的依据文件。确认需要知道来源、会话和界面投影的组装方式，locality 不足。
