@@ -1,6 +1,6 @@
 # 从需求到原型的技术设计
 
-状态：2026-10-26，两轮八项业务决定已确认；按用户后续关于同需求互斥、成熟组件及本地浏览器验证的追问补充技术方案。按现有设计安排开发；具体技术方案的验证结果以实现和验收记录为准。交互依据为[原型工作台设计](../03-prototypes.md)与[HTML 设计稿](../../dseign/原型交互工作台.html)；业务语言见[CONTEXT.md](../../../CONTEXT.md)，架构边界见[ADR-0008](../../adr/0008-project-prototype-parallel-collaboration.md)。
+状态：2026-10-26，两轮八项业务决定已确认；设计已实施（commit 68f269c／a94405d），未验收部分见[验证记录](validation-2026-10-28.md)。交互依据为[原型工作台设计](../03-prototypes.md)与[HTML 设计稿](../../dseign/原型交互工作台.html)；业务语言见[CONTEXT.md](../../../CONTEXT.md)，架构边界见[ADR-0008](../../adr/0008-project-prototype-parallel-collaboration.md)。
 
 ## 1. 已确认的目标与边界
 
@@ -28,31 +28,11 @@
 - [Git merge-tree](https://git-scm.com/docs/git-merge-tree)提供三方合并树计算，支持内容与重命名冲突。Host 构造候选，后台独立计算原型子树验证干净合并，不自行实现一套文本合并算法。
 - 本地预览仍消费经过检查的静态构建产物与合成 Mock，运行状态、工程检查和用户业务核对分别表达。预览页面无工作台命令权限；外开本地预览不等于部署。
 
-协同 API 需要新增验证用 Git 运行工具：当前 `apps/collaboration-api/Dockerfile` 未安装它，版本路线沿用桌面运行锁的 Git 2.56.0 系列，实施时锁定 Linux 构建摘要并验证与 Host 的合并策略一致性，更新镜像、许可清单及运行资源限制。它作为独立进程使用；具体许可原文见 [Git COPYING](https://raw.githubusercontent.com/git/git/master/COPYING)。仅临时处理原型代码子树，不克隆完整业务仓库、不留正文缓存。详细取舍与验证方法见[后台契约 6.1](collaboration-contract.md#61-后台验证候选树)。当前未安装或修改服务，不把这一设计记为已有能力。
+协同 API 使用验证用 Git 运行工具：`apps/collaboration-api/Dockerfile` 以 `git-verifier` 阶段自编 Git 2.56.0（源码包按 `git-verifier.sha256` 校验，`Dockerfile:8-18`），二进制与 `COPYING` 随镜像分发（`Dockerfile:41-42`），版本路线与桌面运行锁的 Git 2.56.0 系列一致。它作为独立进程使用；具体许可原文见 [Git COPYING](https://raw.githubusercontent.com/git/git/master/COPYING)。仅临时处理原型代码子树，不克隆完整业务仓库、不留正文缓存。详细取舍与验证方法见[后台契约 6.1](collaboration-contract.md#61-后台验证候选树)。镜像摘要、许可清单与运行资源限制的验收以[验证记录](validation-2026-10-28.md)为准。
 
 桌面新增明确选型：编辑器采用 CodeMirror 6；业务验证采用独立锁定的稳定 Playwright 1.61.1 与其配对 Chromium，复用固定 DSH 会话／MCP／附件生命周期，保留 Electron 对实际桌面预览的保护检查。须承担新增依赖、浏览器分发和回归成本。完整组件版本、许可、复用边界和验证操作见[技术选型与本地浏览器验证](technology-and-browser-validation.md)。
 
 同需求互斥采用 [PostgreSQL 部分唯一索引](https://www.postgresql.org/docs/current/indexes-partial.html)与已有项目短事务，不新增 Redis 锁或 TTL 抢占。浏览器采用 [Playwright 的定位、断言、隔离与 trace](https://playwright.dev/docs/intro)，不自研自动化引擎；固定 DSH 接口、打包版本和专属浏览器隔离随对应开发工作包实现并验证。
-
-## 3. 当前源码证据与需要替换的模型
-
-以下为 2026-10-26 当前文件静态调查；行号是本轮定位线索，未运行真实桌面、模型或远端验收。
-
-| 链路 | 当前事实／源码位置 | 对技术设计的约束 |
-| --- | --- | --- |
-| 需求确认后衔接 | `packages/studio-plugin/src/host/application/studio.ts:745-758,795-822` 在需求被接受后记录固定引用，后台打开原型会话并发送实现提示；失败不回滚需求确认。 | 必须明确项目级并行任务如何承接该动作，不能每条需求无条件再建一个独立原型。 |
-| 原型任务 | 同文件 `:683-707` 按单 requirement 认领、创建 task worktree，以需求 hash 复用；`:556-580` 恢复要求材料版本和前置完成绑定不变。 | 改为项目原型协作任务身份，保留个人独立现场；删除单需求固定输入和前置完成依赖，不用兼容字段掩盖语义改变。 |
-| 原生会话 | `packages/studio-plugin/src/host/adapters/dsh/sessions.ts:74-125` 经官方 preset mount 后 create/resume，载入模板规则及受控文件工具。 | 沿用原生会话与 Host 工具保护；跨需求查看不改变会话归属。 |
-| 模板与边界 | `packages/studio-plugin/src/host/prototype/template.ts:71-126` 核验模板与保护文件；当前写入范围由 manifest 业务目录白名单约束。 | 原型按已有项目工程演进，不每轮覆盖模板；任务授权须覆盖实际共享页面和组件，不能机械按需求分文件所有权。 |
-| 检查与预览 | `packages/studio-plugin/src/host/composition.ts:56-82,123-125` 缓存检查并运行静态预览；`prototype/checks.ts:29-55`、`preview.ts:16-43` 校验源码、规则、产物与实例。 | 证据必须绑定确切工程和候选；当前内存缓存与单预览实例不能冒称已支持多任务恢复。 |
-| 浏览器保护检查 | `apps/desktop-distribution/build/studio-browser-check.ts:15-46` 检查 Mock ready、未知请求、网络围栏及非空页面。 | 属于技术检查，不证明订单、审批、供应商业务正确。 |
-| 集成粒度 | `apps/collaboration-api/src/modules/integration.ts:68-74` 强制只确认被占用的一个实体；contracts `src/index.ts:120-124` 同样绑定 entity/token。 | 需要原型任务与原型成果的明确契约，不能把一条内部需求完成冒充整体确认。 |
-| 前置门禁 | `packages/asset-domain/src/index.ts:122-130` 要求前置需求指定版本有完成证据，`occupations.ts:9-24,44-47` 在认领和完成重检。 | 按本轮已确认决定删除原型阶段该阻断，保留需求关系语义与合法性校验。 |
-| 基线 | `integration.ts:103-110` 生成单需求基线，SQL `apps/collaboration-api/db/schema.sql:837-850` 将 baseline 唯一绑定需求及材料版本。 | 基线改为整体原型成果版本，不以需求 materialVersion 限制只能确认一次，也不回写全部需求完成状态。 |
-| 事务与恢复 | `apps/collaboration-api/src/service.ts:52-60,219-236`、`integration.ts:81-89,121-133`、`persistence/repository.ts:295-314` 已有项目短事务、固定候选、原操作查询及幂等。 | 可沿用控制机制；并行编辑与串行接受分别处理，网络／Git 操作不放长数据库事务内。 |
-| 原型并发合并 | `packages/studio-plugin/src/host/application/studio.ts:85-86` 仅 material 进入候选自动合并；原型认可头变化仍报错／待核对。 | 并行分支的集成必须补上原型候选合并、重检、冲突恢复与授权边界。不能靠无限重试消除分歧。 |
-
-静态发现：`apps/collaboration-api/src/persistence/repository.ts:156` 插入 `studio_occupation_inputs` 未提供 `project_id`，而 `schema.sql:775` 定义该列 NOT NULL 且无默认；现有触发器只校验引用。非空前置绑定预计失败，尚未做数据库复现。它属于现有单需求模型的风险，后续应随旧原型完成输入模型替换处理；本轮不据此扩展到无关修复。
 
 ## 4. 决策树与轮次记录
 
@@ -137,7 +117,7 @@ flowchart LR
 
 ## 8. 实施拆分与删除范围
 
-以下是按现有设计执行的开发顺序；各工作包同时完成对应验证，当前均待开发。
+以下是按现有设计执行的开发顺序；各工作包同时完成对应验证。PT01—PT07 已实施；PT08 的旧协议删除随本次清理执行，真实桌面验收仍未完成。
 
 | 编号 | 实施单元 | 主要位置与验收产物 | 前置 |
 | --- | --- | --- | --- |
@@ -229,7 +209,7 @@ flowchart LR
 | I06 | 保存的并发、授权变化和未知结果恢复待运行核对。 |
 | I07 | 晚到 push 分叉需受保护的管理员 correction／reconcile，普通取消不能冒充 Git 收敛。 |
 | I08 | 检查进程完整日志、证据复用及重启失效未接齐；固定宿主 DPI、焦点和生命周期未验证。 |
-| I09 | 两个 Chromium 归档的真实 SHA 和许可审核缺口未补齐（见 `apps/desktop-distribution/build/studio-browser-runtime.md`）。 |
+| I09 | 两个 Chromium 归档的真实 SHA 已记录在 `apps/desktop-distribution/build/studio-browser.lock.json`；最终许可审核与分发材料仍未完成（见 `apps/desktop-distribution/build/studio-browser-runtime.md`）。 |
 | I10 | 受影响测试未执行；跨端契约不能仅凭静态代码判定可运行。 |
 | I11 | 文件服务分页一致性、扫描中改写和大文件性能未运行核对。 |
 | I12 | 超长单行、16 MiB 以后位置和父目录解析／打开竞争保留为平台限制。 |

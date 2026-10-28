@@ -4,7 +4,7 @@
 
 依据：[领域语言](../../../CONTEXT.md)、[场景列表设计稿](../../dseign/项目场景列表.html)、[场景编辑设计稿](../../dseign/项目场景编辑.html)。自动修复确认边界另见 [ADR](../../adr/0001-scenario-repair-confirmation.md)。旧规划和 HTML 中的场景 YAML 方向已由 Markdown 决策替代。
 
-数据库落地设计见[阶段一协同后台数据库设计](01-scenarios-database.md)，建表交付见 [schema.sql](schema.sql)，包含表结构、字段权威、约束、编号预留、固定版本接受事务及数据库验收用例；其设计状态与本文的业务设计确认、功能实施验收分别记录。项目创建与就绪使用一张项目表的生命周期；正式依据、关联文件清单及业务内容只随 Git 固定版本保存，后台不重复保存这些清单或整包材料 metadata。
+数据库落地设计见[阶段一协同后台数据库设计](01-scenarios-database.md)，建表交付见 [schema.sql](../../../apps/collaboration-api/db/schema.sql)，包含表结构、字段权威、约束、编号预留、固定版本接受事务及数据库验收用例；其设计状态与本文的业务设计确认、功能实施验收分别记录。项目创建与就绪使用一张项目表的生命周期；正式依据、关联文件清单及业务内容只随 Git 固定版本保存，后台不重复保存这些清单或整包材料 metadata。
 
 **2026-10-21 衔接设计决议**：项目提供独立、非阻断的场景与需求一致性对比能力。每个场景或需求维护同一个文件，历史由 Git 保存；对比只读本地实际文件，不进行 Git 操作，通过手动入口或材料确认后自动发起。查找已有关系及当前项目业务材料中的潜在关联，不自动改正式关系；每次对比的结论与冲突摘要存协同后台，与材料文件和业务状态分开。冲突只在本次快照中留存，后台不维护处理状态；提醒取材料最近一次结论，不自动改写文件，也不阻止流程。实际修改须进入写入提议与独立修订。取消整体关联冻结和强制同批确认。参见[一致性对比决策](../../adr/0003-user-directed-revision-consistency.md)和[需求协同设计](../02-requirements.md)。提醒、权限、并发及接口工程细化见阶段二整体设计；旧实现仍待修改，尚未验收。
 
@@ -135,9 +135,9 @@ collaboration-api 不新增 AI 端点。会话编排、资料受控读取、写�
 **已核对的当前实现与差距**
 
 - MaterialCatalog 已纳入 HEAD；当前材料采用 Markdown + eadp-metadata。读取已计算 SHA-256，普通确认前已比较用户阅读的 hash；普通保存与审阅写入均校验预期 hash。写入提议沿用 eadp-write-proposal 文本协议，由 Host 记录绑定条件及章节差异，显式所选变更通过既有受控保存链路落盘。
-- 当前 checkMaterial 除材料内显式 eadp-metadata 质量项、业务依据和无 blocking 问题外，还硬编码“核心业务规则”“验收条件”两章各至少 8 字符且非占位。这种固定标题／字数推断与自定义模板及关闭结构检查的方向冲突，须移除；场景仅要求流程完整，具体规则和可执行验收条件在需求阶段确认。
-- 历史实现的 categoryId 在 ReserveEntity、Host 和后台新建约束中必填，列表默认选首分类。场景与阶段二需求均已决定取消分类，须删除相关契约、表单、筛选、词表管理和元数据约束，不加默认分类或兼容层；当前需求实现仍待按阶段二设计修改。
-- 当前后台 entity.id 使用 randomUUID()，列表直接显示完整 UUID，文件路径按名称生成（`场景/<名称>.md`），数据库只保证 `(project_id,id)` 唯一。依据：[实体创建](../../../apps/collaboration-api/src/service.ts)、[ID 生成](../../../apps/collaboration-api/src/persistence/repository.ts)、[数据库约束](../../../apps/collaboration-api/db/schema.sql)、[目录卡片](../../../packages/studio-plugin/src/client/components/MaterialCatalog.tsx)。须补项目内原子递增的 sequence／code 及唯一约束，主要界面改显业务编号；保留 UUID 技术身份，不以旧 UUID 展示替代新编号。
+- `checkMaterial` 只按材料内显式质量项判定：场景要求业务流程完整，需求要求业务依据、核心业务规则与验收条件已声明且无 blocking 待澄清项，不再按固定章节名称或字数推断质量（`host/adapters/assets/materials.ts:180-186`）。场景仅要求流程完整，具体规则和可执行验收条件在需求阶段确认。
+- 分类已取消：契约、Host、后台新建约束、表单与筛选中不再有 `categoryId`，只剩拒绝该字段的负向测试；不设默认分类或兼容层。
+- 后台已按项目内原子递增分配业务编号：新建时预留 `SC-0001`/`REQ-0001` 形式的 `code` 并保留 UUID 技术身份，列表与材料显示业务编号（[编号预留](../../../apps/collaboration-api/src/persistence/repository.ts)、[数据库约束](../../../apps/collaboration-api/db/schema.sql)、[目录卡片](../../../packages/studio-plugin/src/client/components/MaterialCatalog.tsx)）。
 - 当前需求新建契约、Host 和后台已要求至少一个同项目已接受场景固定来源；场景确认接受后仅提供拆分入口，用户选择后才发起拆分。现有拆分仍限单场景单确认版本，候选采用仅传标题创建需求，摘要及更细业务内容尚未承接；阶段二须补齐联合拆分、候选内容承接及系统预置通用来源。
 - 固定 DSH 的 web profile 已有 Office → PDF 转换（doc/docx/xls/xlsx/ppt/pptx）、PDF 预览、表格预览（xlsx/xls/csv/tsv）和图片附件底座。尚未发现这些服务已接入场景 Agent 的正文／表格抽取工具，现有 fs.read 仅读 UTF-8 文本。设计复用已有组件，通过 Host 受控读取与上下文通道接入，不放开任意 shell。这里只核对了源码和装配，尚未样本运行验收；上传、预览、转换与 AI 实际读取不能混为一谈。
 - 场景业务流程允许循环；HTML“拓扑无环”文案须调整，已有需求前置依赖环检测仍按其领域规则执行。

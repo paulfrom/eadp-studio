@@ -23,7 +23,7 @@
 node --import ./apps/collaboration-api/node_modules/tsx/dist/loader.mjs --test <test files>
 ```
 
-- 仓库检查：`node scripts/check-repository.mjs`，492 个已跟踪文件／49 项模板摘要通过；模板 `releaseReady=false`。新修复测试及本文保留在工作树，尚未提交。
+- 仓库检查：`node scripts/check-repository.mjs`，492 个已跟踪文件／49 项模板摘要通过；模板 `releaseReady=false`。新修复测试及本文已随 `a94405d` 提交。
 - 后端：三个领域／契约／API 包类型检查通过；整组后端回归 105 通过、0 失败、9 跳过（需要显式隔离测试数据库的用例未运行），日志 `.local/sync-backend-final.log`。
 - Host/client：在 `.local/build/dsh` 对装配后的 Host/client tsconfig 执行 `tsc -b` 通过；日志 `.local/ui-host-typecheck3.log`。
 - 原型及恢复聚焦回归：59 项通过，随后新增恢复范围拒绝用例，恢复文件单独 3 项通过；日志 `.local/ui-host-focused.log`、`.local/ui-host-queue-recovery.log`。

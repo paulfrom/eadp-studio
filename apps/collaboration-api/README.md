@@ -1,10 +1,8 @@
 # 协同 API
 
-本批已将阶段一场景的关系模型接入后端源码，运行时建表入口为 [db/schema.sql](db/schema.sql)，设计依据见[协同后台数据库设计](../../docs/design/scenarios/01-scenarios-database.md)与[设计建表 SQL](../../docs/design/scenarios/schema.sql)。按新库部署，删除旧 JSON 业务快照与独立项目创建表，不保留旧结构兼容层或迁移。本次仅在独立临时数据库验证，未修改现运行库。
+协同后端已接入项目场景的关系模型，运行时建表入口为 [db/schema.sql](db/schema.sql)，设计依据见[协同后台数据库设计](../../docs/design/scenarios/01-scenarios-database.md)。部署须使用新库：旧 JSON 业务快照与独立项目创建表已删除，不提供旧结构兼容层或迁移。后端隔离验证不替代桌面、真实协同或全产品验收。
 
-本批修正范围为协同后端及共享契约；桌面端暂未适配本批破坏性契约。后端隔离验证不表示桌面、真实协同或阶段一全产品验收通过。
-
-Fastify + PostgreSQL 模块化单体。工作台只登录本协同后端，使用独立协同用户和会话；后端将用户持久绑定到已存在的 GitLab 数字用户 ID，并按该用户的实际成员权限授权。每个项目只登记一个 GitLab 仓库及一条稳定分支。正文只保存在 Git，业务 API 的 JSON schema 拒绝正文及未知字段。旧 GitLab OAuth 直登源码和旧证据仅作 [legacy-oauth 归档](../../gitlab/legacy-oauth/README.md)，GitLab 管理 API 仍是当前实现。
+Fastify + PostgreSQL 模块化单体。工作台只登录本协同后端，使用独立协同用户和会话；后端将用户持久绑定到已存在的 GitLab 数字用户 ID，并按该用户的实际成员权限授权。每个项目只登记一个 GitLab 仓库及一条稳定分支。正文只保存在 Git，业务 API 的 JSON schema 拒绝正文及未知字段。GitLab 管理 API 是当前实现，不保留客户端 OAuth 直登路径。
 
 ## 本机运行
 
@@ -25,7 +23,7 @@ GitLab 只在需要它裁决或写入时被请求：建仓与成员分配、写�
 
 Host 只配置 `collaborationUrl`，安全存储 `collaboration-session` 保存后端会话 token/expiresAt；桌面不配置 GitLab OAuth 应用、PKCE/回调或 GitHub Device Flow。用户本机 Git 凭据独立用于 canonical HTTP(S) remote 的 init/push/clone，经可信 system/global credential helper 取用；协同 token 和管理 token 都不注入 Git 授权头、remote 或 askpass。
 
-本工作站的测试服务使用本机 pg17、`0.0.0.0:6972` 及显式 GitLab 代理，服务配置以本文件和环境变量为准。需要代理时在后端 `.env` 设置 `HTTP_PROXY`、`HTTPS_PROXY` 和绕过本地服务的 `NO_PROXY`，并用支持原生环境代理的 Node 启动；当前验证版本为 Node 22.22.3：
+测试与验收服务即 AGENTS 固定的验收主机 `100.119.183.44:6972`（本机 pg17、`0.0.0.0:6972`、显式 GitLab 代理），服务配置以本文件和环境变量为准。需要代理时在后端 `.env` 设置 `HTTP_PROXY`、`HTTPS_PROXY` 和绕过本地服务的 `NO_PROXY`，并用支持原生环境代理的 Node 启动；当前验证版本为 Node 22.22.3：
 
 ```sh
 # 在 apps/collaboration-api 中运行；此命令启用 fetch 的环境代理。
@@ -40,7 +38,7 @@ node --use-env-proxy --env-file=.env --import=tsx src/bootstrap.ts
 
 首次解析先读取 GitLab `/user` 的已认证 token 身份，仅在定位值与其 username/email/public_email 精确相等且账号有效时接受；其他账号仍通过用户目录唯一精确匹配。这样能够验证 token 所属账号的私有邮箱，无需将邮箱公开；不根据邮箱前缀猜测用户名，不因接口失败信任客户端自报身份。采用 [GitLab 当前用户接口](https://docs.gitlab.com/api/users/#retrieve-the-current-user) 的正式身份信息。
 
-`POST /v1/auth/login` 接收 `{username,password}`，返回 `LoginResponse`：`{user,gitlabOrigin,token,expiresAt}`。其中 `user` 为 `StudioUser`，含 `id`、`username`、`name`、账号资料 `email`、`admin`、`gitlabUserId`、`gitlabUsername` 和可选 `gitlabEmail`；协同 ID 与 GitLab 用户 ID 互不替代。opaque Bearer 会话默认 8 小时，数据库只保存会话哈希；`GET /v1/me` 返回 `{user,gitlabOrigin}`，`POST /v1/auth/logout` 无请求正文并撤销当前会话。
+`POST /v1/auth/login` 接收 `{username,password}`，返回 `LoginResponse`：`{user,gitlabOrigin,token,expiresAt}`。其中 `user` 为 `StudioUser`，含 `id`、`username`、`name`、账号资料 `email`、`admin`、`gitlabUserId`、`gitlabUsername` 和可选 `gitlabEmail`；协同 ID 与 GitLab 用户 ID 互不替代。opaque Bearer 会话默认 90 天（`STUDIO_SESSION_TTL_DAYS`），数据库只保存会话哈希；`GET /v1/me` 返回 `{user,gitlabOrigin}`，`POST /v1/auth/logout` 无请求正文并撤销当前会话。
 
 写入与接受按绑定用户的有效 GitLab 成员权限校验，包含继承、active 状态和到期：编辑至少 Developer（30）。读取归属由 Studio 会话决定（部署只有单一协同账号），项目目录、单项目投影、历史版本与对比结论不再逐次询问 GitLab；固定内容的实际字节在读取时仍先校验成员权限。公开仓库可读或管理 token 能读取不等于工作台有权限。管理员 `admin:true` 只授予明确的占用释放/集成纠正能力，不豁免仓库成员权限；不配置 `GITLAB_ADMIN_USER_IDS` 或 `STUDIO_ADMIN_USER_IDS`。发布权限单独使用 `STUDIO_PUBLISHER_USER_IDS` 的协同用户 ID（测试管理员需显式配置 `1`），不因 admin 标记自动授予。
 
@@ -118,6 +116,15 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 | GET `/v1/projects`、POST `/v1/projects` | 本人可见项目；创建 private 空库并登记 pending 项目 |
 | POST `P/initialize` | 核验首提交、远端头、清单、四个业务目录及默认场景模板后 ready 的 ProjectView |
 | GET `P` | `ProjectState`：项目、实体、集成操作、基线 |
+| GET `P/prototype`、GET `P/prototype/tasks/:taskId` | 项目原型视图与单个原型协作任务现场 |
+| POST `P/prototype/tasks` | 新建原型协作任务并取得开发占用 |
+| POST `P/prototype/tasks/:taskId/development-claims` | 扩大任务的开发需求占用 |
+| PUT `P/prototype/tasks/:taskId/reference-requirements`、PUT `P/prototype/tasks/:taskId/write-scope`、PUT `P/prototype/tasks/:taskId/source-base` | 更新参考需求、写入范围与源码基线 |
+| POST `P/prototype/tasks/:taskId/cancel`、POST `P/prototype/tasks/:taskId/admin-release` | 取消任务／管理员释放任务占用 |
+| GET `P/prototype/baselines` | 原型基线分页列表（`limit` 1..100、`offset` ≥ 0） |
+| POST `P/prototype/integrations`、GET `P/prototype/integrations/:id` | 原型集成的准备与查询 |
+| POST `P/prototype/integrations/:id/complete`、POST `P/prototype/integrations/:id/abort` | 原型集成的完成与中止 |
+| GET/POST `P/prototype/adoptions`、POST `P/prototype/adoptions/:id/success` | 原型采用列表、本次受理与绑定后的采用成功记录 |
 | POST `P/entities` | 预留的稳定实体（revision 0）；场景仅名称即可创建并取得 `SC-0001` 形编号；需求须传 `templateId`/`templateRef` 与至少一个同项目已接受场景来源，取得 `REQ-0001` 形编号 |
 | PUT `P/entities/:id` | 持有效设计占用更新名称/摘要，返回新 revision；不接受编号字段 |
 | GET `P/entities/:id/revision-impact` | 已确认场景的修订影响清单及当前 revision，不领取占用 |
@@ -138,6 +145,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 | GET/POST `P/adoptions` | 采用记录列表/本次受理记录 |
 | POST `P/adoptions/:id/success` | 绑定目标确认后的复用成功记录 |
 | GET/POST `P/entities/:id/receipts` | 交接收悉列表/记录 |
+| POST/GET `P/entities/:entityId/status-reports`、GET `P/entities/:entityId/status-reports/:reportId` | 材料状态报告的上报、分页列表与单条读取 |
 | POST `P/consistency-comparisons`、GET `P/consistency-comparisons`、GET `P/consistency-comparisons/:id` | 提交/查询一致性对比记录（列表可按 `entityId` 过滤并分页） |
 | GET `P/entities/:id/consistency-context` | 纯 SQL 的正式关系目录投影（场景来源、关联需求、前置及确认引用），不读取 Git |
 | POST `P/publication-authorizations`、GET `P/publication-current` | 仅可读取当前基线的 5 分钟特定发布授权/门禁结果 |
@@ -194,7 +202,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取�
 
 ## 验证边界
 
-本批验证分为共享契约/后端类型检查、后端单元测试、隔离 PostgreSQL 的数据库与 API 集成检查。隔离 GitLab HTTP fixture 验证请求、固定字节与故障路径，不能证明真实企业 GitLab 实例已验收。当前运行库未被本批更新；桌面仍待适配新建场景、模板、确认、修复和需求来源等破坏性契约。真实建仓/成员分配、用户工程 Git 推送、双作者/双客户端、实际模型资料读取及 Windows 原生宿主仍须单独验收。
+验证分为共享契约/后端类型检查、后端单元测试、隔离 PostgreSQL 的数据库与 API 集成检查。隔离 GitLab HTTP fixture 验证请求、固定字节与故障路径，不能证明真实企业 GitLab 实例已验收。真实建仓/成员分配、用户工程 Git 推送、双作者/双客户端、实际模型资料读取及 Windows 原生宿主仍须单独验收。
 
 后端源码检查命令在仓库根执行：
 
@@ -205,7 +213,7 @@ pnpm --filter @eadp/collaboration-api typecheck
 pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
 ```
 
-`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
+`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts`、`backend-status-reports.test.ts`、`backend-prototype-recovery.test.ts`、`studio-workflow.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
 
 ```sh
 # 在共用实例中重建空的临时库；实例名与账号按本机实际情况替换。

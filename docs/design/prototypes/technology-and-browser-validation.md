@@ -1,6 +1,6 @@
 # 原型技术选型与本地浏览器验证
 
-状态：2026-10-27 技术设计草案，整体设计待用户最终确认；本文不表示依赖已安装、产品已实现或桌面已验收。
+状态：2026-10-27 设计，已实施（commit 68f269c／a94405d）；未验收部分见[验证记录](validation-2026-10-28.md)。
 范围：成熟组件复用、代码编辑、受管浏览器、业务验证与证据；不升级固定 DSH，不启动或安装产品。
 业务边界沿用[原型技术设计](technical-design.md)、[桌面运行时](desktop-runtime.md)及[协同契约](collaboration-contract.md)。
 
@@ -23,7 +23,7 @@
 
 模板版本来源为 [package.json](../../../packages/studio-plugin/assets/prototype-template/package.json)，工具链来源为 [runtime lock](../../../apps/desktop-distribution/build/studio-runtime.lock.json)。
 后端依赖见 [collaboration-api/package.json](../../../apps/collaboration-api/package.json) 与 [contracts/package.json](../../../packages/contracts/package.json)。
-根工程和模板 lock 当前没有 Playwright、Puppeteer 或 Monaco；固定 DSH 上游包含的测试／实验依赖不等于 Studio 已安装和启用这些能力。
+根工程 lock 已固定 `playwright-core@1.61.1` 与全部 `@codemirror/*` 模块（`pnpm-lock.yaml`），并作为插件运行时依赖装配；模板工程仍不含 Playwright、Puppeteer 或 Monaco。固定 DSH 上游包含的测试／实验依赖不等于 Studio 已启用这些能力。
 
 ## 1.1 R03：内嵌承载候选与证据边界
 
@@ -73,7 +73,7 @@
 采用 CodeMirror 6 的 `state`、`view`、`commands`、`search`、`lang-javascript`、`lang-css`、`lang-json` 和 `merge` 模块。
 JavaScript 语言模块开启 JSX／TypeScript 支持；CSS／Less、JSON 的实际语法覆盖在 PT04／PT05B 编辑器开发中验证，不把语法着色称为完整语言服务。
 React 层只管理 EditorView 生命周期、文件选择、文档版本、脏状态、保存及差异数据，不重新实现编辑、搜索或合并视图。
-当前官方核实的 `@codemirror/view` 为 6.43.15、`@codemirror/merge` 为 6.12.3，许可证为 MIT；其余模块在实施时统一解析并提交精确 lock。
+`@codemirror/view` 固定为 6.43.15、`@codemirror/merge` 固定为 6.12.3，许可证为 MIT；其余模块已在根 lock 中固定精确版本。
 依赖不得在产品运行时解析 `latest`；完成模块兼容验证后，把实际完整版本和许可写入发行清单。
 维护源码已迁至 [view](https://code.haverbeke.berlin/codemirror/view) 与 [merge](https://code.haverbeke.berlin/codemirror/merge)，不能将旧 GitHub 仓库归档解释为停止维护。
 
@@ -216,4 +216,4 @@ Host 固定当前事项、候选源码、构建和 Mock 版本，用受管 pnpm 
 6. PT03／PT05B 截图进原生模型：图片由附件 store 进入真实原生会话，支持图片的模型完成可核对的页面观察；非图像路线明确“未看图”。
 
 各工作包局部检查只记录对应实现的验证结果；PT08 须使用当前安装包、真实 Electron 业务桌面、原生会话及真实模型（涉及 AI 时）、Host、指定协同服务 `100.119.183.44`、Git／持久化和桌面结果完成闭环，并覆盖相关中断、失败与恢复。未执行的部分明确记为“未验收”。
-本文未实施依赖、浏览器服务、编辑器或 runtime lock，也未执行上述实现验证与最终真实桌面验收；不能据此报告原型功能完成或生产就绪。
+依赖、编辑器、浏览器运行时与归档 SHA 已实施并随发行装配（`studio-browser.lock.json`、`studio-runtime.lock.json`）；上述实现验证与最终真实桌面验收尚未全部执行，不能据此报告原型功能完成或生产就绪。

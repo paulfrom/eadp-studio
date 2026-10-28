@@ -1,6 +1,6 @@
 # 原型桌面与 Host 运行时技术设计
 
-状态：2026-10-27 技术设计草案，整体设计待用户最终确认；本文件不表示源码已实现或桌面已验收。
+状态：2026-10-27 设计，已实施（commit 68f269c／a94405d）；未验收部分见[验证记录](validation-2026-10-28.md)。本文件不表示真实桌面闭环已通过。
 
 范围：项目原型界面、协作事项、原生会话、私有工程、检查预览、精确确认与失败恢复。
 沿用固定 DSH、现有专用 Host/client 插件及随包原型模板，不升级宿主、不开放任意终端。本轮补充拟增加 CodeMirror 6、独立锁定的稳定版 Playwright 及其配对 Chromium，详见[技术选型与本地浏览器验证](technology-and-browser-validation.md)；不能继续声称桌面零新增依赖。协同服务新增的受限 Git 验证工具见[协同契约](collaboration-contract.md#61-后台验证候选树)。
@@ -37,17 +37,17 @@
 
 ## 3. Client 与 Host 契约
 
-以下为替换现有单需求命令的目标契约，命名在 shared 中统一定义；所有写命令携带 operationId。
+以下为已实现的命令契约，命名以 `shared/prototype.ts` 为准；所有写命令携带 operationId。
 客户端不提供任意工作目录、命令字符串、占用所有者或可信权限字段，Host 从当前账号与项目推导。
 
 | 命令 | 关键输入 | 结果与副作用 |
 | --- | --- | --- |
-| `openPrototype` | projectId、可选 prototypeTaskId | 返回项目原型投影或本人事项；只读，不认领。 |
-| `preparePrototypeInstruction` | projectId、关注需求／文件、意图 | 返回可编辑指令草稿及拟授权范围，不发送模型。 |
+| `savePrototypeInstructionDraft` | operationId、指令草稿 | 保存可编辑的指令草稿及拟授权范围，不发送模型。 |
 | `startPrototypeCollaboration` | projectId、operationId、明确指令、拟授权范围 | Host 保存真实指令及跨步骤 operation，领取、授权并准备现场；无其他运行事项则直接派发，有运行事项则入队保存首次指令，不派发。 |
 | `extendPrototypeDevelopment` | prototypeTaskId、operationId、明确扩范围指令、目标完整开发集合 | 后台按需求 ID 原子扩领，全成或回滚；成功返回完整 claim token 集合、claimsDigest 及新任务 revision，再允许新增业务写入。 |
 | `continuePrototypeCollaboration` | prototypeTaskId、operationId、指令 | 校验活动 token 后发送到原会话，不新建事项。 |
-| `restorePrototypeSession` | prototypeTaskId | 核对事项与现场后恢复原生会话，不自动重发未知消息。 |
+| `queryPrototypeMessage` | prototypeTaskId | 查询未知模型消息的实际结果，不重发、不制作替代候选。 |
+| `readPrototypeConversation` | prototypeTaskId | 返回恢复后的原生会话内容；只读，不重发未知消息。 |
 | `readPrototypeQueue` | 可选 projectId | 返回本机当前账号跨项目队列、当前选择及待恢复位置；只读，不调度。 |
 | `selectPrototypeQueueItem` | prototypeTaskId、operationId | 串行核对当前运行是否 settled，再切换事项和现场；不发送模型。 |
 | `reorderPrototypeQueue` | operationId、稳定事项引用的完整顺序 | 校验本人本机队列后持久化顺序；不重新授权、不启动下一项。 |
@@ -58,29 +58,35 @@
 | `readPrototypeDiff` | 工程引用、Host 发放的比较基准、相对范围、cursor、limit | 返回真实文件增删改及受限文本 hunks、两侧 hash 和截断信息；不接受任意 ref 或磁盘路径。 |
 | `readPrototypeFile` | 工程引用、相对路径、可选行范围 | 返回受限正文、hash、只读／保护属性、工程与观察版本；二进制仅返回允许展示的元信息。 |
 | `savePrototypeFile` | prototypeTaskId、path、expectedHash、正文 | 比较磁盘 hash 后原子保存；冲突返回当前 hash 与读取入口。 |
-| `checkPrototype` | 工程引用、operationId | 返回受控工程检查 operation，不认领、不触发模型。 |
-| `startPrototypePreview` | 工程引用、operationId | 必要时受控安装／检查后启动对应实例，不触发模型。 |
-| `stopPrototypePreview` | previewId | 仅停止该工程实例，幂等返回已停止结果。 |
+| `mergePrototypeConflict` | prototypeTaskId、path、两侧 hash 与正文、最终正文 | 显式解决编辑冲突后落盘，保留双方输入。 |
+| `readPrototypeBuffer`、`savePrototypeBuffer`、`clearPrototypeBuffer` | prototypeTaskId、path、缓冲内容 | 未保存缓冲的读取、持久化与清除；不覆盖磁盘内容。 |
+| `endPrototypeTask` | prototypeTaskId、operationId | 先核对未决集成结果，再释放有效授权，保留未接受代码、缓冲及会话定位。 |
+| `checkProjectPrototype`、`startProjectPrototypePreview`、`stopProjectPrototypePreview` | prototypeTaskId、operationId | 任务工程的受控检查与预览实例；必要时受控安装／检查后启动，不触发模型。 |
+| `checkPrototypeBaseline`、`startPrototypeBaselinePreview`、`stopPrototypeBaselinePreview` | baseline 来源（commitSha）、operationId | 已接受基线的检查与预览实例；只读，不认领。 |
+| `selectPrototypePreview` | 可选预览来源 | 切换当前预览选择，不用旧 URL 覆盖当前选择。 |
 | `preparePrototypeConfirmation` | prototypeTaskId、operationId | 固定候选、范围、检查证据并返回确认摘要和确认摘要 hash。 |
-| `confirmPrototype` | prototypeTaskId、candidateId、expectedSummaryHash、确认方式 | 只确认所见精确候选，返回集成 operation。 |
-| `queryPrototypeOperation` | operationId | 查询本地记录及协同幂等回执，不制作替代候选。 |
-| `cancelPrototypeCollaboration` | prototypeTaskId、operationId、原因 | 先核对未决集成结果，再释放有效授权，保留未接受代码、缓冲及会话定位。 |
+| `readPrototypeCandidateFile` | operationId、path | 读取已准备候选中的单个文件。 |
+| `checkPrototypeCandidate` | operationId、checkOperationId | 对已准备候选运行检查，结果绑定该候选。 |
+| `confirmPrototype` | operationId、expectedSummaryHash | 只确认所见精确候选。 |
+| `submitPrototypeCandidate` | operationId、checkOperationId | 提交已确认候选进入集成。 |
+| `adoptPrototypeBaseline` | operationId、基线来源、targetTaskId、调整说明 | 以已接受基线为起点采用到目标任务。 |
 
 工程引用是 Host 发放的项目认可版本或 prototypeTaskId，不是客户端传入的 filesystem path。
 统一结果包含 operationId、当前 revision、业务状态及可恢复错误；路径与原始日志进入诊断字段。
 错误码区分权限失效、文件冲突、工程变化、检查失败、确认过期、远端头变化和结果未知。
 重复 operationId 绑定同一规范化请求，不允许改正文、路径范围或候选后复用原键。
 
-| 投影／事件 | 最小内容 | 消费规则 |
+| 结果片段 | 最小内容 | 消费规则 |
 | --- | --- | --- |
-| `prototypeStateChanged` | projectId、revision、认可头、当前基线、事项摘要 | 按 revision 更新，丢弃旧投影。 |
-| `prototypeFileChanged` | prototypeTaskId、path、hash、来源 | 标记编辑冲突和检查过期，不覆盖未保存缓冲。 |
-| `prototypeContextRead` | sessionId、资料标识、状态、hash、实际读取范围 | 仅实际读取成功后产生；不得把选中视为已读。 |
-| `prototypeOperationChanged` | operationId、阶段、结果、诊断引用 | 重连先查询完整投影，再接续事件。 |
-| `prototypePreviewChanged` | previewId、工程指纹、运行状态、受管 URL | 只更新匹配实例，不用旧 URL 覆盖当前选择。 |
-| `prototypeQueueChanged` | 本机账号队列 revision、稳定事项引用及顺序、currentSelectedTask、本地调度状态、nextAction | 完整投影覆盖旧 revision；项目过滤不改变跨项目运行上限。 |
+| `state`（每次命令返回） | 项目投影、revision、认可头、当前基线、事项与队列摘要 | 以命令返回的完整投影为准，按 revision 丢弃旧投影。 |
+| `prototypeFiles` | 受控读取结果（目录、搜索、diff、正文）及观察版本 | 过期观察版本须重新读取，不覆盖未保存缓冲。 |
+| `prototypeConversation` | 原生会话内容 | 只读回读；选中不等于已读。 |
+| `prototypeCandidateFile` | 候选文件正文与元信息 | 只在 prepare 之后读取。 |
+| `prototypeBuffer` | 未保存缓冲的内容与基准 hash | 用于恢复编辑现场，不当作磁盘事实。 |
+| `prototypePreview` | 预览实例、工程指纹、运行状态、受管 URL | 只更新匹配实例，不用旧 URL 覆盖当前选择。 |
+| `prototypeQueue` | 本机账号队列 revision、稳定事项引用及顺序、当前选择、本地调度状态 | 完整投影覆盖旧 revision；项目过滤不改变跨项目运行上限。 |
 
-事件由 Host 持久状态投影产生，不作为客户端自行推断 accepted 或权限的依据。
+上述片段由 Host 持久状态投影产生，随命令答复返回；客户端不以自行推断的 accepted 或权限代替 Host 事实。
 原生模型输出仍通过 DSH 会话承载，不复制一套模型消息、审批与取消协议。
 
 ## 4. 协作事项与原生会话
@@ -166,21 +172,19 @@ Host 进入关闭阶段后停止接收新的开始／切换／写入命令；在
 历史请求不能证明未发送时维持待核对；不能为绕过未知状态创建第二个写入同现场的执行者。
 普通会话恢复不重新绑定需求版本；材料更新仍是提醒，不改变既定事项开发集合与工程基底。
 
-### 4.3 当前源码可复用能力与未实现边界
+### 4.3 已实现的队列、退出协议与恢复入口
 
-以下行号来自当前源码核对，仅证明相应局部机制；本节目标队列、退出协议及桌面崩溃恢复尚未实现或验收。
+本机持久队列、退出协议与桌面崩溃恢复已实现；下列位置以当前源码为准，真实桌面闭环仍未验收。
 
-| 当前证据 | 可复用事实与限制 |
-| --- | --- |
-| [state.ts](../../../packages/studio-plugin/src/host/application/state.ts)（54–58 行）、[账号目录与保存](../../../packages/studio-plugin/src/host/application/state.ts)（102–160 行） | 已保存 tasks／operations 等，按账号隔离并串行 temp／rename；尚无上述业务 taskQueue。 |
-| [TaskView](../../../packages/studio-plugin/src/shared/studio.ts)（46 行） | 已有 sessionId、worktree、inputHash 等身份；现有单需求约束仍须按本设计替换。 |
-| [BackgroundLane](../../../packages/studio-plugin/src/host/application/background-lane.ts)（16–47 行） | Promise／Map／Set 提供进程内串行与去重，不是持久业务队列；复用执行器，不将其当恢复权威。 |
-| [恢复入口](../../../packages/studio-plugin/src/host/application/studio.ts)（556–580 行）、[客户端恢复](../../../packages/studio-plugin/src/client/components/NativeConversation.tsx)（19–24 行） | 已先做 Host 身份核对再 retain；当前旧输入版本／hash 门禁不能原样沿用为新原型重绑要求。 |
-| [原生会话适配](../../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts)（69–77 行）、[resume 与事件重放](../../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts)（137–175 行） | 可恢复原 session 与投影；仍需真实消息操作标识、确认位置及未知投递核对。 |
-| [退出等待](../../../packages/studio-plugin/src/host/application/studio.ts)（114–124 行）、[会话释放](../../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts)（217 行） | 已有等待后台工作和释放 handle；不足以证明完整关闭保存／flush 协议。 |
-| [材料输入关闭处理](../../../packages/studio-plugin/src/client/scenarios/useDraftBuffer.ts)（13–17 行） | 当前 beforeunload 只尝试 flush；不是代码 buffer 或强杀无损恢复的证据。 |
-| [固定操作记录](../../../packages/studio-plugin/src/host/application/git-integrations.ts)（30–53 行）、[远端结果核对](../../../packages/studio-plugin/src/host/application/git-integrations.ts)（139–150 行） | 已有先落盘、原幂等操作查询与条件推送模式，原型仍须接入完整恢复流程。 |
-| [接受后收尾](../../../packages/studio-plugin/src/host/application/task-maintenance.ts)（25–27 行）、[逐步保存](../../../packages/studio-plugin/src/host/application/task-maintenance.ts)（48–64 行） | 可复用独立收尾记录，不能用模型结束替代 accepted。 |
+| 已实现机制 | 源码位置 | 事实 |
+| --- | --- | --- |
+| 队列与调度 | `host/application/prototype-collaboration.ts`、`shared/prototype.ts` | 按账号隔离的跨项目队列、当前选择、`localDispatchState` 与 `nextAction`；默认串行，用户手动继续或切换，项目过滤不改变运行上限。 |
+| 记录与保存 | `host/application/state.ts` | 项目管理、事项、候选、操作、评审、采用、初始化、材料预留、模板操作、场景、修复与一致性对比按账号隔离，串行 temp／rename 落盘。 |
+| 退出收敛 | `host/adapters/dsh/sessions.ts`（`settlePrototype`、`dispose`） | 关闭时取消模型、等待 idle、flush 原生会话；未收敛即中止关闭并保留事项与现场，不伪报已保存。 |
+| 崩溃恢复 | `client/prototype/PrototypeWorkbench.tsx`、`host/application/prototype-collaboration.ts` | 原 running 标记 `recovery-required`；恢复先查询后台与未知操作，用户明确继续后才开始新一轮。 |
+| 会话恢复 | `host/adapters/dsh/sessions.ts` | 通过官方 preset mount 与 resume 恢复原 session 与投影；不重发未知消息。 |
+| 后台车道 | `host/application/background-lane.ts` | 进程内串行与去重执行器，不作为持久业务队列或恢复权威。 |
+| 接受后收尾 | `host/application/task-maintenance.ts` | 独立收尾记录承接资源释放、归档与 Git 清理；不以模型结束替代 accepted。 |
 
 方案沿用持久状态机、原生会话日志及 Git worktree 的成熟分工，不把模型输出历史当业务队列。
 上游缓存中原生 conversation 按 session 保存 localStorage 草稿，原生持久化以 flush 为耐久屏障，崩溃开放轮次以 interrupted 收尾；这些源码能力仍须在当前装配版本验证，不承诺最后事件完整或原请求自动续跑。
@@ -296,22 +300,24 @@ accepted 后本机主检出同步、会话释放、预览处理和现场收尾�
 未接受、取消或授权失效事项不自动删除；唯一草稿、未合入代码与会话定位必须保留。
 已接受现场清理前确认无新草稿和未合入提交；必要的唯一成果归档校验后才清理，不复制可重建依赖。
 
-## 9. 模块职责与替换点
+## 9. 模块职责
 
-| 模块 | 保留与目标调整 |
+| 模块 | 当前职责 |
 | --- | --- |
-| `client/studio` 与独立原型组件 | 替换单需求原型 actionBar；项目成果、我的事项、文件缓冲与运行输出分组件。 |
-| `shared` | 定义工程引用、事项投影、文件 hash 并发、检查／预览／集成状态，不复用材料确认输入。 |
-| `application/studio.ts` | 仅命令分派与应用组合；移除 `prototypeTask` 的单 entity 输入与自动启动逻辑。 |
-| 独立原型事项 application 模块 | 负责事项 token、worktree、会话接续与取消；复用现有账号 scope 和后台 lane。 |
-| `adapters/dsh/sessions.ts` | 保留官方 preset/model/session 恢复；增加事项上下文读取和消息操作核对。 |
-| `adapters/platform/execution-guard.ts` | 保留真实 Agent 身份绑定及路径校验，接入事项授权交集与文件并发控制。 |
+| `client/studio` 与 `client/prototype` | 项目成果、我的事项、文件缓冲与运行输出分组件；原型工作台为 `client/prototype/PrototypeWorkbench.tsx`。 |
+| `shared/prototype.ts` | 文件来源、命令与结果、队列项与原生消息身份的唯一契约定义。 |
+| `shared/studio.ts` | `TaskView`（第 41 行）以 `purpose` 区分 `material`／`split`／`prototype`／`handoff`／`review`，并携带 `prototypeBaseline`、`cleanup`、`handoff`、`split` 等绑定；事项不再以单需求输入为身份。 |
+| `host/application/studio.ts` | 命令分派与应用组合；原型命令分派到独立应用模块，不在此实现业务算法。 |
+| `host/application/prototype-collaboration.ts` | 事项 token、worktree、会话接续、队列与取消；复用账号 scope 与后台 lane。 |
+| `host/application/prototype-candidates.ts`、`prototype-integrations.ts` | 候选固定／检查／确认／提交与集成恢复。 |
+| `host/adapters/dsh/sessions.ts` | 官方 preset／model／session 恢复、事项上下文读取、消息操作核对；关闭收敛在 `settlePrototype`／`releaseWorktree`／`dispose`（约 286–315 行），失败时中止关闭并保留现场。 |
+| `host/adapters/platform/execution-guard.ts` | 真实 Agent 身份绑定、路径校验、事项授权交集与文件并发控制。 |
 | 原型浏览器适配与受限服务 | 复用固定 DSH SessionResources／stdio MCP／附件生命周期；内核独立锁定稳定 Playwright，按事项及预览代次限制动作和目标，不放行全部 MCP 工具。 |
-| `prototype/template.ts`、`generation.ts` | 保留模板保护校验，改为事项身份／代码提交绑定，不再要求单 requirementId。 |
-| `prototype/checks.ts`、`preview.ts` | 保留校验算法，拆出持久证据仓库和实例管理，避免全局缓存／端口。 |
-| `composition.ts` | 仅装配依赖；移出检查缓存、预览实例及运行操作编排，不扩展成统一大类。 |
-| `fixed-candidates.ts` | 材料候选继续服务材料；原型候选由独立模块按事项范围固定。 |
-| `git-integrations.ts` 与合并模块 | 复用幂等查询、条件推送和 accepted 恢复，明确原型合并重检与重新确认分支。 |
+| `host/prototype/template.ts` | 模板保护校验改为事项身份／代码提交绑定，不再要求单 requirementId。 |
+| `host/prototype/checks.ts`、`preview.ts` | 校验算法保持不变；证据持久化与实例管理在应用层，避免全局缓存／端口。 |
+| `host/composition.ts` | 仅装配依赖，不承载检查缓存、预览实例或运行编排。 |
+| `host/application/fixed-candidates.ts` | 材料候选继续服务材料；原型候选由独立模块按事项范围固定。 |
+| `host/application/git-integrations.ts` | 幂等查询、条件推送与 accepted 恢复；原型合并重检与重新确认分支由原型集成模块复用。 |
 | `task-maintenance.ts` | 复用接受后独立收尾，不能提前删除未接受事项或唯一成果。 |
 
 现有 `PrototypeStartup`、单需求 `inputHash` 门禁及旧 claim/check 隐式创建任务路径直接替换，不留兼容入口。

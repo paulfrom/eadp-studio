@@ -4,7 +4,7 @@
 
 ## 当前实现
 
-- `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型认领/检查/预览/确认、复用资格与采用、交接回执、发布/撤回和主题设置。
+- `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型协作任务与开发占用/检查/预览/确认、复用资格与采用、交接回执、发布/撤回和主题设置。发布与撤回的代码路径已就绪，发布目标与独立授权属部署期配置，随包桌面未提供该配置通道。
 - `apps/collaboration-api/`：Fastify + PostgreSQL 协同后端。实现协同会话、GitLab 账号绑定与成员权限校验、项目建仓/初始化、固定 Git 正文读取校验、持久占用、集成、复用记录、发布授权和桌面更新检查。
 - `packages/asset-domain/`、`packages/contracts/`：资产领域模型与跨端契约。
 - `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。
@@ -20,8 +20,7 @@
 | `packages/contracts/` | API 与客户端共享的 TypeBox 契约 |
 | `apps/desktop-distribution/` | 固定上游版本、发行装配脚本和发布锁 |
 | `scripts/` | 仓库校验、DSH 获取、桌面开发与打包入口 |
-| `CONTEXT.md` | 架构决策及领域定义 |
-|                              |                                                   |
+| `CONTEXT.md` | 领域语言（术语表） |
 
 用户项目中的 `场景/`、`需求/`、`交接/`、`原型代码/` 属于产品运行时管理的业务工程，不混入本研发仓库；材料文件名取自业务名称，稳定身份由文件内的 `eadp-metadata` 块承载。
 
@@ -75,7 +74,7 @@ pnpm dev:desktop
 ./build-desktop.ps1
 ```
 
-也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包输出到 `artifacts/windows/eadp-studio.exe`，同时输出绝对路径、SHA256 和同名 `.json` 记录。
+也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包命名为 `artifacts/windows/eadp-studio-<manifest.version>-win-x64-unsigned.exe`（版本取自装配后的桌面 `package.json`，见 `scripts/build-desktop.mjs:100`；当前发布锁记录的样本为 `eadp-studio-0.2.1-alpha.4-win-x64-unsigned.exe`），同时输出绝对路径、SHA256 和同名 `.json` 记录。
 
 构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
 

@@ -48,7 +48,7 @@ flowchart TB
 | 位置 | 承担职责 | 复用关系 |
 | --- | --- | --- |
 | 新增 `host/application/material-confirmations.ts` | 发起与恢复完整确认、贯穿记录、可信门禁事实收集、普通与已授权修复确认。 | 复用 `RequirementSaves`、`ScenarioDocumentService` 和 `AuthorReviews`；投影与修复通过窄职责回调共享检查，不反向调用完整 `snapshot`。 |
-| 新增 `host/application/fixed-candidates.ts` | 本次固定输入、材料路径归属、提交白名单、评审快照及固定候选制作。 | 材料确认、原型确认及评审请求共用现有 `prepareContent`／`prepareCandidate` 的 implementation。 |
+| 现有 `host/application/fixed-candidates.ts` | 本次固定输入、材料路径归属、提交白名单、评审快照及固定候选制作。 | 材料确认、原型确认及评审请求共用 `FixedCandidates.content()`／`prepare()`（第 38、84 行）。 |
 | 新增 `host/application/git-integrations.ts` | 原操作查询、候选推送、后台准备、条件推进与接受核对。 | 材料及原型共用固定提交接受协议；模板仅在机械推进部分确有复用时使用，不并入材料确认。 |
 | 现有 `host/application/studio.ts` | 命令路由、构造期组装、单写者队列、后台车道及接受后的领域编排。 | 项目、原型、采用、交接、对比和收整沿用已有职责，不新增通用事件总线或后续动作框架。 |
 | 现有 `scenario-workspaces.ts`、`scenario-repairs.ts` 及 `state.ts` | 使用确认 interface、保存本机确认与子操作记录，继续持有编辑与修复任务自身状态。 | 将需求专用确认编排替换为统一材料确认编排；保留修复授权和预算的原所有者。 |

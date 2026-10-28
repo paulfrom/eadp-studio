@@ -45,32 +45,5 @@
     "nativeBuildVerified": false,
     "distributionVerified": false,
     "releaseReady": false
-  },
-  "windowsVerification": {
-    "scope": "development-machine-unsigned-source-build",
-    "sourceCommit": "39bdfc1fd3c6138505a7e81c0c7df248b33f1d81",
-    "sourceDirty": true,
-    "sourceDigest": "2b292fed1cc56e4c1d3abb764462a71d93e6b75a92e971c26e1c868749018cbd",
-    "sourceScript": {
-      "entry": "./build-desktop.ps1",
-      "exitCode": 0,
-      "log": ".local/logs/eadp-studio-source-script-final-20261016.log",
-      "exitFile": ".local/logs/eadp-studio-source-script-final-20261016.exit",
-      "runDirectory": ".local/build/dsh/apps/desktop/.desktop-build/packaging-runs/2026-10-16T13-33-39.343Z-XsSTGy"
-    },
-    "installer": {
-      "path": "artifacts/windows/eadp-studio-0.2.1-alpha.4-win-x64-unsigned.exe",
-      "bytes": 351769285,
-      "sha256": "f968a6893a8ed9e1fad5999a9727855aeac3ce7a8afa94de9ec2d28494225aa7"
-    },
-    "asar": {
-      "bytes": 185136408,
-      "sha256": "d8012161b99f55db52c3880d39b4249a723a73d7d93ed1d0957526cc96b3fe7e"
-    },
-    "completeStudioPayloadVerified": true,
-    "runtimeInventoryVerified": true,
-    "installedStartupVerified": false,
-    "cleanMachineInstallationVerified": false,
-    "verifiedAt": "2026-10-16T14:20:09Z"
   }
 }

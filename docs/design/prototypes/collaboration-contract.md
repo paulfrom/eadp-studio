@@ -1,9 +1,9 @@
-# 项目原型协同契约技术设计草案：新协议提案，尚未整体确认或实现
+# 项目原型协同契约技术设计
 
-状态：2026-10-27。本文承接已确认的 Q1—Q8，供整体技术设计审阅；以下接口、类型和表结构均为提案，不是现有能力。
-本轮按“同一需求不能由两人同时开发”的追问补充开发互斥方案，不代表整体技术方案已确认；开发占用只约束业务开发权，不固定单需求材料版本，也不恢复前置完成门禁。
+状态：2026-10-27 设计，已按该设计实施（commit 68f269c／a94405d），未验收部分见[验证记录](validation-2026-10-28.md)。本文承接已确认的 Q1—Q8，接口、类型和表结构如下文所述已落地在契约、SQL 与后台实现中。
+开发占用只约束业务开发权，不固定单需求材料版本，也不恢复前置完成门禁。
 主入口：[技术设计](technical-design.md)；业务交互：[原型工作台](../03-prototypes.md)；材料规则：[需求协同](../02-requirements.md)。
-本轮只写设计，不修改产品源码、SQL、运行状态或远端数据；产品完整闭环仍未验收。
+实现已修改产品源码、SQL 与持久化结构；产品完整闭环仍未验收。
 
 ## 1. 已确认的职责边界
 
@@ -18,11 +18,9 @@
 
 ## 2. 沿用的基础与必须替换的现状
 
-沿用现有项目权限、固定 Git 提交、项目短事务、幂等操作表、审计和 integrations 的 prepared／accepted／aborted 协议，不新建通用工作流框架；新增服务端验证用 Git 运行工具的必要性与成本见 6.1，尚待整体确认。
+沿用现有项目权限、固定 Git 提交、项目短事务、幂等操作表、审计和 integrations 的 prepared／accepted／aborted 协议，不新建通用工作流框架；服务端验证用 Git 运行工具见 6.1。
 现有证据：[集成模块](../../../apps/collaboration-api/src/modules/integration.ts)、[服务编排](../../../apps/collaboration-api/src/service.ts)、[契约](../../../packages/contracts/src/index.ts)、[SQL](../../../apps/collaboration-api/db/schema.sql)。
-当前 integration.ts:68—74 只接受被占用的单个实体；:103—110 按需求版本生成基线，不能直接承担项目原型成果。
-当前 asset-domain/src/index.ts:122—130 固定需求及前置完成证据；occupations.ts:44—47 在完成时重检，均须从原型路径删除。
-当前 SQL 的 studio_baselines:837—850 唯一绑定需求版本，studio_occupation_inputs 绑定前置完成，均不保留为兼容路径。
+原型成果基线由 `studio_prototype_baselines` 承载，原型路径不再按需求版本生成基线，也不再绑定前置完成输入；旧 `studio_baselines`、`studio_occupation_inputs` 两表已删除，不保留为兼容路径。
 材料设计占用、固定场景来源、材料独立确认、前置 DAG 校验、材料复用与交接自身规则继续按原职责运行。
 
 ## 3. 领域身份与关系
@@ -111,7 +109,7 @@ authorConfirmation 由可信 Host 在作者明确确认后构造；sourceSha 必
 工程证据只绑定工程源码、规则、构建产物与精确候选，不绑定固定需求 MD、materialVersion 或前置完成状态。
 后台校验形状、SHA、候选差异及权限，不能凭 evidenceHash 宣称自己重跑了桌面检查或验证了业务正确性。
 
-## 5. HTTP 接口提案
+## 5. HTTP 接口
 
 统一前缀 `/v1/projects/:projectId`，继续使用现有认证、错误 envelope 和项目权限检查。
 
@@ -148,7 +146,7 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 1. 用户发送实施指令，Host 解析已有需求真实 ID；后台验证权限及 writeScope/policyHash，在项目短事务中登记 task、唯一 branch、代次、参考范围和全部非空初始开发 claims。已有任一需求被别的任务领取则全部回滚；成功后 Host 按 startHead 创建个人 worktree。只读探索不创建可写任务。
 2. 多轮实现只写本分支；用户指令进入可写执行前，Host 校验当前 task 及全部开发 claims，扩范围先完成原子扩领。开发 claim 不要求占用或确认需求材料，也不检查前置需求完成；材料改版提示差异，不释放 claim 或允许按新版本另领同一 requirementId。
 3. Host 保留多轮任务分支历史，从后台登记的 sourceBaseHead（初始 startHead，或经验证的冲突重确认基头）与用户看到的精确工程树归一构造新单提交 source；第一父=sourceBaseHead，原型树与作者所见一致，非原型树来自基头。作者确认该 sourceSha 与 confirmationId，不重写原任务分支历史；先持久化并上传不可变 source ref，确认远端对象可读，再进入合并。
-   若当前授权代码与已有基线无变化，提示打开既有基线；不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。以下为 R09 待整体确认的处理提案：查看既有基线不发 prepare／complete，任务保持 active、全部 claims 保留，界面说明“无代码变化，事项仍在开发”。用户明确选择结束事项才走既有 cancel，核对未决集成后关闭全部 claims、保留现场；不新增 no-change 状态、伪 acceptance 或伪基线。无既有基线时只说明无可接受代码变化，不伪造打开目标。
+   若当前授权代码与已有基线无变化，固定候选得到 `no-change` 状态：不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。查看既有基线不发 prepare／complete，任务保持 active、全部 claims 保留，界面说明“没有代码变化；事项仍在开发”。用户明确选择结束事项才走既有 `endPrototypeTask`，核对未决集成后关闭全部 claims、保留现场；不伪造 acceptance 或伪基线。无既有基线时只说明无可接受代码变化，不伪造打开目标。
 4. Host 获取 recognizedHead 作为 expectedHead；若等于 sourceBaseHead，author-confirmed 的 candidate=source；否则合并 expectedHead/source，保留原 source 授权并全量重检新 candidate。冲突后先登记最新 head 为新 sourceBaseHead，在其上归一新 source 并由用户重新确认。
 5. 候选生成后上传其不可变 candidate ref，复核原 source ref；两个对象均按 SHA 可见后才 prepare，API 验证权限、稳定头、父关系、路径、合并树与当前证据。source 先于合并上传，因此冲突发生在 prepare 前时，source-base 接口也能读取并独立验证原源码，不依赖尚未存在的集成；全程不会先推进 stable。
 6. API 在项目短事务锁项目行，再读 task，校验 active、owner/client/generation/revision、expectedHead 和幂等键；核对完整开发集合、每项 claimId／generation／active／task 归属及 claimsDigest；项目无其他 prepared 才写 prepared，并冻结该 claim 集合。
@@ -172,7 +170,7 @@ Host 先将 ref 名、准确 SHA、sourceBaseHead 和上传进度写入本地 op
 
 ### 6.1 后台验证候选树
 
-当前[Dockerfile](../../../apps/collaboration-api/Dockerfile) 两阶段均用 node:22-bookworm-slim，未声明安装 Git；[package.json](../../../apps/collaboration-api/package.json) 没有 Git 依赖。现有 Git API 适配不能独立证明合并树，因此提案新增服务端 Git 验证运行工具，不能描述为已有能力或零依赖变化。
+[Dockerfile](../../../apps/collaboration-api/Dockerfile) 以 `git-verifier` 阶段自编 Git 2.56.0 并复制进运行镜像（`Dockerfile:8-18,41-42`），[package.json](../../../apps/collaboration-api/package.json) 仍不引入 Git npm 依赖。现有 Git API 适配不能独立证明合并树，因此服务端保留独立的 Git 验证运行工具。
 Git 以 GPLv2 许可的独立进程运行，不新增 npm 包或把 Git 链接进应用。版本路线沿用[桌面运行锁](../../../apps/desktop-distribution/build/studio-runtime.lock.json)中的 `2.56.0.windows.2`，服务端采用同一上游 `2.56.0` 的 Linux 构建；使用固定的三方合并策略，规则版本进入 policyHash。实施时在服务镜像构建中锁定来源、包摘要和镜像摘要，不能依赖浮动系统包。Windows 补丁与 Linux 的合并树一致性必须通过同一组冲突／重命名样本核对；尚未取得该运行证据，不能提前宣称行为一致。维护成本包括镜像与许可告知、升级和漏洞修复，不升级 DSH 宿主。
 后台先验证 sourceBaseHead 与 task 已登记起点或原冲突 operation 链吻合，source 必须恰有一个父提交且为该基头；不能只信请求自报。clean-merge 的真实 candidate 必须恰有两个父提交，顺序为 expectedHead、sourceSha；derivation.mergeBaseSha 匹配真实共同祖先，不要求旧 source 的父提交变成新 expectedHead。此步骤使用原仓库 SHA。
 只经 Git API 读取共同祖先、expectedHead、sourceSha 的 `原型代码/` code tree/blob，校验对象 ID；不 fetch 完整业务仓库，不读取材料正文，不保留仓库缓存。仅在隔离临时对象库为这三个子树重建“合成祖先、合成 head、合成 source”三个提交，执行 `git merge-tree --write-tree syntheticHead syntheticSource`。

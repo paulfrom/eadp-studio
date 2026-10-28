@@ -67,11 +67,11 @@ AI 以当前项目原型、工程和本轮对话为上下文，按当前任务�
 | 放大／外开 | 放大画布或打开同一受管本地预览。 | 不等于分享、远端部署或正式发布。 |
 | 源码变化后查看 | 保留旧预览，明确提示待重新运行。 | 不将旧构建或旧检查描述成当前源码的结果。 |
 
-内嵌承载实施提案采用主进程持有的隔离 `WebContentsView`，原型作为独立顶层文档加载，保留现有 CSP；不直接移植设计稿 iframe。画布布局、焦点、遮挡、停止及恢复方案与 PT05／PT07 的实现验证样本见[内嵌承载提案](prototypes/technology-and-browser-validation.md#11-r03内嵌承载候选与证据边界)。对应开发及实现验证尚未执行，实际桌面 Electron／Chromium 版本与承载可行性尚未核实；该候选不表示产品已支持内嵌。切到代码或打开覆盖面板时隐藏原生画布，恢复前核对当前预览实例；失败保留工程并显示重试入口，不能以旧构建或独立窗口冒充内嵌成功。
+内嵌承载采用主进程持有的隔离 `WebContentsView`（`apps/desktop-distribution/build/studio-prototype-view.ts:82`），原型作为独立顶层文档加载，保留现有 CSP；不直接移植设计稿 iframe。画布布局、焦点、遮挡、停止及恢复方案与 PT05／PT07 的实现验证样本见[内嵌承载设计](prototypes/technology-and-browser-validation.md#11-r03内嵌承载候选与证据边界)。真实桌面 Electron／Chromium 版本与承载体验尚未完成闭环验收。切到代码或打开覆盖面板时隐藏原生画布，恢复前核对当前预览实例；失败保留工程并显示重试入口，不以旧构建或独立窗口冒充内嵌成功。
 
 应用内“保存订单”“查看审批”只影响业务原型，不能触发工作台确认。真实产品沿用受控 loopback 服务、Mock 与网络围栏，预览页面不能获得工作台命令权限。
 
-本地业务验证拟由稳定 Playwright 驱动随包专属 Chromium，按需求用例执行点击、填写、校验与结果断言，并返回截图、DOM、console 和 trace；现有 Electron 检查继续负责实际桌面预览的技术保护，两种结果分别表达。模板当前使用内存精确 Mock handler，不是 MSW；方案与新增分发成本见[技术选型与浏览器验证](prototypes/technology-and-browser-validation.md)。这些能力尚未接入本交互稿或产品。
+本地业务验证由稳定 Playwright 驱动随包专属 Chromium（`host/prototype/browser-provider.ts`），按需求用例执行点击、填写、校验与结果断言，并返回截图、DOM、console 和 trace；现有 Electron 检查继续负责实际桌面预览的技术保护，两种结果分别表达。模板当前使用内存精确 Mock handler，不是 MSW；方案与新增分发成本见[技术选型与浏览器验证](prototypes/technology-and-browser-validation.md)。浏览器验证的真实业务用例尚未完成桌面闭环验收。
 
 ### 2.4 文件与代码
 
