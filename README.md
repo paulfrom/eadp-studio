@@ -4,7 +4,7 @@
 
 ## 当前实现
 
-- `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型协作任务与开发占用/检查/预览/确认、复用资格与采用、交接回执、发布/撤回和主题设置。发布与撤回的代码路径已就绪，发布目标与独立授权属部署期配置，随包桌面未提供该配置通道。
+- `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型协作任务与开发占用/检查/预览/确认、复用资格与采用、交接收悉、发布/撤回和主题设置。发布与撤回的代码路径已就绪，发布目标与独立授权属部署期配置，随包桌面未提供该配置通道。
 - `apps/collaboration-api/`：Fastify + PostgreSQL 协同后端。实现协同会话、GitLab 账号绑定与成员权限校验、项目建仓/初始化、固定 Git 正文读取校验、持久占用、集成、复用记录、发布授权和桌面更新检查。
 - `packages/asset-domain/`、`packages/contracts/`：资产领域模型与跨端契约。
 - `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。
@@ -20,6 +20,8 @@
 | `packages/contracts/` | API 与客户端共享的 TypeBox 契约 |
 | `apps/desktop-distribution/` | 固定上游版本、发行装配脚本和发布锁 |
 | `scripts/` | 仓库校验、DSH 获取、桌面开发与打包入口 |
+| `docs/product-blueprint/` | 产品构想图：做什么、怎么做、谁来做（draw.io 可编辑） |
+| `docs/architecture/` | 技术架构图：容器视图、组件视图、发行装配链（draw.io 可编辑） |
 | `CONTEXT.md` | 领域语言（术语表） |
 
 用户项目中的 `场景/`、`需求/`、`交接/`、`原型代码/` 属于产品运行时管理的业务工程，不混入本研发仓库；材料文件名取自业务名称，稳定身份由文件内的 `eadp-metadata` 块承载。
