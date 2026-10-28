@@ -167,4 +167,6 @@ AI 以当前项目原型、工程和本轮对话为上下文，按当前任务�
 
 2026-10-27 补充事项与队列、领取及扩领冲突、来源与现场标识的模拟；[受维护离线检查](../../tests/design-prototypes/workbench-demo.mjs)覆盖相关模拟交互，运行需显式提供已安装的 Happy DOM 模块路径。页面使用内存状态，整页刷新会重置；DOM 检查不验证真实浏览器布局、焦点、持久化或桌面协同。
 
+[受维护离线检查](../../tests/design-prototypes/check-prototype-headers.mjs)覆盖场景与需求两稿的对话头 CTA、变更写入、阻断处理与确认流程，运行同样需显式提供已安装的 jsdom 模块路径（`node tests/design-prototypes/check-prototype-headers.mjs <jsdom lib/api.js>`）；本仓库不安装也不下载该依赖，未提供路径时脚本直接报用法错误。
+
 静态检查确认核心主题 token 与现有需求 AI 交互稿一致，项目侧栏为 248px、顶栏为 44px、状态栏为 38px；CSS 可解析且基础规则先于响应式规则，本地资源与文档链接有效。设计稿中固定需求依据、版本绑定、重新绑定和旧需求正文入口已删除。JS 语法与 `git diff --check` 通过；上述结果不构成真实浏览器视觉或产品桌面验收。
