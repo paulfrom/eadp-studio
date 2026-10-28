@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,7 +11,24 @@ import { fileURLToPath } from 'node:url';
 const source = fileURLToPath(new URL('../../scripts/setup-linux.sh', import.meta.url));
 const preflightCode = readFileSync(source, 'utf8').match(/node --input-type=module -e '\n([\s\S]*?)\n' /)?.[1];
 assert.ok(preflightCode, 'The version preflight must be available for real Node validation');
-const bash = process.env.BASH_EXECUTABLE ?? '/bin/bash';
+/**
+ * Resolves the Bash used to run the script under test. An explicit
+ * `BASH_EXECUTABLE` always wins; on Windows the shell Git for Windows ships
+ * beside the active Git installation is used, so the gate needs no per-machine
+ * variable.
+ */
+function resolveBash() {
+  if (process.env.BASH_EXECUTABLE) return process.env.BASH_EXECUTABLE;
+  if (process.platform !== 'win32') return '/bin/bash';
+  const execPath = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim();
+  // `<git>/mingw64/libexec/git-core` → `<git>`, which carries `bin/bash.exe`.
+  const root = execPath?.replace(/[\\/](mingw64|libexec|git-core)[\\/]?.*$/, '');
+  for (const candidate of root ? [path.join(root, 'bin/bash.exe'), path.join(root, 'usr/bin/bash.exe')] : []) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'bash';
+}
+const bash = resolveBash();
 const inheritedEnv = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => name.toLowerCase() !== 'path'));
 const shellPath = (value) => process.platform === 'win32'

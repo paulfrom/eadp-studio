@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, writeFile, rm, readdir, link } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { createStudioTemplateArchive, materializeStudioTemplate, TEMPLATE_ARCHIVE } from '../../apps/desktop-distribution/build/studio-template-archive.mjs'
@@ -12,6 +13,16 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 const common = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', cwd: path.resolve(import.meta.dirname, '../..') })
 if (common.status !== 0) throw new Error('Cannot locate the fixed package-manager runtime.')
 const primary = path.dirname(common.stdout.trim())
+
+/**
+ * Resolves the host tar used to unpack the packed tarball. On Windows this is
+ * the shipped bsdtar: a Git-Bash PATH can put GNU tar first, which reads a
+ * `D:\…` argument as a remote host name.
+ */
+function hostTar() {
+  const systemTar = process.env.SystemRoot && path.join(process.env.SystemRoot, 'System32/tar.exe')
+  return systemTar && existsSync(systemTar) ? systemTar : 'tar'
+}
 
 test('real pnpm pack preserves original ignored template filenames through its declared archive asset', async () => {
   const root = await mkdtemp(path.join(primary, '.local/build/dsh/.studio-template-pack-'))
@@ -30,7 +41,7 @@ test('real pnpm pack preserves original ignored template filenames through its d
     assert.equal(packed.status, 0, packed.stdout + packed.stderr)
     const tarball = (await readdir(output)).find(file => file.endsWith('.tgz'))
     await mkdir(extracted)
-    const unpacked = spawnSync('tar', ['-xzf', path.join(output, tarball), '-C', extracted], { encoding: 'utf8', windowsHide: true })
+    const unpacked = spawnSync(hostTar(), ['-xzf', path.join(output, tarball), '-C', extracted], { encoding: 'utf8', windowsHide: true })
     assert.equal(unpacked.status, 0, unpacked.stderr)
     const installed = path.join(extracted, 'package')
     await assert.rejects(readFile(path.join(installed, 'assets/prototype-template/.gitignore')), /ENOENT/)

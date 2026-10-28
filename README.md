@@ -50,6 +50,15 @@ node scripts/fetch-dsh.mjs --archive-only
 
 满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力。
 
+## 仓库校验与测试组
+
+`pnpm check` 校验跟踪文件、模板哈希与发行边界；`lefthook` 的 pre-commit 会自动运行它与离线测试组。
+
+| 命令 | 覆盖 | 前置 |
+| --- | --- | --- |
+| `pnpm test` | `tests/scripts/`、`tests/scenario-client/*.test.mjs` 的离线组 | 根依赖安装 |
+| `pnpm test:all` | 追加 `tests/scenario-client/*.test.ts`、`tests/gitlab-auth-host/`、`tests/windows-desktop/`、`tests/collaboration/` | `node scripts/fetch-dsh.mjs` 与协作后端依赖（.ts 组经 `apps/collaboration-api` 的 tsx loader 运行）；数据库集成用例需 `STUDIO_TEST_DATABASE_URL`／`SCENARIO_SCHEMA_TEST_DATABASE_URL`，缺变量时跳过，跳过不等于通过 |
+
 ## 本地桌面开发与调试
 
 在原生 Windows x64 工作站的仓库根目录执行：

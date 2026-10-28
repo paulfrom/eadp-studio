@@ -1,0 +1,9 @@
+# Local commit gate: the repository check plus the offline test group must pass
+# before a commit. Groups that need the fixed DSH source or database variables
+# stay in `pnpm test:all` and are run explicitly.
+pre-commit:
+  jobs:
+    - name: repository check
+      run: pnpm check
+    - name: offline tests
+      run: pnpm test

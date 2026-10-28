@@ -10,7 +10,13 @@
   "scripts": {
     "dev:desktop": "node scripts/dev-desktop.mjs",
     "build:desktop": "node scripts/build-desktop.mjs",
+    "check": "node scripts/check-repository.mjs",
     "check:repository": "node scripts/check-repository.mjs",
-    "fetch:dsh": "node scripts/fetch-dsh.mjs"
+    "fetch:dsh": "node scripts/fetch-dsh.mjs",
+    "test": "node --test tests/scripts/*.test.mjs tests/scenario-client/*.test.mjs",
+    "test:all": "node --import ./apps/collaboration-api/node_modules/tsx/dist/loader.mjs --test tests/scripts/*.test.mjs tests/scenario-client/*.test.mjs tests/scenario-client/*.test.ts tests/gitlab-auth-host/*.test.ts tests/windows-desktop/*.test.mjs tests/windows-desktop/*.test.ts tests/collaboration/*.test.mjs tests/collaboration/*.test.ts"
+  },
+  "devDependencies": {
+    "lefthook": "^2.2.2"
   }
 }

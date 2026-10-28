@@ -94,5 +94,5 @@
 - 对象 schema 必须显式声明 additionalProperties。
 
 ## 代码提交门禁
-- 提交前必须通过项目 lint 检查。
+- 提交前必须通过 `pnpm check` 与受影响测试组（`pnpm test`，必要时 `pnpm test:all`）。
 - 涉及 cordis.patch.yml 的修改，必须显式声明依赖的 service 与 slot，不允许隐式依赖。
