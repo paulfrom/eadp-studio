@@ -87,7 +87,7 @@ export async function buildDesktop({ root, sharedRoot, check = false, runNode, p
   pnpm('install', tree)
   pnpm('checkWindows', tree)
   if (check) return undefined
-  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), [], root)
+  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), ['--browser-runtime'], root)
   const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
   await mkdir(builderCache, { recursive: true })
   const environment = {

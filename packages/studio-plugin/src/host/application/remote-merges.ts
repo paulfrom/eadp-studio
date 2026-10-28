@@ -57,9 +57,11 @@ export class RemoteMerges {
     }
     const preserved = await this.ports.git.commitAll(worktree, '同步远端已接受版本前的本地材料', request.identity)
     try {
-      await this.ports.git.fastForward(worktree, target)
-      if (preserved !== head) {
-        const conflicts = await this.ports.git.applyCommit(worktree, preserved)
+      if (preserved === head) {
+        // A clean checkout must advance its files as well as its branch tip.
+        await this.ports.git.fastForward(worktree, target)
+      } else {
+        const conflicts = await this.ports.git.applyCommit(worktree, target)
         for (const file of conflicts) {
           const stages = await this.ports.git.conflictStages(worktree, file)
           let base = decode(stages.base), ours = decode(stages.ours), theirs = decode(stages.theirs)
@@ -81,8 +83,9 @@ export class RemoteMerges {
           report.aiFiles.push(file)
         }
         await this.ports.git.quitApply(worktree)
-        await this.ports.git.unstage(worktree)
       }
+      await this.ports.git.moveHead(worktree, target)
+      await this.ports.git.unstage(worktree)
       return report
     } catch (error) {
       await this.ports.git.abortApply(worktree).catch(() => undefined)

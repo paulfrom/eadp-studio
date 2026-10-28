@@ -88,7 +88,7 @@ export class MaterialSources {
     const source = record.sources.find(value => value.selected && ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(value.format) && record.sourcePaths[value.id] && path.resolve(record.sourcePaths[value.id]!) === path.resolve(task.worktree, output.path))
     if (!source) return
     const filename = record.sourcePaths[source.id]!
-    const relative = path.relative(this.store.directory, filename)
+    const relative = path.relative(this.store.directory, filename).split(path.sep).join('/')
     try { if (digest(await readFile(await containedFile(this.store.directory, relative))) !== source.sha256) return } catch { return }
     source.status = 'read'; source.ranges = output.ranges; source.text = `原生 read_image 已读取图像，attachmentId=${output.attachmentId}；范围=${output.ranges.join('；')}`; delete source.error
     await this.store.save()

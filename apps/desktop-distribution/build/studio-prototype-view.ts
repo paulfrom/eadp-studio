@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { WebContentsView, session, type BrowserWindow, type Session } from 'electron'
+import type { WebContentsView, BrowserWindow, Session } from 'electron'
 
 /** Identity and origin are supplied by the Host that owns a started preview, never by the preview page. */
 type StudioPreviewSource = { kind: 'task'; prototypeTaskId: string } | { kind: 'baseline'; baselineId: string; commitSha: string }
@@ -45,12 +45,12 @@ function boundsFor(owner: BrowserWindow, value: StudioPreviewBounds): StudioPrev
 
 /** A single native preview, with no preload or application session, owned by its main window. */
 export class StudioPrototypeView {
-  private view?: WebContentsView
-  private instance?: StudioPreviewIdentity
-  private owner?: BrowserWindow
+  private view: WebContentsView | undefined
+  private instance: StudioPreviewIdentity | undefined
+  private owner: BrowserWindow | undefined
   private revision = 0
   private epoch = 0
-  private releaseOwner?: () => void
+  private releaseOwner: (() => void) | undefined
   private cleanups = new Set<Promise<void>>()
   private cleanupFailures: unknown[] = []
   private disposed = false
@@ -62,6 +62,10 @@ export class StudioPrototypeView {
     await this.close()
     if (owner.isDestroyed()) throw new Error('Application window is unavailable')
     const epoch = this.epoch
+    // HostProcess is also imported by ordinary Node processes; load native APIs only when mounting a view.
+    if (!process.versions.electron) throw new Error('Native preview requires Electron')
+    const { WebContentsView, session } = await import('electron')
+    if (this.disposed || epoch !== this.epoch || owner.isDestroyed()) throw new Error('Preview selection changed')
     const isolated = session.fromPartition(`studio-prototype-${randomUUID()}`)
     isolated.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
     isolated.setPermissionCheckHandler(() => false)

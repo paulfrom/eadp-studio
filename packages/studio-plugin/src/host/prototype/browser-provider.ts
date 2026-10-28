@@ -166,6 +166,7 @@ export class PrototypeBrowserProvider {
             return { action: command.action, attachment: { id: captured.id, sha256: captured.sha256 } }
           } finally { if (active) await this.context.tracing.stop().catch(() => {}) }
         }
+        if (!('target' in command)) throw new Error('浏览器操作缺少目标')
         const target = locator(this.page, command.target)
         if (command.action === 'click') await target.click()
         else if (command.action === 'fill') await target.fill(bounded(command.value, 10_000))

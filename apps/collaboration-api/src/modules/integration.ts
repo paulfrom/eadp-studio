@@ -35,7 +35,7 @@ function validateConfirmation(project: ProjectView, all: EntityView[], prospecti
   requireCondition(confirmation.readHash === confirmation.fixed.sha256, 'READ_VERSION_MISMATCH', 'Confirmation must bind the exact final material hash');
   if (confirmation.confirmationMethod === 'ai-assisted') {
     requireCondition(confirmation.reviewEvidence.candidateSha === input.candidateSha, 'REVIEW_CANDIDATE_MISMATCH', 'AI review must bind the exact author-confirmed candidate');
-    requireCondition(confirmation.reviewEvidence.inputHash === createHash('sha256').update(reviewInputText(input, root)).digest('hex'), 'REVIEW_INPUT_MISMATCH', 'AI review must bind the exact confirmed input and control context');
+    requireCondition(confirmation.reviewEvidence.inputHash === createHash('sha256').update(reviewInputText(input)).digest('hex'), 'REVIEW_INPUT_MISMATCH', 'AI review must bind the exact confirmed input and control context');
   }
   requireCondition(value.revision === confirmation.expectedRevision && metadata.kind === value.kind, 'CONFIRMATION_REVISION_CONFLICT', 'Confirmation entity, kind and revision must match');
   requireCondition(!metadata.applicability || value.kind === 'requirement', 'INVALID_APPLICABILITY', 'Only a requirement may be marked not applicable', 422);

@@ -31,7 +31,7 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'material') {
   const materialPath = `需求/${metadata.title}.md`;
   const body = Buffer.from('# Accepted input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
   const fixed = { commitSha: fixedSha, path: materialPath, sha256: createHash('sha256').update(body).digest('hex') };
-  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
+  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: 'design' as const, inputVersion: 1, createdAt: '' };
   const entity: EntityView = { id: 'asset-1', kind, title: metadata.title, revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: actor.id, templateId: metadata.templateId, templateRef: metadata.templateRef, occupation: token, current: { version: 1, confirmationId: 'confirmation-1', confirmedBy: actor.id, confirmedAt: '', fixed, metadata, reuse: { enabled: true, reason: 'accepted' } } };
   const project: ProjectView = { id: 'project-1', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: 'Project', namespaceId: 2, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: head, revision: 1 };
   const changedPath = materialPath;
@@ -113,7 +113,7 @@ for (const stage of ['material'] as const) {
   test(`${stage} AI-assisted confirmation binds the reviewed candidate and exact input`, () => {
     const f = fixture(stage), confirmation = f.input.confirmations[0]!;
     f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence: {
-      candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex'),
+      candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input)).digest('hex'),
       reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64),
     } };
     validateIntegration(f.project, f.all, actor, f.input, f.materials);
@@ -121,7 +121,7 @@ for (const stage of ['material'] as const) {
   for (const field of ['candidateSha', 'inputHash'] as const) {
     test(`${stage} rejects a review for another ${field}`, () => {
       const f = fixture(stage), confirmation = f.input.confirmations[0]!;
-      const reviewEvidence = { candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex'),
+      const reviewEvidence = { candidateSha: candidate, inputHash: createHash('sha256').update(reviewInputText(f.input)).digest('hex'),
         reportHash: '1'.repeat(64), dispositionHash: '2'.repeat(64) };
       reviewEvidence[field] = field === 'candidateSha' ? 'f'.repeat(40) : '0'.repeat(64);
       f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence };
@@ -131,7 +131,7 @@ for (const stage of ['material'] as const) {
   }
   test(`${stage} review digest ignores JSON property order but rejects stale control context`, () => {
     const f = fixture(stage), confirmation = f.input.confirmations[0]!;
-    const hash = () => createHash('sha256').update(reviewInputText(f.input, f.entity)).digest('hex');
+    const hash = () => createHash('sha256').update(reviewInputText(f.input)).digest('hex');
     const original = hash();
     f.input.token = Object.fromEntries(Object.entries(f.input.token).reverse()) as typeof f.input.token;
     if (f.entity.current) f.entity.current = Object.fromEntries(Object.entries(f.entity.current).reverse()) as typeof f.entity.current;

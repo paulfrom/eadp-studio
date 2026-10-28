@@ -93,7 +93,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
   }
 }
 
-for (const stage of ['material', 'prototype'] as const) test(`${stage} persists before remote work and accepts its fixed original task`, async t => {
+for (const stage of ['material'] as const) test(`${stage} persists before remote work and accepts its fixed original task`, async t => {
   const f = await fixture(t, stage), operation = await f.runner.submit(f.task, f.draft, f.prepare)
   await f.lane.settle()
   assert.equal(operation.phase, 'accepted')

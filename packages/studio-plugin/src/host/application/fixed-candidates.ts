@@ -41,7 +41,7 @@ export class FixedCandidates {
     const task = request.task ?? await this.deps.designTask(context.remote, context.entity)
     context = await this.deps.entity(request.entityId, context.remote.project.id)
     const { remote, entity } = context, token = await this.deps.owned(entity)
-    await this.requireTask(task, remote, entity, token, request.purpose)
+    await this.requireTask(task, remote, entity, token)
     const draft = await this.currentMaterialDraft(task, entity)
     assertHandoffSource(task, draft)
     if (request.expectedHash && draft.sha256 !== request.expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
@@ -76,7 +76,7 @@ export class FixedCandidates {
     const stage = 'material' as const
     const input = { ...prepareBase, stage, confirmations }
     return { remote, entity, task, draft, drafts, paths, allowedPaths, confirmations, input,
-      inputHash: digest(reviewInputText(input, entity)),
+      inputHash: digest(reviewInputText(input)),
       snapshot: { head, files: await this.snapshotFiles(task.worktree, allowedPaths) } }
   }
 
@@ -132,7 +132,7 @@ export class FixedCandidates {
   }
 
   /** A recorded task cannot be replaced by another session or a newly acquired occupation. */
-  private async requireTask(task: TaskView, remote: ProjectState, entity: EntityView, token: OccupationToken, purpose: FixedCandidateRequest['purpose']): Promise<void> {
+  private async requireTask(task: TaskView, remote: ProjectState, entity: EntityView, token: OccupationToken): Promise<void> {
     const expectedPurpose = entity.kind === 'handoff' ? 'handoff' : 'material'
     const registered = (await this.store.read()).tasks.some(value => value.projectId === task.projectId && value.entityId === task.entityId && value.worktree === task.worktree && value.sessionId === task.sessionId && value.purpose === task.purpose && value.inputHash === task.inputHash)
     if (!registered || task.projectId !== remote.project.id || task.entityId !== entity.id || task.purpose !== expectedPurpose || path.basename(task.worktree) !== token.taskId || entity.occupation?.purpose !== 'design') throw new Error('原任务现场与当前材料占用不一致，请保留现场并重新核对')

@@ -13,7 +13,7 @@ test('ordinary Node imports the real Desktop HostProcess and Electron helpers wi
   const fixture = await mkdtemp(path.join(prepared, 'apps/desktop/.studio-node-import-'))
   try {
     for (const filename of ['host-process.ts', 'node-environment.ts']) await cp(path.join(prepared, 'apps/desktop/src', filename), path.join(fixture, filename))
-    for (const filename of ['studio-browser-check.ts', 'studio-secret-store.ts']) await cp(path.join(repo, 'apps/desktop-distribution/build', filename), path.join(fixture, filename))
+    for (const filename of ['studio-browser-check.ts', 'studio-secret-store.ts', 'studio-prototype-bridge.ts', 'studio-prototype-view.ts']) await cp(path.join(repo, 'apps/desktop-distribution/build', filename), path.join(fixture, filename))
     const script = `
       import assert from 'node:assert/strict';
       assert.equal(process.versions.electron, undefined);

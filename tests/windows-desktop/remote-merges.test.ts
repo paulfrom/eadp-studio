@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
+import type { PlatformRuntime, ProcessResult } from '../../packages/studio-plugin/src/host/adapters/platform/runtime.ts'
+import { WorkspaceGit } from '../../packages/studio-plugin/src/host/adapters/workspace/git.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import { RemoteMerges, RemoteSyncPending } from '../../packages/studio-plugin/src/host/application/remote-merges.ts'
 
@@ -42,7 +46,7 @@ test('a clean remote advance preserves local bytes and reports the applied commi
   const report = await f.merges.align({ worktree: f.worktree, target, identity: author })
   assert.deepEqual(report?.files, ['场景/其他.md'])
   assert.deepEqual(report?.aiFiles, [])
-  assert.deepEqual(f.calls, ['state', 'commitAll', 'fastForward', 'applyCommit', 'quitApply', 'unstage'])
+  assert.deepEqual(f.calls, ['state', 'commitAll', 'applyCommit', 'quitApply', 'moveHead', 'unstage'])
 })
 
 test('AI merges a text conflict and the resolved bytes are applied', async t => {
@@ -97,13 +101,58 @@ test('an AI deletion also refuses a conflicted file symlink', async t => {
   assert.equal(await readFile(linked, 'utf8'), '外部原内容\n')
 })
 
-test('a clean worktree fast-forwards without replaying its own history', async t => {
+test('a clean worktree moves to the accepted head without replaying its own history', async t => {
   const f = await fixture(t, [], undefined, true)
   const report = await f.merges.align({ worktree: f.worktree, target, identity: author })
   assert.ok(report)
   assert.ok(!f.calls.includes('applyCommit'))
   assert.ok(f.calls.includes('fastForward'))
 })
+
+for (const localChanges of [false, true]) {
+  test(`real Git alignment updates accepted bytes and ${localChanges ? 'preserves local edits' : 'keeps a clean checkout clean'}`, async t => {
+    const root = await mkdtemp(path.join(tmpdir(), 'eadp-remote-merge-real-'))
+    t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
+    const execute = promisify(execFile)
+    const run = async (args: readonly string[], cwd = root): Promise<ProcessResult> => {
+      try {
+        const result = await execute('git', [...args], { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } })
+        return { ...result, stdoutBytes: Buffer.from(result.stdout), exitCode: 0 }
+      } catch (error) {
+        const failure = error as { code: number | string; stdout: string; stderr: string }
+        if (typeof failure.code !== 'number') throw error
+        return { stdout: failure.stdout, stderr: failure.stderr, stdoutBytes: Buffer.from(failure.stdout), exitCode: failure.code }
+      }
+    }
+    const setup = async (...args: string[]) => { const result = await run(args); assert.equal(result.exitCode, 0, result.stderr); return result.stdout.trim() }
+    await setup('init', '--initial-branch=main')
+    await setup('config', 'user.name', author.name); await setup('config', 'user.email', author.email)
+    await setup('config', 'commit.gpgsign', 'false'); await setup('config', 'core.autocrlf', 'false')
+    await setup('remote', 'add', 'origin', 'https://example.test/project.git')
+    await writeFile(path.join(root, 'material.md'), 'old accepted material\n')
+    await writeFile(path.join(root, 'local.md'), 'original local material\n')
+    await setup('add', '--all'); await setup('commit', '-m', 'base')
+    const original = await setup('rev-parse', 'HEAD')
+    await writeFile(path.join(root, 'material.md'), 'new accepted remote material\n')
+    await setup('add', '--all'); await setup('commit', '-m', 'accepted remote update')
+    const accepted = await setup('rev-parse', 'HEAD')
+    await setup('reset', '--hard', original)
+    if (localChanges) await writeFile(path.join(root, 'local.md'), 'uncommitted author edit\n')
+    const runtime = {
+      start: async (_tool: string, args: readonly string[], options: { cwd: string }) => ({ done: run(args, options.cwd) }),
+      run: async (_tool: string, args: readonly string[], options: { cwd: string }) => run(args, options.cwd),
+    } as unknown as PlatformRuntime
+    const git = new WorkspaceGit(runtime)
+    const merges = new RemoteMerges({ git } as unknown as Pick<HostPorts, 'git' | 'mergeConflict'>)
+    const report = await merges.align({ worktree: root, target: accepted, identity: author })
+    assert.deepEqual(report?.files, ['material.md'])
+    assert.equal(await setup('rev-parse', 'HEAD'), accepted)
+    assert.equal(await readFile(path.join(root, 'material.md'), 'utf8'), 'new accepted remote material\n')
+    assert.equal(await readFile(path.join(root, 'local.md'), 'utf8'), localChanges ? 'uncommitted author edit\n' : 'original local material\n')
+    assert.equal(await setup('status', '--porcelain'), localChanges ? 'M local.md' : '')
+    assert.equal(await setup('diff', '--cached', '--name-only'), '')
+  })
+}
 
 test('a leftover candidate commit is reclaimed as local bytes without a merge', async t => {
   const f = await fixture(t, [])

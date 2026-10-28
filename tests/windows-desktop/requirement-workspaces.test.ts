@@ -10,6 +10,7 @@ import { digest, readMaterial, saveMaterial } from '../../packages/studio-plugin
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
 import type { ProjectWorkspaces } from '../../packages/studio-plugin/src/host/application/projects.ts'
 import { StudioStore } from '../../packages/studio-plugin/src/host/application/state.ts'
+import { BackgroundLane } from '../../packages/studio-plugin/src/host/application/background-lane.ts'
 import { ScenarioWorkspaces } from '../../packages/studio-plugin/src/host/application/scenario-workspaces.ts'
 
 const templateBody = '## 目标\n\n## 业务规则\n\n## 验收条件\n'
@@ -32,12 +33,16 @@ async function fixture(t: { after(work: () => Promise<unknown>): unknown }) {
   const ports = { account: async () => ({ id: 1 }), session: async (value: TaskView, rules: string) => { sessionRules.push(rules); return value.sessionId }, git: { state: async () => ({ dirty: false, branch: 'main', head: 'c'.repeat(40) }) } } as unknown as HostPorts
   const projects = { readFixed: async (_project: string, _commit: string, relative: string) => templates.get(relative), localFixed: async (_project: string, _commit: string, relative: string) => templates.get(relative) } as unknown as ProjectWorkspaces
   const api = { request: async () => entity } as unknown as CollaborationClient
+  const lane = new BackgroundLane()
   const workspaces = new ScenarioWorkspaces(store, api, ports, projects, {
     entity: async () => ({ entity, remote }), task: async () => task,
     owned: async value => { if (!value.occupation) throw new Error('occupation missing'); return { ...value.occupation, expectedRevision: value.revision } },
-    deliver: async work => { await work() },
+    deliver: work => { lane.append(work) },
   })
-  t.after(async () => { workspaces.dispose(); await rm(parent, { recursive: true, force: true }) })
+  const reports: Promise<unknown>[] = []
+  const report = workspaces.statusReports.report.bind(workspaces.statusReports)
+  workspaces.statusReports.report = input => { const pending = report(input); reports.push(pending); return pending }
+  t.after(async () => { workspaces.dispose(); await lane.settle(); await Promise.all(reports); await rm(parent, { recursive: true, force: true }) })
   const draft = await saveMaterial(root, metadata(), '')
   const record = await workspaces.record(entity.id)
   record.sources.push({ id: 'read-source', name: '审批规则', format: 'txt', sha256: digest('仅审批人可以同意'), status: 'read', ranges: ['line:1'], text: '仅审批人可以同意', selected: true, formal: false })

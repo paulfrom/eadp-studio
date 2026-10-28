@@ -15,6 +15,15 @@ services:
       context: ../..
       dockerfile: apps/collaboration-api/Dockerfile
     network_mode: bridge
+    # Two bounded Git verifiers share the budget with Node and the temporary
+    # object store. No repository data is written to the container layer.
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2.0
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,mode=0700,uid=1000,gid=1000
     ports:
       - '${EADP_API_PORT:-6972}:3001'
     extra_hosts:
@@ -30,6 +39,7 @@ services:
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
       HOST: 0.0.0.0
+      TMPDIR: /tmp
       PORT: 3001
       STUDIO_SESSION_TTL_DAYS: ${STUDIO_SESSION_TTL_DAYS:-90}
       STUDIO_PUBLISHER_USER_IDS: ${STUDIO_PUBLISHER_USER_IDS:-}

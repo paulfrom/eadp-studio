@@ -32,7 +32,8 @@ export function updateStudioWriteScope(agent: StudioExecutionAgent, paths: reado
   if (!scope || !active(scope)) throw new Error('会话没有有效的任务写入范围')
   scope.policy.writablePaths = paths.map(relativePolicyPath)
   scope.policy.writablePrefixes = prefixes.map(relativePolicyPath)
-  scope.policy.authorizeWrite = authorizeWrite
+  if (authorizeWrite) scope.policy.authorizeWrite = authorizeWrite
+  else delete scope.policy.authorizeWrite
 }
 function active(binding: ExecutionScope): boolean { return binding.active && (!binding.parent || active(binding.parent)) }
 /** Only the Host's verified live registry parent/child edge may call this. */

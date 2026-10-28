@@ -1,15 +1,15 @@
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import type { PrototypeCheckReport } from '../../shared/prototype.ts'
+import type { PrototypeCheckDiagnostic, PrototypeCheckReport } from '../../shared/prototype.ts'
 import type { TaskView } from '../../shared/studio.ts'
 import { AtomicState } from '../adapters/local-state/atomic-state.ts'
 import type { StudioStore } from '../application/state.ts'
 import type { PrototypeCheckResult, PrototypeCheckStep } from './checks.ts'
 
-/** Account-scoped check history contains step outcomes and fingerprints, not process output. */
+/** Account-scoped check history retains bounded diagnostics with step outcomes and fingerprints. */
 export class PrototypeCheckJournal {
   private readonly active = new Set<string>()
-  constructor(private readonly store: StudioStore) {}
+  constructor(private readonly store: StudioStore, private readonly toolsHash: string, private readonly validate: (report: PrototypeCheckReport) => Promise<boolean | undefined>) {}
   private key(projectId: string, taskId: string): string { return createHash('sha256').update(JSON.stringify([projectId, taskId])).digest('hex') }
   private storage(projectId: string, taskId: string): AtomicState<PrototypeCheckReport[]> {
     if (!this.store.accountId) throw new Error('请先登录后查看工程检查')
@@ -25,28 +25,33 @@ export class PrototypeCheckJournal {
     const write = async () => { if (this.store.accountId !== accountId) throw new Error('协同账号已变化'); await storage.write(reports) }
     await write(); this.active.add(activeKey)
     return {
-      step: async (name: PrototypeCheckStep, status: 'running' | 'passed' | 'failed', exitCode?: number) => {
+      step: async (name: PrototypeCheckStep, status: 'running' | 'passed' | 'failed', exitCode?: number, diagnostic?: PrototypeCheckDiagnostic) => {
         const previous = report.steps.find(value => value.name === name)
         if (previous) { previous.status = status; if (exitCode !== undefined) previous.exitCode = exitCode }
         else report.steps.push({ name, status, ...(exitCode !== undefined ? { exitCode } : {}) })
+        if (diagnostic) report.steps.find(value => value.name === name)!.diagnostic = diagnostic
         await write()
       },
-      finish: async (status: 'passed' | 'failed', result?: PrototypeCheckResult) => {
+      finish: async (status: 'passed' | 'failed', result?: PrototypeCheckResult, error?: unknown) => {
         report.status = status; report.completedAt = new Date().toISOString()
-        if (result) { report.inputHash = result.inputHash; report.outputHash = result.outputHash }
+        if (result) { report.inputHash = result.inputHash; report.outputHash = result.outputHash; report.rulesHash = result.rulesSha256; report.toolsHash = this.toolsHash }
         if (status === 'failed') { for (const step of report.steps) if (step.status === 'running') step.status = 'failed'; report.message = '检查未完成，请查看失败步骤并重新发起检查。' }
+        if (error instanceof Error) report.message = error.message.slice(0, 4096)
         try { await write() } finally { this.active.delete(activeKey) }
       },
     }
   }
   async latest(tasks: Array<{ projectId: string; prototypeTaskId: string }>): Promise<PrototypeCheckReport[]> {
     const accountId = this.store.accountId
-    const reports = await Promise.all(tasks.map(async task => {
+    const reports = await Promise.all(tasks.map(async (task): Promise<PrototypeCheckReport | undefined> => {
       const values = await this.storage(task.projectId, task.prototypeTaskId).read()
       const last = values?.at(-1)
       if (!last) return undefined
       const activeKey = `${accountId}:${task.projectId}:${task.prototypeTaskId}:${last.operationId}`
-      return last.status === 'running' && !this.active.has(activeKey) ? { ...last, status: 'interrupted' as const } : last
+      if (last.status === 'running' && !this.active.has(activeKey)) return { ...last, status: 'interrupted' as const, validity: 'unverified' as const }
+      if (last.status !== 'passed') return { ...last, validity: 'unverified' as const }
+      const current = last.toolsHash === this.toolsHash ? await this.validate(last).catch(() => false) : false
+      return { ...last, validity: current === undefined ? 'unverified' as const : current ? 'current' as const : 'stale' as const }
     }))
     if (this.store.accountId !== accountId) throw new Error('协同账号已变化')
     return reports.filter((value): value is PrototypeCheckReport => value !== undefined)

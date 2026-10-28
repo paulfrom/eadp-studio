@@ -9,6 +9,7 @@ import { saveMaterial } from '../../packages/studio-plugin/src/host/adapters/ass
 import { initialMetadata } from '../../packages/studio-plugin/src/host/application/ports.ts'
 
 const mocks = {
+  '@deepseek-ai/dsh-tools': 'export const defineTool = value => value',
   '@deepseek-ai/dsh-llm': 'export const createUserMessage = value => value; export const ReasoningEffortId = value => value',
   '@deepseek-ai/dsh-agent': 'export const installModelSelection = () => () => {}',
   '@deepseek-ai/dsh-office-to-pdf': 'export const OfficeSourceKey = value => value',

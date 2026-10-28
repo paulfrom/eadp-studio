@@ -114,6 +114,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
     }
   }
   const api = { request: async (method: string, route: string, input?: Record<string, unknown>) => {
+    if (method === 'GET' && (route.startsWith('/v1/projects/project/prototype/baselines?') || route === '/v1/projects/project/prototype/adoptions')) return []
     if (input && 'token' in input) assert.equal(Value.Check(OccupationTokenSchema, input.token), true, 'Host writes must send the exact occupation token contract')
     if (method === 'GET' && route === '/v1/projects') return [project]
     if (method === 'GET' && route.endsWith('/templates')) return { acceptedHead: project.recognizedHead, scenarios: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认场景模板', fixed: templateRef }] }, requirements: { defaultTemplateId: 'default', templates: [{ id: 'default', name: '默认需求模板', fixed: templateRef }] } }
@@ -179,7 +180,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
       commits: async () => [{ sha: gitState.remote, title: '远端修改' }], commitAll: async () => 'f'.repeat(40),
       fastForward: async () => { gitState.head = gitState.remote }, applyCommit: async () => [...gitState.conflicts],
       conflictStages: async (_root: string, file: string) => gitState.stages.get(file)!,
-      resolvePath: async () => {}, quitApply: async () => {}, unstage: async () => {}, abortApply: async () => {}, restore: async () => {}, moveHead: async () => {}, changedPathStatuses: async () => [],
+      resolvePath: async () => {}, quitApply: async () => {}, unstage: async () => {}, abortApply: async () => {}, restore: async () => {}, moveHead: async () => { gitState.head = gitState.remote }, changedPathStatuses: async () => [],
       commitFiles: async (_directory: string, files: readonly string[]) => { calls.commits.push(files); gitState.head = candidate; gitState.changedFiles = [...new Set([...gitState.changedFiles, ...files])]; gitState.dirtyFiles = []; return candidate }, verifyFile: async () => {}, push: async (_root: string, commit: string, branch: string) => { calls.pushes.push(commit + ':' + branch); if (failures.push) { failures.push = false; throw new Error('push response lost') } }, remoteHead: async () => gitState.remote, conditionalUpdate: async (_directory: string, _branch: string, expected: string, next: string) => { assert.equal(expected, gitState.remote); gitState.remote = next; calls.conditionalUpdates++ }, fetch: async () => {}, checkoutBranch: async (_root: string, _branch: string, baseSha: string) => { gitState.head = baseSha }, switchBranch: async (_root: string, _branch: string, commit: string) => { gitState.head = commit }, deleteBranch: async () => {}, merge: async (_root: string, commit: string) => { assert.equal(commit, candidate); gitState.head = 'd'.repeat(40); project.recognizedHead = gitState.remote; return { status: 'merged' as const, commit: gitState.head } }, fetchCommit: async () => {}, readBlob: async (_directory: string, _sha: string, file: string) => { const { readFile } = await import('node:fs/promises'); return readFile(path.join(_directory === sourceDirectory ? sourceDirectory : worktree, file)) }, changedFiles: async () => gitState.changedFiles, state: async (directory: string) => { if (directory === worktree) return { head: gitState.head, branch: 'studio/target/original', dirty: gitState.dirtyFiles.length > 0 }; await stat(directory); return { head: reviewTrees.get(directory), dirty: false } }, createWorktree: async (_root: string, directory: string, _branch: string, sha: string) => { if (!directory.includes(path.sep + 'reviews' + path.sep)) throw new Error('prototype intentionally not started'); await cp(worktree, directory, { recursive: true }); reviewTrees.set(directory, sha) } },
   } as unknown as HostPorts
   const app = (nextStore = store) => { const created = new StudioApplication(nextStore, api, ports); apps.push(created); return created }
@@ -617,14 +618,6 @@ test('duplicate review requests recover the same local report across Host restar
   assert.equal((await rebooted.read()).reviews[0]!.status, 'failed')
   assert.equal(f.calls.prepared.length, 0)
 })
-
-test('candidate commits outside the task whitelist are rejected even when the current worktree is clean', async t => {
-  const f = await prototypeFixture(t)
-  f.gitState.dirtyFiles = []; f.gitState.head = candidate; f.gitState.changedFiles = ['原型代码/src/page.tsx', '场景/unrelated.md']
-  assert.equal((await f.app().command({ action: 'confirmPrototype', entityId: f.value.id, method: 'direct' })).ok, false)
-  assert.equal(f.calls.prepared.length, 0)
-})
-
 
 test('adoption recovery recognizes already-applied exact provenance without replacing later author edits', async t => {
   const f = await fixture(t), app = f.app()

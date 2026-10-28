@@ -77,6 +77,18 @@ test('formal evidence archives only explicit selected versions with original byt
   assert.match((await scenarioFileErrors(root, current)).join('\n'), /文件内容已变化/)
 })
 
+test('Windows checkout line endings are normalized without overwriting substantive evidence changes', { skip: process.platform !== 'win32' }, async t => {
+  const { root } = await fixture(t), original = Buffer.from('第一行\n第二行\n')
+  const source: ScenarioSource = { id: 'checkout-eol', name: '业务依据.txt', format: 'txt', sha256: digest(original), status: 'read', ranges: ['line:1-2'], text: original.toString(), selected: true, formal: true }
+  const [evidence] = await archiveSelectedEvidence(root, [{ source, original }], ['checkout-eol'])
+  const target = path.join(root, evidence!.files[0]!.path)
+  await writeFile(target, Buffer.from(original.toString().replace(/\n/g, '\r\n')))
+  await archiveSelectedEvidence(root, [{ source, original }], ['checkout-eol'])
+  assert.deepEqual(await readFile(target), original)
+  await writeFile(target, '实质内容已变化')
+  await assert.rejects(archiveSelectedEvidence(root, [{ source, original }], ['checkout-eol']), /固定路径不一致/)
+})
+
 for (const [text, endLine] of [['第一行\n第二行', 2], ['第一行\n第二行\n', 2], ['第一行\n第二行\n\n', 3], ['第一行\r\n第二行\r\n', 2]] as const) test(`formal evidence line ranges preserve terminal separators: ${JSON.stringify(text)}`, async t => {
   const { root } = await fixture(t), original = Buffer.from(text)
   const source: ScenarioSource = { id: 'lines', name: '业务依据.txt', format: 'txt', sha256: digest(original),
@@ -106,8 +118,12 @@ test('requirement evidence metadata uses the same serialized expected-hash write
   const draft = await saveMaterial(f.root, requirement, '需求正文')
   const saved = await Promise.all(['甲', '乙'].map((title, index) => f.service.save({ root: f.root, metadata: { ...requirement, title }, body: draft.body, operationId: `requirement-${index}` })))
   assert.deepEqual(saved.map(value => (value.metadata as MaterialMetadata).title), ['甲', '乙'])
-  assert.equal(saved[1]!.path, (await readMaterial(f.root, 'requirement', requirement.entityId)).path)
-  assert.equal((await readMaterial(f.root, 'requirement', requirement.entityId)).body, draft.body)
+  const current = await readMaterial(f.root, 'requirement', requirement.entityId)
+  // Concurrent requests may acquire the writer in either order; the final file must match one complete saved result.
+  const persisted = saved.find(value => value.sha256 === current.sha256)
+  assert.ok(persisted)
+  assert.equal(persisted.path, current.path)
+  assert.equal(current.body, draft.body)
   assert.equal((await readdir(path.join(f.root, '需求'))).length, 1)
 })
 

@@ -15,7 +15,7 @@ const project = { id: 'project', gitlabProjectId: 1, repositoryUrl: 'https://exa
 const fixed = { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: 'b'.repeat(64) };
 
 function material(kind: 'scenario' | 'requirement'): EntityView {
-  return { id: kind, kind, title: 'Material', templateId: 'default', templateRef: fixed, authorId: actor.id, revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], occupation: { occupationId: 'occupation', entityId: kind, ownerId: actor.id, generation: 1, taskId: 'task', clientId: 'client', expectedRevision: 1, inputVersion: 0, prerequisiteBindings: [], purpose: 'design', createdAt: '2026-10-24T00:00:00Z' } };
+  return { id: kind, kind, title: 'Material', templateId: 'default', templateRef: fixed, authorId: actor.id, revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], occupation: { occupationId: 'occupation', entityId: kind, ownerId: actor.id, generation: 1, taskId: 'task', clientId: 'client', expectedRevision: 1, inputVersion: 0, purpose: 'design', createdAt: '2026-10-24T00:00:00Z' } };
 }
 
 function request(value: EntityView): BindTemplateRequest {

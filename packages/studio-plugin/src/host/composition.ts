@@ -28,7 +28,7 @@ import { checkStaticPreview } from './adapters/dsh/browser-check.ts'
 import { desktopPreviewCanvas } from './adapters/dsh/prototype-canvas.ts'
 import { PrototypeBrowserTools } from './adapters/dsh/prototype-browser-tools.ts'
 import { PrototypeBrowserAttachmentStore } from './prototype/browser-attachments.ts'
-import { copyTemplate } from './prototype/template.js'
+import { copyTemplate, prototypeInputHash, sha256, verifyPrototypeContract } from './prototype/template.js'
 import { assertCurrentPrototypeChecks, buildPrototypePreview, installPrototypeDependencies, runPrototypeChecks } from './prototype/checks.js'
 import { PrototypeCheckJournal } from './prototype/check-journal.ts'
 import { startPrototypePreview, type PrototypePreview } from './prototype/preview.js'
@@ -67,7 +67,15 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const assets = fileURLToPath(new URL('../assets/', import.meta.url))
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')
   const store = new StudioStore(stateDirectory)
-  const checkJournal = new PrototypeCheckJournal(store)
+  const checkJournal = new PrototypeCheckJournal(store, digest(JSON.stringify(runtime.manifest.tools)), async report => {
+    const local = await store.read()
+    const task = local.tasks.find(item => item.projectId === report.projectId && item.entityId === report.prototypeTaskId && item.purpose === 'prototype')
+    if (!task) return undefined
+    const root = path.join(task.worktree, '原型代码')
+    await verifyPrototypeContract(root, manifestPath)
+    return report.sourceSha === (await git.state(task.worktree)).head && report.inputHash === await prototypeInputHash(root) &&
+      report.outputHash === await prototypeInputHash(path.join(root, 'dist')) && report.rulesHash === sha256(await readFile(path.join(root, 'AGENT.md')))
+  })
   let app: StudioApplication
   const previews = new Map<string, { preview: PrototypePreview; identity: PrototypePreviewIdentity }>()
   const browserTools = new PrototypeBrowserTools({
@@ -128,7 +136,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
         { name: 'mock', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.mockHash })) },
         { name: 'browser', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.browserHash })) },
       ] }
-    } catch (error) { await journal.finish('failed'); throw error }
+    } catch (error) { await journal.finish('failed', undefined, error); throw error }
   }
   const runChecks = async (task: TaskView, sourceSha: string, operationId = crypto.randomUUID()): Promise<CheckEvidence> => {
     const evidence = await runCandidateChecks(task, sourceSha, operationId)
@@ -189,7 +197,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
           const entry = { preview: next, identity }; previews.set(task.sessionId, entry)
           void next.process.done.finally(() => { if (previews.get(task.sessionId) === entry) { previews.delete(task.sessionId); app.prototypePreviewStopped(identity); void browserTools.close(task.sessionId).catch(() => {}); void desktopPreviewCanvas.revoke(identity).catch(() => {}) } }).catch(() => {})
           return { url: next.url, identity }
-        } catch (error) { if (next) await next.stop().catch(() => {}); await journal.finish('failed'); throw error }
+        } catch (error) { if (next) await next.stop().catch(() => {}); await journal.finish('failed', undefined, error); throw error }
     }, selectPreview: identity => identity ? desktopPreviewCanvas.select(identity) : desktopPreviewCanvas.deselect(), stopPreview,
     publication: async action => {
       const local = await store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目')

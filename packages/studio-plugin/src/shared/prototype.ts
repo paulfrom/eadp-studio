@@ -34,10 +34,11 @@ export interface PrototypeQueueView { revision: number; selectedTaskId?: string;
 export type PrototypePreviewSource = { kind: 'task'; prototypeTaskId: string } | { kind: 'baseline'; baselineId: string; commitSha: string }
 export interface PrototypePreviewIdentity { projectId: string; source: PrototypePreviewSource; previewId: string; generation: number; buildHash: string }
 /** Recorded engineering steps; a running operation left by a previous process is interrupted. */
+export interface PrototypeCheckDiagnostic { stdout: string; stderr: string; truncated: boolean; error?: string }
 export interface PrototypeCheckReport {
   operationId: string; projectId: string; prototypeTaskId: string; baselineId?: string; kind: 'checks' | 'preview'; sourceSha: string; startedAt: string; completedAt?: string
-  status: 'running' | 'passed' | 'failed' | 'interrupted'; steps: Array<{ name: 'install' | 'typecheck' | 'lint' | 'build' | 'browser'; status: 'running' | 'passed' | 'failed'; exitCode?: number }>
-  inputHash?: string; outputHash?: string; message?: string
+  status: 'running' | 'passed' | 'failed' | 'interrupted'; steps: Array<{ name: 'install' | 'typecheck' | 'lint' | 'build' | 'browser'; status: 'running' | 'passed' | 'failed'; exitCode?: number; diagnostic?: PrototypeCheckDiagnostic }>
+  inputHash?: string; outputHash?: string; rulesHash?: string; toolsHash?: string; validity?: 'current' | 'stale' | 'unverified'; message?: string
 }
 export interface PrototypeInstructionAttachment { kind: 'file' | 'image'; name: string; mediaType: string; data: string }
 /** Unsent project instruction, stored independently of any collaboration task. */
@@ -67,7 +68,7 @@ export interface PrototypeCandidateSummary {
   summaryHash: string; changes: Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>
   status: 'ready' | 'confirmed' | 'no-change' | 'conflict'; confirmedAt?: string; checks?: 'passed'
   conflict?: { expectedHead: string; files: string[] }
-  integrationPhase?: 'fixed' | 'source-uploading' | 'source-uploaded' | 'candidate-uploading' | 'uploaded' | 'preparing' | 'prepared' | 'pushing' | 'pushed' | 'completing' | 'accepted' | 'aborted' | 'unknown'
+  integrationPhase?: 'fixed' | 'source-uploading' | 'source-uploaded' | 'candidate-uploading' | 'uploaded' | 'preparing' | 'prepared' | 'pushing' | 'pushed' | 'completing' | 'aborting' | 'accepted' | 'aborted' | 'unknown'
 }
 export interface PrototypeCandidateFile {
   path: string; baseContent?: string; sourceContent?: string; binary: boolean; truncated: boolean

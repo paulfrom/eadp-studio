@@ -47,10 +47,10 @@ interface Dependencies {
 
 /** Publication retains the author's exact request and never replaces an unknown operation. */
 export class PrototypeIntegrations {
-  private record?: RecordFile
+  private record: RecordFile | undefined
   private storage?: AtomicState<RecordFile>
   private account?: number
-  private loading?: { accountId: number; promise: Promise<RecordFile> }
+  private loading: { accountId: number; promise: Promise<RecordFile> } | undefined
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly deps: Dependencies) {}
 
   private async data(): Promise<RecordFile> {

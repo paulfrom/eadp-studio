@@ -11,12 +11,13 @@ import type { PlatformRuntime, ProcessResult } from '../../packages/studio-plugi
 const exec = promisify(execFile)
 const identity = { name: 'Tester', email: 'tester@example.test' }
 const runtime = (() => {
-  const run = (file: string, args: string[], options: { cwd: string }): Promise<ProcessResult> => new Promise(resolve => {
-    execFile(file, args, { cwd: options.cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+  const run = (file: string, args: string[], options: { cwd: string; input?: string }): Promise<ProcessResult> => new Promise(resolve => {
+    const child = execFile(file, args, { cwd: options.cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       resolve({ exitCode: error ? Number((error as { code?: number }).code ?? 1) : 0, stdout, stderr, stdoutBytes: Buffer.from(stdout) } as ProcessResult)
     })
+    child.stdin?.end(options.input)
   })
-  return { run, start: (file: string, args: string[], options: { cwd: string }) => ({ done: run(file, args, options), onOutput: () => () => {} }) } as unknown as PlatformRuntime
+  return { run, start: (file: string, args: string[], options: { cwd: string; input?: string }) => ({ done: run(file, args, options), onOutput: () => () => {} }) } as unknown as PlatformRuntime
 })()
 
 test('merge reports a clean merge commit and conflicted files, completeMerge finishes them', async t => {
@@ -78,7 +79,7 @@ test('changed path statuses use committed tree metadata for large, special and n
   const large = '.eadp/evidence/large.md'
   await mkdir(path.dirname(path.join(root, large)), { recursive: true })
   await writeFile(path.join(root, large), Buffer.alloc(1_048_577, 97))
-  const special = '场景/特殊\n换行\t制表.md'
+  const special = process.platform === 'win32' ? '场景/特殊 空格与中文.md' : '场景/特殊\n换行\t制表.md'
   await mkdir(path.dirname(path.join(root, special)), { recursive: true })
   await writeFile(path.join(root, special), 'special')
   await mkdir(path.join(root, 'bulk'))

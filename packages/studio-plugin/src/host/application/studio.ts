@@ -84,11 +84,12 @@ export class StudioApplication {
     this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress)
     this.prototypeIntegrations = new PrototypeIntegrations(store, api, ports, {
       task: id => this.prototypeCollaboration.task(id),
+      cancellation: id => this.prototypeCollaboration.cancellation(id),
       accepted: async (taskId, baselineId) => this.prototypeCollaboration.accepted(taskId, baselineId),
       completeAdoptions: async (taskId, baselineId) => this.completePrototypeAdoptions(taskId, baselineId),
       cancelled: async (taskId, gitRecovery) => this.prototypeCollaboration.cancelled(taskId, gitRecovery),
       stopPreview: sessionId => this.ports.stopPreview(sessionId),
-      releaseTask: this.ports.releaseTask ? worktree => this.ports.releaseTask!(worktree) : undefined,
+      ...(this.ports.releaseTask ? { releaseTask: (worktree: string) => this.ports.releaseTask!(worktree) } : {}),
       syncMain: (projectId, candidateSha, accountId) => this.projects.syncMain(projectId, candidateSha, accountId),
       cleanup: operationId => this.prototypeCandidates.cleanupAccepted(operationId),
     })
@@ -206,7 +207,7 @@ export class StudioApplication {
       const current = await this.prototypeCollaboration.fileService.read(workspace, { action: 'readPrototypeFile', source: workspace.source, path: command.path })
       if (current.kind !== 'file' || current.hash !== command.diskHash || current.content !== command.diskContent) throw new Error('磁盘文件已再次变化，请重新读取冲突现场')
       if (!this.ports.mergeConflict) throw new Error('当前宿主没有受控文本合并能力')
-      const merged = await this.ports.mergeConflict({ path: command.path, base: command.baseContent, ours: command.diskContent, theirs: command.content })
+      const merged = await this.ports.mergeConflict({ path: command.path, base: command.baseContent, ours: command.diskContent, theirs: command.content }, new AbortController().signal)
       if (merged.delete || merged.content === undefined) throw new Error('合并结果需要人工处理，编辑缓冲未改动')
       return { ok: true, state: await this.state(), prototypeMergedText: merged.content }
     }
@@ -622,7 +623,7 @@ export class StudioApplication {
       .map(value => value.integrationId!))
     const prototypeQueue = await this.prototypeCollaboration.view()
     const prototypeBaselines = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeBaselineView[]>('GET', this.route(selected.id, '/prototype/baselines?limit=100&offset=0')) : undefined
-    const prototypeCheckReports = await this.ports.prototypeCheckReports?.([...prototypeQueue.items.map(item => ({ projectId: item.projectId, prototypeTaskId: item.prototypeTaskId })), ...(prototypeBaselines ?? []).map(item => ({ projectId: item.projectId, prototypeTaskId: item.id }))])
+    const prototypeCheckReports = await this.ports.prototypeCheckReports?.([...prototypeQueue.items.map(item => ({ projectId: item.projectId, prototypeTaskId: item.prototypeTaskId })), ...(prototypeBaselines ?? []).map(item => ({ projectId: selected!.id, prototypeTaskId: item.id }))])
     const prototypeMaterialReads = await this.prototypeMaterials.reads(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeCandidates = await this.prototypeCandidates.latest(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeAdoptions = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeAdoptionView[]>('GET', this.route(selected.id, '/prototype/adoptions')) : undefined

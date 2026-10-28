@@ -71,12 +71,12 @@ test('shared toolbar keeps the live project, preview target and refresh action',
     openSettings() {},
   })
   let refreshed = 0
-  const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, preview: { url: 'http://127.0.0.1:4321' }, onRefresh: () => { refreshed++ } }
+  const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, prototypeQueue: { selectedTaskId: 'task', items: [{ prototypeTaskId: 'task' }] }, prototypePreviews: [{ prototypeTaskId: 'task', url: 'http://127.0.0.1:4321' }], onRefresh: () => { refreshed++ } }
   // Web (non-captioned) renders the single in-flow toolbar row.
   const header = find(Component({ faces: faces(state), sidebarCollapsed: false, onToggleSidebar() {} }), 'header')
   assert.ok(header, 'the web fallback renders the in-flow toolbar')
   assert.match(texts(header), /EADP Studio.*采购项目.*main（已同步）.*本地原型.*刷新/)
-  assert.equal(find(header, 'a').props.href, state.preview.url)
+  assert.equal(find(header, 'a').props.href, state.prototypePreviews[0].url)
   assert.equal(find(header, 'a').props.rel, 'noreferrer')
   findAll(header, 'button').find(button => texts(button) === '刷新').props.onClick()
   assert.equal(refreshed, 1)

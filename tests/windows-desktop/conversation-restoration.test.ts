@@ -34,7 +34,8 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
   const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: 'studio-existing', purpose, inputHash: entity.current?.fixed.sha256 ?? '', worktree }
   local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id; local.tasks.push(task); await store.save()
   const sessions: TaskView[] = [], requests: string[] = [], active = new Set<string>()
-  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: template.id, templates: [template] }; return { acceptedHead: project.recognizedHead, scenarios: catalog, requirements: catalog } } throw new Error(route) } } as unknown as CollaborationClient
+  const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route.startsWith('/v1/projects/project/prototype/baselines?') || route === '/v1/projects/project/prototype/adoptions') return []
+    if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: template.id, templates: [template] }; return { acceptedHead: project.recognizedHead, scenarios: catalog, requirements: catalog } } throw new Error(route) } } as unknown as CollaborationClient
   const ports = { account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (value: TaskView) => { sessions.push(value); active.add(value.sessionId); return value.sessionId }, git: { hasCommit: async () => true, fetchCommit: async () => {}, readBlob: async (_root: string, _sha: string, file: string) => readFile(path.join(file.startsWith('.template/') ? root : worktree, file)) } } as unknown as HostPorts
   const reboot = () => { const next = new StudioStore(storeRoot); next.useUser(1); return new StudioApplication(next, api, ports) }
   return { store, local, task, entity, remote, sessions, requests, active, reboot, template }
@@ -42,7 +43,7 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
 
 const restore = (app: StudioApplication, sessionId = 'studio-existing') => app.command({ action: 'restoreSession', sessionId } as StudioCommand)
 
-for (const purpose of ['material', 'prototype', 'handoff'] as const) test(`cold ${purpose} conversation restores the existing verified task without claiming`, async t => {
+for (const purpose of ['material', 'handoff'] as const) test(`cold ${purpose} conversation restores the existing verified task without claiming`, async t => {
   const f = await fixture(t, purpose), app = f.reboot()
   const results = await Promise.all([restore(app), restore(app)])
   for (const reply of results) { assert.equal(reply.ok, true, JSON.stringify(reply)); if (reply.ok) assert.equal(reply.sessionId, f.task.sessionId) }
@@ -112,34 +113,8 @@ for (const purpose of ['material', 'handoff'] as const) test(`${purpose} restora
   assert.equal(await readFile(path.join(f.task.worktree, saved.path), 'utf8'), before)
 })
 
-test('prototype restoration rejects modified local requirement bytes even while the remote hash is unchanged', async t => {
+test('the old requirement-bound prototype session cannot restore through the material entry', async t => {
   const f = await fixture(t, 'prototype')
-  await saveMaterial(f.task.worktree, initialMetadata(f.entity), '# 本地需求被修改\n')
   assert.equal((await restore(f.reboot())).ok, false)
   assert.equal(f.sessions.length, 0)
-})
-
-for (const change of ['missing-completion', 'confirmation', 'integration', 'version', 'unconfirmed-input'] as const) test(`prototype restoration rejects changed prerequisite basis: ${change}`, async t => {
-  const f = await fixture(t, 'prototype')
-  const completion = { version: 1, confirmationId: 'prerequisite-confirmation', integrationSha: 'c'.repeat(40), baselineId: 'baseline' }
-  const prerequisite: EntityView = { ...f.entity, id: 'prerequisite', occupation: undefined, completions: [completion] }
-  f.remote.entities.push(prerequisite)
-  f.entity.prerequisites = [{ requirementId: prerequisite.id, version: 1 }]
-  f.entity.occupation!.prerequisiteBindings = [{ requirementId: prerequisite.id, version: 1, confirmationId: completion.confirmationId, integrationSha: completion.integrationSha }]
-  if (change === 'missing-completion') prerequisite.completions = []
-  if (change === 'confirmation') completion.confirmationId = 'new-confirmation'
-  if (change === 'integration') completion.integrationSha = 'd'.repeat(40)
-  if (change === 'version') { f.entity.prerequisites[0]!.version = 2; prerequisite.completions!.push({ ...completion, version: 2 }) }
-  if (change === 'unconfirmed-input') f.entity.confirmationStatus = 'draft'
-  assert.equal((await restore(f.reboot())).ok, false)
-  assert.equal(f.sessions.length, 0)
-})
-
-test('prototype restoration retains an accepted fixed prerequisite version when its source has a newer current version', async t => {
-  const f = await fixture(t, 'prototype')
-  const binding = { requirementId: 'prerequisite', version: 1, confirmationId: 'accepted-v1', integrationSha: 'c'.repeat(40) }
-  f.entity.prerequisites = [{ requirementId: binding.requirementId, version: 1 }]; f.entity.occupation!.prerequisiteBindings = [binding]
-  f.remote.entities.push({ ...f.entity, id: binding.requirementId, materialVersion: 2, current: undefined, occupation: undefined, prerequisites: [], completions: [{ ...binding, baselineId: 'baseline-v1' }] })
-  assert.equal((await restore(f.reboot())).ok, true)
-  assert.equal(f.sessions.length, 1)
 })

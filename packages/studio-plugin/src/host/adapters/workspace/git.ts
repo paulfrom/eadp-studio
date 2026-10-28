@@ -192,11 +192,11 @@ export class WorkspaceGit {
     return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
   }
   /**
-   * Replay one local commit onto the current head without committing it.
-   * @returns paths left in conflict; an empty list means the replay applied cleanly.
+   * Merge one fetched commit into the preserved local history without committing it.
+   * @returns paths left in conflict; an empty list means the merge applied cleanly.
    */
   async applyCommit(root: string, commit: string): Promise<string[]> {
-    const result = await this.result(root, ['cherry-pick', '--no-commit', fixedSha(commit)])
+    const result = await this.result(root, ['merge', '--no-commit', '--no-ff', fixedSha(commit)])
     const conflicts = await this.conflictPaths(root)
     if (result.exitCode !== 0 && !conflicts.length) { await this.abortApply(root); throw new Error('无法把本地材料应用到远端已接受版本，请保留现场后核对。') }
     return conflicts
@@ -216,8 +216,8 @@ export class WorkspaceGit {
   }
   /** Marks one resolved path and clears the replay state without creating a commit. */
   async resolvePath(root: string, relativePath: string): Promise<void> { await this.requireResult(root, ['add', '--', gitRelativePath(relativePath)]) }
-  async quitApply(root: string): Promise<void> { await this.result(root, ['cherry-pick', '--quit']) }
-  async abortApply(root: string): Promise<void> { await this.result(root, ['cherry-pick', '--abort']) }
+  async quitApply(root: string): Promise<void> { await this.result(root, ['merge', '--quit']) }
+  async abortApply(root: string): Promise<void> { await this.result(root, ['merge', '--abort']) }
   /** Keep the working tree but return the index to the current head. */
   async unstage(root: string): Promise<void> { await this.requireResult(root, ['reset']) }
   /** Restore the exact bytes of a preserved commit, used only when a replay must be abandoned. */
@@ -477,7 +477,7 @@ export class WorkspaceGit {
     const address = new URL(repositoryAddress(value))
     if (!this.trustedOrigin || address.origin !== await this.trustedOrigin()) throw new Error('仓库地址与后台指定的 GitLab 实例不一致。')
   }
-  private safe(args: readonly string[]): string[] { return ['-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', ...args] }
+  private safe(args: readonly string[]): string[] { return [...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []), '-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`, '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', ...args] }
   private options(cwd: string, signal?: AbortSignal, timeoutMs = 120_000): RunOptions { return { cwd, gitUserCredentials: true, timeoutMs, ...(signal ? { signal } : {}) } }
   private async result(cwd: string, args: readonly string[]): Promise<ProcessResult> { return (await this.runtime.start('git', this.safe(args), this.options(cwd))).done }
   private async guardLocal(cwd: string): Promise<void> {

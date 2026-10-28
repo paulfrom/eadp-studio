@@ -18,7 +18,8 @@ import { isMaterialIntegrationRequest, type EntityView, type IntegrationView, ty
 // task-presets-runtime verifies the actual scoped assembly/request middleware.
 const llmFactory = 'data:text/javascript,' + encodeURIComponent('export const createUserMessage = value => value; export const ReasoningEffortId = value => value')
 const agentFactory = 'data:text/javascript,' + encodeURIComponent('export const installModelSelection = () => () => {}')
-const hooks = registerHooks({ resolve(specifier, context, nextResolve) { const url = specifier === '@deepseek-ai/dsh-llm' ? llmFactory : specifier === '@deepseek-ai/dsh-agent' ? agentFactory : undefined; return url ? { url, shortCircuit: true } : nextResolve(specifier, context) } })
+const toolsFactory = 'data:text/javascript,' + encodeURIComponent('export const defineTool = value => value')
+const hooks = registerHooks({ resolve(specifier, context, nextResolve) { const url = specifier === '@deepseek-ai/dsh-llm' ? llmFactory : specifier === '@deepseek-ai/dsh-agent' ? agentFactory : specifier === '@deepseek-ai/dsh-tools' ? toolsFactory : undefined; return url ? { url, shortCircuit: true } : nextResolve(specifier, context) } })
 const { DshTaskSessions } = await import('../../packages/studio-plugin/src/host/adapters/dsh/sessions.ts')
 hooks.deregister()
 
@@ -281,6 +282,8 @@ function dshFixture(events: Map<string, unknown[]>) {
   let listener: (session: { id: string }, event: unknown) => void = () => {}
   const counts = { creates: 0, resumes: 0, followups: 0 }
   const context = {
+    attachments: { admitPromptContent: async (content: unknown) => content },
+    sessions: { flush: async () => true },
     agentDefaultModel: { currentSelection: () => ({ provider: 'default-provider', model: 'default-model' }) },
     agentPresets: { resolve: async () => ({ id: 'standard' }), mount: async () => {} },
     sessionProjections: { restore: () => ({ snapshot: { values: { agentPreset: null } } }) },
@@ -292,7 +295,7 @@ function dshFixture(events: Map<string, unknown[]>) {
       resume: async ({ resumeSessionId }: { resumeSessionId: string }) => { assert.ok(events.has(resumeSessionId)); counts.resumes++; return handle(resumeSessionId) },
     },
   }
-  const handle = (sessionId: string) => ({ agent: { followup: (message: unknown) => { counts.followups++; events.get(sessionId)!.push({ type: 'user/message', data: message }) } }, dispose: async () => {} })
+  const handle = (sessionId: string) => ({ agent: { session: { id: sessionId }, followup: (message: unknown) => { counts.followups++; events.get(sessionId)!.push({ type: 'user/message', data: message }) } }, dispose: async () => {} })
   return { context, counts, emit: (id: string, content: string) => listener({ id }, assistant(content)), emitEvent: (id: string, event: unknown) => listener({ id }, event) }
 }
 const assistant = (text: string, interrupted = false) => ({ type: 'assistant/message', data: { interrupted, message: { content: [{ type: 'text', text }] } } })

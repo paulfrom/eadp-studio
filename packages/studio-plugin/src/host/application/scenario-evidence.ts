@@ -9,7 +9,11 @@ const extensions: Readonly<Record<string, string>> = { text: 'txt', txt: 'txt', 
 async function archiveBytes(root: string, relative: string, bytes: Uint8Array): Promise<{ path: string; sha256: string }> {
   const target = await containedFile(root, relative, true), hash = digest(bytes)
   const existing = await readFile(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error })
-  if (existing && digest(existing) !== hash) throw new Error('已归档依据内容与其固定路径不一致')
+  if (existing && digest(existing) !== hash) {
+    const checkoutConverted = process.platform === 'win32' && !bytes.includes(13) && existing.equals(Buffer.from(Buffer.from(bytes).toString('utf8').replace(/\n/g, '\r\n')))
+    if (!checkoutConverted) throw new Error('已归档依据内容与其固定路径不一致')
+    await atomicWriteFile(target, bytes)
+  }
   if (!existing) await atomicWriteFile(target, bytes)
   return { path: relative, sha256: hash }
 }

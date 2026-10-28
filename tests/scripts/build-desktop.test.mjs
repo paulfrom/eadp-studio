@@ -53,6 +53,7 @@ test('source pipeline propagates failures, preserves paths and packages the actu
     await mkdir(outputs, { recursive: true })
     await writeFile(path.join(outputs, name), 'installer fixture')
     const receipt = await buildDesktop(runner)
+    assert.ok(calls.some(call => call[0] === 'node' && call[1].endsWith('prepare-studio-plugin.mjs') && call[2].includes('--browser-runtime')), 'the installer must include the locked browser distributions')
     assert.equal(receipt.path, path.join(root, 'artifacts/windows', name))
     assert.equal(receipt.sha256, 'b97d800ba8d0420dc6a0342045a15a97d785bd61d4cf9902d0c334ba32ec188b')
     assert.equal(await readFile(receipt.path, 'utf8'), 'installer fixture')

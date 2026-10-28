@@ -5,5 +5,8 @@
   "type": "module",
   "scripts": {
     "fetch:source": "node ../../scripts/fetch-dsh.mjs"
+  },
+  "devDependencies": {
+    "extract-zip": "2.0.1"
   }
 }

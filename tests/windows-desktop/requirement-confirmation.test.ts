@@ -57,6 +57,7 @@ async function fixture(t: test.TestContext) {
   const blob = (sha: string, file: string): Buffer => { const bytes = trees.get(sha)?.get(file); if (!bytes) throw Object.assign(new Error('fixed blob missing'), { code: 'ENOENT' }); return Buffer.from(bytes) }
   let failDirectory = false, loseCompletionReply = false, directoryGate: (() => Promise<void>) | undefined, claims = 0
   const api = { async request(method: string, route: string, input?: Record<string, unknown>) {
+    if (method === 'GET' && /^\/v1\/projects\/(project|other-project)\/prototype\/(baselines\?|adoptions$)/.test(route)) return []
     if (method !== 'GET') { apiWrites.push(route); assert.ok(route.startsWith('/v1/projects/project/'), `write crossed projects: ${route}`) }
     if (method === 'GET' && route === '/v1/projects') return [project, otherProject]
     if (method === 'GET' && route === '/v1/projects/project') return structuredClone(remote)

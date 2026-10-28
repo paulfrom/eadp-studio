@@ -285,7 +285,6 @@ export class CollaborationService {
     await this.authorize(actor, projectId, true);
     return this.mutate(actor, projectId, `entity.update:${id}`, input, async (c, _project, all) => {
       const value = repository.entity(all, id), occupation = occupations.assertOccupation(value, input.token, actor);
-      requireCondition(occupation.purpose !== 'prototype', 'DESIGN_OCCUPATION_REQUIRED', 'Directory updates require a material design occupation');
       requireCondition(!value.builtinKey, 'BUILTIN_SCENARIO_IMMUTABLE', 'The built-in general scenario cannot be edited', 409);
       requireCondition(!(await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' AND occupation_id=$2", [projectId, occupation.occupationId])).rowCount,
         'INTEGRATION_PENDING', 'Reconcile the prepared confirmation before changing directory fields');

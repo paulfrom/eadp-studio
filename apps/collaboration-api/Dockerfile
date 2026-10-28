@@ -40,7 +40,9 @@ COPY --chown=node:node --from=deps /out /app/apps/collaboration-api
 COPY --chown=node:node packages/studio-plugin/assets/prototype-template.manifest.json /app/packages/studio-plugin/assets/prototype-template.manifest.json
 COPY --from=git-verifier /out/bin/git /usr/local/bin/git
 COPY --from=git-verifier /out/licenses/git/COPYING /usr/local/share/licenses/git/COPYING
-RUN chmod +x /app/apps/collaboration-api/docker-entrypoint.sh && mkdir -p /usr/local/share/git-core/templates
+RUN test "$(id -u node):$(id -g node)" = '1000:1000' \
+    && chmod +x /app/apps/collaboration-api/docker-entrypoint.sh \
+    && mkdir -p /usr/local/share/git-core/templates
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

@@ -133,19 +133,19 @@ test('switching accounts during a local step cannot deliver the original operati
   const f = await integrationFixture(t)
   f.during('release', async () => { f.account(2) })
   await assert.rejects(f.runner.resume('operation'), /协同账号已变化/)
-  assert.deepEqual(f.calls, ['projection', 'preview', 'release'])
-  assert.deepEqual((await f.saved()).delivery?.completed, ['projection', 'preview'])
+  assert.deepEqual(f.calls, ['projection', 'adoptions', 'preview', 'release'])
+  assert.deepEqual((await f.saved()).delivery?.completed, ['projection', 'adoptions', 'preview'])
   assert.equal((await f.saved()).delivery?.step, 'release')
   f.account(1)
   const operation = await f.runner.resume('operation')
-  assert.deepEqual(f.calls, ['projection', 'preview', 'release', 'release', 'main', 'cleanup'])
+  assert.deepEqual(f.calls, ['projection', 'adoptions', 'preview', 'release', 'release', 'main', 'cleanup'])
   assert.equal(operation.deliveryMessage, undefined)
 })
 
 test('missing native release capability remains an explicit retryable delivery failure', async t => {
   const f = await integrationFixture(t, { release: false })
   await assert.rejects(f.runner.resume('operation'), /原生事项资源释放能力/)
-  assert.deepEqual(f.calls, ['projection', 'preview'])
+  assert.deepEqual(f.calls, ['projection', 'adoptions', 'preview'])
   assert.match((await f.saved()).deliveryMessage!, /原生事项资源释放能力/)
   f.enableRelease()
   const operation = await f.runner.resume('operation')
@@ -260,7 +260,7 @@ test('merge check registration survives a later conflict reset and accepted clea
       prototypeCleanMerge: async () => ++merges === 1
         ? { status: 'merged', candidateSha: mergedCandidate, mergeBaseSha: mergeBase, changedPaths: ['原型代码/src/app.ts'], retainedDirectory: mergedDirectory }
         : { status: 'conflicted', mergeBaseSha: mergeBase, conflictFiles: ['src/app.ts'], directory: conflictDirectory },
-      prototypeRestoreConflict: async (input: { onPlan(plan: { files: unknown[] }): Promise<void> }) => { const writeback = { files: [] }; await input.onPlan(writeback); return { conflictFiles: ['src/app.ts'], writeback } },
+      prototypeRestoreConflict: async (_worktree: string, input: { onPlan(plan: { files: unknown[] }): Promise<void> }) => { const writeback = { files: [] }; await input.onPlan(writeback); return { conflictFiles: ['src/app.ts'], writeback } },
     },
     candidateChecks: async (checkedTask: TaskView, sha: string) => { checkDirectory = checkedTask.worktree; return evidence(sha) },
   } as unknown as HostPorts

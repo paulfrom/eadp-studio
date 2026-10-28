@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import type { PlatformRuntime } from '../adapters/platform/runtime.js';
 import type { PrototypeTaskIdentity } from './generation.js';
 import { prototypeInputHash, sha256, verifyPrototypeContract } from './template.js';
+import type { PrototypeCheckDiagnostic } from '../../shared/prototype.ts';
 
 export interface PrototypeCheckResult {
   templateVersion: string;
@@ -19,19 +20,31 @@ export interface PrototypeCheckResult {
 }
 
 export type PrototypeCheckStep = 'install' | 'typecheck' | 'lint' | 'build' | 'browser';
-export type CheckStepObserver = (name: PrototypeCheckStep, status: 'running' | 'passed' | 'failed', exitCode?: number) => Promise<void>;
+export type CheckStepObserver = (name: PrototypeCheckStep, status: 'running' | 'passed' | 'failed', exitCode?: number, diagnostic?: PrototypeCheckDiagnostic) => Promise<void>;
 
 async function command(runtime: PlatformRuntime, input: PrototypeTaskIdentity, name: Exclude<PrototypeCheckStep, 'browser'>, args: string[], timeoutMs: number, observer?: CheckStepObserver, signal?: AbortSignal): Promise<number> {
   await observer?.(name, 'running');
+  const diagnostic: PrototypeCheckDiagnostic = { stdout: '', stderr: '', truncated: false };
+  const append = (channel: 'stdout' | 'stderr', text: string) => {
+    const remaining = 65536 - diagnostic[channel].length;
+    diagnostic[channel] += text.slice(0, remaining);
+    if (text.length > remaining) diagnostic.truncated = true;
+  };
+  let unsubscribe: (() => void) | undefined;
   try {
-    const result = await (await runtime.start('pnpm', args, { cwd: input.prototypeRoot, ...(signal ? { signal } : {}), timeoutMs })).done;
-    await observer?.(name, result.exitCode === 0 ? 'passed' : 'failed', result.exitCode);
+    const process = await runtime.start('pnpm', args, { cwd: input.prototypeRoot, ...(signal ? { signal } : {}), timeoutMs });
+    unsubscribe = process.onOutput(append);
+    const result = await process.done;
+    diagnostic.stdout = ''; diagnostic.stderr = ''; diagnostic.truncated = false;
+    append('stdout', result.stdout); append('stderr', result.stderr);
+    await observer?.(name, result.exitCode === 0 ? 'passed' : 'failed', result.exitCode, diagnostic);
     if (result.exitCode !== 0) throw new Error(`工程检查 ${name} 失败（退出码 ${result.exitCode}）`);
     return result.exitCode;
   } catch (error) {
-    await observer?.(name, 'failed');
+    diagnostic.error = error instanceof Error ? error.message : '工程检查中断';
+    await observer?.(name, 'failed', undefined, diagnostic);
     throw error;
-  }
+  } finally { unsubscribe?.(); }
 }
 
 export async function installPrototypeDependencies(runtime: PlatformRuntime, input: PrototypeTaskIdentity, signal?: AbortSignal, observer?: CheckStepObserver): Promise<void> {

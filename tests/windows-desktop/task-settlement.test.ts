@@ -21,12 +21,13 @@ const exists = (target: string): Promise<boolean> => stat(target).then(() => tru
 const origin = 'http://gitlab.example.test/team/project.git'
 
 /** A Git runtime that executes the native binary the fixture hashes into its own config. */
-function nativeRuntime(): { run(tool: string, args: string[], options: { cwd: string }): Promise<ProcessResult>; start(tool: string, args: string[], options: { cwd: string }): { done: Promise<ProcessResult> } } {
-  const start = (tool: string, args: string[], options: { cwd: string }) => ({ done: new Promise<ProcessResult>(resolve => {
-    execFile(tool, args, { cwd: options.cwd, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+function nativeRuntime(): { run(tool: string, args: string[], options: { cwd: string; input?: string }): Promise<ProcessResult>; start(tool: string, args: string[], options: { cwd: string; input?: string }): { done: Promise<ProcessResult> } } {
+  const start = (tool: string, args: string[], options: { cwd: string; input?: string }) => ({ done: new Promise<ProcessResult>(resolve => {
+    const child = execFile(tool, args, { cwd: options.cwd, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
       const code = typeof (error as NodeJS.ErrnoException | null)?.code === 'number' ? (error as unknown as { code: number }).code : error ? 1 : 0
       resolve({ stdout, stderr, stdoutBytes: Buffer.from(stdout), exitCode: code })
     })
+    child.stdin?.end(options.input)
   }) })
   return {
     start,
@@ -63,7 +64,7 @@ async function fixture() {
   let recognizedHead = base
   const remote: ProjectState = { project: { id: 'project', name: '测试项目', gitlabProjectId: 1, repositoryUrl: origin, stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready', recognizedHead: base, revision: 1 }, entities: [], baselines: [], integrations: [] }
   const api = { request: async (method: string, route: string) => route === '/v1/projects/project' ? { ...remote, project: { ...remote.project, recognizedHead } } : remote } as unknown as CollaborationClient
-  const ports = { git, gitLocal: (args: string[], cwd: string) => git.local(cwd, args), stopPreview: async () => {} } as unknown as HostPorts
+  const ports = { account: async () => ({ id: 1 }), git, gitLocal: (args: string[], cwd: string) => git.local(cwd, args), stopPreview: async () => {} } as unknown as HostPorts
   const projects = new ProjectWorkspaces(store, api, ports, new BackgroundLane())
   const released: string[] = []
   const maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => projects.syncMain(projectId, commit), release: async value => { released.push(value.worktree) } })

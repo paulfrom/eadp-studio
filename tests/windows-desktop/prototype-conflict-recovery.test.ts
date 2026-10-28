@@ -12,23 +12,24 @@ const exec = promisify(execFile)
 const pinnedVersion = '2.56.0.windows.2'
 
 function runtime(): PlatformRuntime {
-  const start = (tool: string, args: string[], options: { cwd: string }) => ({
+  const start = (tool: string, args: string[], options: { cwd: string; input?: string }) => ({
     done: new Promise<ProcessResult>(resolve => {
-      execFile(tool, args, { cwd: options.cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const child = execFile(tool, args, { cwd: options.cwd, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
         const exitCode = typeof (error as NodeJS.ErrnoException | null)?.code === 'number' ? (error as unknown as { code: number }).code : error ? 1 : 0
         resolve({ stdout, stderr, stdoutBytes: Buffer.from(stdout), exitCode })
       })
+      child.stdin?.end(options.input)
     }),
     onOutput: () => () => {},
   })
   return {
     manifest: { tools: { git: { version: pinnedVersion } } },
-    run: async (tool: string, args: string[], options: { cwd: string }) => {
+    run: async (tool: string, args: string[], options: { cwd: string; input?: string }) => {
       const result = await start(tool, args, options).done
       if (result.exitCode !== 0) throw new Error(`${tool} failed: ${result.exitCode}`)
       return result
     },
-    start: (tool: string, args: string[], options: { cwd: string }) => {
+    start: (tool: string, args: string[], options: { cwd: string; input?: string }) => {
       if (args[0] === '--no-replace-objects' && args.at(-1) === '--version') return { done: Promise.resolve({ stdout: `git version ${pinnedVersion}\n`, stderr: '', stdoutBytes: Buffer.from(`git version ${pinnedVersion}\n`), exitCode: 0 }), onOutput: () => () => {} }
       return start(tool, args, options)
     },
@@ -77,7 +78,7 @@ test('retained merge-tree conflicts restore exact files and modes without touchi
   const conflictText = await readFile(path.join(root, '原型代码/app.txt'), 'utf8')
   assert.match(conflictText, /<<<<<<<|=======|>>>>>>>/)
   assert.equal(await readFile(path.join(root, '原型代码/delete.txt'), 'utf8').then(() => 'present', error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'; throw error }), 'absent')
-  assert.equal(await readFile(path.join(root, '需求/keep.md'), 'utf8'), 'unchanged business material')
+  assert.equal(await readFile(path.join(root, '需求/keep.md'), 'utf8'), 'unchanged business material\n')
   assert.equal(await readFile(path.join(root, '原型代码/new.sh'), 'utf8'), '#!/bin/sh\necho author\n')
   if (process.platform !== 'win32') assert.ok((await stat(path.join(root, '原型代码/new.sh'))).mode & 0o111)
   assert.ok(writeback?.files.every(value => value.status === 'written'))
@@ -106,6 +107,6 @@ test('retained merge-tree conflicts restore exact files and modes without touchi
   if (process.platform !== 'win32') {
     await unlink(path.join(root, '原型代码/new.sh')); await symlink('../需求/keep.md', path.join(root, '原型代码/new.sh'))
     await assert.rejects(restore(), /符号链接|普通文件/)
-    assert.equal(await readFile(path.join(root, '需求/keep.md'), 'utf8'), 'unchanged business material')
+    assert.equal(await readFile(path.join(root, '需求/keep.md'), 'utf8'), 'unchanged business material\n')
   }
 })

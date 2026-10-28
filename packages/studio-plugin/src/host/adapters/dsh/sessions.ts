@@ -288,9 +288,9 @@ export class DshTaskSessions {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       const idle = await Promise.race([agent.whenIdle().then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 30_000) })])
-      if (!idle || agent.status !== 'idle' || !allowPending && agent.inbox.hasPending) return false
+      if (!idle || agent.status !== 'idle' || !allowPending && (agent.inbox.nextTurn.length > 0 || agent.inbox.nextStep.length > 0)) return false
       const flushed = await this.ctx.sessions.flush(agent.session)
-      return flushed && agent.status === 'idle' && (allowPending || !agent.inbox.hasPending)
+      return flushed && agent.status === 'idle' && (allowPending || !(agent.inbox.nextTurn.length > 0 || agent.inbox.nextStep.length > 0))
     } finally { if (timer) clearTimeout(timer) }
   }
   /** Release only the Agent handles owned by one task worktree; other tasks keep running. */

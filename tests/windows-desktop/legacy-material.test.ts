@@ -32,6 +32,7 @@ async function fixture() {
   const api = { request: async (method: string, route: string) => {
     calls.push(`${method} ${route}`)
     if (method !== 'GET') throw new Error(`unexpected write ${method} ${route}`)
+    if (route.startsWith('/v1/projects/project/prototype/baselines?') || route === '/v1/projects/project/prototype/adoptions') return []
     if (route === '/v1/projects') return [remote.project]
     if (route === '/v1/projects/project/templates') return { acceptedHead: remote.project.recognizedHead, scenarios: { templates: [] }, requirements: { templates: [] } }
     if (route === '/v1/projects/project') return remote

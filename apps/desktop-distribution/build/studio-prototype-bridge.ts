@@ -4,16 +4,18 @@ import { StudioPrototypeView, previewUrl, samePreviewIdentity, type StudioPrevie
 
 export const STUDIO_PROTOTYPE_LAYOUT = 'studio-prototype:layout'
 type HostRequest = { type: 'studio-prototype-register'; requestId: string; instance: StudioPreviewInstance }
-  | { type: 'studio-prototype-select' | 'studio-prototype-revoke'; requestId: string; identity: StudioPreviewIdentity }
-  | { type: 'studio-prototype-clear' | 'studio-prototype-deselect'; requestId: string }
+  | { type: 'studio-prototype-select'; requestId: string; identity: StudioPreviewIdentity }
+  | { type: 'studio-prototype-revoke'; requestId: string; identity: StudioPreviewIdentity }
+  | { type: 'studio-prototype-clear'; requestId: string }
+  | { type: 'studio-prototype-deselect'; requestId: string }
 
 /** Only the owned Host child may register an origin or change the selected instance. */
 class PrototypeBridge {
   private readonly native = new StudioPrototypeView()
   private readonly instances = new Map<string, StudioPreviewInstance>()
-  private child?: ChildProcess
-  private selected?: StudioPreviewIdentity
-  private mounted?: StudioPreviewIdentity
+  private child: ChildProcess | undefined
+  private selected: StudioPreviewIdentity | undefined
+  private mounted: StudioPreviewIdentity | undefined
   private work: Promise<unknown> = Promise.resolve()
 
   private validIdentity(value: unknown): StudioPreviewIdentity {

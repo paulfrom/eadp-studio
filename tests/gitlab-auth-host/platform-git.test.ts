@@ -128,3 +128,16 @@ test('linked worktrees support normal Git configuration and reject effective wor
     }
   } finally { await f.dispose() }
 })
+
+test('Windows commits and reads evidence paths beyond the legacy path limit', { skip: process.platform !== 'win32' }, async () => {
+  const f = await fixture()
+  try {
+    const repo = path.join(f.directory, 'repo'), relative = `.eadp/evidence/${'a'.repeat(64)}/${'segment/'.repeat(20)}extracted-${'b'.repeat(64)}.txt`
+    await f.git.init(repo, 'http://gitlab.example.test/team/project.git')
+    assert.ok(path.join(repo, relative).length > 260)
+    await mkdir(path.join(repo, path.dirname(relative)), { recursive: true })
+    await writeFile(path.join(repo, relative), 'long path evidence\n')
+    const commit = await f.git.commitFiles(repo, [relative], 'long path evidence', { name: 'Fixture', email: 'fixture@example.test' })
+    assert.deepEqual(await f.git.readBlob(repo, commit, relative), Buffer.from('long path evidence\n'))
+  } finally { await f.dispose() }
+})

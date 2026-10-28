@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { CancelPrototypeTaskRequest, CreatePrototypeTaskRequest, DevelopmentClaimToken, EntityView, ProjectPrototypeView, ProjectView, PrototypeTaskToken, PrototypeTaskView, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
+import type { CancelPrototypeTaskRequest, CreatePrototypeTaskRequest, DevelopmentClaimToken, EntityView, ProjectPrototypeView, ProjectView, PrototypeTaskToken, PrototypeTaskView, StudioUser, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 
@@ -67,7 +67,7 @@ export async function getTask(c: Transaction, projectId: string, taskId: string,
   requireCondition(Number(row.owner_id) === actor.id || actor.admin, 'PROTOTYPE_TASK_NOT_FOUND', 'Prototype task was not found', 404);
   return taskView(c, projectId, row);
 }
-export async function projectPrototype(c: Transaction, project: ProjectView, actor: Actor): Promise<ProjectPrototypeView> {
+export async function projectPrototype(c: Transaction, project: ProjectView, actor: StudioUser): Promise<ProjectPrototypeView> {
   const row = (await c.query<{ id: string; current_baseline_id: string | null }>('SELECT id,current_baseline_id FROM studio_prototypes WHERE project_id=$1', [project.id])).rows[0];
   requireCondition(row && project.recognizedHead, 'PROJECT_NOT_INITIALIZED', 'Project prototype is not initialized', 409);
   const rows = await c.query<TaskRow>('SELECT * FROM studio_prototype_tasks WHERE project_id=$1 AND owner_id=$2 ORDER BY created_date,id', [project.id, actor.id]);

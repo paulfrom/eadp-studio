@@ -9,12 +9,12 @@
     "headed": {
       "filename": "headed.zip",
       "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-win64.zip",
-      "sha256": null
+      "sha256": "ebc0c2b75e2ea98151a7f18ff47037bfcbab44a8660e79b9ffa6520f9b7607ab"
     },
     "headless": {
       "filename": "headless.zip",
       "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-headless-shell-win64.zip",
-      "sha256": null
+      "sha256": "5cfda0c763aa6a867ce2efad0c467e3220e9c5c01c4cba02fd57afe49ede5457"
     }
   }
 }

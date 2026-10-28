@@ -28,7 +28,7 @@ export class PrototypeCollaboration {
   private record?: QueueRecord
   private accountId?: number
   private storage?: AtomicState<QueueRecord>
-  private loading?: Promise<QueueRecord>
+  private loading: Promise<QueueRecord> | undefined
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) {}
   private route(projectId: string, suffix: string): string { return `/v1/projects/${encodeURIComponent(projectId)}${suffix}` }
   private async data(): Promise<QueueRecord> {

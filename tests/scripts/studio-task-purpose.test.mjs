@@ -15,7 +15,7 @@ const createElement = (type, props, ...children) => ({ type, props: props ?? {},
 // The module's own dependencies, as with `css` below: the panel takes its empty
 // projection from `client/state.ts`, which this harness does not transpile.
 const emptyStudioState = () => ({ connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], pending: [], reviews: [] })
-const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'emptyStudioState', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', 'RequirementWorkspace', 'MaterialConversation', `${compiled}; return StudioPanel`)
+const Component = new Function('React', 'useState', 'useEffect', 'useCallback', 'useRef', 'emptyStudioState', 'css', 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', 'NativeConversation', 'ScenarioWorkspace', 'RequirementWorkspace', 'MaterialConversation', 'PrototypeWorkbench', `${compiled}; return StudioPanel`)
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(nodes)]
 const text = tree => !tree || typeof tree !== 'object' ? tree ?? '' : tree.children.map(text).join('')
 
@@ -31,7 +31,7 @@ function render(stage, tasks) {
   // the panel's own stage and selection.
   const values = [stage, entity.id], calls = [], updates = []
   let index = 0
-  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), emptyStudioState, new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace', 'RequirementWorkspace', function MaterialConversation() {})
+  const Panel = Component({ createElement }, initial => { const slot = index++; return [slot < values.length ? values[slot] : typeof initial === 'function' ? initial() : initial, value => updates.push({ slot, value })] }, () => {}, value => value, initial => ({ current: initial }), emptyStudioState, new Proxy({}, { get: (_, key) => key }), 'MaterialEditor', 'ReviewPanel', 'ProjectDialog', 'StudioSettings', 'StudioTopbar', function NativeConversation() {}, 'ScenarioWorkspace', 'RequirementWorkspace', function MaterialConversation() {}, 'PrototypeWorkbench')
   // The panel reads one shared projection and runs commands through the session;
   // the harness supplies both faces the slot registration injects.
   const props = { useStore: selector => selector({ projection: state, loading: false, error: '' }), run: async command => { calls.push(command); return { ok: true, state } }, sync: () => {}, theme: {} }
@@ -39,7 +39,7 @@ function render(stage, tasks) {
   return { tree, calls, updates }
 }
 
-for (const [stage, purpose] of [['prototype', 'prototype'], ['handoffs', 'handoff']]) {
+for (const [stage, purpose] of [['handoffs', 'handoff']]) {
   test(`${stage} displays only its exact task purpose and invokes its dedicated session entry`, async () => {
     const task = { entityId: 'asset', purpose, sessionId: purpose + '-session', error: purpose + '-error' }
     const other = { entityId: 'other', purpose, sessionId: 'wrong-entity' }
@@ -112,4 +112,13 @@ test('failed requirement flush blocks stage and return navigation without droppi
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(updates.some(update => update.slot === 1 || update.slot === 2), false)
   assert.deepEqual(calls, [])
+})
+
+test('prototype delegates project collaboration to its dedicated workbench', () => {
+  const { tree } = render('prototype', [])
+  const workbench = nodes(tree).find(node => node.type === 'PrototypeWorkbench')
+  assert.ok(workbench)
+  assert.equal(typeof workbench.props.flushBeforeLeave, 'function')
+  assert.equal(typeof workbench.props.registerFlush, 'function')
+  assert.equal(nodes(tree).some(node => node.type?.name === 'NativeConversation'), false)
 })

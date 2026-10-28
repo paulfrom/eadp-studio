@@ -187,7 +187,7 @@ export type TemplateIntegrationRequest = Static<typeof TemplateIntegrationSchema
 export const PrepareIntegrationSchema = Type.Union([MaterialIntegrationSchema, TemplateIntegrationSchema]);
 export type PrepareIntegrationRequest = Static<typeof PrepareIntegrationSchema>;
 /** Stable review input bytes shared by Host and API; object key order is not evidence. */
-export function reviewInputText(input: Pick<MaterialIntegrationRequest, 'stage' | 'expectedHead' | 'token'> & { confirmations: readonly Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>[] }, root: Pick<EntityView, 'current' | 'occupation'>): string {
+export function reviewInputText(input: Pick<MaterialIntegrationRequest, 'stage' | 'expectedHead' | 'token'> & { confirmations: readonly Pick<ConfirmationInput, 'entityId' | 'expectedRevision' | 'fixed'>[] }): string {
   const value = { expectedHead: input.expectedHead, token: input.token,
     inputs: input.confirmations.map(c => ({ entityId: c.entityId, revision: c.expectedRevision, sha256: c.fixed.sha256 })).sort((a, b) => a.entityId.localeCompare(b.entityId)),
   };
