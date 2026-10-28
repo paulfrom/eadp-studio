@@ -1,7 +1,7 @@
 import type { CheckEvidence, FixedReference, MaterialMetadata, PrototypeEngineeringEvidence, StudioIdentity, StudioUser } from '@eadp/contracts'
 import type { TaskView } from '../../shared/studio.ts'
 import type { ConsistencyModelInput } from '../../shared/consistency.ts'
-import type { WorkspaceGit } from '../adapters/workspace/git.js'
+import type { WorkspaceGit } from '../adapters/workspace/git.ts'
 import type { PrototypeCheckReport, PrototypeInstructionAttachment, PrototypePreviewIdentity } from '../../shared/prototype.ts'
 import type { RequirementIdentity } from '../adapters/dsh/prototype-requirements.ts'
 

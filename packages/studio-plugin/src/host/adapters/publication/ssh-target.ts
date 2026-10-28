@@ -1,10 +1,10 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import type { PlatformRuntime } from '../platform/runtime.js'
-import type { SecretStore } from '../platform/credentials.js'
-import type { PublicationArtifact, PublicationBaseline, PublicationRecord, PublicationTarget } from '../../prototype/publication.js'
-import { REMOTE_PUBLICATION_RUNNER } from './remote-runner.js'
+import type { PlatformRuntime } from '../platform/runtime.ts'
+import type { SecretStore } from '../platform/credentials.ts'
+import type { PublicationArtifact, PublicationBaseline, PublicationRecord, PublicationTarget } from '../../prototype/publication.ts'
+import { REMOTE_PUBLICATION_RUNNER } from './remote-runner.ts'
 
 export interface SshPublicationOptions {
   host: string; port: number; username: string; knownHostKey: string; root: string; url: string

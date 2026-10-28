@@ -1,6 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { sha256, verifyPrototypeContract } from './template.js';
+import { sha256, verifyPrototypeContract } from './template.ts';
 
 export interface PrototypeTaskIdentity {
   prototypeRoot: string;

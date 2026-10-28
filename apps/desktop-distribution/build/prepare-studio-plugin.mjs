@@ -53,8 +53,11 @@ const browserArchiveCache = path.join(sharedRoot, '.local/browser-archives')
 async function verifyWebDependencyLock(manifest) {
   const lock = JSON.parse(await readFile(new URL('./studio-web-dependencies.lock.json', import.meta.url), 'utf8'))
   if (lock.schemaVersion !== 1 || !lock.packages || typeof lock.packages !== 'object') throw new Error('Studio web dependency lock is invalid.')
+  // Bundled UI libraries are build-time dependencies; Host runtime libraries stay
+  // in `dependencies`. Either declaration must still match the locked version.
   for (const [name, entry] of Object.entries(lock.packages)) {
-    if (!entry.version || !entry.license || manifest.dependencies?.[name] !== entry.version) throw new Error(`Studio web dependency or license lock mismatch: ${name}`)
+    const declared = manifest.dependencies?.[name] ?? manifest.devDependencies?.[name]
+    if (!entry.version || !entry.license || declared !== entry.version) throw new Error(`Studio web dependency or license lock mismatch: ${name}`)
   }
 }
 
@@ -124,7 +127,7 @@ export const studioStagingPaths = [...new Set([
   ...UPSTREAM_EDITS.map(edit => edit.file),
   ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, STUDIO_PROTOTYPE_VIEW_FILE, STUDIO_PROTOTYPE_BRIDGE_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
   'tsconfig.host.json', 'tsconfig.client.json', 'tsconfig.base.json',
-  ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'assets/skills', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
+  ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'assets/skills', 'locale', 'icon.svg', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/asset-domain/${file}`),
 ])]
@@ -240,6 +243,9 @@ async function placePlugin(incremental = false) {
   }
   await writeFile(path.join(assembledPlugin, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   await cp(path.join(productPlugin, 'README.md'), path.join(assembledPlugin, 'README.md'))
+  // Locale catalogues are declared as a glob in `files`, so copy the directory
+  // explicitly; the loop below skips glob entries.
+  await cp(path.join(productPlugin, 'locale'), path.join(assembledPlugin, 'locale'), { recursive: true })
   // Publishable files the tarball must carry (the bundle patch); lib/* outputs
   // and glob patterns are produced by the build instead.
   for (const entry of manifest.files ?? []) {

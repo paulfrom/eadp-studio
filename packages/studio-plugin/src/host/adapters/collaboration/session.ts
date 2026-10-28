@@ -1,5 +1,5 @@
 import type { LoginResponse, StudioIdentity } from '@eadp/contracts'
-import type { SecretStore } from '../platform/credentials.js'
+import type { SecretStore } from '../platform/credentials.ts'
 import { CollaborationError, collaborationFailureMessage, collaborationJson, collaborationOrigin } from './client.ts'
 
 interface SavedSession { origin: string; token: string; expiresAt: string; userId: number }

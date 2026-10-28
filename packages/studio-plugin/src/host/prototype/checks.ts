@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import type { PlatformRuntime } from '../adapters/platform/runtime.js';
-import type { PrototypeTaskIdentity } from './generation.js';
-import { prototypeInputHash, sha256, verifyPrototypeContract } from './template.js';
+import type { PlatformRuntime } from '../adapters/platform/runtime.ts';
+import type { PrototypeTaskIdentity } from './generation.ts';
+import { prototypeInputHash, sha256, verifyPrototypeContract } from './template.ts';
 import type { PrototypeCheckDiagnostic } from '../../shared/prototype.ts';
 
 export interface PrototypeCheckResult {

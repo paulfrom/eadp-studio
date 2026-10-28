@@ -1,15 +1,20 @@
 {
   "name": "@eadp-studio/studio-plugin",
+  "description": "EADP Studio 工作台：场景、需求、原型协作与交接材料设计、确认和协同。",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/host/index.d.ts",
+  "icon": "./icon.svg",
   "exports": {
     ".": {
       "types": "./lib/types/host/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./icon": "./icon.svg",
+    "./icon.svg": "./icon.svg",
+    "./locale/*.json": "./locale/*.json",
     "./client": {
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
@@ -48,14 +53,11 @@
     "lib/typert.remote-client.d.ts",
     "assets/prototype-template.tar.gz",
     "assets/prototype-template.manifest.json",
-    "assets/skills/**/*"
+    "assets/skills/**/*",
+    "icon.svg",
+    "locale/*.json"
   ],
   "devDependencies": {
-    "@eadp/asset-domain": "workspace:*",
-    "@eadp/contracts": "workspace:*",
-    "@tailwindcss/cli": "^4.3.3"
-  },
-  "dependencies": {
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-css": "6.3.1",
     "@codemirror/lang-javascript": "6.2.5",
@@ -65,6 +67,11 @@
     "@codemirror/search": "6.7.2",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.15",
+    "@eadp/asset-domain": "workspace:*",
+    "@eadp/contracts": "workspace:*",
+    "@tailwindcss/cli": "^4.3.3"
+  },
+  "dependencies": {
     "pdfjs-dist": "6.3.289",
     "playwright-core": "1.61.1",
     "undici": "8.11.2"

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.js'
+import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.ts'
 import { mergePrototype, restorePrototypeConflict, type PrototypeMergeResult, type PrototypeConflictWriteback } from './prototype-merge.ts'
 export type { PrototypeConflictObservation, PrototypeConflictWriteback, PrototypeConflictWritebackFile } from './prototype-merge.ts'
 

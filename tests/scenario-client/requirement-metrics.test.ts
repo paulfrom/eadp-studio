@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { ConsistencyComparisonView, MaterialMetadata } from '../../packages/studio-plugin/src/shared/studio.ts'
+import type { ConsistencyComparisonView, MaterialMetadata } from '@eadp/contracts'
 import { latestComparison, requirementMetrics } from '../../packages/studio-plugin/src/client/requirements/metrics.ts'
 
 const metadata = (openQuestions: Array<{ blocking: boolean }> = []) => ({ openQuestions: openQuestions.map(question => ({ blocking: question.blocking, limitation: '待澄清', excludedScope: '无' })) }) as unknown as MaterialMetadata

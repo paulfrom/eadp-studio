@@ -67,6 +67,16 @@ importers:
 
   packages/studio-plugin:
     dependencies:
+      pdfjs-dist:
+        specifier: 6.3.289
+        version: 6.3.289
+      playwright-core:
+        specifier: 1.61.1
+        version: 1.61.1
+      undici:
+        specifier: 8.11.2
+        version: 8.11.2
+    devDependencies:
       '@codemirror/commands':
         specifier: 6.11.1
         version: 6.11.1
@@ -94,16 +104,6 @@ importers:
       '@codemirror/view':
         specifier: 6.43.15
         version: 6.43.15
-      pdfjs-dist:
-        specifier: 6.3.289
-        version: 6.3.289
-      playwright-core:
-        specifier: 1.61.1
-        version: 1.61.1
-      undici:
-        specifier: 8.11.2
-        version: 8.11.2
-    devDependencies:
       '@eadp/asset-domain':
         specifier: workspace:*
         version: link:../asset-domain

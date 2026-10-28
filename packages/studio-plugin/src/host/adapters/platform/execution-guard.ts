@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { canonicalWritePath, withPathWriteLock } from './path-write-lock.js'
+import { canonicalWritePath, withPathWriteLock } from './path-write-lock.ts'
 
 interface StudioExecutionAgent { readonly session: { readonly header: { readonly cwd?: string } } }
 interface GuardExecution { readonly name: string; readonly arguments: unknown; readonly agent?: StudioExecutionAgent }

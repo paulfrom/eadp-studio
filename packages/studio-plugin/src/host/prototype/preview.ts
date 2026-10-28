@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ManagedProcess, PlatformRuntime } from '../adapters/platform/runtime.js';
-import type { PrototypeCheckResult } from './checks.js';
-import { assertCurrentPrototypeBuild } from './checks.js';
-import type { PrototypeTaskIdentity } from './generation.js';
+import type { ManagedProcess, PlatformRuntime } from '../adapters/platform/runtime.ts';
+import type { PrototypeCheckResult } from './checks.ts';
+import { assertCurrentPrototypeBuild } from './checks.ts';
+import type { PrototypeTaskIdentity } from './generation.ts';
 
 export interface PrototypePreview {
   previewId: string;

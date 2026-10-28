@@ -3,8 +3,8 @@ import { constants } from 'node:fs'
 import { lstat, open, readdir, realpath, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import type { PrototypeFileCommand, PrototypeFileResult, PrototypeFileSource } from '../../shared/prototype.ts'
-import { readTemplateManifest } from './template.js'
-import { withPathWriteLock } from '../adapters/platform/path-write-lock.js'
+import { readTemplateManifest } from './template.ts'
+import { withPathWriteLock } from '../adapters/platform/path-write-lock.ts'
 
 const MAX_BYTES = 1024 * 1024
 const MAX_FILES = 5000

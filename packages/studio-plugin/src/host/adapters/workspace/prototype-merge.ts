@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { PlatformRuntime, ProcessResult } from '../platform/runtime.ts'
-import { withPathWriteLock } from '../platform/path-write-lock.js'
+import { withPathWriteLock } from '../platform/path-write-lock.ts'
 
 interface FileEntry { path: string; mode: '100644' | '100755'; oid: string }
 interface Tree { oid: string; files: FileEntry[] }

@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { studioCall, studioProgressCall } from './command.ts'
-import { StudioPanel } from './StudioPanel.tsx'
+import { StudioPanel } from './studio/StudioPanel.tsx'
 import { StudioPanelIcon } from './panelIcon.tsx'
 import { MaterialAttachmentButton } from './components/MaterialAttachments.tsx'
 import { MaterialDecisionQuestionDock } from './components/MaterialDecisionQuestions.tsx'
@@ -30,7 +30,7 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' { interface Sess
 declare module '@deepseek-ai/dsh-typert-protocol' { interface TypertRemoteNamespaceMap { studio: { command(command: StudioCommand): Promise<RemoteResult<StudioReply>>; progress(): Promise<RemoteResult<ProjectProgressReply>> } } }
 
 /** The layout service, the slot registry, the native session navigator and the theme are the services this slice needs. */
-export const inject = ['slots', 'layout', 'sessions', 'remote', 'uiSession', 'uiConversation', 'theme', 'uiWorkspace']
+export const inject = ['slots', 'layout', 'sessions', 'remote', 'theme', 'uiWorkspace']
 
 const PANEL_ID = 'studio' as MainPanelId
 
