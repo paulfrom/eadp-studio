@@ -79,8 +79,9 @@
 # 项目硬性约定：DSH 桌面插件增强
 
 ## 必读技能
-- 开发或修改任何插件代码前，必须先读取并遵循 .dsh/skills/creating-dsh-plugins/SKILL.md。
+- 开发或修改任何插件代码前，必须先读取并遵循 .agents/skills/creating-dsh-plugins/SKILL.md。
 - 涉及 Client 半边（UI / 渲染层）开发时，必须核对官方双面插件（dual-face）契约，不得猜测 slot、service 或 API 签名。
+- 需要上游 UI/评审类技能时读 `.local/upstream/dsh/.agents/skills/` 原版，不在本仓保留副本。
 
 ## 增强边界（组合优先，禁止覆盖）
 - 本项目是官方桌面插件的增强层。必须通过官方暴露的 slot、service、patch 或 seam 机制扩展。
