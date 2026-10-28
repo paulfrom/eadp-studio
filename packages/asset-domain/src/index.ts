@@ -1,5 +1,8 @@
 import { isConfirmedMaterialMetadata, isProjectManifest, type BuiltinScenarioMetadata, type EntityView, type MaterialMetadata, type Prerequisite, type ProjectManifest } from '@eadp/contracts';
 
+/** Version of the fixed Git strategy used for prototype subtree merges. */
+export const PROTOTYPE_MERGE_POLICY = 'git-2.56.0-ort-subtree-v1';
+
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string, public readonly status = 409, public readonly details?: unknown) { super(message); }
 }

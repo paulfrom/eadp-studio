@@ -18,7 +18,7 @@ const fixedSha = 'a'.repeat(40), head = 'b'.repeat(40), candidate = 'c'.repeat(4
 const code = (expected: string) => (error: unknown) => error instanceof DomainError && error.code === expected;
 afterEach(() => mock.restoreAll());
 
-function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
+function fixture(stage: MaterialIntegrationRequest['stage'] = 'material') {
   const kind = 'requirement' as const;
   const evidenceBytes = Buffer.from('用户提供的业务依据。\n第二行明确规则。\n');
   const evidencePath = '.eadp/evidence/source.txt';
@@ -31,12 +31,12 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   const materialPath = `需求/${metadata.title}.md`;
   const body = Buffer.from('# Accepted input\n\n```eadp-metadata\n' + JSON.stringify(metadata) + '\n```\n\n## 核心业务规则\n\n明确的业务规则。\n\n## 验收条件\n\n明确的验收条件。\n');
   const fixed = { commitSha: fixedSha, path: materialPath, sha256: createHash('sha256').update(body).digest('hex') };
-  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: stage === 'prototype' ? 'prototype' as const : 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
+  const token = { occupationId: 'occupation-1', generation: 1, taskId: 'task-1', clientId: 'client-1', expectedRevision: 1, entityId: 'asset-1', ownerId: actor.id, purpose: 'design' as const, inputVersion: 1, prerequisiteBindings: [], createdAt: '' };
   const entity: EntityView = { id: 'asset-1', kind, title: metadata.title, revision: 1, generation: 1, materialVersion: 1, confirmationStatus: 'confirmed', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: actor.id, templateId: metadata.templateId, templateRef: metadata.templateRef, occupation: token, current: { version: 1, confirmationId: 'confirmation-1', confirmedBy: actor.id, confirmedAt: '', fixed, metadata, reuse: { enabled: true, reason: 'accepted' } } };
   const project: ProjectView = { id: 'project-1', gitlabProjectId: 7, repositoryUrl: 'http://gitlab.test/team/project.git', stableBranch: 'main', name: 'Project', namespaceId: 2, namespacePath: 'team', initializationStatus: 'ready', recognizedHead: head, revision: 1 };
-  const changedPath = stage === 'prototype' ? '原型代码/src/pages/index.tsx' : materialPath;
+  const changedPath = materialPath;
   const diff = (path: string, text = '+accepted change') => ({ old_path: path, new_path: path, deleted_file: false, renamed_file: false, diff: text });
-  const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: (stage === 'prototype' ? ['engineering', 'mock', 'browser', 'relations'] : ['materials', 'relations']).map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: stage === 'prototype' ? { ...fixed } : { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }] };
+  const input: MaterialIntegrationRequest = { idempotencyKey: 'integration-1', entityId: entity.id, token, stage, sourceSha: candidate, candidateSha: candidate, expectedHead: head, allowedPaths: [changedPath], checks: { candidateSha: candidate, passed: true, checks: ['materials', 'relations'].map(name => ({ name, passed: true, evidenceHash: 'e'.repeat(64) })) }, confirmations: [{ entityId: entity.id, expectedRevision: entity.revision, fixed: { ...fixed, commitSha: candidate }, readHash: fixed.sha256, confirmationMethod: 'direct', authorConfirmed: true }] };
   const controls = { candidateManifest: undefined as ProjectManifest | undefined, projectManifest: { schemaVersion: 1, projectId: project.id, gitlabProjectId: 7, repositoryUrl: project.repositoryUrl, stableBranch: 'main', directories: ['场景', '需求', '交接', '原型代码'], scenarioTemplates: { defaultTemplateId: 'default', templates: [{ id: 'default', name: 'Default', path: templateRef.path }] }, requirementTemplates: { defaultTemplateId: 'requirement-default', templates: [{ id: 'requirement-default', name: 'Default requirement', path: requirementTemplateRef.path }] } } as ProjectManifest, files: new Map([[evidencePath, evidenceBytes]]), previousMaterials: new Map<string, Uint8Array>(), candidateBody: body, fixedBody: body, candidateDiffs: [diff(changedPath)], sourceDiffs: [diff(changedPath)], denied: false };
   const reads: Array<{ path: string; ref: string | null }> = [];
   mock.method(globalThis, 'fetch', async (url: string | URL | Request, request: RequestInit) => {
@@ -75,12 +75,6 @@ function fixture(stage: MaterialIntegrationRequest['stage'] = 'prototype') {
   return { input, entity, project, content, controls, reads, body, metadata, materialPath, diff, verify, all, materials };
 }
 
-test('a normal prototype candidate verifies unchanged accepted requirement bytes at both fixed and candidate refs', async () => {
-  const f = fixture(); await f.verify();
-  assert.deepEqual(f.reads, [{ path: f.materialPath, ref: fixedSha }, { path: f.materialPath, ref: candidate }]);
-  assert.ok(!f.input.allowedPaths.includes(f.materialPath), 'accepted input must not be added to the prototype write scope');
-});
-
 test('a display projection reads accepted material once while acceptance keeps reading it', async () => {
   const f = fixture('material'), confirmation = f.input.confirmations[0]!;
   const reads = f.reads.length;
@@ -115,59 +109,7 @@ test('material confirmations still require exact candidate paths and bytes', asy
   await assert.rejects(f.content.verifyCandidate(actor, 7, f.input), code('CANDIDATE_PATH_SCOPE'));
 });
 
-test('prototype input must match the exact current fixed commit and path even when content hashes match', async () => {
-  const f = fixture();
-  f.input.confirmations[0]!.fixed.commitSha = 'f'.repeat(40);
-  assert.throws(() => validateIntegration(f.project, f.all, actor, f.input, f.materials), code('PROTOTYPE_INPUT_CHANGED'));
-  f.input.confirmations[0]!.fixed = { ...f.entity.current!.fixed, path: '需求/other.md' };
-  assert.throws(() => validateIntegration(f.project, f.all, actor, f.input, f.materials), code('PROTOTYPE_INPUT_CHANGED'));
-});
-
-test('prototype rejects substituted accepted or candidate requirement bytes even if comparison hides the MD change', async () => {
-  const f = fixture();
-  f.controls.fixedBody = Buffer.from('substituted accepted requirement');
-  await assert.rejects(f.verify(), code('CONTENT_HASH_MISMATCH'));
-  f.controls.fixedBody = f.body; f.controls.candidateBody = Buffer.from('substituted candidate requirement');
-  await assert.rejects(f.verify(), code('CONTENT_HASH_MISMATCH'));
-});
-
-test('prototype rejects wrong confirmed hash and metadata before accepting any candidate', async () => {
-  const f = fixture();
-  f.input.confirmations[0]!.fixed.sha256 = '0'.repeat(64);
-  assert.throws(() => validateIntegration(f.project, f.all, actor, f.input, f.materials), code('READ_VERSION_MISMATCH'));
-  f.input.confirmations[0]!.fixed = { ...f.entity.current!.fixed };
-  f.materials.get(f.entity.id)!.title = 'unconfirmed title';
-  assert.throws(() => validateIntegration(f.project, f.all, actor, f.input, f.materials), code('PROTOTYPE_INPUT_CHANGED'));
-});
-
-test('prototype candidate path and source equality checks remain strict', async () => {
-  const f = fixture();
-  f.controls.candidateDiffs.push(f.diff(f.materialPath));
-  await assert.rejects(f.verify(), code('CANDIDATE_PATH_SCOPE'));
-  f.controls.candidateDiffs.pop(); f.input.sourceSha = sourceSha;
-  f.controls.sourceDiffs = [f.diff(f.input.allowedPaths[0]!, '+different source change')];
-  await assert.rejects(f.verify(), code('SOURCE_CANDIDATE_MISMATCH'));
-});
-
-test('prototype fixed input reads retain current GitLab authorization', async () => {
-  const f = fixture(); f.controls.denied = true;
-  await assert.rejects(f.verify(), code('GITLAB_READ_DENIED'));
-  assert.deepEqual(f.reads, []);
-});
-
-test('prototype cannot whitelist a requirement MD to turn it into newly confirmed material', async () => {
-  const f = fixture();
-  f.input.allowedPaths.push(f.materialPath);
-  f.controls.candidateDiffs.push(f.diff(f.materialPath));
-  await assert.rejects(f.verify(), code('PROTOTYPE_PATH_SCOPE'));
-  assert.deepEqual(f.reads, []);
-  f.input.allowedPaths = [f.input.allowedPaths[0]!];
-  f.controls.candidateDiffs.pop();
-  f.input.confirmations[0]!.fixed.commitSha = candidate;
-  assert.throws(() => validateIntegration(f.project, f.all, actor, f.input, f.materials), code('PROTOTYPE_INPUT_CHANGED'));
-});
-
-for (const stage of ['material', 'prototype'] as const) {
+for (const stage of ['material'] as const) {
   test(`${stage} AI-assisted confirmation binds the reviewed candidate and exact input`, () => {
     const f = fixture(stage), confirmation = f.input.confirmations[0]!;
     f.input.confirmations[0] = { ...confirmation, confirmationMethod: 'ai-assisted', reviewEvidence: {

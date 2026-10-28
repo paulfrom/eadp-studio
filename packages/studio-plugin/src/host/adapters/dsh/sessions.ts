@@ -8,15 +8,21 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import type { AttachmentAdmissionPart, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
-import type { PrototypeConversationMessage } from '../../../shared/prototype.ts'
+import type { PrototypeConversationAttachment, PrototypeConversationMessage, PrototypeInstructionAttachment } from '../../../shared/prototype.ts'
 import { findMaterialFile } from '../assets/materials.ts'
 import { inheritStudioExecutionScope, registerStudioExecutionScope, updateStudioWriteScope } from '../platform/execution-guard.js'
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.js'
 import { readTemplateManifest } from '../../prototype/template.js'
+import type { PrototypeMaterialContext } from '../../application/prototype-material-context.ts'
+import { registerPrototypeMaterialTools } from './prototype-material-tools.ts'
+import type { PrototypeBrowserTools } from './prototype-browser-tools.ts'
 
 const configuredAgents = new WeakSet<object>()
+const conversationText = (value: string): { text: string; truncated?: true } => ({ text: value.slice(0, 100_000), ...(value.length > 100_000 ? { truncated: true as const } : {}) })
+const conversationAttachments = (content: ReadonlyArray<{ type: string; attachment?: { attachmentId: string; name?: string; bytes: number; width?: number; height?: number } }>): PrototypeConversationAttachment[] => content.flatMap(part => part.attachment ? [{ id: part.attachment.attachmentId, kind: part.type === 'image' ? 'image' as const : 'file' as const, ...(part.attachment.name ? { name: part.attachment.name } : {}), bytes: part.attachment.bytes, ...(part.attachment.width !== undefined ? { width: part.attachment.width } : {}), ...(part.attachment.height !== undefined ? { height: part.attachment.height } : {}) }] : [])
 export type ScenarioContextReader = (task: TaskView, signal: AbortSignal) => Promise<{ text: string; readPaths: string[] }>
 
 export class DshTaskSessions {
@@ -27,7 +33,7 @@ export class DshTaskSessions {
   private readonly imageCalls = new Map<string, string>()
   private readonly releaseOutput: () => void
   private readonly releaseInheritance: () => void
-  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader, private readonly skillsDirectory?: string) {
+  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader, private readonly skillsDirectory?: string, private readonly prototypeWriteAuthorization?: (task: TaskView) => Promise<() => Promise<void>>, private readonly prototypeMaterials?: () => PrototypeMaterialContext, private readonly prototypeBrowser?: PrototypeBrowserTools) {
     this.releaseOutput = ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
     this.releaseInheritance = ctx.on('agent/created', ({ agent }) => {
       const parentId = agent.session.header.parentSession
@@ -46,7 +52,7 @@ export class DshTaskSessions {
     const { apply } = await import(specifier) as { apply: (ctx: Context, config: Record<string, unknown>) => void }
     scope.plugin({ apply }, { providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [this.skillsDirectory!], watch: false })
   }
-  async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined): Promise<string> {
+  async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined, requireExisting = false): Promise<string> {
     if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
     // Materials are named after their titles, so the session resolves their current paths instead of deriving them.
     const scenarioFile = task.purpose === 'material' ? await findMaterialFile(task.worktree, 'scenario', task.entityId) : undefined
@@ -59,7 +65,9 @@ export class DshTaskSessions {
     if (this.handles.has(task.sessionId)) {
       if (input) {
         const handle = this.handles.get(task.sessionId)!
-        updateStudioWriteScope(handle.agent, (task.writePaths ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`), (task.writePaths ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`))
+        if (!this.prototypeWriteAuthorization) throw new Error('原型事项缺少后台授权核对')
+        const authorizeWrite = await this.prototypeWriteAuthorization(task)
+        updateStudioWriteScope(handle.agent, (task.writePaths ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`), (task.writePaths ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`), authorizeWrite)
       }
       if (input) await this.bind(task, input)
       if (this.durableSessions.has(task.sessionId)) {
@@ -117,12 +125,24 @@ export class DshTaskSessions {
       if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
       if (input) {
         const manifest = await readTemplateManifest(this.manifestPath)
+        scope.on('agent/pre-step', async (_payload, next) => {
+          const decision = await next()
+          if (decision.kind === 'enter' && decision.messages.some(message => message.source.kind !== 'studio-task')) return { kind: 'reject' }
+          return decision
+        })
+        if (!this.prototypeWriteAuthorization) throw new Error('原型事项缺少后台授权核对')
+        const authorizeWrite = await this.prototypeWriteAuthorization(task)
         scope.effect(() => registerStudioExecutionScope(task.worktree, {
           readRoot: task.worktree,
           writablePaths: (task.writePaths ?? []).filter(p => !p.endsWith('/')).map(p => `原型代码/${p}`),
           writablePrefixes: (task.writePaths ?? []).filter(p => p.endsWith('/')).map(p => `原型代码/${p}`),
           protectedPaths: manifest.contract.protectedPaths.map(p => `原型代码/${p}`),
+          coordinateWrites: true,
+          authorizeWrite,
+          prototypeMaterials: !!this.prototypeMaterials,
         }, agent), 'studio: prototype file boundary')
+        if (this.prototypeMaterials) registerPrototypeMaterialTools(scope, agent, task, this.prototypeMaterials())
+        this.prototypeBrowser?.register(scope, agent, task)
         const binding = await loadPrototypeRules(input, { load: async request => {
           scope.systemPrompt.section({ name: 'eadp-template-rules', order: 60, text: request.content, interpolate: false })
           return { loaded: true, sessionId: task.sessionId, sha256: request.sha256, entrypoint: 'AgentRegistry.setup → systemPrompt.section' }
@@ -144,6 +164,7 @@ export class DshTaskSessions {
       await configure(live.ctx, live, false)
       handle = { agent: live, dispose: async () => {} }
     } else if (inspection) handle = await this.ctx.agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
+    else if (requireExisting) throw new Error('原生会话记录无法读取，原事项和现场已保留')
     else handle = await this.ctx.agents.create({ sessionId, meta: { cwd: task.worktree, agentPreset }, agentOptions, setup })
     this.handles.set(task.sessionId, handle)
     this.worktrees.set(task.sessionId, path.resolve(task.worktree))
@@ -192,33 +213,64 @@ export class DshTaskSessions {
     } })
     this.bindings.set(task.sessionId, binding); return binding
   }
-  async prompt(sessionId: string, text: string, operationId?: string): Promise<void> {
+  async prompt(sessionId: string, text: string, operationId?: string, attachments: PrototypeInstructionAttachment[] = []): Promise<void> {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error('任务会话尚未恢复')
     if (operationId || this.durableSessions.has(sessionId)) {
       const inspection = operationId ? await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined) : await this.ctx.sessionController.inspect(sessionId as SessionId)
       const delivered = inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task'
         && (operationId ? event.data.source.operationId === operationId : event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n') === text))
-      if (delivered) return
+      const admitted = operationId && inspection?.events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'studio-task' && message.source.operationId === operationId))
+      if (delivered || admitted) return
     }
-    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'studio-task', ...(operationId ? { operationId } : {}) } }))
+    if (attachments.length > 8) throw new Error('每条原型指令最多附带 8 个文件')
+    const parts: AttachmentAdmissionPart[] = []
+    let totalBytes = 0
+    for (const attachment of attachments) {
+      if (!attachment.name || attachment.name.length > 255 || attachment.name.includes('\0') || !attachment.mediaType) throw new Error('附件名称或类型无效')
+      const bytes = Buffer.from(attachment.data, 'base64')
+      if (!bytes.length || bytes.length > 8 * 1024 * 1024 || bytes.toString('base64') !== attachment.data) throw new Error(`附件 ${attachment.name} 的编码或大小无效`)
+      totalBytes += bytes.length
+      if (totalBytes > 16 * 1024 * 1024) throw new Error('每条原型指令的附件总大小不能超过 16 MiB')
+      if (attachment.kind === 'file') parts.push({ type: 'file', attachment: await this.ctx.attachments.admitEncodedFile({ data: attachment.data, name: attachment.name }) })
+      else if (attachment.kind === 'image') parts.push({ type: 'image', data: attachment.data, mediaType: attachment.mediaType as ImageMediaType, name: attachment.name })
+      else throw new Error('附件类型不受支持')
+    }
+    const content = await this.ctx.attachments.admitPromptContent([{ type: 'text', text }, ...parts])
+    handle.agent.followup(createUserMessage({ content, source: { kind: 'studio-task', ...(operationId ? { operationId } : {}) } }))
+    if (operationId) {
+      if (!await this.ctx.sessions.flush(handle.agent.session)) throw new Error('原生消息持久化结果未知')
+      if (await this.inspectPrompt(sessionId, operationId) === 'unknown') throw new Error('原生消息记录尚不可核对')
+    }
   }
   /** A missing log entry does not prove that an in-flight request was not delivered. */
-  async inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'unknown'> {
+  async inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'unknown'> {
+    const handle = this.handles.get(sessionId)
+    if (handle && !await this.ctx.sessions.flush(handle.agent.session).catch(() => false)) return 'unknown'
     const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined)
-    return inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task' && event.data.source.operationId === operationId) ? 'delivered' : 'unknown'
+    if (inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task' && event.data.source.operationId === operationId)) return 'delivered'
+    if (inspection?.events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'studio-task' && message.source.operationId === operationId))) return 'admitted'
+    return 'unknown'
   }
   async readPrototypeConversation(sessionId: string): Promise<PrototypeConversationMessage[]> {
     const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
-    const messages: PrototypeConversationMessage[] = []
+    const messages: PrototypeConversationMessage[] = [], toolNames = new Map<string, string>()
     for (const event of inspection.events) {
       if (event.type === 'user/message') {
-        if (event.data.source.kind !== 'studio-task' && event.data.source.kind !== 'user') continue
-        const text = event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-        if (text) messages.push({ sequence: event.seq, role: 'user', text })
+        if (!['studio-task', 'user', 'user-rpc'].includes(event.data.source.kind)) continue
+        const text = event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n'), attachments = conversationAttachments(event.data.content)
+        if (text || attachments.length) messages.push({ sequence: event.seq, role: 'user', ...conversationText(text), source: event.data.source.kind,
+          ...(event.data.source.kind === 'studio-task' && event.data.source.operationId ? { operationId: event.data.source.operationId } : {}), ...(attachments.length ? { attachments } : {}) })
       } else if (event.type === 'assistant/message') {
         const text = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-        if (text) messages.push({ sequence: event.seq, role: 'assistant', text, ...(event.data.interrupted ? { interrupted: true } : {}) })
+        if (text) messages.push({ sequence: event.seq, role: 'assistant', ...conversationText(text), ...(event.data.interrupted ? { interrupted: true } : {}) })
+      } else if (event.type === 'tool/call') {
+        toolNames.set(event.data.callId, event.data.name)
+        messages.push({ sequence: event.seq, role: 'assistant', kind: 'tool', ...conversationText(event.data.arguments), tool: { callId: event.data.callId, name: event.data.name, status: 'running', arguments: event.data.arguments.slice(0, 100_000) } })
+      } else if (event.type === 'tool/result') {
+        const callId = event.data.message.toolCallId, text = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n'), attachments = conversationAttachments(event.data.message.content)
+        messages.push({ sequence: event.seq, role: 'assistant', kind: 'tool', ...conversationText(text), ...(attachments.length ? { attachments } : {}),
+          tool: { callId, name: toolNames.get(callId) ?? '工具', status: event.data.message.isError ? 'failed' : 'completed', result: text.slice(0, 100_000) } })
       }
     }
     return messages
@@ -227,18 +279,45 @@ export class DshTaskSessions {
   async cancel(sessionId: string): Promise<void> {
     if (this.ctx.agents.get(sessionId as SessionId)) this.ctx.sessionController.cancel({ sessionId: sessionId as SessionId })
   }
+  /** Cancel without discarding pending inbox work, then wait for the whole native agent and persistence. */
+  async settlePrototype(sessionId: string, cancel: boolean, allowPending = false): Promise<boolean> {
+    const handle = this.handles.get(sessionId)
+    if (!handle) return false
+    const agent = handle.agent
+    if (cancel) agent.cancel({ kind: 'user' }, { keepInbox: true })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const idle = await Promise.race([agent.whenIdle().then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 30_000) })])
+      if (!idle || agent.status !== 'idle' || !allowPending && agent.inbox.hasPending) return false
+      const flushed = await this.ctx.sessions.flush(agent.session)
+      return flushed && agent.status === 'idle' && (allowPending || !agent.inbox.hasPending)
+    } finally { if (timer) clearTimeout(timer) }
+  }
   /** Release only the Agent handles owned by one task worktree; other tasks keep running. */
   async releaseWorktree(worktree: string): Promise<void> {
-    const target = path.resolve(worktree), released: AgentHandle[] = []
+    const target = path.resolve(worktree), released: AgentHandle[] = [], closing: Promise<void>[] = []
     for (const [sessionId, directory] of [...this.worktrees]) {
       if (directory !== target) continue
       const handle = this.handles.get(sessionId)
       this.worktrees.delete(sessionId); this.handles.delete(sessionId); this.durableSessions.delete(sessionId); this.bindings.delete(sessionId)
       for (const key of [...this.imageCalls.keys()]) if (key.startsWith(`${sessionId}:`)) this.imageCalls.delete(key)
       if (handle) released.push(handle)
+      if (this.prototypeBrowser) closing.push(this.prototypeBrowser.close(sessionId))
     }
-    await Promise.allSettled(released.map(handle => handle.dispose()))
+    const results = await Promise.allSettled([...released.map(handle => handle.dispose()), ...closing]), failures = results.filter(result => result.status === 'rejected')
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), '原生事项资源未能完整释放')
   }
-  async dispose(): Promise<void> { this.releaseOutput(); this.releaseInheritance(); const handles = [...this.handles.values()]; this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); await Promise.allSettled(handles.map(h => h.dispose())) }
+  /** Stop model work, persist durable inbox state, and keep live handles when shutdown cannot settle. */
+  async dispose(): Promise<void> {
+    const prototypeIds = [...this.bindings.keys()]
+    const settled = await Promise.all(prototypeIds.map(id => this.settlePrototype(id, true, true)))
+    if (settled.some(value => !value)) throw new Error('原型会话尚未收敛或保存，关闭已暂停；事项和现场保持原状')
+    await this.prototypeBrowser?.dispose()
+    this.releaseOutput(); this.releaseInheritance()
+    const handles = [...this.handles.values()]
+    this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear()
+    const results = await Promise.allSettled(handles.map(handle => handle.dispose())), failures = results.filter(result => result.status === 'rejected')
+    if (failures.length) throw new AggregateError(failures.map(result => result.reason), '原生会话句柄未能完整释放')
+  }
 }
 declare module '@deepseek-ai/dsh-llm' { interface MessageSourceMap { 'studio-task': { kind: 'studio-task'; operationId?: string } } }

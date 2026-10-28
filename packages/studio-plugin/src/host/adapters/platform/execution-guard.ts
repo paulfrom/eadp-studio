@@ -1,11 +1,12 @@
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { canonicalWritePath, withPathWriteLock } from './path-write-lock.js'
 
 interface StudioExecutionAgent { readonly session: { readonly header: { readonly cwd?: string } } }
 interface GuardExecution { readonly name: string; readonly arguments: unknown; readonly agent?: StudioExecutionAgent }
 const FILE_TOOLS = new Set(['read', 'read_image', 'write', 'edit', 'glob', 'grep'])
 const CONTROL_TOOLS = new Set(['ask_user_question', 'todo_write', 'update_plan', 'set_todo', 'list_agents', 'spawn_agent', 'send_message', 'wait_agent', 'close_agent'])
-export interface StudioExecutionPolicy { readRoot: string; readPaths?: () => readonly string[]; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[] }
+export interface StudioExecutionPolicy { readRoot: string; readPaths?: () => readonly string[]; writablePaths?: readonly string[]; writablePrefixes?: readonly string[]; protectedPaths?: readonly string[]; coordinateWrites?: boolean; authorizeWrite?: () => Promise<void>; prototypeMaterials?: boolean }
 interface ExecutionScope { readonly cwd: string; policy: StudioExecutionPolicy; active: boolean; readonly parent?: ExecutionScope }
 const scopes = new WeakMap<StudioExecutionAgent, ExecutionScope>()
 export function registerStudioExecutionScope(cwd: string, policy: StudioExecutionPolicy, agent: StudioExecutionAgent): () => void {
@@ -26,11 +27,12 @@ export function registerStudioExecutionScope(cwd: string, policy: StudioExecutio
   return () => { binding.active = false; if (scopes.get(agent) === binding) scopes.delete(agent) }
 }
 /** Replace the live task's write scope after the Host has recorded its updated authorization. */
-export function updateStudioWriteScope(agent: StudioExecutionAgent, paths: readonly string[], prefixes: readonly string[]): void {
+export function updateStudioWriteScope(agent: StudioExecutionAgent, paths: readonly string[], prefixes: readonly string[], authorizeWrite?: () => Promise<void>): void {
   const scope = scopes.get(agent)
   if (!scope || !active(scope)) throw new Error('会话没有有效的任务写入范围')
   scope.policy.writablePaths = paths.map(relativePolicyPath)
   scope.policy.writablePrefixes = prefixes.map(relativePolicyPath)
+  scope.policy.authorizeWrite = authorizeWrite
 }
 function active(binding: ExecutionScope): boolean { return binding.active && (!binding.parent || active(binding.parent)) }
 /** Only the Host's verified live registry parent/child edge may call this. */
@@ -105,6 +107,7 @@ export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) =
     } catch { return '无法验证子 Agent 工作目录。' }
   }
   if (CONTROL_TOOLS.has(execution.name)) return undefined
+  if (execution.name === 'prototype_requirement_catalog' || execution.name === 'prototype_read_requirement') return policy.prototypeMaterials ? undefined : '此会话没有原型需求读取权限。'
   if (!FILE_TOOLS.has(execution.name)) return '工作台禁止普通 Agent 执行任意命令、程序或宿主扩展操作；请使用工作台专用检查、预览及发布入口。'
   const args = execution.arguments as Record<string, unknown> | null
   const value = args?.file_path ?? args?.path ?? '.'
@@ -130,3 +133,26 @@ export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) =
   }
 }
 export const studioToolGuard = createStudioToolGuard()
+
+/** Keep native prototype writes inside the same path lock as the workbench editor. */
+export async function coordinateStudioToolWrite<T>(execution: Readonly<GuardExecution> & { readonly signal: AbortSignal }, next: () => Promise<T>): Promise<T> {
+  if (execution.name !== 'write' && execution.name !== 'edit') return next()
+  const binding = execution.agent && scopes.get(execution.agent)
+  if (!binding?.policy.coordinateWrites) return next()
+  const args = execution.arguments as Record<string, unknown> | null
+  const value = args?.file_path ?? args?.path
+  if (typeof value !== 'string' || !value || value.includes('\0')) throw new Error('文件路径无效。')
+  const target = path.resolve(binding.cwd, value), lockedPath = canonicalWritePath(target)
+  return withPathWriteLock(target, async () => {
+    execution.signal.throwIfAborted()
+    const authorizeWrite = binding.policy.authorizeWrite
+    if (!authorizeWrite) throw new Error('原型事项缺少后台授权核对，现场已保留。')
+    await authorizeWrite()
+    if (binding.policy.authorizeWrite !== authorizeWrite) throw new Error('原型事项授权在写入前发生变化，请重新核对。')
+    execution.signal.throwIfAborted()
+    const reason = studioToolGuard(execution)
+    if (reason) throw new Error(reason)
+    if (canonicalWritePath(target) !== lockedPath) throw new Error('文件路径在等待写入期间发生变化，请重新读取。')
+    return next()
+  })
+}

@@ -56,7 +56,7 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
   const scene = (title: string, idempotencyKey = key()) => post<EntityView>(`${base}/entities`, { idempotencyKey, kind: 'scenario', title })
   const state = () => get<ProjectState>(base)
   async function entity(id: string) { const value = (await state()).entities.find(e => e.id === id); assert.ok(value && 'title' in value); return value as EntityView }
-  const claim = (value: EntityView, purpose: 'design' | 'prototype' = 'design') => post<EntityView>(`${base}/entities/${value.id}/claim`, { idempotencyKey: key(), expectedRevision: value.revision, taskId: key(), clientId: key(), purpose })
+  const claim = (value: EntityView) => post<EntityView>(`${base}/entities/${value.id}/claim`, { idempotencyKey: key(), expectedRevision: value.revision, taskId: key(), clientId: key(), purpose: 'design' })
   const requirementRef = async () => ({ commitSha: (await state()).project.recognizedHead!, path: '.template/requirement.md', sha256: hash(requirementTemplate) })
   const requirement = async (title: string, sources: Array<{ projectId: string; entityId: string; version: number }>, idempotencyKey = key()) =>
     post<EntityView>(`${base}/entities`, { idempotencyKey, kind: 'requirement', title, templateId: 'requirement', templateRef: await requirementRef(), sources })
@@ -283,8 +283,6 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     dependent = await entity(dependent.id)
     assert.equal(dependent.materialVersion, 1, 'Document confirmation is not blocked by a prerequisite without production evidence')
     assert.deepEqual(dependent.prerequisites, [{ requirementId: reqA.id, version: 1 }])
-    const prematurePrototype = await send('POST', `${base}/entities/${dependent.id}/claim`, { idempotencyKey: key(), expectedRevision: dependent.revision, taskId: key(), clientId: key(), purpose: 'prototype' })
-    assert.equal(prematurePrototype.statusCode, 409, prematurePrototype.body); assert.equal(errorCode(prematurePrototype), 'PREREQUISITE_INCOMPLETE')
     const upstream = await claim(await entity(reqA.id))
     const cycle = await send('PUT', `${base}/entities/${upstream.id}/relations`, { idempotencyKey: key(), token: token(upstream), sources: upstream.scenarioSources, scenarioIds: upstream.scenarioIds, prerequisites: [{ requirementId: dependent.id, version: 1 }] })
     assert.equal(cycle.statusCode, 409, cycle.body); assert.equal(errorCode(cycle), 'DEPENDENCY_CYCLE')
@@ -301,39 +299,15 @@ test('scenario backend: relational persistence, fixed Git acceptance and repair 
     assert.equal((await entity(left.id)).materialVersion, 1)
     await post(`${base}/entities/${right.id}/cancel`, { idempotencyKey: key(), token: token(right), reason: '结束联合确认验证' })
   })
-  await t.test('existing prototype completion, reuse and handoff still use relational fixed-version records', async () => {
-    async function prototype(value: EntityView) {
-      const owned = await claim(await entity(value.id), 'prototype'), current = (await state()).project
-      const sha = (++candidateNumber).toString(16).padStart(40, '0'), path = `原型代码/src/${owned.id}.tsx`
-      const files = new Map(remote.snapshots!.get(current.recognizedHead!)!); files.set(path, Buffer.from('export default function Page() { return <main>订单审核</main> }\n'))
-      remote.snapshots!.set(sha, files); remote.commits!.set(sha, [current.recognizedHead!])
-      remote.comparisons!.set(`${current.recognizedHead}:${sha}`, [{ old_path: path, new_path: path, deleted_file: false, renamed_file: false, diff: '+prototype' }])
-      return accept({ idempotencyKey: key(), entityId: owned.id, token: token(owned), stage: 'prototype', sourceSha: sha, expectedHead: current.recognizedHead!, candidateSha: sha,
-        allowedPaths: [path], checks: { candidateSha: sha, passed: true, checks: ['engineering', 'mock', 'browser', 'relations'].map(name => ({ name, passed: true as const, evidenceHash: '1'.repeat(64) })) },
-        confirmations: [{ entityId: owned.id, expectedRevision: owned.revision, fixed: owned.current!.fixed, readHash: owned.current!.fixed.sha256, authorConfirmed: true, confirmationMethod: 'direct' }] })
-    }
-    const sourceCompletion = await prototype(reqA)
-    assert.ok(sourceCompletion.accepted.baselineId)
-    await post(`${base}/entities/${reqA.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: false, reason: '临时停止新采用' })
-    await post(`${base}/entities/${reqA.id}/eligibility`, { idempotencyKey: key(), version: 1, enabled: true, reason: '恢复采用' })
-    let target = await requirement('复用审核规则', [{ projectId: project.id, entityId: first.id, version: 2 }])
-    target = await claim(target)
-    const adopted = await post<{ id: string }>(`${base}/adoptions`, { idempotencyKey: key(), source: { projectId: project.id, entityId: reqA.id, version: 1 }, targetEntityId: target.id, targetTaskId: target.occupation!.taskId, scope: 'prototype-package', adjustmentSummary: '按新订单入口调整' })
-    const fixed = await accept(await candidate([{ value: target, metadata: material(target, { sources: [...target.scenarioSources!, { projectId: project.id, entityId: reqA.id, version: 1 }] }) }]))
-    const premature = await send('POST', `${base}/adoptions/${adopted.id}/success`, { idempotencyKey: key(), targetConfirmationId: fixed.accepted.confirmationIds![0] })
-    assert.equal(premature.statusCode, 409)
-    const targetCompletion = await prototype(target)
-    const succeeded = await post<{ status: string }>(`${base}/adoptions/${adopted.id}/success`, { idempotencyKey: key(), targetConfirmationId: targetCompletion.accepted.confirmationIds![0] })
-    assert.equal(succeeded.status, 'succeeded')
+  await t.test('handoff receipts remain idempotent for a fixed confirmed material', async () => {
     let handoff = await post<EntityView>(`${base}/entities`, { idempotencyKey: key(), kind: 'handoff', title: '审核交接' })
     handoff = await claim(handoff)
-    const done = await accept(await candidate([{ value: handoff, metadata: material(handoff, { referencedAssets: [{ projectId: project.id, entityId: target.id, version: 1 }] }) }]))
+    const done = await accept(await candidate([{ value: handoff, metadata: material(handoff) }]))
     const payload = { idempotencyKey: key(), confirmationId: done.accepted.confirmationIds![0], note: '已收悉固定交接版本' }
     const receipt = await post<{ id: string }>(`${base}/entities/${handoff.id}/receipts`, payload)
     assert.deepEqual(await post(`${base}/entities/${handoff.id}/receipts`, payload), receipt)
     const receipts = await get<Array<{ id: string; actorId: number }>>(`${base}/entities/${handoff.id}/receipts`)
     assert.equal(receipts.length, 1); assert.equal(receipts[0]!.actorId, 1)
-    assert.ok((await state()).baselines.length >= 2)
   })
   await t.test('S08/S29/S30 template publication has a separate scope, preserves old bindings and is idempotent', async () => {
     const current = (await state()).project, sha = (++candidateNumber).toString(16).padStart(40, '0')

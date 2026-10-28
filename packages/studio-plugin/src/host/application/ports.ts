@@ -1,7 +1,9 @@
-import type { CheckEvidence, FixedReference, MaterialMetadata, StudioIdentity, StudioUser } from '@eadp/contracts'
+import type { CheckEvidence, FixedReference, MaterialMetadata, PrototypeEngineeringEvidence, StudioIdentity, StudioUser } from '@eadp/contracts'
 import type { TaskView } from '../../shared/studio.ts'
 import type { ConsistencyModelInput } from '../../shared/consistency.ts'
 import type { WorkspaceGit } from '../adapters/workspace/git.js'
+import type { PrototypeCheckReport, PrototypeInstructionAttachment, PrototypePreviewIdentity } from '../../shared/prototype.ts'
+import type { RequirementIdentity } from '../adapters/dsh/prototype-requirements.ts'
 
 export type SessionOutput = ({ kind: 'assistant'; content: string } | { kind: 'turn-ended'; reason: string }
   | { kind: 'source-read'; path: string; ranges: string[]; attachmentId: string }) & { seq?: number }
@@ -19,10 +21,12 @@ export interface HostPorts {
   logout(): Promise<void>
   account(): Promise<StudioUser | undefined>
   installTemplate(destination: string): Promise<void>
-  session(task: TaskView, rules: string): Promise<string>
-  prompt(sessionId: string, text: string, operationId?: string): Promise<void>
-  inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'unknown'>
+  session(task: TaskView, rules: string, requireExisting?: boolean): Promise<string>
+  prompt(sessionId: string, text: string, operationId?: string, attachments?: PrototypeInstructionAttachment[]): Promise<void>
+  inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'unknown'>
   readPrototypeConversation(sessionId: string): Promise<import('../../shared/prototype.ts').PrototypeConversationMessage[]>
+  /** Read-only one-shot identification; its result is checked against the original instruction and project directory. */
+  identifyPrototypeRequirements?(input: { instruction: string; requirements: RequirementIdentity[]; existingIds: string[]; explicitIds: string[] }, signal: AbortSignal): Promise<string>
   /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */
   compareConsistency?(input: ConsistencyModelInput, signal: AbortSignal): Promise<string>
   /** One-shot short-text inference with no Agent tools, Session persistence, or Git access. */
@@ -30,11 +34,16 @@ export interface HostPorts {
   /** One-shot merging of text that a remote accepted change and this task both modified. */
   mergeConflict?(input: MergeConflictInput, signal: AbortSignal): Promise<MergeConflictResult>
   cancelSession?(sessionId: string): Promise<void>
+  /** Observe whole-agent quiescence and flush the native session before releasing the local execution slot. */
+  settlePrototypeSession(sessionId: string, cancel: boolean): Promise<boolean>
   /** Release the Agent handles owned by one task worktree; other tasks stay live. */
   releaseTask?(worktree: string): Promise<void>
   readScenarioSource?(source: { path: string; name: string }): Promise<ScenarioSourceRead>
-  checks(task: TaskView, sourceSha: string): Promise<CheckEvidence>
-  preview(task: TaskView): Promise<{ url: string }>
+  checks(task: TaskView, sourceSha: string, operationId?: string): Promise<CheckEvidence>
+  candidateChecks(task: TaskView, sourceSha: string, operationId: string): Promise<PrototypeEngineeringEvidence>
+  prototypeCheckReports?(tasks: Array<{ projectId: string; prototypeTaskId: string }>): Promise<PrototypeCheckReport[]>
+  preview(task: TaskView, operationId: string): Promise<{ url: string; identity: PrototypePreviewIdentity }>
+  selectPreview(identity?: PrototypePreviewIdentity): Promise<void>
   stopPreview(sessionId?: string): Promise<void>
   publication(action: 'publish' | 'revokePublication'): Promise<void>
 }

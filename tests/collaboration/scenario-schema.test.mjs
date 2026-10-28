@@ -102,27 +102,21 @@ test('collaboration schema on PostgreSQL', { skip: !databaseUrl }, async t => {
     await confirm(pool, 'requirement-b-confirmed', 'requirement-b', { projectId: 'project-b', sources: ['general-confirmed-project-b'] });
     await assert.rejects(insert(pool, 'studio_prerequisites', { ...prerequisite, requirement_id: 'requirement-b', confirmation_id: 'requirement-b-confirmed' }), /requirement in the same project/);
     await insert(pool, 'studio_prerequisites', prerequisite);
-    assert.equal((await pool.query("SELECT count(*)::int AS n FROM studio_baselines WHERE entity_id='requirement-large'")).rows[0].n, 0);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM studio_prototype_baseline_requirements WHERE requirement_id='requirement-large'")).rows[0].n, 0);
     // DAG validation belongs to the relationship service transaction, not this DDL test.
   });
 
-  await t.test('prototype inputs bind completion baseline SHA while preserving the different original material SHA', async () => {
-    const completionSha = '4'.repeat(40);
-    assert.notEqual(completionSha, fixed.commitSha);
-    await inTransaction(pool, async c => {
-      await c.query("UPDATE studio_occupations SET active=false,finish_status='completed' WHERE id='occupation-requirement-large'");
-      await insert(c, 'studio_occupations', { id: 'prototype-occupation', project_id: 'project-a', entity_id: 'requirement-large', generation: 2, owner_id: 1, purpose: 'prototype', task_id: 'prototype-large', client_id: 'schema-test', expected_revision: 1, input_version: 1, ...audit.mutable });
-      await insert(c, 'studio_integrations', { id: 'prototype-integration', project_id: 'project-a', scope: 'prototype', entity_id: 'requirement-large', occupation_id: 'prototype-occupation', status: 'accepted', source_sha: fixed.commitSha, expected_head: fixed.commitSha, candidate_sha: completionSha, allowed_paths: ['prototype/requirement-large'], request: {}, ...audit.mutable });
-      await insert(c, 'studio_confirmations', { id: 'prototype-completed', project_id: 'project-a', entity_id: 'requirement-large', version: 1, stage: 'prototype', revision: 1, title: 'requirement-large', summary: 'Completed', commit_sha: fixed.commitSha, path: 'requirement-large.md', sha256: fixed.contentHash, method: 'normal', read_hash: fixed.contentHash, integration_id: 'prototype-integration', ...audit.created });
-      await insert(c, 'studio_baselines', { id: 'completed-baseline', project_id: 'project-a', entity_id: 'requirement-large', version: 1, commit_sha: completionSha, confirmation_id: 'prototype-completed', ...audit.created });
-      await c.query("UPDATE studio_occupations SET active=false,finish_status='completed' WHERE id='occupation-requirement-a'");
-      await insert(c, 'studio_occupations', { id: 'consumer-prototype-occupation', project_id: 'project-a', entity_id: 'requirement-a', generation: 2, owner_id: 1, purpose: 'prototype', task_id: 'prototype-a', client_id: 'schema-test', expected_revision: 1, input_version: 1, ...audit.mutable });
-    });
-    const input = { project_id: 'project-a', occupation_id: 'consumer-prototype-occupation', requirement_id: 'requirement-large', version: 1, confirmation_id: 'prototype-completed', integration_sha: completionSha, ...audit.created };
-    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, confirmation_id: 'requirement-large-confirmed' }), { code: '23503' });
-    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, integration_sha: fixed.commitSha }), { code: '23503' });
-    await assert.rejects(insert(pool, 'studio_occupation_inputs', { ...input, project_id: 'project-b' }), /requirement in the same project/);
-    await insert(pool, 'studio_occupation_inputs', input);
+  await t.test('prototype development claims exclude concurrent tasks for the same requirement', async () => {
+    await insert(pool, 'studio_prototypes', { id: 'prototype-a', project_id: 'project-a', creator_id: 1 });
+    const task = { project_id: 'project-a', prototype_id: 'prototype-a', owner_id: 1, client_id: 'schema-test', generation: 1, revision: 0, status: 'active', title: '事项', start_head: fixed.commitSha, source_base_head: fixed.commitSha, write_scope: ['src/pages/'], policy_hash: 'a'.repeat(64), claims_digest: 'b'.repeat(64), instruction: {} };
+    await insert(pool, 'studio_prototype_tasks', { ...task, id: 'prototype-task-a', branch: 'studio/a' });
+    await insert(pool, 'studio_prototype_tasks', { ...task, id: 'prototype-task-b', branch: 'studio/b' });
+    await insert(pool, 'studio_prototype_development_claims', { id: 'claim-a', project_id: 'project-a', task_id: 'prototype-task-a', requirement_id: 'requirement-large', generation: 1 });
+    const second = { id: 'claim-b', project_id: 'project-a', task_id: 'prototype-task-b', requirement_id: 'requirement-large', generation: 2 };
+    await assert.rejects(insert(pool, 'studio_prototype_development_claims', second), { code: '23505' });
+    await pool.query("UPDATE studio_prototype_development_claims SET active=false,ended_reason='cancelled' WHERE id='claim-a'");
+    await insert(pool, 'studio_prototype_development_claims', second);
+    await assert.rejects(insert(pool, 'studio_prototype_task_references', { project_id: 'project-b', task_id: 'prototype-task-b', requirement_id: 'requirement-large' }), { code: '23503' });
   });
 
   await t.test('comparison results, coverage and sealed conflict sets are independently validated', async () => {

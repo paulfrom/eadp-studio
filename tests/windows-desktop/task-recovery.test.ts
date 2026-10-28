@@ -354,28 +354,6 @@ test('persisted output retains the historical fixed confirmation after a newer v
 })
 
 
-for (const action of ['checkPrototype', 'startPreview'] as const) test('failed ' + action + ' clears an earlier successful preview projection', async () => {
-  const f = await fixture()
-  try {
-    const entity = f.remote.entities[0]!
-    entity.kind = 'requirement'
-    entity.current!.metadata = initialMetadata(entity)
-    entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
-    f.local.tasks.push({ projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype', inputHash: entity.current!.fixed.sha256, worktree: path.join(f.root, 'prototype-task') })
-    await f.store.save()
-    f.ports.git.state = async () => ({ root: f.root, head: 'a'.repeat(40), branch: 'main', dirty: false, repositoryUrl: '' })
-    f.ports.preview = async () => ({ url: 'http://127.0.0.1:4173' })
-    const app = f.createApp()
-    assert.equal((await app.command({ action: 'startPreview', entityId: entity.id })).ok, true)
-    assert.equal((await app.state()).preview?.url, 'http://127.0.0.1:4173')
-    if (action === 'checkPrototype') f.ports.checks = async () => { throw new Error('injected check failure') }
-    else f.ports.preview = async () => { throw new Error('injected preview failure') }
-    assert.equal((await app.command({ action, entityId: entity.id })).ok, false)
-    assert.equal((await app.state()).preview, undefined)
-  } finally { await f.dispose() }
-})
-
-
 test('sent recovery with unreadable history fails closed without creating or prompting a replacement', async () => {
   const f = await fixture()
   try {
@@ -506,41 +484,6 @@ for (const reason of [{ kind: 'completed' }, { kind: 'error', error: { code: 'UN
   } finally { await f.dispose() }
 })
 
-
-for (const action of ['claimPrototype', 'startSession'] as const) test(action + ' opens and restores prototype sessions with prototype rules, while materials retain their boundary', async () => {
-  const f = await fixture()
-  try {
-    const entity = f.remote.entities[0]!
-    entity.kind = 'requirement'
-    const worktree = path.join(f.root, 'prototype-task')
-    await mkdir(worktree)
-    const draft = await saveMaterial(worktree, initialMetadata(entity), '# 已确认需求\n')
-    const fixedBytes = await readFile(path.join(worktree, draft.path)), readBlob = f.ports.git.readBlob
-    f.ports.git.readBlob = async (directory, sha, file) => file === draft.path ? fixedBytes : readBlob(directory, sha, file)
-    entity.current!.fixed = { ...entity.current!.fixed, path: draft.path, sha256: draft.sha256 }
-    entity.current!.metadata = draft.metadata
-    entity.occupation = { occupationId: 'occupation', expectedRevision: 1, entityId: entity.id, ownerId: 1, clientId: f.local.clientId, taskId: 'prototype-task', generation: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
-    const task = { projectId: 'project', entityId: entity.id, sessionId: 'prototype-session', purpose: 'prototype' as const, inputHash: draft.sha256, worktree }
-    f.local.tasks.push(task)
-    const rules: string[] = []
-    f.ports.session = async (_task, value) => { rules.push(value); return _task.sessionId }
-    await f.store.save()
-    const first = await f.createApp().command({ action, entityId: entity.id, ...(action === 'startSession' ? { purpose: 'prototype' as const } : {}) })
-    assert.equal(first.ok, true, JSON.stringify(first))
-    assert.equal(first.sessionId, task.sessionId)
-    assert.match(rules[0]!, /按已确认需求完成原型/)
-    assert.doesNotMatch(rules[0]!, /仅编辑|不得.*执行shell/)
-    const store = new StudioStore(f.storeRoot); store.useUser(1)
-    assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'prototype' })).ok, true)
-    assert.equal(rules[1], rules[0], 'all prototype entry points and restored tasks use the same rules')
-    entity.occupation.purpose = 'design'
-    const local = await store.read(); local.tasks.push({ ...task, purpose: 'material', sessionId: 'design-session' }); await store.save()
-    assert.equal((await f.createApp(store).command({ action: 'startSession', entityId: entity.id, purpose: 'material' })).ok, true)
-    assert.match(rules[2]!, /需求设计助手/)
-    assert.match(rules[2]!, /不写正文/)
-    assert.doesNotMatch(rules[2]!, /仅编辑/)
-  } finally { await f.dispose() }
-})
 
 for (const restore of [false, true]) test('task sessions mount the resolved official preset before publishing ' + (restore ? 'resumed' : 'new') + ' Agents', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'studio-preset-'))

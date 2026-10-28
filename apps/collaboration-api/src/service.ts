@@ -15,8 +15,10 @@ import * as templates from './modules/templates.js';
 import * as prototypes from './modules/prototypes.js';
 import * as prototypeIntegration from './modules/prototype-integration.js';
 import * as prototypeReuse from './modules/prototype-reuse.js';
-import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, ReleasePrototypeTaskRequest, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest } from '@eadp/contracts';
+import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, PrototypeSourceBaseResult, ReleasePrototypeTaskRequest, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
 import { visibleEntity } from './modules/visibility.js';
+import { prototypePolicy, validatePrototypePolicy } from './prototype-policy.js';
+import { verifyPrototypeConflict, verifyPrototypeMerge } from './prototype-merge-verifier.js';
 
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
 export class CollaborationService {
@@ -90,6 +92,7 @@ export class CollaborationService {
   }
   async createPrototypeTask(actor: Actor, projectId: string, input: CreatePrototypeTaskRequest) {
     await this.authorize(actor, projectId, true);
+    validatePrototypePolicy(await prototypePolicy(), input.writeScope, input.policyHash);
     return this.mutate(actor, projectId, 'prototype.task.create', input, (c, project, all) => prototypes.createTask(c, project, all, actor, input));
   }
   async extendPrototypeClaims(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeClaimsRequest) {
@@ -102,15 +105,60 @@ export class CollaborationService {
   }
   async updatePrototypeScope(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeScopeRequest) {
     await this.authorize(actor, projectId, true);
+    validatePrototypePolicy(await prototypePolicy(), input.writeScope, input.policyHash);
     return this.mutate(actor, projectId, `prototype.task.scope:${taskId}`, input, c => prototypes.updateScope(c, projectId, actor, taskId, input));
   }
+  /** The registered base may advance only after the original uploaded source really conflicts. */
+  async updatePrototypeSourceBase(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeSourceBaseRequest): Promise<PrototypeSourceBaseResult> {
+    const project = await this.authorize(actor, projectId, true);
+    const action = `prototype.task.source-base:${taskId}`;
+    const previous = await this.replay(actor, projectId, action, input);
+    if (previous.found) return previous.result as PrototypeSourceBaseResult;
+    const task = await this.transact(actor, c => prototypes.getTask(c, projectId, taskId, actor));
+    prototypes.assertPrototypeClaims(task, actor, input);
+    requireCondition(project.recognizedHead === input.newBaseHead && input.newBaseHead !== task.sourceBaseHead, 'INTEGRATION_HEAD_CHANGED', 'The requested source base is not the current recognized head', 409);
+    validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
+    requireCondition(!input.sourceOperationId.includes('..') && !input.sourceOperationId.endsWith('.lock') && input.sourceRef === `refs/heads/studio-private/${taskId}/${input.sourceOperationId}/source`, 'INVALID_SOURCE_REF', 'The source ref must identify the original task operation', 422);
+    const prefix = `/projects/${project.gitlabProjectId}/repository`;
+    const observe = async () => Promise.all([
+      this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch),
+      this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.sourceRef)}`),
+      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.sourceSha}`),
+    ]);
+    const checkObserved = ([head, ref, source]: Awaited<ReturnType<typeof observe>>): void => {
+      requireCondition(head === input.newBaseHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch does not match the recognized project head', 409);
+      requireCondition(ref.id === input.sourceSha && source.id === input.sourceSha && Array.isArray(source.parent_ids) && source.parent_ids.length === 1 && source.parent_ids[0] === task.sourceBaseHead, 'SOURCE_CANDIDATE_MISMATCH', 'The original source ref or its parent does not match the registered task base', 409);
+    };
+    checkObserved(await observe());
+    const mergeBaseSha = await verifyPrototypeConflict(this.gitlab, project.gitlabProjectId, { sourceBaseHead: task.sourceBaseHead, sourceSha: input.sourceSha, newBaseHead: input.newBaseHead, writeScope: task.writeScope });
+    checkObserved(await observe());
+    return this.mutate(actor, projectId, action, input, async (c, current) => {
+      const updated = await prototypes.updateSourceBase(c, current, actor, taskId, input, task.sourceBaseHead);
+      return { task: updated, source: { operationId: input.sourceOperationId, ref: input.sourceRef, sha: input.sourceSha, previousBaseHead: task.sourceBaseHead, newBaseHead: input.newBaseHead, mergeBaseSha } };
+    });
+  }
+  /** Revoke the task independently of Git availability and retain the observed recovery state. */
+  private async endPrototypeTask(actor: Actor, projectId: string, taskId: string, status: 'cancelled' | 'released', input: CancelPrototypeTaskRequest | ReleasePrototypeTaskRequest) {
+    const project = await this.authorize(actor, projectId, true);
+    const action = `prototype.task.${status === 'cancelled' ? 'cancel' : 'release'}:${taskId}`;
+    const previous = await this.replay(actor, projectId, action, input);
+    if (previous.found) return previous.result;
+    let observedHead: string | undefined;
+    try {
+      observedHead = await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch);
+    } catch {
+      // An unavailable observation must not keep the task's authorization alive.
+    }
+    return this.mutate(actor, projectId, action, input, async (c, current) => ({
+      ...(await prototypes.endTask(c, projectId, actor, taskId, status, input)),
+      gitRecovery: observedHead === undefined ? 'unknown' : observedHead === current.recognizedHead ? 'clear' : 'reconcile-required',
+    }));
+  }
   async cancelPrototypeTask(actor: Actor, projectId: string, taskId: string, input: CancelPrototypeTaskRequest) {
-    await this.authorize(actor, projectId, true);
-    return this.mutate(actor, projectId, `prototype.task.cancel:${taskId}`, input, async c => ({ ...(await prototypes.endTask(c, projectId, actor, taskId, 'cancelled', input)), gitRecovery: 'unknown' as const }));
+    return this.endPrototypeTask(actor, projectId, taskId, 'cancelled', input);
   }
   async releasePrototypeTask(actor: Actor, projectId: string, taskId: string, input: ReleasePrototypeTaskRequest) {
-    await this.authorize(actor, projectId, true);
-    return this.mutate(actor, projectId, `prototype.task.release:${taskId}`, input, async c => ({ ...(await prototypes.endTask(c, projectId, actor, taskId, 'released', input)), gitRecovery: 'unknown' as const }));
+    return this.endPrototypeTask(actor, projectId, taskId, 'released', input);
   }
   async prototypeBaselines(actor: Actor, projectId: string, limit: number, offset: number) {
     await this.authorize(actor, projectId);
@@ -145,15 +193,13 @@ export class CollaborationService {
     requireCondition(sourceRef.id === input.sourceSha && candidateRef.id === input.candidateSha && source.id === input.sourceSha && candidate.id === input.candidateSha && source.parent_ids.length === 1 && source.parent_ids[0] === input.sourceBaseHead, 'SOURCE_CANDIDATE_MISMATCH', 'Uploaded refs and source parent must match the confirmed source', 409);
     if (input.derivation.kind === 'author-confirmed') requireCondition(input.sourceBaseHead === input.expectedHead && input.candidateSha === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Direct candidates must be the confirmed source', 409);
     else requireCondition(candidate.parent_ids.length === 2 && candidate.parent_ids[0] === input.expectedHead && candidate.parent_ids[1] === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Merged candidate must retain the expected head and source as parents', 409);
-    type Diff = { old_path: string; new_path: string; too_large?: boolean; collapsed?: boolean };
-    type Compare = { compare_timeout?: boolean; compare_same_ref?: boolean; diffs: Diff[] };
-    const compare = async (from: string, to: string) => this.gitlab.json<Compare>(`${prefix}/compare?from=${from}&to=${to}&straight=true`);
-    const [sourceDiff, candidateDiff] = await Promise.all([compare(input.sourceBaseHead, input.sourceSha), compare(input.expectedHead, input.candidateSha)]);
-    for (const diff of [sourceDiff, candidateDiff]) requireCondition(!diff.compare_timeout && !diff.compare_same_ref && diff.diffs.length > 0 && diff.diffs.every(item => !item.too_large && !item.collapsed && input.allowedPaths.includes(item.old_path) && input.allowedPaths.includes(item.new_path)), 'CANDIDATE_PATH_SCOPE', 'Source and candidate changes must be complete and within the declared scope', 422);
+    await verifyPrototypeMerge(this.gitlab, project.gitlabProjectId, input);
   }
   async preparePrototypeIntegration(actor: Actor, projectId: string, input: PrototypeIntegrationRequest) {
     const project = await this.authorize(actor, projectId, true), action = 'prototype.integration.prepare';
     const previous = await this.replay(actor, projectId, action, input); if (previous.found) return previous.result;
+    const task = await this.transact(actor, c => prototypes.getTask(c, projectId, input.token.prototypeTaskId, actor));
+    validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
     requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch differs from the recognized head', 409);
     await this.inspectPrototypeCandidate(project, input);
     return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.prepare(c, current, actor, input));
@@ -162,7 +208,12 @@ export class CollaborationService {
     const project = await this.authorize(actor, projectId, true), action = `prototype.integration.complete:${id}`;
     const previous = await this.replay(actor, projectId, action, input); if (previous.found) return previous.result;
     const operation = await this.transact(actor, c => prototypeIntegration.getIntegration(c, projectId, id, actor));
+    if (operation.status === 'accepted') return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.complete(c, current, actor, id, input));
     requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === operation.candidateSha, 'GIT_COMPLETION_UNVERIFIED', 'Stable branch has not reached the prepared candidate', 409);
+    const request = await this.transact(actor, c => prototypeIntegration.integrationRequest(c, projectId, id, actor));
+    const task = await this.transact(actor, c => prototypes.getTask(c, projectId, request.token.prototypeTaskId, actor));
+    validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
+    await this.inspectPrototypeCandidate(project, request);
     return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.complete(c, current, actor, id, input));
   }
   async abortPrototypeIntegration(actor: Actor, projectId: string, id: string, input: AbortPrototypeIntegrationRequest) {
@@ -359,6 +410,7 @@ export class CollaborationService {
     return this.mutate(actor, projectId, action, input, async (c, p) => {
       requireCondition(p.recognizedHead === input.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized integration head changed');
       await c.query("UPDATE studio_integrations SET status='aborted',last_editor_id=$2,last_editor_account=$3,last_editor_name=$4,last_edited_date=now() WHERE project_id=$1 AND status='prepared'", [projectId, actor.id, actor.username, actor.name]);
+      await c.query("UPDATE studio_prototype_integrations SET status='aborted',git_recovery='reconciled' WHERE project_id=$1 AND (status='prepared' OR (status='aborted' AND git_recovery='pending'))", [projectId]);
       p.recognizedHead = input.correctedHead; p.revision++; await repository.saveProject(c, p);
       await repository.audit(c, projectId, actor, 'integration.reconciled', { expectedHead: input.expectedHead, correctedHead: input.correctedHead, reason: input.reason }); return p;
     });

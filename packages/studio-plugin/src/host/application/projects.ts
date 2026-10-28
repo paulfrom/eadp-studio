@@ -208,24 +208,34 @@ export class ProjectWorkspaces {
    * @param projectId - project whose main checkout is synchronized.
    * @param commit - accepted head the checkout must contain.
    */
-  async syncMain(projectId: string, commit: string): Promise<void> {
+  async syncMain(projectId: string, commit: string, expectedAccountId = this.store.accountId): Promise<void> {
+    const accountId = this.store.accountId
+    if (!accountId || accountId !== expectedAccountId) throw new Error('协同账号已变化，原项目同步待恢复')
     const local = await this.store.read(), project = local.projects.find(p => p.id === projectId)
     if (!project) throw new Error('项目未在本机登记')
+    const assertOwner = async (): Promise<void> => {
+      if (this.store.accountId !== accountId || await this.store.read() !== local || (await this.ports.account())?.id !== accountId || this.store.accountId !== accountId) throw new Error('协同账号已变化，原项目同步待恢复')
+    }
     const record = (status: ProjectSync['status'], detail?: string): void => { project.sync = { status, commit, ...(detail ? { message: detail } : {}) } }
+    await assertOwner()
     record('pending'); await this.store.save()
     try {
       const state = await this.ports.git.state(project.directory)
+      await assertOwner()
       const stable = (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(projectId)}`)).project.stableBranch
+      await assertOwner()
       if (state.branch !== stable) { record('blocked', '主目录不在稳定分支，已记录为已确认待同步'); return }
       if (state.dirty) { record('blocked', '主目录有未提交改动，已记录为已确认待同步'); return }
       if (state.head === commit) { record('synced'); return }
-      if (!await this.ports.git.hasCommit(project.directory, commit)) await this.ports.git.fetchCommit(project.directory, commit)
+      if (!await this.ports.git.hasCommit(project.directory, commit)) { await assertOwner(); await this.ports.git.fetchCommit(project.directory, commit) }
+      await assertOwner()
       await this.ports.git.fastForward(project.directory, commit)
+      await assertOwner()
       record('synced')
     } catch (error) {
-      record('blocked', `主目录同步未完成：${error instanceof Error ? error.message : '未知原因'}`)
+      if (this.store.accountId === accountId && await this.store.read() === local) record('blocked', `主目录同步未完成：${error instanceof Error ? error.message : '未知原因'}`)
       throw error
-    } finally { await this.store.save() }
+    } finally { if (this.store.accountId === accountId && await this.store.read() === local) await this.store.save() }
   }
   async dispose(): Promise<void> { const owned = [...this.caches.values()]; this.caches.clear(); this.fixedBytes.clear(); await Promise.all(owned.map(directory => rm(directory, { recursive: true, force: true }))) }
   private async project(id: string): Promise<ProjectView> { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id)) throw new Error('项目身份无效。'); return (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(id)}`)).project }

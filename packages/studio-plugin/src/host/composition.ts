@@ -1,11 +1,12 @@
 import path from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
-import type { CheckEvidence, ProjectPrototypeView, ProjectState } from '@eadp/contracts'
+import type { CheckEvidence, ProjectPrototypeView, ProjectState, PrototypeEngineeringEvidence, PrototypeTaskView } from '@eadp/contracts'
 import { StudioApplication } from './application/studio.ts'
 import { StudioStore } from './application/state.ts'
 import type { HostPorts } from './application/ports.ts'
@@ -16,20 +17,34 @@ import { DesktopSecretStore } from './adapters/platform/credentials.js'
 import { CollaborationSession } from './adapters/collaboration/session.js'
 import { CollaborationTransport } from './adapters/collaboration/transport.js'
 import { WorkspaceGit } from './adapters/workspace/git.js'
-import { studioToolGuard } from './adapters/platform/execution-guard.js'
+import { coordinateStudioToolWrite, studioToolGuard } from './adapters/platform/execution-guard.js'
 import { DshTaskSessions } from './adapters/dsh/sessions.ts'
 import { compareLocalMaterials } from './adapters/dsh/consistency.ts'
 import { summarizeText } from './adapters/dsh/summary.ts'
+import { identifyPrototypeRequirements } from './adapters/dsh/prototype-requirements.ts'
 import { mergeRemoteConflict } from './adapters/dsh/merge.ts'
 import { readScenarioSource } from './adapters/dsh/scenario-sources.ts'
 import { checkStaticPreview } from './adapters/dsh/browser-check.ts'
+import { desktopPreviewCanvas } from './adapters/dsh/prototype-canvas.ts'
+import { PrototypeBrowserTools } from './adapters/dsh/prototype-browser-tools.ts'
+import { PrototypeBrowserAttachmentStore } from './prototype/browser-attachments.ts'
 import { copyTemplate } from './prototype/template.js'
-import { installPrototypeDependencies, runPrototypeChecks, type PrototypeCheckResult } from './prototype/checks.js'
+import { assertCurrentPrototypeChecks, buildPrototypePreview, installPrototypeDependencies, runPrototypeChecks } from './prototype/checks.js'
+import { PrototypeCheckJournal } from './prototype/check-journal.ts'
 import { startPrototypePreview, type PrototypePreview } from './prototype/preview.js'
 import type { PrototypeTaskIdentity } from './prototype/generation.js'
+import type { PrototypePreviewIdentity } from '../shared/prototype.ts'
 import { PublicationService, type PublicationBaseline } from './prototype/publication.js'
 import { SshPublicationTarget } from './adapters/publication/ssh-target.js'
 import { digest } from './adapters/assets/materials.ts'
+
+async function installedBrowserRuntime(assets: string): Promise<{ runtime?: { root: string; manifest: string; manifestSha256: string }; unavailable?: string }> {
+  try {
+    const release = JSON.parse(await readFile(path.join(assets, 'browser-runtime.release.json'), 'utf8')) as { manifest?: string; manifestSha256?: string; platform?: string; arch?: string; playwright?: string; chromiumRevision?: string; chromiumVersion?: string }
+    if (release.manifest !== 'browser-runtime/browser-manifest.json' || !/^[a-f0-9]{64}$/.test(release.manifestSha256 ?? '') || release.platform !== process.platform || release.arch !== process.arch || release.playwright !== '1.61.1' || release.chromiumRevision !== '1228' || release.chromiumVersion !== '149.0.7827.55') throw new Error('浏览器发行元数据与当前固定版本不匹配')
+    return { runtime: { root: path.join(assets, 'browser-runtime'), manifest: path.join(assets, 'browser-runtime', 'browser-manifest.json'), manifestSha256: release.manifestSha256! } }
+  } catch (error) { return { unavailable: `受信浏览器运行时不可用：${error instanceof Error ? error.message : '发行元数据不可读取'}` } }
+}
 
 export interface Config {
   collaborationUrl?: string;
@@ -52,10 +67,26 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const assets = fileURLToPath(new URL('../assets/', import.meta.url))
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')
   const store = new StudioStore(stateDirectory)
+  const checkJournal = new PrototypeCheckJournal(store)
   let app: StudioApplication
-  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'))
-  const checkResults = new Map<string, PrototypeCheckResult>()
-  const previews = new Map<string, PrototypePreview>()
+  const previews = new Map<string, { preview: PrototypePreview; identity: PrototypePreviewIdentity }>()
+  const browserTools = new PrototypeBrowserTools({
+    ...await installedBrowserRuntime(assets),
+    attachments: new PrototypeBrowserAttachmentStore(path.join(stateDirectory, 'prototype-browser-attachments')),
+    scope: async (task, validationRunId) => {
+      const entry = previews.get(task.sessionId)
+      if (!entry || entry.identity.source.kind !== 'task' || entry.identity.source.prototypeTaskId !== task.entityId || task.purpose !== 'prototype' || task.prototypeBaseline) return undefined
+      const identity = await auth.current(), local = await store.read()
+      if (!identity) return undefined
+      const remote = await api.request<PrototypeTaskView>('GET', `/v1/projects/${encodeURIComponent(task.projectId)}/prototype/tasks/${encodeURIComponent(task.entityId)}`)
+      if (remote.id !== task.entityId || remote.status !== 'active' || remote.ownerId !== identity.user.id || remote.clientId !== local.clientId) return undefined
+      return { accountId: identity.user.id, projectId: task.projectId, sessionId: task.sessionId, validationRunId,
+        target: { kind: 'task', prototypeTaskId: task.entityId, taskGeneration: remote.generation }, previewId: entry.identity.previewId,
+        previewGeneration: entry.identity.generation, buildHash: entry.identity.buildHash, origin: entry.preview.url }
+    },
+  })
+  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'), task => app.prototypeWriteAuthorization(task), () => app.prototypeMaterials, browserTools)
+  let previewGeneration = 0
   const availablePort = async (): Promise<number> => new Promise((resolve, reject) => {
     const server = createServer()
     server.once('error', reject)
@@ -68,24 +99,40 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const prototypeInput = async (task: TaskView, sourceSha?: string): Promise<PrototypeTaskIdentity> => ({ prototypeRoot: path.join(task.worktree, '原型代码'), manifestPath, projectId: task.projectId, prototypeTaskId: task.entityId, sessionId: task.sessionId, sourceSha: sourceSha ?? (await git.state(task.worktree)).head })
   const stopPreview = async (sessionId?: string) => {
     const owned = sessionId ? [...previews.entries()].filter(([id]) => id === sessionId) : [...previews.entries()]
-    for (const [id, preview] of owned) { previews.delete(id); await preview.stop() }
+    const failures: unknown[] = []
+    try { if (sessionId) await browserTools.close(sessionId); else await browserTools.dispose() } catch (error) { failures.push(error) }
+    for (const [id, entry] of owned) {
+      previews.delete(id)
+      app.prototypePreviewStopped(entry.identity)
+      try { await desktopPreviewCanvas.revoke(entry.identity) } catch (error) { failures.push(error) }
+      try { await entry.preview.stop() } catch (error) { failures.push(error) }
+    }
+    if (failures.length) throw new AggregateError(failures, '部分预览未能完整关闭，请核对桌面状态')
   }
-  const runChecks = async (task: TaskView, sourceSha: string): Promise<CheckEvidence> => {
-    checkResults.delete(task.sessionId)
+  const runCandidateChecks = async (task: TaskView, sourceSha: string, operationId: string): Promise<PrototypeEngineeringEvidence> => {
+    const journal = await checkJournal.begin(task, sourceSha, operationId, 'checks')
     try {
       const input = await prototypeInput(task, sourceSha)
-      await installPrototypeDependencies(runtime, input)
-      const result = await runPrototypeChecks(runtime, input)
+      await installPrototypeDependencies(runtime, input, undefined, journal.step)
+      const result = await runPrototypeChecks(runtime, input, undefined, journal.step)
+      await journal.step('browser', 'running')
       const current = await startPrototypePreview(runtime, input, result, await availablePort())
-      let browserHash: string
-      try { browserHash = await checkStaticPreview(`${current.url}/`) } finally { await current.stop() }
-      checkResults.set(task.sessionId, result)
-      return { candidateSha: sourceSha, passed: true, checks: [
-        { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify(result)) },
-        { name: 'mock', passed: true, evidenceHash: browserHash },
-        { name: 'browser', passed: true, evidenceHash: browserHash },
+      let browser: Awaited<ReturnType<typeof checkStaticPreview>>
+      try { browser = await checkStaticPreview(`${current.url}/`) } finally { await current.stop() }
+      await assertCurrentPrototypeChecks(input, result)
+      await journal.step('browser', 'passed')
+      await journal.finish('passed', result)
+      const binding = { candidateSha: sourceSha, inputHash: result.inputHash, outputHash: result.outputHash, rulesHash: result.rulesSha256 }
+      return { candidateSha: sourceSha, sourceTreeHash: result.inputHash, rulesHash: result.rulesSha256, buildArtifactSha256: result.outputHash, checks: [
+        { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result, tools: runtime.manifest.tools })) },
+        { name: 'mock', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.mockHash })) },
+        { name: 'browser', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.browserHash })) },
       ] }
-    } catch (error) { checkResults.delete(task.sessionId); throw error }
+    } catch (error) { await journal.finish('failed'); throw error }
+  }
+  const runChecks = async (task: TaskView, sourceSha: string, operationId = crypto.randomUUID()): Promise<CheckEvidence> => {
+    const evidence = await runCandidateChecks(task, sourceSha, operationId)
+    return { candidateSha: sourceSha, passed: true, checks: evidence.checks }
   }
   const publication = new PublicationService({
     authority: {
@@ -122,19 +169,28 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     login: (username, password) => auth.login(username, password), logout: () => auth.logout(),
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
-    session: async (task, rules) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined),
-    prompt: (id, text, operationId) => sessions.prompt(id, text, operationId), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks,
-    preview: async task => {
+    session: async (task, rules, requireExisting) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined, requireExisting),
+    prompt: (id, text, operationId, attachments) => sessions.prompt(id, text, operationId, attachments), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), identifyPrototypeRequirements: (input, signal) => identifyPrototypeRequirements(ctx, input, signal), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), settlePrototypeSession: (id, cancel) => sessions.settlePrototype(id, cancel), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks, candidateChecks: runCandidateChecks, prototypeCheckReports: tasks => checkJournal.latest(tasks),
+    preview: async (task, operationId) => {
+        const input = await prototypeInput(task, task.prototypeBaseline?.commitSha)
+        const journal = await checkJournal.begin(task, input.sourceSha, operationId, 'preview')
+        let next: PrototypePreview | undefined
         try {
-          const input = await prototypeInput(task)
-          const result = checkResults.get(task.sessionId)
-          if (!result) throw new Error('请先运行工程检查并验证静态页面')
-          const next = await startPrototypePreview(runtime, input, result, await availablePort())
-          try { await checkStaticPreview(`${next.url}/`) } catch (error) { await next.stop(); throw error }
-          await stopPreview(task.sessionId); previews.set(task.sessionId, next)
-          return { url: next.url }
-        } catch (error) { checkResults.delete(task.sessionId); throw error }
-    }, stopPreview,
+          await installPrototypeDependencies(runtime, input, undefined, journal.step)
+          const result = await buildPrototypePreview(runtime, input, undefined, journal.step)
+          await journal.step('browser', 'running')
+          next = await startPrototypePreview(runtime, input, result, await availablePort())
+          await checkStaticPreview(`${next.url}/`)
+          await journal.step('browser', 'passed')
+          const identity: PrototypePreviewIdentity = { projectId: task.projectId, source: task.prototypeBaseline ? { kind: 'baseline', baselineId: task.prototypeBaseline.id, commitSha: task.prototypeBaseline.commitSha } : { kind: 'task', prototypeTaskId: task.entityId }, previewId: next.previewId, generation: ++previewGeneration, buildHash: next.buildHash }
+          await desktopPreviewCanvas.register({ ...identity, url: next.url })
+          try { await stopPreview(task.sessionId); await journal.finish('passed', result) }
+          catch (error) { await desktopPreviewCanvas.revoke(identity).catch(() => {}); throw error }
+          const entry = { preview: next, identity }; previews.set(task.sessionId, entry)
+          void next.process.done.finally(() => { if (previews.get(task.sessionId) === entry) { previews.delete(task.sessionId); app.prototypePreviewStopped(identity); void browserTools.close(task.sessionId).catch(() => {}); void desktopPreviewCanvas.revoke(identity).catch(() => {}) } }).catch(() => {})
+          return { url: next.url, identity }
+        } catch (error) { if (next) await next.stop().catch(() => {}); await journal.finish('failed'); throw error }
+    }, selectPreview: identity => identity ? desktopPreviewCanvas.select(identity) : desktopPreviewCanvas.deselect(), stopPreview,
     publication: async action => {
       const local = await store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目')
       if (action === 'publish') {
@@ -146,6 +202,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   }
   app = new StudioApplication(store, api, ports)
     ctx.effect(() => ctx.tools.guard(studioToolGuard), 'studio: monotonic execution guard')
+    ctx.effect(() => ctx.on('tools/execute', (execution, next) => coordinateStudioToolWrite(execution, next)), 'studio: prototype write coordination')
     ctx.effect(() => async () => { auth.dispose(); await stopPreview(); await app.dispose(); await runtime.dispose() }, 'studio: host resources')
   return app
 }

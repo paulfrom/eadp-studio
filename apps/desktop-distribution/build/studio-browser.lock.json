@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "platform": "win32",
+  "arch": "x64",
+  "playwright": "1.61.1",
+  "chromiumRevision": "1228",
+  "chromiumVersion": "149.0.7827.55",
+  "archives": {
+    "headed": {
+      "filename": "headed.zip",
+      "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-win64.zip",
+      "sha256": null
+    },
+    "headless": {
+      "filename": "headless.zip",
+      "url": "https://cdn.playwright.dev/builds/cft/149.0.7827.55/win64/chrome-headless-shell-win64.zip",
+      "sha256": null
+    }
+  }
+}

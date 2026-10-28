@@ -1,28 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { canonical, requireCondition } from '@eadp/asset-domain';
-import type { AbortPrototypeIntegrationRequest, CompletePrototypeIntegrationRequest, DevelopmentClaimToken, ProjectView, PrototypeBaselineView, PrototypeIntegrationRequest, PrototypeTaskView } from '@eadp/contracts';
+import type { AbortPrototypeIntegrationRequest, CompletePrototypeIntegrationRequest, DevelopmentClaimToken, ProjectView, PrototypeBaselineView, PrototypeIntegrationRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 import * as repository from '../persistence/repository.js';
-import { getTask } from './prototypes.js';
+import { withinPrototypeScope } from '../prototype-policy.js';
+import { assertPrototypeClaims, getTask } from './prototypes.js';
 
-type IntegrationRow = { id: string; owner_id: string | number; status: 'prepared' | 'accepted' | 'aborted'; request: PrototypeIntegrationRequest; created_date: Date | string };
-export interface PrototypeIntegrationView { id: string; prototypeTaskId: string; status: 'prepared' | 'accepted' | 'aborted'; sourceSha: string; expectedHead: string; candidateSha: string; createdAt: string; baselineId?: string; acceptanceId?: string }
+type IntegrationRow = { id: string; owner_id: string | number; status: 'prepared' | 'accepted' | 'aborted'; git_recovery: 'pending' | 'reconciled' | null; request: PrototypeIntegrationRequest; created_date: Date | string };
+export interface PrototypeIntegrationView { id: string; prototypeTaskId: string; status: 'prepared' | 'accepted' | 'aborted'; sourceSha: string; expectedHead: string; candidateSha: string; createdAt: string; gitRecovery?: 'pending' | 'reconciled'; baselineId?: string; acceptanceId?: string }
 
-/** Bind a proposed acceptance to the live task revision and the complete claim set. */
-function assertClaims(task: PrototypeTaskView, input: { token: PrototypeIntegrationRequest['token']; developmentClaims: DevelopmentClaimToken[]; claimsDigest: string }) {
-  requireCondition(task.status === 'active' && task.id === input.token.prototypeTaskId && task.clientId === input.token.clientId && task.generation === input.token.generation && task.revision === input.token.expectedRevision, 'STALE_PROTOTYPE_TASK', 'Prototype task authorization has changed', 409);
-  const ordered = (values: DevelopmentClaimToken[]) => [...values].sort((a, b) => a.requirementId.localeCompare(b.requirementId));
-  requireCondition(task.developmentClaims.length > 0 && canonical(ordered(task.developmentClaims)) === canonical(ordered(input.developmentClaims)) && task.claimsDigest === input.claimsDigest, 'STALE_DEVELOPMENT_CLAIM', 'The complete active claim set has changed', 409);
-}
-function withinScope(path: string, scope: string[]) {
-  const relative = path.startsWith('原型代码/') ? path.slice('原型代码/'.length) : '';
-  return !!relative && scope.some(item => item.endsWith('/') ? relative.startsWith(item) : relative === item);
-}
 async function integrationRow(c: Transaction, projectId: string, id: string): Promise<IntegrationRow> {
   const row = (await c.query<IntegrationRow>('SELECT * FROM studio_prototype_integrations WHERE project_id=$1 AND id=$2', [projectId, id])).rows[0];
   requireCondition(row, 'INTEGRATION_NOT_FOUND', 'Prototype integration was not found', 404);
   return row;
+}
+/** The fixed request is retained for rechecking the same candidate at completion. */
+export async function integrationRequest(c: Transaction, projectId: string, id: string, actor: Actor): Promise<PrototypeIntegrationRequest> {
+  const row = await integrationRow(c, projectId, id);
+  requireCondition(Number(row.owner_id) === actor.id || actor.admin, 'INTEGRATION_NOT_FOUND', 'Prototype integration was not found', 404);
+  return row.request;
 }
 export async function getIntegration(c: Transaction, projectId: string, id: string, actor: Actor): Promise<PrototypeIntegrationView> {
   const row = await integrationRow(c, projectId, id);
@@ -30,16 +27,17 @@ export async function getIntegration(c: Transaction, projectId: string, id: stri
   const accepted = (await c.query<{ id: string; baseline_id: string }>('SELECT a.id,b.id AS baseline_id FROM studio_prototype_acceptances a JOIN studio_prototype_baselines b ON b.acceptance_id=a.id WHERE a.project_id=$1 AND a.integration_id=$2', [projectId, id])).rows[0];
   return { id, prototypeTaskId: row.request.token.prototypeTaskId, status: row.status, sourceSha: row.request.sourceSha,
     expectedHead: row.request.expectedHead, candidateSha: row.request.candidateSha, createdAt: new Date(row.created_date).toISOString(),
+    ...(row.status === 'aborted' ? { gitRecovery: row.git_recovery! } : {}),
     ...(accepted ? { acceptanceId: accepted.id, baselineId: accepted.baseline_id } : {}) };
 }
 export async function prepare(c: Transaction, project: ProjectView, actor: Actor, input: PrototypeIntegrationRequest): Promise<PrototypeIntegrationView> {
-  const task = await getTask(c, project.id, input.token.prototypeTaskId, actor); assertClaims(task, input);
+  const task = await getTask(c, project.id, input.token.prototypeTaskId, actor); assertPrototypeClaims(task, actor, input);
   requireCondition(task.ownerId === actor.id && task.prototypeId === input.prototypeId && task.sourceBaseHead === input.sourceBaseHead, 'STALE_PROTOTYPE_TASK', 'Prototype task identity or source base has changed', 409);
   requireCondition(project.recognizedHead === input.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized project head has changed', 409);
   requireCondition(canonical([...input.developmentRequirementIds].sort()) === canonical([...task.developmentRequirementIds].sort()), 'STALE_DEVELOPMENT_CLAIM', 'Development scope must match the complete active claim set', 409);
   requireCondition(input.authorConfirmation.sourceSha === input.sourceSha && input.authorConfirmation.claimsDigest === input.claimsDigest, 'CONFIRMATION_SOURCE_MISMATCH', 'Confirmation must bind the source and claims', 409);
   requireCondition(input.evidence.candidateSha === input.candidateSha && new Set(input.evidence.checks.map(check => check.name)).size === 3, 'CHECK_CANDIDATE_MISMATCH', 'Evidence must describe the candidate and all three checks', 422);
-  requireCondition(input.allowedPaths.length > 0 && input.allowedPaths.every(path => withinScope(path, task.writeScope)), 'PROTOTYPE_PATH_SCOPE', 'Candidate paths must be within the task write scope', 422);
+  requireCondition(input.allowedPaths.length > 0 && input.allowedPaths.every(path => withinPrototypeScope(path, task.writeScope)), 'PROTOTYPE_PATH_SCOPE', 'Candidate paths must be within the task write scope', 422);
   const pending = await c.query("SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND status='prepared' UNION ALL SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [project.id]);
   requireCondition(!pending.rowCount, 'INTEGRATION_PENDING', 'An integration is already prepared', 409);
   const id = randomUUID();
@@ -49,8 +47,14 @@ export async function prepare(c: Transaction, project: ProjectView, actor: Actor
 }
 export async function complete(c: Transaction, project: ProjectView, actor: Actor, id: string, input: CompletePrototypeIntegrationRequest): Promise<PrototypeIntegrationView> {
   const row = await integrationRow(c, project.id, id), request = row.request;
+  if (row.status === 'accepted') {
+    requireCondition(Number(row.owner_id) === actor.id, 'INTEGRATION_NOT_PENDING', 'Only the original author can recover the accepted integration', 409);
+    const ordered = (claims: DevelopmentClaimToken[]) => [...claims].sort((a, b) => a.requirementId.localeCompare(b.requirementId));
+    requireCondition(canonical(input.token) === canonical(request.token) && canonical(ordered(input.developmentClaims)) === canonical(ordered(request.developmentClaims)) && input.claimsDigest === request.claimsDigest, 'STALE_DEVELOPMENT_CLAIM', 'Recovery must identify the original task and claims', 409);
+    return getIntegration(c, project.id, id, actor);
+  }
   requireCondition(row.status === 'prepared' && Number(row.owner_id) === actor.id, 'INTEGRATION_NOT_PENDING', 'The original author must complete a prepared integration', 409);
-  const task = await getTask(c, project.id, request.token.prototypeTaskId, actor); assertClaims(task, input);
+  const task = await getTask(c, project.id, request.token.prototypeTaskId, actor); assertPrototypeClaims(task, actor, input);
   requireCondition(canonical(input.token) === canonical(request.token) && input.claimsDigest === request.claimsDigest, 'STALE_DEVELOPMENT_CLAIM', 'Acceptance must use the originally confirmed task and claims', 409);
   requireCondition(project.recognizedHead === request.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'Recognized project head has changed', 409);
   const acceptanceId = randomUUID(), baselineId = randomUUID();
@@ -76,9 +80,9 @@ export async function abort(c: Transaction, project: ProjectView, actor: Actor, 
   const row = await integrationRow(c, project.id, id), request = row.request;
   requireCondition(row.status === 'prepared' && Number(row.owner_id) === actor.id, 'INTEGRATION_NOT_PENDING', 'The original author must abort a prepared integration', 409);
   const task = await getTask(c, project.id, request.token.prototypeTaskId, actor);
-  assertClaims(task, { token: input.token, developmentClaims: request.developmentClaims, claimsDigest: request.claimsDigest });
+  assertPrototypeClaims(task, actor, { token: input.token, developmentClaims: request.developmentClaims, claimsDigest: request.claimsDigest });
   requireCondition(canonical(input.token) === canonical(request.token) && project.recognizedHead === request.expectedHead, 'INTEGRATION_HEAD_CHANGED', 'The original integration state has changed', 409);
-  await c.query("UPDATE studio_prototype_integrations SET status='aborted' WHERE project_id=$1 AND id=$2", [project.id, id]);
+  await c.query("UPDATE studio_prototype_integrations SET status='aborted',git_recovery='pending' WHERE project_id=$1 AND id=$2", [project.id, id]);
   return getIntegration(c, project.id, id, actor);
 }
 export async function baselines(c: Transaction, projectId: string, limit = 100, offset = 0): Promise<PrototypeBaselineView[]> {

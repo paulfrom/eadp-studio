@@ -1,6 +1,9 @@
-import { mkdir, readFile, realpath } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.js'
+import { mergePrototype, restorePrototypeConflict, type PrototypeMergeResult, type PrototypeConflictWriteback } from './prototype-merge.ts'
+export type { PrototypeConflictObservation, PrototypeConflictWriteback, PrototypeConflictWritebackFile } from './prototype-merge.ts'
 
 export interface GitIdentity { name: string; email: string }
 export type GitMergeResult = { status: 'merged'; commit: string } | { status: 'conflicted'; files: string[] }
@@ -63,6 +66,11 @@ export class WorkspaceGit {
     const args = ['clone', '--progress', '--no-local', '--', repositoryAddress(repositoryUrl), destination]
     if (onProgress) await this.streamed(path.dirname(destination), args, true, signal, repositoryUrl, onProgress)
     else await this.command(path.dirname(destination), args, true, signal, repositoryUrl)
+  }
+  /** Acquire objects for an isolated fixed snapshot without checking out project files. */
+  async cloneSnapshot(repositoryUrl: string, destination: string): Promise<void> {
+    await mkdir(path.dirname(destination), { recursive: true })
+    await this.command(path.dirname(destination), ['clone', '--no-checkout', '--no-local', '--', repositoryAddress(repositoryUrl), destination], true, undefined, repositoryUrl)
   }
   async init(root: string, repositoryUrl: string, branch = 'main'): Promise<void> {
     await mkdir(root, { recursive: true })
@@ -131,6 +139,22 @@ export class WorkspaceGit {
   async remoteHead(root: string, branch: string): Promise<string> {
     const result = await this.command(root, ['ls-remote', '--exit-code', 'origin', `refs/heads/${branchName(branch)}`], true)
     return fixedSha(result.stdout.trim().split(/\s+/)[0] ?? '')
+  }
+  /** Observe a single registered remote branch, including the case where it does not yet exist. */
+  async optionalRemoteHead(root: string, branch: string): Promise<string | undefined> {
+    const ref = `refs/heads/${branchName(branch)}`
+    const result = await this.command(root, ['ls-remote', '--heads', '--refs', 'origin', ref], true)
+    const lines = result.stdout.trim().split('\n').filter(Boolean)
+    if (!lines.length) return undefined
+    if (lines.length !== 1) throw new Error('远程操作引用结果不唯一。')
+    const [sha, actual] = lines[0]!.split(/\s+/)
+    if (actual !== ref) throw new Error('远程操作引用不匹配。')
+    return fixedSha(sha ?? '')
+  }
+  /** Publish a new operation ref only if no remote ref of that name exists. */
+  async pushNewBranch(root: string, branch: string, sha: string): Promise<void> {
+    const ref = `refs/heads/${branchName(branch)}`
+    await this.command(root, ['push', '--porcelain', `--force-with-lease=${ref}:`, 'origin', `${fixedSha(sha)}:${ref}`], true)
   }
   async readBlob(root: string, commit: string, relativePath: string): Promise<Buffer> {
     const file = gitRelativePath(relativePath), sha = fixedSha(commit)
@@ -244,6 +268,28 @@ export class WorkspaceGit {
     return (await this.command(root, args)).stdout
   }
   async listFiles(root: string, commit: string): Promise<string[]> { return (await this.command(root, ['ls-tree', '-r', '--name-only', '-z', fixedSha(commit)])).stdout.split('\0').filter(Boolean) }
+  /** Read only ordinary files from the fixed prototype tree, without checkout filters. */
+  async prototypeSnapshot(root: string, commit: string): Promise<Array<{ path: string; bytes: Buffer; mode: '100644' | '100755' }>> {
+    const raw = (await this.command(root, ['ls-tree', '-r', '-l', '-z', fixedSha(commit), '--', '原型代码'])).stdout
+    const entries = raw.split('\0')
+    if (entries.pop() !== '') throw new Error('原型基线文件树不完整')
+    if (entries.length > 5000) throw new Error('原型基线文件数量超过受管现场上限')
+    const files: Array<{ path: string; bytes: Buffer; mode: '100644' | '100755' }> = []
+    let total = 0
+    for (const entry of entries) {
+      const match = /^(100644|100755) blob ([a-f0-9]{40})\s+(\d+)\t(.+)$/.exec(entry)
+      if (!match) throw new Error('原型基线只允许普通文件，不支持链接或子模块')
+      const full = gitRelativePath(match[4]!), prefix = '原型代码/'
+      if (!full.startsWith(prefix)) throw new Error('原型基线文件路径无效')
+      const size = Number(match[3]); total += size
+      if (!Number.isSafeInteger(size) || size > 16 * 1024 * 1024 || total > 128 * 1024 * 1024) throw new Error('原型基线文件超过受管现场大小上限')
+      const args = await this.prepared(root, ['cat-file', 'blob', match[2]!], false, undefined)
+      const bytes = (await this.runtime.run('git', args, { ...this.options(root), maxOutputBytes: 16 * 1024 * 1024 + 64 * 1024 })).stdoutBytes
+      if (bytes.length !== size) throw new Error('原型基线文件对象不完整')
+      files.push({ path: full.slice(prefix.length), bytes, mode: match[1] as '100644' | '100755' })
+    }
+    return files
+  }
   async changedFiles(root: string, baseSha: string, candidateSha: string): Promise<string[]> {
     const result = await this.command(root, ['diff', '--name-only', '-z', '--no-renames', fixedSha(baseSha), fixedSha(candidateSha), '--'])
     return result.stdout.split('\0').filter(Boolean).map(gitRelativePath)
@@ -276,6 +322,81 @@ export class WorkspaceGit {
     if (files.length && files.pop() !== '') throw new Error('Git 未跟踪文件列表不完整。')
     for (const file of files.map(gitRelativePath)) if (file.startsWith('原型代码/')) changes.set(file.slice('原型代码/'.length), 'added')
     return [...changes].map(([path, status]) => ({ path, status })).sort((left, right) => left.path.localeCompare(right.path))
+  }
+
+  /**
+   * Fix the visible prototype tree on its registered base without altering the
+   * task branch or its index. The operation ref makes an interrupted result
+   * discoverable and is never moved to a different commit.
+   */
+  async prototypeSource(root: string, baseSha: string, operationId: string, writeScope: readonly string[], identity: GitIdentity): Promise<{ sha: string; changedPaths: string[] }> {
+    const base = fixedSha(baseSha)
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(operationId)) throw new Error('原型固定操作身份无效。')
+    validateIdentity(identity)
+    const scopes = writeScope.map(value => {
+      const directory = value.endsWith('/')
+      const normalized = gitRelativePath(directory ? value.slice(0, -1) : value)
+      return directory ? `${normalized}/` : normalized
+    })
+    if (!scopes.length) throw new Error('事项没有可写原型范围。')
+    const allowed = (file: string): boolean => {
+      if (!file.startsWith('原型代码/')) return false
+      const relative = file.slice('原型代码/'.length)
+      return scopes.some(scope => scope.endsWith('/') ? relative.startsWith(scope) : relative === scope)
+    }
+    const directory = await mkdtemp(path.join(tmpdir(), 'eadp-prototype-index-'))
+    const indexPath = path.join(directory, 'index')
+    const run = async (args: readonly string[]): Promise<ProcessResult> => {
+      const argv = await this.prepared(root, args, false, undefined)
+      return this.runtime.run('git', argv, { cwd: root, timeoutMs: 120_000, env: { GIT_INDEX_FILE: indexPath } })
+    }
+    const tree = async (): Promise<string> => {
+      await run(['read-tree', base])
+      await run(['add', '--all', '--', '原型代码'])
+      return fixedSha((await run(['write-tree'])).stdout.trim())
+    }
+    try {
+      const firstTree = await tree()
+      if (await tree() !== firstTree) throw new Error('固定原型时工程内容发生变化，请重新核对。')
+      const ref = `refs/eadp/archive/prototype-source/${operationId}`
+      const existing = (await this.result(root, ['rev-parse', '--verify', ref])).stdout.trim()
+      let sha: string
+      if (existing) {
+        sha = fixedSha(existing)
+        const parents = (await this.command(root, ['rev-list', '--parents', '-n', '1', sha])).stdout.trim().split(/\s+/)
+        const existingTree = fixedSha((await this.command(root, ['rev-parse', `${sha}^{tree}`])).stdout.trim())
+        if (parents.length !== 2 || parents[0] !== sha || parents[1] !== base || existingTree !== firstTree) throw new Error('原固定操作对应的工程或基头已变化，请保留原候选。')
+      } else {
+        sha = fixedSha((await run(['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit-tree', firstTree, '-p', base, '-m', `固定原型 ${operationId}`])).stdout.trim())
+        await this.command(root, ['update-ref', ref, sha, '0000000000000000000000000000000000000000'])
+      }
+      const changedPaths = await this.changedFiles(root, base, sha)
+      if (changedPaths.some(file => !allowed(file))) throw new Error('原型候选包含事项可写范围外的变更，已保留固定候选供核对。')
+      return { sha, changedPaths }
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  }
+  /** Build a merge candidate from fixed Git objects without changing the task worktree. */
+  async prototypeCleanMerge(root: string, input: { operationRoot: string; operationId: string; sourceBaseHead: string; sourceSha: string; expectedHead: string; writeScope: readonly string[]; identity: GitIdentity }): Promise<PrototypeMergeResult> {
+    return mergePrototype({ ...input, runtime: this.runtime, local: this.prototypeLocal(root) })
+  }
+  /** Restore one retained conflict operation using its durable per-path observations. */
+  async prototypeRestoreConflict(root: string, input: { directory: string; operationId: string; sourceBaseHead: string; sourceSha: string; expectedHead: string; mergeBaseSha: string; writeScope: readonly string[]; writeback?: PrototypeConflictWriteback; onPlan(writeback: PrototypeConflictWriteback): Promise<void>; onPathRestored(path: string): Promise<void> }): Promise<{ conflictFiles: string[]; writeback: PrototypeConflictWriteback }> {
+    if (!input.writeback) {
+      const fixed = await this.prototypeSource(root, input.sourceBaseHead, input.operationId, input.writeScope, await this.identity(root))
+      if (fixed.sha !== input.sourceSha) throw new Error('原冲突来源已变化，不能覆盖当前工作区')
+    }
+    return restorePrototypeConflict({ ...input, runtime: this.runtime, local: this.prototypeLocal(root), root })
+  }
+  private prototypeLocal(root: string) {
+    return async (args: string[], options: { input?: string; env?: Record<string, string>; allowFailure?: boolean } = {}): Promise<ProcessResult> => {
+      const attributesFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
+      const argv = await this.prepared(root, ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-c', `core.attributesFile=${attributesFile}`, ...args], false, undefined)
+      const handle = await this.runtime.start('git', argv, { cwd: root, timeoutMs: 120_000, maxOutputBytes: 8 * 1024 * 1024,
+        env: { GIT_ATTR_NOSYSTEM: '1', ...options.env }, ...(options.input === undefined ? {} : { input: options.input }) })
+      const result = await handle.done
+      if (result.exitCode !== 0 && !options.allowFailure) throw new Error(`原型合并 Git 操作失败（退出码 ${result.exitCode}）`)
+      return result
+    }
   }
   async commitFiles(root: string, files: readonly string[], message: string, identity: GitIdentity): Promise<string> {
     if (!files.length || !message.trim() || message.length > 500) throw new Error('Git 提交信息无效。')

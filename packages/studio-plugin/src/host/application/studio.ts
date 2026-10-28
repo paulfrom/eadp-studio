@@ -15,6 +15,7 @@ import { ProjectWorkspaces } from './projects.ts'
 import { TaskMaintenance } from './task-maintenance.ts'
 import { AuthorReviews } from './reviews.ts'
 import { FixedCandidates } from './fixed-candidates.ts'
+import { assertHandoffSource } from './handoff-source.ts'
 import { CandidateMerges } from './candidate-merges.ts'
 import { GitIntegrations } from './git-integrations.ts'
 import { MaterialConfirmations } from './material-confirmations.ts'
@@ -26,9 +27,14 @@ import { ConsistencyComparisons } from './consistency-comparisons.ts'
 import type { CandidateTemplate, SplitSource } from '../../shared/requirements.ts'
 import type { ConsistencyCommand } from '../../shared/consistency.ts'
 import type { RequirementWorkspaceCommand } from '../../shared/requirement-workspace.ts'
+import type { PrototypeAdoptionView, PrototypePreviewIdentity } from '../../shared/prototype.ts'
 import { candidateBusinessEvidence } from './requirement-candidate-content.ts'
 import { readRequirementSource } from './requirement-sources.ts'
 import { PrototypeCollaboration } from './prototype-collaboration.ts'
+import { PrototypeBaselineWorkspaces } from './prototype-baseline-workspace.ts'
+import { PrototypeCandidates } from './prototype-candidates.ts'
+import { PrototypeIntegrations } from './prototype-integrations.ts'
+import { PrototypeMaterialContext } from './prototype-material-context.ts'
 
 const key = (): string => randomUUID()
 const confirmationChoice = (choice: ConfirmationChoice): ConfirmationChoice => choice.method === 'direct' ? { method: 'direct' } : { method: 'ai-assisted', reviewId: choice.reviewId, authorDisposition: choice.authorDisposition }
@@ -50,7 +56,8 @@ export class StudioApplication {
   private projection: Promise<StudioState> | undefined
   private readonly requirementRecoveries = new Set<string>()
   private previewState: StudioState['preview']
-  private readonly prototypePreviews = new Map<string, { prototypeTaskId: string; url: string }>()
+  private readonly prototypePreviews = new Map<string, NonNullable<StudioState['prototypePreviews']>[number]>()
+  private readonly prototypeBaselinePreviews = new Map<string, NonNullable<StudioState['prototypePreviews']>[number]>()
   private namespaces: NamespaceView[] = []
   private readonly reviews: AuthorReviews
   private readonly projects: ProjectWorkspaces
@@ -65,8 +72,28 @@ export class StudioApplication {
   private readonly integrations: GitIntegrations
   private readonly confirmations: MaterialConfirmations
   private readonly prototypeCollaboration: PrototypeCollaboration
+  private readonly prototypeBaselineWorkspaces: PrototypeBaselineWorkspaces
+  private readonly prototypeCandidates: PrototypeCandidates
+  private readonly prototypeIntegrations: PrototypeIntegrations
+  readonly prototypeMaterials: PrototypeMaterialContext
   private lastState: StudioState | undefined
-  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) { this.prototypeCollaboration = new PrototypeCollaboration(store, api, ports); this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress); this.reviews = new AuthorReviews(store, ports)
+  constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) {
+    this.prototypeCollaboration = new PrototypeCollaboration(store, api, ports)
+    this.prototypeBaselineWorkspaces = new PrototypeBaselineWorkspaces(store, api, ports, this.prototypeCollaboration.fileService)
+    this.prototypeMaterials = new PrototypeMaterialContext(store, api, ports)
+    this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress)
+    this.prototypeIntegrations = new PrototypeIntegrations(store, api, ports, {
+      task: id => this.prototypeCollaboration.task(id),
+      accepted: async (taskId, baselineId) => this.prototypeCollaboration.accepted(taskId, baselineId),
+      completeAdoptions: async (taskId, baselineId) => this.completePrototypeAdoptions(taskId, baselineId),
+      cancelled: async (taskId, gitRecovery) => this.prototypeCollaboration.cancelled(taskId, gitRecovery),
+      stopPreview: sessionId => this.ports.stopPreview(sessionId),
+      releaseTask: this.ports.releaseTask ? worktree => this.ports.releaseTask!(worktree) : undefined,
+      syncMain: (projectId, candidateSha, accountId) => this.projects.syncMain(projectId, candidateSha, accountId),
+      cleanup: operationId => this.prototypeCandidates.cleanupAccepted(operationId),
+    })
+    this.prototypeCandidates = new PrototypeCandidates(store, api, ports, this.prototypeCollaboration, this.prototypeIntegrations)
+    this.reviews = new AuthorReviews(store, ports)
     this.maintenance = new TaskMaintenance(store, ports, { sync: (projectId, commit) => this.projects.syncMain(projectId, commit), release: task => this.releaseTask(task) })
     this.scenarios = new ScenarioWorkspaces(store, api, ports, this.projects, { entity: (id, projectId) => this.entity(id, projectId), task: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity), deliver: work => this.lane.append(work), changed: async (task, error) => { if (error) await this.repairs.observationFailed(task.entityId, task.projectId, error); else await this.repairs.checkConcurrent(task.entityId, task.projectId) } })
     this.templates = new ScenarioTemplates(store, api, ports, this.projects, this.lane)
@@ -123,7 +150,7 @@ export class StudioApplication {
   async dispose(): Promise<void> {
     this.scenarios.dispose(); await this.comparisons.dispose(); await this.settle()
     // A queued save can reopen observation while it finishes; release that observation too.
-    this.scenarios.dispose(); await this.projects.dispose()
+    this.scenarios.dispose(); await this.prototypeBaselineWorkspaces.dispose(); await this.projects.dispose()
   }
   /**
    * Run one command. Projection reads keep their own lane so a long local write
@@ -155,39 +182,97 @@ export class StudioApplication {
     }
     return respond(read.then(state => ({ ok: true, state })))
   }
+  private async syncPrototypePreviewSelection(previous?: string): Promise<void> {
+    const selected = (await this.prototypeCollaboration.view()).selectedTaskId
+    if (selected === previous) return
+    const current = selected ? this.prototypePreviews.get(selected) : undefined
+    if (current || previous && this.prototypePreviews.has(previous)) await this.ports.selectPreview(current?.identity)
+  }
+  /** A stopped process must not remain visible in later workbench projections. */
+  prototypePreviewStopped(identity: PrototypePreviewIdentity): void {
+    const previews = identity.source.kind === 'task' ? this.prototypePreviews : this.prototypeBaselinePreviews
+    const id = identity.source.kind === 'task' ? identity.source.prototypeTaskId : identity.source.baselineId
+    if (previews.get(id)?.identity.previewId === identity.previewId) previews.delete(id)
+  }
   private async execute(command: Exclude<StudioCommand, { action: 'state' }>): Promise<StudioReply> {
     let sessionId: string | undefined
     if (command.action !== 'login' && command.action !== 'logout') await this.requireAccount()
     if (command.action === 'readPrototypeBuffer') return { ok: true, state: await this.state(), prototypeBuffer: await this.prototypeCollaboration.readBuffer(command.prototypeTaskId, command.path) }
     if (command.action === 'savePrototypeBuffer') { await this.prototypeCollaboration.saveBuffer(command.operationId, command.buffer); return { ok: true, state: await this.state() } }
     if (command.action === 'clearPrototypeBuffer') { await this.prototypeCollaboration.clearBuffer(command.prototypeTaskId, command.path, command.expectedContent); return { ok: true, state: await this.state() } }
+    if (command.action === 'mergePrototypeConflict') {
+      if (digest(command.baseContent) !== command.baseHash || digest(command.diskContent) !== command.diskHash) throw new Error('冲突三方内容与指纹不一致')
+      const workspace = await this.prototypeCollaboration.fileWorkspace(command.prototypeTaskId)
+      const current = await this.prototypeCollaboration.fileService.read(workspace, { action: 'readPrototypeFile', source: workspace.source, path: command.path })
+      if (current.kind !== 'file' || current.hash !== command.diskHash || current.content !== command.diskContent) throw new Error('磁盘文件已再次变化，请重新读取冲突现场')
+      if (!this.ports.mergeConflict) throw new Error('当前宿主没有受控文本合并能力')
+      const merged = await this.ports.mergeConflict({ path: command.path, base: command.baseContent, ours: command.diskContent, theirs: command.content })
+      if (merged.delete || merged.content === undefined) throw new Error('合并结果需要人工处理，编辑缓冲未改动')
+      return { ok: true, state: await this.state(), prototypeMergedText: merged.content }
+    }
     if (command.action === 'readPrototypeDiff') return { ok: true, state: await this.state(), prototypeFiles: await this.prototypeCollaboration.diff(command) }
     if (command.action === 'listPrototypeDirectory' || command.action === 'searchPrototypeFiles' || command.action === 'readPrototypeFile' || command.action === 'savePrototypeFile') {
-      const prototypeFiles = command.action === 'savePrototypeFile' ? await this.prototypeCollaboration.saveFile(command) : await this.prototypeCollaboration.fileService.read(await this.prototypeCollaboration.fileWorkspace(command.prototypeTaskId), command)
+      const prototypeFiles = command.action === 'savePrototypeFile' ? await this.prototypeCollaboration.saveFile(command) : command.source.kind === 'baseline' ? await this.prototypeBaselineWorkspaces.read(command) : await this.prototypeCollaboration.fileService.read(await this.prototypeCollaboration.fileWorkspace(command.source.prototypeTaskId), command)
+      if (command.action !== 'savePrototypeFile' && command.source.kind === 'task' && (prototypeFiles.source.kind !== 'task' || prototypeFiles.source.projectId !== command.source.projectId)) throw new Error('原型事项不属于所选项目')
       return { ok: true, state: await this.state(), prototypeFiles }
     }
-    if (command.action === 'startPrototypeCollaboration') { await this.prototypeCollaboration.start(command); return { ok: true, state: await this.state() } }
-    if (command.action === 'continuePrototypeCollaboration' || command.action === 'extendPrototypeDevelopment') { await this.prototypeCollaboration.continue(command); return { ok: true, state: await this.state() } }
-    if (command.action === 'selectPrototypeQueueItem') { await this.prototypeCollaboration.select(command.prototypeTaskId); return { ok: true, state: await this.state() } }
-    if (command.action === 'resumePrototypeQueueItem') { await this.prototypeCollaboration.resumeQueued(command.prototypeTaskId); return { ok: true, state: await this.state() } }
+    if (command.action === 'startPrototypeCollaboration') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.start(command) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'continuePrototypeCollaboration' || command.action === 'extendPrototypeDevelopment') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.continue(command) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'selectPrototypeQueueItem') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; await this.prototypeCollaboration.select(command.prototypeTaskId, command.operationId); await this.syncPrototypePreviewSelection(before); return { ok: true, state: await this.state() } }
+    if (command.action === 'reorderPrototypeQueue') { await this.prototypeCollaboration.reorder(command); return { ok: true, state: await this.state() } }
+    if (command.action === 'pausePrototypeQueueItem') { await this.prototypeCollaboration.pause(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
+    if (command.action === 'resumePrototypeQueueItem') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.resumeQueued(command.prototypeTaskId) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'endPrototypeTask') { const operationId = await this.prototypeCollaboration.prepareCancellation(command.prototypeTaskId, command.operationId); await this.prototypeIntegrations.cancel(command.prototypeTaskId, operationId); return { ok: true, state: await this.state() } }
     if (command.action === 'queryPrototypeMessage') { await this.prototypeCollaboration.queryMessage(command.prototypeTaskId); return { ok: true, state: await this.state() } }
     if (command.action === 'readPrototypeConversation') return { ok: true, state: await this.state(), prototypeConversation: await this.prototypeCollaboration.conversation(command.prototypeTaskId) }
     if (command.action === 'readPrototypeQueue') return { ok: true, state: await this.state() }
     if (command.action === 'savePrototypeInstructionDraft') { await this.prototypeCollaboration.saveDraft(command.operationId, command.draft); return { ok: true, state: await this.state() } }
+    if (command.action === 'preparePrototypeConfirmation') { await this.prototypeCandidates.prepare(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
+    if (command.action === 'readPrototypeCandidateFile') return { ok: true, state: await this.state(), prototypeCandidateFile: await this.prototypeCandidates.readFile(command.operationId, command.path) }
+    if (command.action === 'checkPrototypeCandidate') { await this.prototypeCandidates.check(command.operationId, command.checkOperationId); return { ok: true, state: await this.state() } }
+    if (command.action === 'confirmPrototype') { await this.prototypeCandidates.confirm(command.operationId, command.expectedSummaryHash); return { ok: true, state: await this.state() } }
+    if (command.action === 'submitPrototypeCandidate') { await this.prototypeCandidates.submit(command.operationId, command.checkOperationId); return { ok: true, state: await this.state() } }
     if (command.action === 'checkProjectPrototype' || command.action === 'startProjectPrototypePreview') {
       const task = await this.prototypeCollaboration.task(command.prototypeTaskId)
       const sha = (await this.ports.git.state(task.worktree)).head
-      await this.ports.checks(task, sha)
       if (command.action === 'startProjectPrototypePreview') {
-        const preview = await this.ports.preview(task)
-        this.prototypePreviews.set(command.prototypeTaskId, { prototypeTaskId: command.prototypeTaskId, url: preview.url })
-      }
+        const preview = await this.ports.preview(task, command.operationId)
+        this.prototypePreviews.set(command.prototypeTaskId, { prototypeTaskId: command.prototypeTaskId, ...preview })
+        if ((await this.prototypeCollaboration.view()).selectedTaskId === command.prototypeTaskId) await this.ports.selectPreview(preview.identity)
+      } else await this.ports.checks(task, sha, command.operationId)
       return { ok: true, state: await this.state() }
     }
     if (command.action === 'stopProjectPrototypePreview') {
       const sessionId = await this.prototypeCollaboration.sessionId(command.prototypeTaskId)
       if (sessionId) await this.ports.stopPreview(sessionId)
       this.prototypePreviews.delete(command.prototypeTaskId)
+      return { ok: true, state: await this.state() }
+    }
+    if (command.action === 'checkPrototypeBaseline' || command.action === 'startPrototypeBaselinePreview') {
+      const task = await this.prototypeBaselineWorkspaces.prepare(command.source, command.operationId)
+      if (command.action === 'startPrototypeBaselinePreview') {
+        const preview = await this.ports.preview(task, command.operationId)
+        this.prototypeBaselinePreviews.set(command.source.baselineId, { baselineId: command.source.baselineId, ...preview })
+        await this.ports.selectPreview(preview.identity)
+      } else await this.ports.candidateChecks(task, command.source.commitSha, command.operationId)
+      await this.prototypeBaselineWorkspaces.verifyTask(task)
+      return { ok: true, state: await this.state() }
+    }
+    if (command.action === 'stopPrototypeBaselinePreview') {
+      await this.ports.stopPreview(`studio-baseline-${command.baselineId}`)
+      this.prototypeBaselinePreviews.delete(command.baselineId)
+      return { ok: true, state: await this.state() }
+    }
+    if (command.action === 'selectPrototypePreview') {
+      const preview = command.source?.kind === 'baseline' ? this.prototypeBaselinePreviews.get(command.source.baselineId) : command.source?.kind === 'task' ? this.prototypePreviews.get(command.source.prototypeTaskId) : undefined
+      await this.ports.selectPreview(preview?.identity)
+      return { ok: true, state: await this.state() }
+    }
+    if (command.action === 'adoptPrototypeBaseline') {
+      const local = await this.store.read(), task = (await this.prototypeCollaboration.view()).items.find(value => value.prototypeTaskId === command.targetTaskId && value.taskStatus === 'active')
+      if (!task || task.projectId !== local.selectedProjectId) throw new Error('复用目标必须是当前项目中的活动事项')
+      const result = await this.api.request<PrototypeAdoptionView>('POST', this.route(task.projectId, '/prototype/adoptions'), { idempotencyKey: command.operationId, source: command.source, targetTaskId: command.targetTaskId, adjustmentSummary: command.adjustmentSummary })
+      if (result.targetTaskId !== command.targetTaskId || result.source.projectId !== command.source.projectId || result.source.baselineId !== command.source.baselineId || result.adjustmentSummary !== command.adjustmentSummary) throw new Error('原型复用登记与来源或目标事项不一致')
       return { ok: true, state: await this.state() }
     }
     if (command.action === 'readRequirementSource') {
@@ -203,7 +288,7 @@ export class StudioApplication {
     switch (command.action) {
       case 'login': {
         await this.comparisons.dispose(); this.lastState = undefined
-        await this.ports.stopPreview(); this.previewState = undefined; this.prototypePreviews.clear(); this.namespaces = []
+        await this.ports.stopPreview(); this.previewState = undefined; this.prototypePreviews.clear(); this.prototypeBaselinePreviews.clear(); this.namespaces = []
         const identity = await this.ports.login(command.username, command.password)
         this.store.useUser(identity.user.id)
         // Login's contract is authentication, not a full projection: the reply
@@ -212,7 +297,7 @@ export class StudioApplication {
         // full state right after.
         return { ok: true, state: { connected: true, account: identity.user, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] } }
       }
-      case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.prototypePreviews.clear(); this.lastState = undefined; this.namespaces = [] } break }
+      case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); await this.prototypeBaselineWorkspaces.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.prototypePreviews.clear(); this.prototypeBaselinePreviews.clear(); this.lastState = undefined; this.namespaces = [] } break }
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
       case 'openProject': await this.projects.open(command.projectId); break
@@ -314,6 +399,7 @@ export class StudioApplication {
     const state = await this.state()
     return { ok: true, state, ...(sessionId ? { sessionId } : {}) }
   }
+  prototypeWriteAuthorization(task: TaskView): Promise<() => Promise<void>> { return this.prototypeCollaboration.writeAuthorization(task) }
   async scenarioSessionContext(task: TaskView, signal?: AbortSignal): Promise<{ text: string; readPaths: string[] }> {
     signal?.throwIfAborted()
     if ((await this.ports.account())?.id !== this.store.accountId) throw new Error('会话登录身份已变化')
@@ -460,6 +546,15 @@ export class StudioApplication {
     if (!task) return
     await this.scenarios.sources.acceptRead(task, output)
   }
+  private async completePrototypeAdoptions(taskId: string, baselineId: string): Promise<void> {
+    const queue = await this.prototypeCollaboration.view(), item = queue.items.find(value => value.prototypeTaskId === taskId)
+    if (!item) throw new Error('原型复用目标事项未在本机登记')
+    const adoptions = await this.api.request<PrototypeAdoptionView[]>('GET', this.route(item.projectId, '/prototype/adoptions'))
+    for (const adoption of adoptions.filter(value => value.targetTaskId === taskId && value.status === 'accepted')) {
+      const result = await this.api.request<PrototypeAdoptionView>('POST', this.route(item.projectId, `/prototype/adoptions/${encodeURIComponent(adoption.id)}/success`), { idempotencyKey: `${baselineId}:${adoption.id}`, targetBaselineId: baselineId })
+      if (result.id !== adoption.id || result.status !== 'succeeded' || result.targetBaselineId !== baselineId || result.targetTaskId !== taskId) throw new Error('原型复用成功回执与目标基线不一致')
+    }
+  }
   /**
    * Build the projection the surfaces render. This read never synchronizes Git:
    * commit fetches, mirrors and preparation are queued on the background lane,
@@ -527,7 +622,11 @@ export class StudioApplication {
       .map(value => value.integrationId!))
     const prototypeQueue = await this.prototypeCollaboration.view()
     const prototypeBaselines = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeBaselineView[]>('GET', this.route(selected.id, '/prototype/baselines?limit=100&offset=0')) : undefined
-    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}),
+    const prototypeCheckReports = await this.ports.prototypeCheckReports?.([...prototypeQueue.items.map(item => ({ projectId: item.projectId, prototypeTaskId: item.prototypeTaskId })), ...(prototypeBaselines ?? []).map(item => ({ projectId: item.projectId, prototypeTaskId: item.id }))])
+    const prototypeMaterialReads = await this.prototypeMaterials.reads(prototypeQueue.items.map(item => item.prototypeTaskId))
+    const prototypeCandidates = await this.prototypeCandidates.latest(prototypeQueue.items.map(item => item.prototypeTaskId))
+    const prototypeAdoptions = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeAdoptionView[]>('GET', this.route(selected.id, '/prototype/adoptions')) : undefined
+    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeMaterialReads, prototypeCandidates, ...(prototypeCheckReports ? { prototypeCheckReports } : {}), prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values(), ...this.prototypeBaselinePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}), ...(prototypeAdoptions ? { prototypeAdoptions } : {}),
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
         // record the account can no longer read cannot be finished, so it stops being a task
@@ -850,23 +949,38 @@ export class StudioApplication {
     const existing = remote.entities.find((e): e is EntityView => isEntityView(e) && e.kind === 'handoff' && e.title === title)
     const entity = existing ?? await this.api.request<EntityView>('POST', this.route(remote.project.id, '/entities'), { idempotencyKey: key(), kind: 'handoff', title })
     const fresh = await this.entity(entity.id); const task = await this.designTask(fresh.remote, fresh.entity)
-    if (!task.handoff) { task.handoff = { baselineId: baseline.id, sequence: baseline.sequence, commitSha: baseline.commitSha, status: 'pending' }; await this.store.save() }
+    if (!task.handoff) { task.handoff = { baselineId: baseline.id, sequence: baseline.sequence, commitSha: baseline.commitSha, operationId: key(), status: 'pending' }; await this.store.save() }
     const handoff = task.handoff
     if (handoff.baselineId !== baseline.id || handoff.commitSha !== baseline.commitSha || handoff.sequence !== baseline.sequence) throw new Error('交接任务已绑定其他固定基线')
-    if (handoff.status === 'sent') return
     try {
       let draft: MaterialDraft
       try { draft = await readMaterial(task.worktree, 'handoff', entity.id) }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        if (handoff.status !== 'pending' && handoff.status !== 'failed') throw new Error('原交接草稿缺失，已保留任务供核对')
         const metadata = initialMetadata(entity)
         if (metadata.kind !== 'handoff') throw new Error('交接材料身份不正确')
         metadata.prototypeBaseline = { baselineId: baseline.id, commitSha: baseline.commitSha }
         draft = await saveMaterial(task.worktree, metadata, '# ' + entity.title + '\n\n## 固定资料\n\n原型基线 ' + baseline.id + '，代码 ' + baseline.commitSha + '。\n\n## 核心业务规则\n\n待根据固定需求整理。\n\n## 验收条件\n\n待根据固定需求整理。\n\n## 交付内容、限制与待澄清\n\n请结合固定材料补充。\n')
       }
+      assertHandoffSource(task, draft)
+      if (handoff.status === 'sent') return
+      if (!handoff.operationId) throw new Error('原交接指令缺少可核对的操作身份，已保留现场')
+      if (handoff.status === 'sending' || handoff.status === 'unknown') {
+        if (await this.ports.inspectPrompt(task.sessionId, handoff.operationId) !== 'unknown') {
+          handoff.status = 'sent'; delete task.error; await this.store.save(); return
+        }
+        handoff.status = 'unknown'; await this.store.save()
+        throw new Error('交接指令投递结果未知，原指令未重发')
+      }
       await this.ports.session(task, this.materialRules(draft))
-      await this.ports.prompt(task.sessionId, '基于已接受基线 ' + baseline.id + '（代码 ' + baseline.commitSha + '）结合基线关联需求和原型代码，整理可阅读交接清单 ' + draft.path + '：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。')
+      handoff.status = 'sending'; await this.store.save()
+      await this.ports.prompt(task.sessionId, '基于已接受基线 ' + baseline.id + '（代码 ' + baseline.commitSha + '）结合基线关联需求和原型代码，整理可阅读交接清单 ' + draft.path + '：业务范围、规则、字段、异常、验收、依赖、来源、限制和不适用范围。不能编造缺失内容，不要自行确认。', handoff.operationId)
+      if (await this.ports.inspectPrompt(task.sessionId, handoff.operationId) === 'unknown') {
+        handoff.status = 'unknown'; await this.store.save()
+        throw new Error('交接指令投递结果待核对，原指令未重发')
+      }
       handoff.status = 'sent'; delete task.error; await this.store.save()
-    } catch (error) { handoff.status = 'failed'; task.error = error instanceof Error ? error.message : '交接清单请求未完成'; await this.store.save(); throw error }
+    } catch (error) { if (handoff.status === 'sending') handoff.status = 'unknown'; else if (handoff.status !== 'unknown' && handoff.status !== 'sent') handoff.status = 'failed'; task.error = error instanceof Error ? error.message : '交接清单请求未完成'; await this.store.save(); throw error }
   }
 }

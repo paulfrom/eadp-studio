@@ -90,7 +90,7 @@ test('a changed occupation or removed original session never selects or acquires
     const f = await fixture(child)
     if (change === 'occupation') f.entity.occupation!.taskId = 'new-task'
     if (change === 'session') f.local.tasks = f.local.tasks.filter(value => value.sessionId !== f.task.sessionId)
-    if (change === 'purpose') f.entity.occupation!.purpose = 'prototype'
+    if (change === 'purpose') f.task.purpose = 'split'
     await assert.rejects(f.candidates.prepare(f.request), /原任务现场与当前材料占用不一致/)
     assert.equal(f.calls.taskFactories, 0)
     assert.equal(f.calls.commits.length, 0)

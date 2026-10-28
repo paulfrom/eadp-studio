@@ -98,6 +98,10 @@ export const UpdatePrototypeReferencesSchema = object({ ...keyed, token: Prototy
 export type UpdatePrototypeReferencesRequest = Static<typeof UpdatePrototypeReferencesSchema>;
 export const UpdatePrototypeScopeSchema = object({ ...keyed, token: PrototypeTaskTokenSchema, writeScope: prototypePaths, policyHash: Sha256Schema, instruction: prototypeInstruction });
 export type UpdatePrototypeScopeRequest = Static<typeof UpdatePrototypeScopeSchema>;
+export const UpdatePrototypeSourceBaseSchema = object({ ...keyed, token: PrototypeTaskTokenSchema,
+  sourceOperationId: IdSchema, sourceRef: Type.String({ minLength: 1, maxLength: 400 }), sourceSha: ShaSchema, newBaseHead: ShaSchema,
+  developmentClaims: Type.Array(DevelopmentClaimTokenSchema, { minItems: 1, maxItems: 100 }), claimsDigest: Sha256Schema });
+export type UpdatePrototypeSourceBaseRequest = Static<typeof UpdatePrototypeSourceBaseSchema>;
 export const CancelPrototypeTaskSchema = object({ ...keyed, token: PrototypeTaskTokenSchema, reason: text });
 export type CancelPrototypeTaskRequest = Static<typeof CancelPrototypeTaskSchema>;
 export const ReleasePrototypeTaskSchema = object({ ...keyed, expectedGeneration: Type.Integer({ minimum: 1 }), expectedRevision: RevisionSchema, reason: text });
@@ -107,6 +111,11 @@ export interface PrototypeTaskView {
   status: 'active' | 'cancelled' | 'released' | 'accepted'; title: string; branch: string; startHead: string; sourceBaseHead: string;
   developmentRequirementIds: string[]; referenceRequirementIds: string[]; developmentClaims: DevelopmentClaimToken[]; claimsDigest: string;
   writeScope: string[]; policyHash: string;
+}
+/** A conflict-base change retains the exact independently verified source operation. */
+export interface PrototypeSourceBaseResult {
+  task: PrototypeTaskView;
+  source: { operationId: string; ref: string; sha: string; previousBaseHead: string; newBaseHead: string; mergeBaseSha: string };
 }
 export interface ProjectPrototypeView { id: string; projectId: string; currentBaselineId?: string; recognizedHead: string; tasks: PrototypeTaskView[] }
 export interface PrototypeBaselineView { id: string; prototypeId: string; sequence: number; acceptanceId: string; integrationId: string; prototypeTaskId: string; commitSha: string; relatedRequirementIds: string[]; confirmedBy: number; acceptedAt: string }

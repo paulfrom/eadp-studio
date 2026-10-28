@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "@codemirror/commands": { "version": "6.11.1", "license": "MIT" },
+    "@codemirror/lang-css": { "version": "6.3.1", "license": "MIT" },
+    "@codemirror/lang-javascript": { "version": "6.2.5", "license": "MIT" },
+    "@codemirror/lang-json": { "version": "6.0.2", "license": "MIT" },
+    "@codemirror/language": { "version": "6.13.1", "license": "MIT" },
+    "@codemirror/merge": { "version": "6.12.3", "license": "MIT" },
+    "@codemirror/search": { "version": "6.7.2", "license": "MIT" },
+    "@codemirror/state": { "version": "6.7.6", "license": "MIT" },
+    "@codemirror/view": { "version": "6.43.15", "license": "MIT" },
+    "playwright-core": { "version": "1.61.1", "license": "Apache-2.0" }
+  }
+}

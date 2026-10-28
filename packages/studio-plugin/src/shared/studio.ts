@@ -4,7 +4,7 @@ import type { Candidate, SplitTaskBinding } from './requirements.ts'
 import type { ConsistencyCommand, ConsistencyTaskView } from './consistency.ts'
 import type { ConsistencyComparisonView } from '@eadp/contracts'
 import type { RequirementSourceView, RequirementWorkspaceCommand } from './requirement-workspace.ts'
-import type { PrototypeCollaborationCommand, PrototypeConversationMessage, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeQueueView } from './prototype.ts'
+import type { PrototypeAdoptionView, PrototypeCandidateFile, PrototypeCandidateSummary, PrototypeCheckReport, PrototypeCollaborationCommand, PrototypeConversationMessage, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeMaterialRead, PrototypePreviewIdentity, PrototypeQueueView } from './prototype.ts'
 export type { Candidate } from './requirements.ts'
 
 /** One project template catalog; `defaultTemplateId` is absent while a project has published no template. */
@@ -38,7 +38,7 @@ export interface TaskCleanup {
   archive?: string; head?: string; branch?: string; message?: string;
 }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
-export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; baseHead?: string; writePaths?: string[]; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; sequence: number; commitSha: string; status: 'pending' | 'sent' | 'failed' }; split?: SplitTaskBinding }
+export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; baseHead?: string; writePaths?: string[]; prototypeBaseline?: { id: string; commitSha: string }; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; sequence: number; commitSha: string; operationId: string; status: 'pending' | 'sending' | 'unknown' | 'sent' | 'failed' }; split?: SplitTaskBinding }
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
@@ -54,9 +54,13 @@ export interface StudioState {
   requirement?: ScenarioWorkspace;
   consistencyTasks?: ConsistencyTaskView[]; consistencyLatest?: ConsistencyComparisonView[];
   prototypeQueue?: PrototypeQueueView;
+  prototypeCheckReports?: PrototypeCheckReport[];
+  prototypeCandidates?: PrototypeCandidateSummary[];
+  prototypeMaterialReads?: PrototypeMaterialRead[];
   prototypeInstructionDrafts?: PrototypeInstructionDraft[];
   prototypeBaselines?: PrototypeBaselineView[];
-  prototypePreviews?: Array<{ prototypeTaskId: string; url: string }>;
+  prototypeAdoptions?: PrototypeAdoptionView[];
+  prototypePreviews?: Array<{ prototypeTaskId?: string; baselineId?: string; url: string; identity: PrototypePreviewIdentity }>;
   /** Bodies of accepted materials that predate the current contract: displayable, never editable. */
   legacyMaterials?: Array<{ entityId: string; body: string }>; tasks: TaskView[]; candidates: Candidate[];
   preview?: { entityId: string; url: string }; pending: Array<{ id: string; entityId: string; phase: string; message?: string }>;
@@ -88,7 +92,7 @@ export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWo
   | { action: 'generateHandoff'; baselineId: string }
   | { action: 'acknowledgeHandoff'; entityId: string; note: string }
   | { action: 'publish' | 'revokePublication' }
-export type StudioReply = { ok: true; state: StudioState; sessionId?: string; comparisons?: ConsistencyComparisonView[]; requirementSource?: RequirementSourceView; prototypeFiles?: PrototypeFileResult; prototypeBuffer?: PrototypeEditBuffer | null; prototypeConversation?: PrototypeConversationMessage[] } | { ok: false; message: string; code: string }
+export type StudioReply = { ok: true; state: StudioState; sessionId?: string; comparisons?: ConsistencyComparisonView[]; requirementSource?: RequirementSourceView; prototypeFiles?: PrototypeFileResult; prototypeBuffer?: PrototypeEditBuffer | null; prototypeConversation?: PrototypeConversationMessage[]; prototypeCandidateFile?: PrototypeCandidateFile; prototypeMergedText?: string } | { ok: false; message: string; code: string }
 export type { EntityView, MaterialMetadata }
 
 export type * from './scenarios.ts'

@@ -9,6 +9,7 @@ import { assertSingleIdentityBlock, checkMaterial, containedFile, digest, normal
 import type { HostPorts } from './ports.ts'
 import type { ReviewCandidate, ReviewFile } from './reviews.ts'
 import type { StudioStore } from './state.ts'
+import { assertHandoffSource } from './handoff-source.ts'
 
 /** The material or prototype input, optionally bound to a recorded confirmation task. */
 export interface FixedCandidateRequest {
@@ -42,6 +43,7 @@ export class FixedCandidates {
     const { remote, entity } = context, token = await this.deps.owned(entity)
     await this.requireTask(task, remote, entity, token, request.purpose)
     const draft = await this.currentMaterialDraft(task, entity)
+    assertHandoffSource(task, draft)
     if (request.expectedHash && draft.sha256 !== request.expectedHash) throw new Error('材料已变化，请阅读并确认新版本')
     await assertSingleIdentityBlock(task.worktree, draft.path)
     // The snapshot starts from the task HEAD; target files are bound by their own hashes.

@@ -2,7 +2,7 @@ import type { LocalScenarioRepair } from './scenario-repairs.ts'
 import type { ScenarioRecord } from './scenario-workspaces.ts'
 import type { TemplateOperation } from './scenario-templates.ts'
 import type { LocalConsistencyComparison } from './consistency-comparisons.ts'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AdoptRequest, AssetSource, FixedReference, IntegrationView, MaterialMetadata } from '@eadp/contracts'
@@ -154,9 +154,14 @@ export class StudioStore {
     return preserved
   }
   private async persist(): Promise<void> {
+    const userId = this.userId, directory = this.directory
     const value = await this.read()
-    const temp = path.join(this.directory, `${recordName}.${randomUUID()}.tmp`)
-    await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-    await rename(temp, path.join(this.directory, recordName))
+    if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
+    const temp = path.join(directory, `${recordName}.${randomUUID()}.tmp`)
+    try {
+      await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+      if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
+      await rename(temp, path.join(directory, recordName))
+    } finally { await rm(temp, { force: true }) }
   }
 }

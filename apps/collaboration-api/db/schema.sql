@@ -1529,6 +1529,7 @@ CREATE TABLE studio_prototype_integrations (
   task_id text NOT NULL,
   owner_id bigint NOT NULL REFERENCES studio_users(id),
   status text NOT NULL CHECK (status IN ('prepared','accepted','aborted')),
+  git_recovery text CHECK ((status='aborted' AND git_recovery IS NOT NULL AND git_recovery IN ('pending','reconciled')) OR (status IN ('prepared','accepted') AND git_recovery IS NULL)),
   source_sha text NOT NULL CHECK (source_sha ~ '^[a-f0-9]{40}$'),
   expected_head text NOT NULL CHECK (expected_head ~ '^[a-f0-9]{40}$'),
   candidate_sha text NOT NULL CHECK (candidate_sha ~ '^[a-f0-9]{40}$'),

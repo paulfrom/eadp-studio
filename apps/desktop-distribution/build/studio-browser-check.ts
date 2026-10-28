@@ -42,8 +42,10 @@ export async function handleStudioPreviewCheck(child: ChildProcess, request: Pre
       return { ready: true, unknownRejected: checked.unknownRejected, allBlocked, guardVersion: guard.version };
     })()`, true)
     if (failed || outsideRequests || !result || typeof result !== 'object' || (result as { allBlocked?: boolean }).allBlocked !== true) throw new Error('preview protection')
-    const evidenceHash = createHash('sha256').update(JSON.stringify(result)).digest('hex')
-    send({ ok: true, evidenceHash })
+    const verified = result as { ready: boolean; unknownRejected: boolean; allBlocked: boolean; guardVersion: string }
+    const mockHash = createHash('sha256').update(JSON.stringify({ ready: verified.ready, unknownRejected: verified.unknownRejected, guardVersion: verified.guardVersion })).digest('hex')
+    const browserHash = createHash('sha256').update(JSON.stringify({ allBlocked: verified.allBlocked, outsideRequests, renderFailed: failed })).digest('hex')
+    send({ ok: true, mockHash, browserHash })
     await isolated.clearStorageData()
   } catch { send({ ok: false }) }
   finally { window?.destroy() }

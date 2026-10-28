@@ -88,13 +88,17 @@ export class GitLab {
     catch { throw new DomainError('GITLAB_INVALID_RESPONSE', 'GitLab returned an invalid response', 502); }
   }
   async json<T>(path: string, method = 'GET', body?: unknown): Promise<T> { return this.parse<T>(await this.read(await this.response(path, method, body), 10 * 1024 * 1024)); }
-  async list(path: string): Promise<unknown[]> {
-    const result: unknown[] = [];
+  async list(path: string, budget: { maxItems?: number; maxBytes?: number; deadline?: number } = {}): Promise<unknown[]> {
+    const result: unknown[] = []; let consumed = 0;
     for (let page = 1; page <= 100; page++) {
+      requireCondition(budget.deadline === undefined || Date.now() < budget.deadline, 'GITLAB_LIST_INCOMPLETE', 'GitLab listing exceeded its time budget', 422);
+      const maximum = Math.min(10 * 1024 * 1024, (budget.maxBytes ?? 10 * 1024 * 1024 * 100) - consumed);
+      requireCondition(maximum > 0, 'GITLAB_LIST_INCOMPLETE', 'GitLab listing exceeded its byte budget', 422);
       const response = await this.response(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
-      const items: unknown = this.parse(await this.read(response, 10 * 1024 * 1024)); valid(Array.isArray(items));
+      const bytes = await this.read(response, maximum); consumed += bytes.byteLength;
+      const items: unknown = this.parse(bytes); valid(Array.isArray(items));
       result.push(...items);
-      requireCondition(result.length <= 10000, 'GITLAB_LIST_INCOMPLETE', 'GitLab listing exceeded its verification budget', 422);
+      requireCondition(result.length <= (budget.maxItems ?? 10000), 'GITLAB_LIST_INCOMPLETE', 'GitLab listing exceeded its verification budget', 422);
       const next = response.headers.get('x-next-page');
       if (next === '') return result;
       if (next !== null) { valid(next === String(page + 1)); continue; }

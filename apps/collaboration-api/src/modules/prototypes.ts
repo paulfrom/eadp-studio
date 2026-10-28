@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { requireCondition } from '@eadp/asset-domain';
-import type { CancelPrototypeTaskRequest, CreatePrototypeTaskRequest, DevelopmentClaimToken, EntityView, ProjectPrototypeView, ProjectView, PrototypeTaskToken, PrototypeTaskView, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest } from '@eadp/contracts';
+import { canonical, requireCondition } from '@eadp/asset-domain';
+import type { CancelPrototypeTaskRequest, CreatePrototypeTaskRequest, DevelopmentClaimToken, EntityView, ProjectPrototypeView, ProjectView, PrototypeTaskToken, PrototypeTaskView, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
 import type { Actor } from '../auth/session.js';
 import type { Transaction } from '../persistence/database.js';
 
@@ -14,6 +14,14 @@ type TaskRow = {
 export function claimsDigest(claims: DevelopmentClaimToken[]): string {
   const ordered = [...claims].sort((a, b) => a.requirementId.localeCompare(b.requirementId));
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
+}
+
+/** Verify the task identity and complete active claim set for an integration operation. */
+export function assertPrototypeClaims(task: PrototypeTaskView, actor: Actor, input: { token: PrototypeTaskToken; developmentClaims: DevelopmentClaimToken[]; claimsDigest: string }): void {
+  const token = input.token;
+  requireCondition(task.ownerId === actor.id && task.status === 'active' && task.id === token.prototypeTaskId && task.clientId === token.clientId && task.generation === token.generation && task.revision === token.expectedRevision, 'STALE_PROTOTYPE_TASK', 'Prototype task authorization has changed', 409);
+  const ordered = (values: DevelopmentClaimToken[]) => [...values].sort((a, b) => a.requirementId.localeCompare(b.requirementId));
+  requireCondition(task.developmentClaims.length > 0 && canonical(ordered(task.developmentClaims)) === canonical(ordered(input.developmentClaims)) && task.claimsDigest === input.claimsDigest && claimsDigest(task.developmentClaims) === input.claimsDigest, 'STALE_DEVELOPMENT_CLAIM', 'The complete active claim set has changed', 409);
 }
 
 function validateRequirements(all: EntityView[], actor: Actor, ids: string[]) {
@@ -48,6 +56,11 @@ async function taskRow(c: Transaction, projectId: string, taskId: string): Promi
   const row = (await c.query<TaskRow>('SELECT * FROM studio_prototype_tasks WHERE project_id=$1 AND id=$2', [projectId, taskId])).rows[0];
   requireCondition(row, 'PROTOTYPE_TASK_NOT_FOUND', 'Prototype task was not found', 404);
   return row;
+}
+/** A prepared integration fixes the task revision and its complete claim set. */
+async function assertNoPreparedIntegration(c: Transaction, projectId: string, taskId: string): Promise<void> {
+  const pending = await c.query("SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND task_id=$2 AND status='prepared'", [projectId, taskId]);
+  requireCondition(!pending.rowCount, 'INTEGRATION_PENDING', 'Resolve the prepared integration before changing the task', 409);
 }
 export async function getTask(c: Transaction, projectId: string, taskId: string, actor: Actor): Promise<PrototypeTaskView> {
   const row = await taskRow(c, projectId, taskId);
@@ -95,6 +108,7 @@ export async function createTask(c: Transaction, project: ProjectView, all: Enti
 }
 export async function extendClaims(c: Transaction, projectId: string, all: EntityView[], actor: Actor, taskId: string, input: UpdatePrototypeClaimsRequest): Promise<PrototypeTaskView> {
   const row = await taskRow(c, projectId, taskId); assertToken(row, input.token, actor);
+  await assertNoPreparedIntegration(c, projectId, taskId);
   validateRequirements(all, actor, input.developmentRequirementIds);
   const current = await claims(c, projectId, taskId);
   requireCondition(current.every(claim => input.developmentRequirementIds.includes(claim.requirementId)), 'DEVELOPMENT_SCOPE_SHRINK_FORBIDDEN', 'Active development claims cannot be removed', 409);
@@ -107,6 +121,7 @@ export async function extendClaims(c: Transaction, projectId: string, all: Entit
 }
 export async function updateReferences(c: Transaction, projectId: string, all: EntityView[], actor: Actor, taskId: string, input: UpdatePrototypeReferencesRequest): Promise<PrototypeTaskView> {
   const row = await taskRow(c, projectId, taskId); assertToken(row, input.token, actor);
+  await assertNoPreparedIntegration(c, projectId, taskId);
   validateRequirements(all, actor, input.referenceRequirementIds);
   validateReferences((await claims(c, projectId, taskId)).map(claim => claim.requirementId), input.referenceRequirementIds);
   await replaceReferences(c, projectId, taskId, input.referenceRequirementIds);
@@ -115,8 +130,19 @@ export async function updateReferences(c: Transaction, projectId: string, all: E
 }
 export async function updateScope(c: Transaction, projectId: string, actor: Actor, taskId: string, input: UpdatePrototypeScopeRequest): Promise<PrototypeTaskView> {
   const row = await taskRow(c, projectId, taskId); assertToken(row, input.token, actor); validatePaths(input.writeScope);
+  await assertNoPreparedIntegration(c, projectId, taskId);
   await c.query('UPDATE studio_prototype_tasks SET revision=revision+1,write_scope=$3,policy_hash=$4,instruction=$5,last_edited_date=clock_timestamp() WHERE project_id=$1 AND id=$2', [projectId, taskId, input.writeScope, input.policyHash, input.instruction]);
   return getTask(c, projectId, taskId, actor);
+}
+/** Record a verified conflict base only while the original task and project remain current. */
+export async function updateSourceBase(c: Transaction, project: ProjectView, actor: Actor, taskId: string, input: UpdatePrototypeSourceBaseRequest, previousBaseHead: string): Promise<PrototypeTaskView> {
+  const task = await getTask(c, project.id, taskId, actor);
+  assertPrototypeClaims(task, actor, input);
+  requireCondition(task.sourceBaseHead === previousBaseHead && project.recognizedHead === input.newBaseHead && input.newBaseHead !== previousBaseHead, 'INTEGRATION_HEAD_CHANGED', 'The task base or recognized project head changed', 409);
+  const pending = await c.query("SELECT id FROM studio_prototype_integrations WHERE project_id=$1 AND (status='prepared' OR (task_id=$2 AND status='aborted' AND git_recovery='pending')) UNION ALL SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared'", [project.id, taskId]);
+  requireCondition(!pending.rowCount, 'INTEGRATION_PENDING', 'Resolve the original integration and any uncertain Git operation before changing the source base', 409);
+  await c.query('UPDATE studio_prototype_tasks SET source_base_head=$3,revision=revision+1,last_edited_date=clock_timestamp() WHERE project_id=$1 AND id=$2', [project.id, taskId, input.newBaseHead]);
+  return getTask(c, project.id, taskId, actor);
 }
 export async function endTask(c: Transaction, projectId: string, actor: Actor, taskId: string, status: 'cancelled' | 'released', input: CancelPrototypeTaskRequest | { expectedGeneration: number; expectedRevision: number; reason: string }): Promise<PrototypeTaskView> {
   const row = await taskRow(c, projectId, taskId);
@@ -125,7 +151,9 @@ export async function endTask(c: Transaction, projectId: string, actor: Actor, t
     requireCondition(actor.admin, 'ADMIN_REQUIRED', 'Only an administrator can release another task', 403);
     requireCondition(row.status === 'active' && Number(row.generation) === input.expectedGeneration && Number(row.revision) === input.expectedRevision, 'STALE_PROTOTYPE_TASK', 'Task authorization has changed', 409);
   }
+  // Keep the original request and SHAs so a late Git push can still be reconciled.
+  await c.query("UPDATE studio_prototype_integrations SET status='aborted',git_recovery='pending' WHERE project_id=$1 AND task_id=$2 AND status='prepared'", [projectId, taskId]);
   await c.query('UPDATE studio_prototype_development_claims SET active=false,ended_reason=$3 WHERE project_id=$1 AND task_id=$2 AND active', [projectId, taskId, input.reason]);
-  await c.query('UPDATE studio_prototype_tasks SET status=$3,revision=revision+1,claims_digest=$4,last_edited_date=clock_timestamp() WHERE project_id=$1 AND id=$2', [projectId, taskId, status, claimsDigest([])]);
+  await c.query('UPDATE studio_prototype_tasks SET status=$3,generation=generation+1,revision=revision+1,claims_digest=$4,last_edited_date=clock_timestamp() WHERE project_id=$1 AND id=$2', [projectId, taskId, status, claimsDigest([])]);
   return getTask(c, projectId, taskId, actor);
 }

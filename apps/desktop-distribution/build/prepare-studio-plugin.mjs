@@ -25,7 +25,8 @@ import { STUDIO_SETTINGS_BRIDGE_EDIT } from './studio-settings-bridge-edits.mjs'
 import { STUDIO_SETTINGS_SECTIONS_EDIT } from './studio-settings-sections-edits.mjs'
 import { DESKTOP_PLUGIN_EDIT, STUDIO_PACKAGE } from './desktop-plugin-edits.mjs'
 import { STUDIO_PLATFORM_EDITS, STUDIO_PLATFORM_FILES } from './studio-platform-edits.mjs'
-import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE } from './studio-browser-edits.mjs'
+import { STUDIO_BROWSER_EDIT, STUDIO_BROWSER_FILE, STUDIO_PROTOTYPE_VIEW_FILE, STUDIO_PROTOTYPE_BRIDGE_FILE, STUDIO_PROTOTYPE_MAIN_EDIT, STUDIO_PROTOTYPE_PRELOAD_EDIT } from './studio-browser-edits.mjs'
+import { prepareStudioBrowserRuntime } from './prepare-studio-browser.mjs'
 import { productionPluginManifest, recordStudioBuild, verifyStudioPlugin } from './studio-payload.mjs'
 import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_MODEL_SELECTION_EDITS } from './model-selection-edits.mjs'
@@ -47,6 +48,15 @@ const assembledPlugin = path.join(buildTree, 'packages/eadp/studio-plugin')
 const assembledContracts = path.join(buildTree, 'packages/eadp/contracts')
 const assembledDomain = path.join(buildTree, 'packages/eadp/asset-domain')
 const packedPluginDirectory = path.join(sharedRoot, '.local/build/packed-studio')
+const browserArchiveCache = path.join(sharedRoot, '.local/browser-archives')
+
+async function verifyWebDependencyLock(manifest) {
+  const lock = JSON.parse(await readFile(new URL('./studio-web-dependencies.lock.json', import.meta.url), 'utf8'))
+  if (lock.schemaVersion !== 1 || !lock.packages || typeof lock.packages !== 'object') throw new Error('Studio web dependency lock is invalid.')
+  for (const [name, entry] of Object.entries(lock.packages)) {
+    if (!entry.version || !entry.license || manifest.dependencies?.[name] !== entry.version) throw new Error(`Studio web dependency or license lock mismatch: ${name}`)
+  }
+}
 
 /**
  * Upstream edits the product needs for a built-in plugin. Each is anchored on
@@ -65,6 +75,8 @@ const UPSTREAM_EDITS = [
   DESKTOP_PLUGIN_EDIT,
   ...STUDIO_PLATFORM_EDITS,
   STUDIO_BROWSER_EDIT,
+  STUDIO_PROTOTYPE_MAIN_EDIT,
+  STUDIO_PROTOTYPE_PRELOAD_EDIT,
   STUDIO_PACKAGING_EDIT,
   STUDIO_PACKAGED_COMMIT_EDIT,
   STUDIO_PACK_CONCURRENCY_EDIT,
@@ -110,7 +122,7 @@ const UPSTREAM_EDITS = [
 /** Files whose actual staged bytes must still match before a developer build is reused. */
 export const studioStagingPaths = [...new Set([
   ...UPSTREAM_EDITS.map(edit => edit.file),
-  ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
+  ...[...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, STUDIO_PROTOTYPE_VIEW_FILE, STUDIO_PROTOTYPE_BRIDGE_FILE, ...STUDIO_TEMPLATE_FILES].map(addition => addition.file),
   'tsconfig.host.json', 'tsconfig.client.json', 'tsconfig.base.json',
   ...['src', 'assets/prototype-template', 'assets/prototype-template.manifest.json', 'assets/skills', 'package.json', 'README.md', 'cordis.patch.yml', 'tsconfig.json', 'tsconfig.host.json', 'tsconfig.client.json', 'tsdown.config.ts'].map(file => `packages/eadp/studio-plugin/${file}`),
   ...['src', 'package.json', 'tsconfig.json'].map(file => `packages/eadp/contracts/${file}`),
@@ -217,6 +229,8 @@ async function placePlugin(incremental = false) {
   await mkdir(assembledPlugin, { recursive: true })
   await cp(path.join(productPlugin, 'src'), path.join(assembledPlugin, 'src'), { recursive: true })
   const manifest = productionPluginManifest(JSON.parse(await readFile(path.join(productPlugin, 'package.json'), 'utf8')))
+  await verifyWebDependencyLock(manifest)
+  manifest.files = [...new Set([...manifest.files, 'assets/browser-runtime/**/*', 'assets/browser-runtime.release.json'])]
   manifest.peerDependencies = Object.fromEntries(WORKSPACE_DEPENDENCIES.map((name) => [name, 'workspace:*']))
   manifest.devDependencies = {
     ...manifest.devDependencies,
@@ -312,7 +326,7 @@ async function applyUpstreamEdits() {
   for (const file of new Set(UPSTREAM_EDITS.map(edit => edit.file))) {
     await cp(path.join(upstreamSource, file), path.join(buildTree, file))
   }
-  for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, ...STUDIO_TEMPLATE_FILES]) {
+  for (const addition of [...STUDIO_PLATFORM_FILES, STUDIO_BROWSER_FILE, STUDIO_PROTOTYPE_VIEW_FILE, STUDIO_PROTOTYPE_BRIDGE_FILE, ...STUDIO_TEMPLATE_FILES]) {
     const target = path.join(buildTree, addition.file)
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, addition.source)
@@ -340,19 +354,21 @@ async function packPlugin() {
   console.log(`Packed the plugin, contracts and asset-domain into ${path.relative(sharedRoot, packedPluginDirectory)}`)
 }
 
-export async function stageStudioPlugin({ incremental = false } = {}) {
+export async function stageStudioPlugin({ incremental = false, browserRuntime = false } = {}) {
   await copyVerifiedSource()
   await generateStudioStyles()
   await placePlugin(incremental)
   await referencePlugin(incremental)
   await applyUpstreamEdits()
+  if (browserRuntime) await prepareStudioBrowserRuntime(path.join(assembledPlugin, 'assets/browser-runtime'), browserArchiveCache)
 }
 
 async function main() {
   const args = process.argv.slice(2)
-  if (args.length > 1 || args.some(arg => !['--stage-only', '--dev-stage'].includes(arg))) throw new Error('Usage: prepare-studio-plugin.mjs [--stage-only | --dev-stage]')
-  await stageStudioPlugin({ incremental: args.includes('--dev-stage') })
-  if (args.length) { console.log('Studio source staged; build steps skipped.'); return }
+  if (args.some(arg => !['--stage-only', '--dev-stage', '--browser-runtime'].includes(arg)) || (args.includes('--stage-only') && args.includes('--dev-stage'))) throw new Error('Usage: prepare-studio-plugin.mjs [--stage-only | --dev-stage] [--browser-runtime]')
+  const stageOnly = args.includes('--stage-only') || args.includes('--dev-stage')
+  await stageStudioPlugin({ incremental: args.includes('--dev-stage'), browserRuntime: args.includes('--browser-runtime') })
+  if (stageOnly) { console.log('Studio source staged; build steps skipped.'); return }
   runPnpm('install', buildTree)
   // A clean source tree needs Host-generated Remote contracts before Client compilation.
   runPnpm('libraries', buildTree)

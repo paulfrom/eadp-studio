@@ -94,13 +94,13 @@ test('fixed alpha4 task presets enforce Studio boundaries and real model routes 
       }});
       const results=[];
       for (const purpose of ['material','prototype']) {
-        const task={ projectId:'project',entityId:'requirement',sessionId:'studio-preset-runtime-'+purpose,worktree,purpose,inputHash:'' };
+        const task={ projectId:'project',entityId:'requirement',sessionId:'studio-preset-runtime-'+purpose,worktree,purpose,inputHash:'',...(purpose==='prototype'?{writePaths:['src/pages/']}:{}) };
         const target=purpose==='prototype'?'原型代码/src/pages/preset-runtime.tsx':file;
         if(purpose==='prototype'){await mkdir(path.dirname(path.join(worktree,target)),{recursive:true});await writeFile(path.join(worktree,target),'initial prototype');}
-        const input=purpose==='prototype'?{prototypeRoot:path.join(worktree,'原型代码'),manifestPath:manifest,assetId:'asset',requirementId:task.entityId,sessionId:task.sessionId,sourceSha:'a'.repeat(40)}:undefined;
-        let sessions=new DshTaskSessions(ctx,manifest,async()=>{});
+        const input=purpose==='prototype'?{prototypeRoot:path.join(worktree,'原型代码'),manifestPath:manifest,projectId:task.projectId,prototypeTaskId:task.entityId,sessionId:task.sessionId,sourceSha:'a'.repeat(40)}:undefined;
+        let sessions=new DshTaskSessions(ctx,manifest,async()=>{},undefined,undefined,async()=>async()=>{});
         for (const restore of [false,true]) {
-          await sessions.open(task,purpose==='prototype'?'按已确认需求完成原型；作者通过工作台确认。':'仅编辑 需求/requirement.md；作者通过工作台确认。',input);
+          await sessions.open(task,purpose==='prototype'?'按明确指令实现原型；作者通过工作台确认。':'仅编辑 需求/requirement.md；作者通过工作台确认。',input);
           const agent=ctx.agents.get(task.sessionId);
           assert.ok(agent);
           const names=ctx.tools.schemas(scopeOf(agent.ctx)).map(tool=>tool.name);
@@ -128,7 +128,7 @@ test('fixed alpha4 task presets enforce Studio boundaries and real model routes 
           assert.equal(await readFile(path.join(worktree,target),'utf8'),'updated '+restore);
           results.push({purpose,restore,names,compositions,read,denied,outside,allowed});
           await sessions.dispose();
-          sessions=new DshTaskSessions(ctx,manifest,async()=>{});
+          sessions=new DshTaskSessions(ctx,manifest,async()=>{},undefined,undefined,async()=>async()=>{});
         }
         await sessions.dispose();
       }

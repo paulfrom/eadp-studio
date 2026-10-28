@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ManagedProcess, PlatformRuntime } from '../adapters/platform/runtime.js';
 import type { PrototypeCheckResult } from './checks.js';
-import { assertCurrentPrototypeChecks } from './checks.js';
+import { assertCurrentPrototypeBuild } from './checks.js';
 import type { PrototypeTaskIdentity } from './generation.js';
 
 export interface PrototypePreview {
+  previewId: string;
+  buildHash: string;
   url: string;
   sourceSha: string;
   inputHash: string;
@@ -15,7 +17,7 @@ export interface PrototypePreview {
 
 export async function startPrototypePreview(runtime: PlatformRuntime, input: PrototypeTaskIdentity,
   checks: PrototypeCheckResult, port: number, signal?: AbortSignal): Promise<PrototypePreview> {
-  await assertCurrentPrototypeChecks(input, checks);
+  await assertCurrentPrototypeBuild(input, checks);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid loopback preview port');
   const instance = randomUUID();
   const process = await runtime.start('pnpm', ['run', 'preview', '--', '--port', String(port), '--instance', instance], {
@@ -33,7 +35,7 @@ export async function startPrototypePreview(runtime: PlatformRuntime, input: Pro
         if (response.ok) {
           const ready = await response.json() as { ready?: boolean; mode?: string; outputDirectory?: string; instance?: string };
           if (ready.ready && ready.mode === 'synthetic-only' && ready.outputDirectory === 'dist' && ready.instance === instance) {
-            return { url, sourceSha: input.sourceSha, inputHash: checks.inputHash, process, stop: () => process.stop() };
+            return { previewId: instance, buildHash: checks.outputHash, url, sourceSha: input.sourceSha, inputHash: checks.inputHash, process, stop: () => process.stop() };
           }
         }
       } catch { /* A starting loopback listener may refuse connections. */ }

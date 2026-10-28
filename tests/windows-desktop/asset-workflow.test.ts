@@ -152,7 +152,7 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
       }
       const saved = { id: `integration-${prepared.idempotencyKey}`, entityId: value.id, ownerId: 1, status: failures.pendingIntegration ? 'prepared' as const : 'accepted' as const, sourceSha: prepared.sourceSha, expectedHead: prepared.expectedHead, candidateSha: prepared.candidateSha, stage: prepared.stage, confirmationIds: prepared.confirmations.map(item => 'confirmed-' + item.entityId), createdAt: '' }
       remote.integrations.push(saved); integrationInputs.set(saved.id, prepared); records.set(prepared.idempotencyKey, saved)
-      if (saved.status === 'accepted' && prepared.stage !== 'prototype') acceptMaterials(prepared, materials)
+      if (saved.status === 'accepted') acceptMaterials(prepared, materials)
       if (failures.integrationResponse) { failures.integrationResponse = false; throw new Error('integration response lost') }
       return saved
     }
@@ -161,15 +161,17 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
       assert.ok(saved); assert.equal(saved.status, 'prepared')
       const prepared = integrationInputs.get(id)!, materials = await readMaterials(prepared)
       saved.status = 'accepted'; saved.confirmationIds = prepared.confirmations.map(item => 'confirmed-' + item.entityId)
-      if (prepared.stage !== 'prototype') acceptMaterials(prepared, materials)
+      acceptMaterials(prepared, materials)
       project.recognizedHead = prepared.candidateSha
       return saved
     }
     throw new Error('Unexpected request: ' + method + ' ' + route)
   } } as unknown as CollaborationClient
+  const deliveredPrompts = new Set<string>()
   const ports = { account: async () => ({ id: 1, name: '作者', gitlabUsername: 'author', gitlabEmail: 'author@example.invalid' }), stopPreview: async () => {},
     session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failures.session) { failures.session = false; throw new Error('session failed') }; return task.sessionId },
-    prompt: async (session: string, text: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') } },
+    prompt: async (session: string, text: string, operationId?: string) => { calls.prompts.push(session + ':' + text); if (failures.prompt) { failures.prompt = false; throw new Error('prompt failed') }; if (operationId) deliveredPrompts.add(operationId) },
+    inspectPrompt: async (_session: string, operationId: string) => deliveredPrompts.has(operationId) ? 'delivered' as const : 'unknown' as const,
     checks: async (_task: unknown, sha: string) => ({ candidateSha: sha, passed: true, checks: [{ name: 'engineering', passed: true, evidenceHash: digest('checked') }] }),
     gitLocal: async (args: readonly string[]) => args[0] === 'rev-list' ? `${gitState.head} ${gitState.remote} ${candidate}` : gitState.dirtyFiles.map(file => ' M ' + file + '\0').join(''),
     git: { hasCommit: async () => true,
@@ -339,152 +341,14 @@ test('a lost integration response resolves the original operation on retry witho
   assert.equal((await f.store.read()).operations[0]!.phase, 'accepted')
 })
 
-/** External adapters that let an accepted requirement open its fixed prototype task. */
-function enablePrototypeStartup(f: Awaited<ReturnType<typeof fixture>>): void {
-  const request = f.api.request.bind(f.api)
-  f.api.request = async (method, route, input?: Record<string, unknown>) => {
-    if (method === 'POST' && route.endsWith('/claim')) {
-      f.value.revision++; f.value.generation++
-      f.value.occupation = { occupationId: 'prototype-occupation', generation: f.value.generation, taskId: String(input!.taskId), clientId: String(input!.clientId), expectedRevision: f.value.revision,
-        entityId: f.value.id, ownerId: 1, purpose: 'prototype', inputVersion: f.value.materialVersion, prerequisiteBindings: [], createdAt: '' }
-      return structuredClone(f.value)
-    }
-    return request(method, route, input)
-  }
-  f.ports.git.createWorktree = async (_root, directory) => { await cp(f.worktree, directory, { recursive: true }) }
-}
-
-test('an unknown prototype send keeps material acceptance and is not resent by confirmation recovery or restart', async t => {
-  const f = await fixture(t)
-  enablePrototypeStartup(f)
-  f.failures.prompt = true
-  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
+test('confirming a requirement never starts or prompts a prototype session', async t => {
+  const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   assert.equal((await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })).ok, true)
   await app.settle()
-  const operation = f.local.operations[0]!, startup = f.local.tasks.find(task => task.purpose === 'material')!.prototypeStart!
-  assert.equal(operation.phase, 'accepted'); assert.equal(operation.accepted!.status, 'accepted')
-  assert.equal(operation.message, undefined); assert.equal(operation.deliveryMessage, undefined)
-  assert.equal(startup.status, 'unknown'); assert.ok(startup.task)
-  assert.equal(f.calls.prompts.length, 1)
-  await app.command({ action: 'retryOperation', operationId: operation.id }); await app.settle()
-  const store = new StudioStore(path.join(f.root, 'state')); store.useUser(1)
-  const restarted = f.app(store)
-  await restarted.command({ action: 'retryOperation', operationId: operation.id }); await restarted.settle()
-  assert.equal(f.calls.prepared.length, 1, 'follow-up recovery never prepares another confirmation')
-  assert.equal(f.calls.prompts.length, 1, 'a missing send acknowledgement is not permission to send again')
-  const pending = await restarted.command({ action: 'state' })
-  assert.ok(pending.ok && pending.state.pending.some(value => value.id === startup.id && value.phase === 'prototype-startup'))
-})
-
-test('a failed final startup receipt never makes an already sent prototype prompt retryable', async t => {
-  const f = await fixture(t)
-  enablePrototypeStartup(f)
-  const save = f.store.save.bind(f.store)
-  let lostReceipt = false
-  f.store.save = async () => {
-    if (!lostReceipt && f.local.tasks.some(task => task.prototypeStart?.status === 'sent')) { lostReceipt = true; throw new Error('startup receipt write failed') }
-    await save()
-  }
-  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
-  const operation = f.local.operations[0]!, startup = f.local.tasks.find(task => task.purpose === 'material')!.prototypeStart!
-  assert.equal(lostReceipt, true); assert.equal(startup.status, 'unknown'); assert.equal(operation.phase, 'accepted')
-  assert.equal(f.calls.prompts.length, 1)
-  await app.command({ action: 'retryOperation', operationId: operation.id }); await app.settle()
-  const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
-  const restarted = f.app(rebooted)
-  await restarted.command({ action: 'retryOperation', operationId: operation.id }); await restarted.settle()
-  assert.equal(f.calls.prompts.length, 1)
-  assert.equal(f.calls.prepared.length, 1)
-})
-
-test('an old automatic prototype startup cannot cancel a later explicit design occupation', async t => {
-  const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
-  const operation = f.local.operations[0]!, original = f.local.tasks.find(task => task.purpose === 'material')!, startup = original.prototypeStart!
-  assert.equal(operation.phase, 'accepted'); assert.equal(startup.status, 'blocked')
-  const worktree = path.join(f.root, 'new-revision'); await cp(f.worktree, worktree, { recursive: true })
-  const next = { ...original, worktree, sessionId: 'new-revision-session' }; delete next.cleanup; delete next.prototypeStart
-  f.local.tasks.push(next)
-  f.value.revision++; f.value.generation++
-  f.value.occupation = { occupationId: 'new-design', generation: f.value.generation, taskId: 'new-revision', clientId: f.local.clientId, expectedRevision: f.value.revision,
-    entityId: f.value.id, ownerId: 1, purpose: 'design', inputVersion: f.value.materialVersion, prerequisiteBindings: [], createdAt: '' }
-  const expected = structuredClone(f.value.occupation), request = f.api.request.bind(f.api)
-  const controls: string[] = []
-  f.api.request = async (method, route, input) => {
-    if (method === 'POST' && /\/(cancel|claim)$/.test(route)) controls.push(route)
-    return request(method, route, input)
-  }
-  await f.store.save()
-  await app.command({ action: 'retryOperation', operationId: startup.id }); await app.settle()
-  assert.deepEqual(controls, []); assert.deepEqual(f.value.occupation, expected)
-  assert.equal(next.cleanup, undefined); assert.equal(startup.status, 'blocked'); assert.match(startup.message!, /设计占用/)
-  assert.equal(operation.phase, 'accepted'); assert.equal(f.calls.prepared.length, 1)
-})
-
-test('switching accounts during prototype preparation never creates or saves a task in the new account', { timeout: 5000 }, async t => {
-  const f = await fixture(t)
-  enablePrototypeStartup(f)
-  let accountId = 1, reached!: () => void, release!: () => void
-  const entered = new Promise<void>(resolve => { reached = resolve }), gate = new Promise<void>(resolve => { release = resolve })
-  f.ports.account = async () => ({ id: accountId, name: '作者', gitlabUsername: 'author', gitlabEmail: 'author@example.invalid' }) as Awaited<ReturnType<HostPorts['account']>>
-  const hasCommit = f.ports.git.hasCommit.bind(f.ports.git), createWorktree = f.ports.git.createWorktree.bind(f.ports.git)
-  const created: string[] = []
-  f.ports.git.hasCommit = async (directory, sha) => {
-    if (directory === f.root && f.value.occupation?.purpose === 'prototype') { reached(); await gate }
-    return hasCommit(directory, sha)
-  }
-  f.ports.git.createWorktree = async (directory, worktree, branch, sha) => { created.push(worktree); await createWorktree(directory, worktree, branch, sha) }
-  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  const reply = await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })
-  assert.equal(reply.ok, true)
-  await entered
-  accountId = 2; f.store.useUser(2)
-  const other = await f.store.read()
-  release(); await app.settle()
-  assert.deepEqual(created, []); assert.deepEqual(other.tasks, []); assert.deepEqual(other.projects, [])
-  assert.equal(f.local.tasks.filter(task => task.purpose === 'prototype').length, 0)
-  assert.equal(f.calls.sessions.length, 0); assert.equal(f.calls.prompts.length, 0)
   assert.equal(f.local.operations[0]!.phase, 'accepted')
-})
-
-test('same-named accepted operations in two projects start their own prototypes exactly once', async t => {
-  const f = await fixture(t)
-  enablePrototypeStartup(f)
-  const app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  await app.command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' }); await app.settle()
-  const original = f.local.tasks.find(task => task.purpose === 'material')!, first = f.local.operations[0]!
-  assert.equal(original.prototypeStart!.status, 'sent'); assert.equal(f.calls.prompts.length, 1)
-  const directory = path.join(f.root, 'second-project'), worktree = path.join(directory, 'task')
-  await cp(f.worktree, worktree, { recursive: true })
-  const task = { ...structuredClone(original), projectId: 'second-project', worktree, sessionId: 'second-material-session' }
-  delete task.prototypeStart; delete task.cleanup; delete task.error
-  const entity = structuredClone(f.value); delete entity.occupation
-  entity.current!.confirmationId = 'second-confirmation'
-  const project = { ...f.remote.project, id: 'second-project', name: '第二项目', recognizedHead: candidate }
-  const operation = { ...structuredClone(first), projectId: project.id, task: { projectId: project.id, entityId: task.entityId, worktree, sessionId: task.sessionId, purpose: task.purpose, inputHash: task.inputHash } }
-  operation.integrationId = 'second-integration'; operation.accepted!.id = operation.integrationId; operation.accepted!.confirmationIds = ['second-confirmation']
-  const remote: ProjectState = { project, entities: [entity], integrations: [operation.accepted!], baselines: [] }
-  f.local.projects.push({ id: project.id, name: project.name, directory, repositoryUrl: project.repositoryUrl })
-  f.local.tasks.push(task); f.local.operations.push(operation)
-  const request = f.api.request.bind(f.api)
-  f.api.request = async (method, route, input?: Record<string, unknown>) => {
-    if (method === 'GET' && route === '/v1/projects') return [f.remote.project, project]
-    if (method === 'GET' && route === '/v1/projects/second-project') return remote
-    if (method === 'POST' && route === '/v1/projects/second-project/entities/target/claim') {
-      entity.revision++; entity.generation++
-      entity.occupation = { occupationId: 'second-prototype', generation: entity.generation, taskId: String(input!.taskId), clientId: f.local.clientId, expectedRevision: entity.revision,
-        entityId: entity.id, ownerId: 1, purpose: 'prototype', inputVersion: entity.materialVersion, prerequisiteBindings: [], createdAt: '' }
-      return structuredClone(entity)
-    }
-    return request(method, route, input)
-  }
-  await f.store.save(); await app.command({ action: 'state' }); await app.settle()
-  assert.equal(task.prototypeStart!.status, 'sent')
-  assert.notEqual(task.prototypeStart!.id, original.prototypeStart!.id)
-  assert.equal(f.calls.sessions.length, 2); assert.equal(f.calls.prompts.length, 2)
-  await app.command({ action: 'retryOperation', operationId: task.prototypeStart!.id }); await app.settle()
-  assert.equal(f.calls.prepared.length, 1); assert.equal(f.calls.prompts.length, 2)
+  assert.equal(f.local.tasks.filter(task => task.purpose === 'prototype').length, 0)
+  assert.equal(f.calls.sessions.length, 0)
+  assert.equal(f.calls.prompts.length, 0)
 })
 
 test('a moved remote head rebuilds and accepts a merged candidate without rewriting the diverged branch', async t => {
@@ -508,10 +372,13 @@ test('a moved remote head rebuilds and accepts a merged candidate without rewrit
 
 test('accepted handoff generation is durable per fixed baseline and never overwrites author edits on retry', async t => {
   const f = await fixture(t, 'handoff')
-  f.value.title = '交接 requirement v2'
+  f.value.title = '原型交接 v2'
   const requirement = entity('requirement'); requirement.materialVersion = 2
   f.remote.entities.push(requirement)
-  f.remote.baselines.push({ id: 'baseline', entityId: requirement.id, version: 2, commitSha: candidate, confirmationId: 'completed', createdAt: '' })
+  f.remote.baselines.push({ id: 'baseline', prototypeId: 'prototype', sequence: 2, acceptanceId: 'acceptance', integrationId: 'integration', prototypeTaskId: 'task', commitSha: candidate, relatedRequirementIds: [requirement.id], confirmedBy: 1, acceptedAt: '' })
+  const initial = await readMaterial(f.worktree, 'handoff', f.value.id)
+  if (initial.metadata.kind !== 'handoff') throw new Error('handoff fixture identity')
+  await saveMaterial(f.worktree, { ...initial.metadata, prototypeBaseline: { baselineId: 'baseline', commitSha: candidate } }, initial.body)
   assert.equal((await f.app().command({ action: 'generateHandoff', baselineId: 'baseline' })).ok, true)
   const generated = await readMaterial(f.worktree, 'handoff', f.value.id)
   await saveMaterial(f.worktree, generated.metadata, '作者修改必须保留\n' + body)
@@ -526,7 +393,7 @@ test('scenario confirmation fixes only the scenario material and leaves related 
   f.value.materialVersion = 1; f.value.occupation!.inputVersion = 1
   const unstarted = entity('unstarted'), completed = entity('completed'), unrelated = entity('unrelated')
   for (const requirement of [unstarted, completed, unrelated]) requirement.scenarioIds = [f.value.id]
-  completed.materialVersion = 2; completed.completedVersion = 2
+  completed.materialVersion = 2
   f.remote.entities.push(unstarted, completed, unrelated)
   const draft = await readMaterial(f.worktree, 'scenario', f.value.id)
   const reply = await f.app().command({ action: 'confirmMaterial', entityId: f.value.id, expectedHash: draft.sha256, method: 'direct' })
@@ -622,16 +489,19 @@ test('a confirmed target without the exact adopted source cannot report reuse su
 
 for (const failure of ['session', 'prompt'] as const) test('failed handoff ' + failure + ' retries its fixed task without replacing author content', async t => {
   const f = await fixture(t, 'handoff')
-  f.value.title = '交接 requirement v2'
+  f.value.title = '原型交接 v2'
   const requirement = entity('requirement'); requirement.materialVersion = 2
   f.remote.entities.push(requirement)
-  f.remote.baselines.push({ id: 'baseline', entityId: requirement.id, version: 2, commitSha: candidate, confirmationId: 'completed', createdAt: '' })
+  f.remote.baselines.push({ id: 'baseline', prototypeId: 'prototype', sequence: 2, acceptanceId: 'acceptance', integrationId: 'integration', prototypeTaskId: 'task', commitSha: candidate, relatedRequirementIds: [requirement.id], confirmedBy: 1, acceptedAt: '' })
+  const initial = await readMaterial(f.worktree, 'handoff', f.value.id)
+  if (initial.metadata.kind !== 'handoff') throw new Error('handoff fixture identity')
+  await saveMaterial(f.worktree, { ...initial.metadata, prototypeBaseline: { baselineId: 'baseline', commitSha: candidate } }, initial.body)
   f.failures[failure] = true
   assert.equal((await f.app().command({ action: 'generateHandoff', baselineId: 'baseline' })).ok, false)
   const draft = await readMaterial(f.worktree, 'handoff', f.value.id)
   await saveMaterial(f.worktree, draft.metadata, '失败后作者补充\n' + body)
   const rebooted = new StudioStore(path.join(f.root, 'state')); rebooted.useUser(1)
-  assert.equal((await f.app(rebooted).command({ action: 'generateHandoff', baselineId: 'baseline' })).ok, true)
+  assert.equal((await f.app(rebooted).command({ action: 'generateHandoff', baselineId: 'baseline' })).ok, failure === 'session')
   assert.match((await readMaterial(f.worktree, 'handoff', f.value.id)).body, /失败后作者补充/)
   assert.ok(f.calls.sessions.every(id => id === 'material-session'))
 })
@@ -748,30 +618,6 @@ test('duplicate review requests recover the same local report across Host restar
   assert.equal(f.calls.prepared.length, 0)
 })
 
-async function prototypeFixture(t: test.TestContext) {
-  const f = await fixture(t)
-  const draft = await readMaterial(f.worktree, 'requirement', f.value.id)
-  f.value.materialVersion = 1; f.value.confirmationStatus = 'confirmed'; f.value.current = { version: 1, fixed: { commitSha: head, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationId: 'requirement-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
-  f.value.occupation!.purpose = 'prototype'; f.value.occupation!.inputVersion = 1
-  f.local.tasks[0]!.purpose = 'prototype'; f.local.tasks[0]!.inputHash = draft.sha256
-  await mkdir(path.join(f.worktree, '原型代码/src'), { recursive: true }); await writeFile(path.join(f.worktree, '原型代码/src/page.tsx'), 'export default () => null')
-  f.gitState.dirtyFiles = ['原型代码/src/page.tsx']; await f.store.save()
-  return f
-}
-
-test('prototype AI review binds the confirmed input and uses the same completion pipeline as direct author confirmation', async t => {
-  const f = await prototypeFixture(t), app = f.app()
-  assert.equal((await app.command({ action: 'requestReview', entityId: f.value.id, purpose: 'prototype' })).ok, true)
-  const review = (await f.store.read()).reviews[0]!
-  await app.acceptSessionOutput(review.task.sessionId, { kind: 'assistant', content: reviewReport('原型固定候选已检查。') })
-  await app.acceptSessionOutput(review.task.sessionId, { kind: 'turn-ended', reason: 'completed' })
-  const reply = await app.command({ action: 'confirmPrototype', entityId: f.value.id, method: 'ai-assisted', reviewId: review.id, authorDisposition: '已核对并确认本次固定原型。' })
-  assert.equal(reply.ok, true, JSON.stringify(reply))
-  assert.equal(f.calls.prepared[0]!.stage, 'prototype')
-  assert.deepEqual(f.calls.prepared[0]!.confirmations[0]!.fixed, f.value.current!.fixed)
-  assert.equal(f.calls.prepared[0]!.confirmations[0]!.confirmationMethod, 'ai-assisted')
-})
-
 test('candidate commits outside the task whitelist are rejected even when the current worktree is clean', async t => {
   const f = await prototypeFixture(t)
   f.gitState.dirtyFiles = []; f.gitState.head = candidate; f.gitState.changedFiles = ['原型代码/src/page.tsx', '场景/unrelated.md']
@@ -837,7 +683,7 @@ test('explicit scenario revision claims a design occupation and leaves requireme
   }
   const previous = await saveMaterial(f.worktree, metadata(related), body + '\n作者保留的业务细节。')
   const finished = await saveMaterial(f.worktree, metadata(completed), body + '\n已完成需求保持固定。')
-  completed.materialVersion = 2; completed.completedVersion = 2; completed.confirmationStatus = 'confirmed'
+  completed.materialVersion = 2; completed.confirmationStatus = 'confirmed'
   completed.current = { version: 2, fixed: { commitSha: head, path: finished.path, sha256: finished.sha256 }, metadata: finished.metadata, confirmationId: 'completed-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
   f.remote.entities.push(related, completed)
   const original = f.api.request.bind(f.api), claims: Array<Record<string, unknown>> = []
@@ -932,7 +778,7 @@ test('native image reads for requirement attachments require the current design 
   assert.match((await app.scenarioSessionContext(f.local.tasks[0]!)).text, /attachmentId=native-image/)
 })
 
-test('confirmed requirement attachment projections use fixed evidence and reject mutation or prototype ownership', async t => {
+test('confirmed requirement attachment projections use fixed evidence and reject mutation by another owner', async t => {
   const f = await fixture(t), app = f.app(), draft = await readMaterial(f.worktree, 'requirement', f.value.id)
   const archived = await archiveSelectedEvidence(f.worktree, [{ source: { id: 'fixed-pdf', name: '已确认部分读取.pdf', format: 'pdf', sha256: digest('原始PDF'), status: 'partial', ranges: ['page:1'], text: '仅读取第一页', error: '第 2 页提取失败', selected: true, formal: true }, original: Buffer.from('原始PDF') }], ['fixed-pdf'])
   f.value.current = { version: 1, fixed: { commitSha: head, path: draft.path, sha256: draft.sha256 }, metadata: { ...draft.metadata, businessEvidence: archived }, confirmationId: 'accepted', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
@@ -946,7 +792,7 @@ test('confirmed requirement attachment projections use fixed evidence and reject
   assert.deepEqual(projection.sources[0]!.ranges, ['page:1']); assert.match(projection.sources[0]!.error!, /第 2 页提取失败/)
   const command = { action: 'importScenarioSource' as const, entityId: f.value.id, operationId: 'blocked-source', name: '禁止.txt', base64: Buffer.from('blocked').toString('base64') }
   assert.equal((await app.command(command)).ok, false)
-  f.value.occupation = { occupationId: 'prototype', generation: 1, taskId: 'task', clientId: f.local.clientId, expectedRevision: 1, entityId: f.value.id, ownerId: 1, purpose: 'prototype', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
+  f.value.occupation = { occupationId: 'other-owner', generation: 1, taskId: 'task', clientId: f.local.clientId, expectedRevision: 1, entityId: f.value.id, ownerId: 2, purpose: 'design', inputVersion: 1, prerequisiteBindings: [], createdAt: '' }
   projection = (await app.state()).materialSources!.find(value => value.entityId === f.value.id)!
   assert.equal(projection.readOnly, true); assert.equal((await app.command(command)).ok, false)
   assert.equal(record.sources.length, 1)

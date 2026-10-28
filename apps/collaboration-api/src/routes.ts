@@ -37,6 +37,7 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   write('POST', `${base}/prototype/tasks/:taskId/development-claims`, contract.UpdatePrototypeClaimsSchema, (a, p, b) => service.extendPrototypeClaims(a, p.projectId!, p.taskId!, b));
   write('PUT', `${base}/prototype/tasks/:taskId/reference-requirements`, contract.UpdatePrototypeReferencesSchema, (a, p, b) => service.updatePrototypeReferences(a, p.projectId!, p.taskId!, b));
   write('PUT', `${base}/prototype/tasks/:taskId/write-scope`, contract.UpdatePrototypeScopeSchema, (a, p, b) => service.updatePrototypeScope(a, p.projectId!, p.taskId!, b));
+  write('PUT', `${base}/prototype/tasks/:taskId/source-base`, contract.UpdatePrototypeSourceBaseSchema, (a, p, b) => service.updatePrototypeSourceBase(a, p.projectId!, p.taskId!, b));
   write('POST', `${base}/prototype/tasks/:taskId/cancel`, contract.CancelPrototypeTaskSchema, (a, p, b) => service.cancelPrototypeTask(a, p.projectId!, p.taskId!, b));
   write('POST', `${base}/prototype/tasks/:taskId/admin-release`, contract.ReleasePrototypeTaskSchema, (a, p, b) => service.releasePrototypeTask(a, p.projectId!, p.taskId!, b));
   app.get<{ Params: { projectId: string }; Querystring: { limit?: string; offset?: string } }>(`${base}/prototype/baselines`, request => {

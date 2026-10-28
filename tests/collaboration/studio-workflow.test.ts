@@ -89,7 +89,7 @@ test('actual Host, API, PostgreSQL and smart HTTP Git execute requirement collab
       return JSON.stringify({ summary: '本次实际读取范围未发现冲突', conflicts: [] })
     },
     checks: async (_task, candidateSha): Promise<CheckEvidence> => ({ candidateSha, passed: true, checks: ['engineering', 'mock', 'browser', 'relations'].map(name => ({ name, passed: true, evidenceHash: digest(`deterministic-test-check:${name}:${candidateSha}`) })) }),
-    preview: async () => { throw new Error('This suite does not claim native preview verification') }, stopPreview: async () => {}, publication: async () => { throw new Error('Publication is outside requirement collaboration') },
+    preview: async () => { throw new Error('This suite does not claim native preview verification') }, candidateChecks: async () => { throw new Error('This suite does not claim prototype validation') }, selectPreview: async () => {}, stopPreview: async () => {}, settlePrototypeSession: async () => false, publication: async () => { throw new Error('Publication is outside requirement collaboration') },
   }
   const app = new StudioApplication(store, api, ports); t.after(() => app.dispose())
   const command = async (input: StudioCommand) => { const reply = await app.command(input); assert.equal(reply.ok, true, JSON.stringify(reply)); if (!reply.ok) throw new Error('unreachable'); console.info('workflow command completed:', input.action); return reply.state }
