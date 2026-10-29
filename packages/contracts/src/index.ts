@@ -109,10 +109,10 @@ export interface PrototypeTaskView {
   developmentRequirementIds: string[]; referenceRequirementIds: string[]; developmentClaims: DevelopmentClaimToken[]; claimsDigest: string;
   writeScope: string[]; policyHash: string;
 }
-/** A conflict-base change retains the exact independently verified source operation. */
+/** A conflict-base change retains the exact source operation registered by the desktop. */
 export interface PrototypeSourceBaseResult {
   task: PrototypeTaskView;
-  source: { operationId: string; ref: string; sha: string; previousBaseHead: string; newBaseHead: string; mergeBaseSha: string };
+  source: { operationId: string; ref: string; sha: string; previousBaseHead: string; newBaseHead: string };
 }
 export interface ProjectPrototypeView { id: string; projectId: string; currentBaselineId?: string; recognizedHead: string; tasks: PrototypeTaskView[] }
 export interface PrototypeBaselineView { id: string; prototypeId: string; sequence: number; acceptanceId: string; integrationId: string; prototypeTaskId: string; commitSha: string; relatedRequirementIds: string[]; confirmedBy: number; acceptedAt: string }
@@ -124,7 +124,6 @@ export const PrototypeIntegrationSchema = object({ ...keyed, stage: Type.Literal
   sourceRef: Type.String({ minLength: 1, maxLength: 400 }), candidateRef: Type.String({ minLength: 1, maxLength: 400 }),
   developmentRequirementIds: prototypeDevelopmentIds, developmentClaims: Type.Array(DevelopmentClaimTokenSchema, { minItems: 1, maxItems: 100 }), claimsDigest: Sha256Schema,
   evidence: PrototypeEngineeringEvidenceSchema,
-  derivation: Type.Union([object({ kind: Type.Literal('author-confirmed') }), object({ kind: Type.Literal('clean-merge'), mergeBaseSha: ShaSchema })]),
   authorConfirmation: object({ confirmationId: IdSchema, sourceSha: ShaSchema, authorConfirmed: Type.Literal(true), claimsDigest: Sha256Schema, mergePolicy: Type.Literal('clean-merge-and-recheck') }) });
 export type PrototypeIntegrationRequest = Static<typeof PrototypeIntegrationSchema>;
 export const CompletePrototypeIntegrationSchema = object({ ...keyed, token: PrototypeTaskTokenSchema,

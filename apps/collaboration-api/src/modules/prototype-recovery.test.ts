@@ -8,6 +8,8 @@ import type { Database, Transaction } from '../persistence/database.js';
 import { GitLabContent } from '../gitlab-content.js';
 import { CollaborationService } from '../service.js';
 import { complete, getIntegration } from './prototype-integration.js';
+import { prototypePolicy } from '../prototype-policy.js';
+import { claimsDigest } from './prototypes.js';
 
 const actor: Actor = { id: 1, username: 'author', name: 'Author', email: 'author@example.test', admin: false, gitlabUserId: 1, gitlabUsername: 'author', sessionHash: 'session' };
 const expectedHead = 'a'.repeat(40), candidateSha = 'b'.repeat(40), correctedHead = 'c'.repeat(40), hash = 'd'.repeat(64);
@@ -19,9 +21,13 @@ const request: PrototypeIntegrationRequest = {
   allowedPaths: ['原型代码/src/pages/index.tsx'], sourceRef: 'refs/heads/studio-private/task/operation/source', candidateRef: 'refs/heads/studio-private/task/operation/candidate',
   developmentRequirementIds: ['r1', 'r2'], developmentClaims: [{ requirementId: 'r1', claimId: 'claim1', generation: 1 }, { requirementId: 'r2', claimId: 'claim2', generation: 2 }], claimsDigest: hash,
   evidence: { sourceTreeHash: hash, rulesHash: hash, buildArtifactSha256: hash, candidateSha, checks: ['engineering', 'mock', 'browser'].map(name => ({ name: name as 'engineering' | 'mock' | 'browser', passed: true, evidenceHash: hash })) },
-  derivation: { kind: 'author-confirmed' }, authorConfirmation: { confirmationId: 'confirmation', sourceSha: candidateSha, authorConfirmed: true, claimsDigest: hash, mergePolicy: 'clean-merge-and-recheck' },
+  authorConfirmation: { confirmationId: 'confirmation', sourceSha: candidateSha, authorConfirmed: true, claimsDigest: hash, mergePolicy: 'clean-merge-and-recheck' },
 };
 const recoveryInput = (): CompletePrototypeIntegrationRequest => ({ idempotencyKey: 'recover', token: { ...request.token }, developmentClaims: structuredClone(request.developmentClaims), claimsDigest: request.claimsDigest });
+const prototypeTask = (policyHash: string) => ({
+  id: 'task', prototypeId: 'prototype', ownerId: actor.id, clientId: 'client', generation: 1, revision: 2, status: 'active', title: 'Prototype task', branch: 'studio/task', startHead: expectedHead, sourceBaseHead: expectedHead,
+  developmentRequirementIds: request.developmentRequirementIds, referenceRequirementIds: [], developmentClaims: request.developmentClaims, claimsDigest: claimsDigest(request.developmentClaims), writeScope: ['src/pages/'], policyHash,
+});
 const code = (expected: string) => (error: unknown) => (error as { code?: string }).code === expected;
 
 /** A read-only persistence fixture: recovery may read fixed facts but cannot recreate them. */
@@ -83,3 +89,44 @@ for (const scenario of ['valid', 'rewritten-history', 'changed-tree', 'incomplet
     else await assert.rejects(result, code(scenario === 'rewritten-history' ? 'CORRECTION_ANCESTRY_MISMATCH' : 'CORRECTION_TREE_MISMATCH'));
   });
 }
+
+test('source-base registration observes only the stable head and original source ref', async () => {
+  const policy = await prototypePolicy(), task = prototypeTask(policy.hash), stateProject = { ...project, recognizedHead: correctedHead };
+  const endpoints: string[] = [];
+  const gitlab = {
+    branchHead: async () => correctedHead,
+    json: async (endpoint: string) => { endpoints.push(endpoint); return { id: candidateSha }; },
+  } as unknown as GitLab;
+  const service = new CollaborationService({} as Database, gitlab, {} as PublicationAuthorization, {} as SessionAuth);
+  service.authorize = async () => stateProject;
+  service.replay = async () => ({ found: false });
+  const internals = service as unknown as { transact: (action: unknown) => Promise<unknown>; mutate: (...args: unknown[]) => Promise<unknown> };
+  internals.transact = async () => task;
+  internals.mutate = async () => undefined;
+  await service.updatePrototypeSourceBase(actor, project.id, task.id, {
+    idempotencyKey: 'source-base', token: request.token, sourceOperationId: 'operation', sourceRef: request.sourceRef, sourceSha: candidateSha, newBaseHead: correctedHead,
+    developmentClaims: request.developmentClaims, claimsDigest: task.claimsDigest,
+  });
+  assert.equal(endpoints.length, 1);
+  assert.ok(endpoints[0]!.includes(`/commits/${encodeURIComponent(request.sourceRef)}`));
+  assert.ok(endpoints.every(endpoint => !/merge_base|trees|blobs/.test(endpoint)));
+});
+
+test('prototype preparation observes only project state and uploaded refs', async () => {
+  const policy = await prototypePolicy(), task = prototypeTask(policy.hash), endpoints: string[] = [];
+  const gitlab = {
+    branchHead: async () => expectedHead,
+    json: async (endpoint: string) => { endpoints.push(endpoint); return { id: candidateSha }; },
+  } as unknown as GitLab;
+  const service = new CollaborationService({} as Database, gitlab, {} as PublicationAuthorization, {} as SessionAuth);
+  service.authorize = async () => project;
+  service.replay = async () => ({ found: false });
+  const internals = service as unknown as { transact: (action: unknown) => Promise<unknown>; mutate: (...args: unknown[]) => Promise<unknown> };
+  internals.transact = async () => task;
+  internals.mutate = async () => ({ status: 'prepared' });
+  assert.deepEqual(await service.preparePrototypeIntegration(actor, project.id, request), { status: 'prepared' });
+  assert.equal(endpoints.length, 2);
+  assert.ok(endpoints.some(endpoint => endpoint.includes(`/commits/${encodeURIComponent(request.sourceRef)}`)));
+  assert.ok(endpoints.some(endpoint => endpoint.includes(`/commits/${encodeURIComponent(request.candidateRef)}`)));
+  assert.ok(endpoints.every(endpoint => !/merge_base|trees|blobs/.test(endpoint)));
+});

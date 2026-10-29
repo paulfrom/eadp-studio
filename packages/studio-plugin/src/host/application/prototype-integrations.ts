@@ -93,7 +93,7 @@ export class PrototypeIntegrations {
     if (request.idempotencyKey !== operation.id || request.stage !== 'prototype' || request.token.prototypeTaskId !== operation.taskId || request.sourceRef !== `${prefix}/source` || request.candidateRef !== `${prefix}/candidate` ||
       request.authorConfirmation.sourceSha !== request.sourceSha || request.authorConfirmation.claimsDigest !== request.claimsDigest || request.evidence.candidateSha !== request.candidateSha ||
       request.evidence.checks.length !== 3 || new Set(request.evidence.checks.map(item => item.name)).size !== 3 || request.evidence.checks.some(item => !item.passed)) throw new Error('原型固定请求、作者确认或工程证据不一致')
-    if (request.derivation.kind === 'author-confirmed' && (request.sourceSha !== request.candidateSha || request.sourceBaseHead !== request.expectedHead)) throw new Error('原型直接候选与作者确认不一致')
+    if (request.sourceBaseHead === request.expectedHead && request.sourceSha !== request.candidateSha) throw new Error('原型直接候选与作者确认不一致')
     return request
   }
   private async assertTask(operation: PrototypeIntegrationOperation): Promise<void> {

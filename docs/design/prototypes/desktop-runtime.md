@@ -3,7 +3,7 @@
 状态：2026-10-29 队列新决定待实现；2026-10-27 其余设计已实施（commit 68f269c／a94405d）；未验收部分见[验证记录](validation-2026-10-28.md)。本文件不表示真实桌面闭环已通过。
 
 范围：项目原型界面、协作事项、原生会话、私有工程、检查预览、精确确认与失败恢复。
-沿用固定 DSH、现有专用 Host/client 插件及随包原型模板，不升级宿主、不开放任意终端。本轮补充拟增加 CodeMirror 6、独立锁定的稳定版 Playwright 及其配对 Chromium，详见[技术选型与本地浏览器验证](technology-and-browser-validation.md)；不能继续声称桌面零新增依赖。协同服务新增的受限 Git 验证工具见[协同契约](collaboration-contract.md#61-后台验证候选树)。
+沿用固定 DSH、现有专用 Host/client 插件及随包原型模板，不升级宿主、不开放任意终端。本轮补充拟增加 CodeMirror 6、独立锁定的稳定版 Playwright 及其配对 Chromium，详见[技术选型与本地浏览器验证](technology-and-browser-validation.md)；不能继续声称桌面零新增依赖。桌面 Host 承担原型合并与结果验证，协同服务只核对项目和候选状态，见[协同契约](collaboration-contract.md#61-桌面合并与后台状态核对)。
 业务交互见[原型工作台设计](../03-prototypes.md)，视觉见[原型工作台](../../dseign/原型交互工作台.html)。
 
 ## 1. 已确认的业务边界

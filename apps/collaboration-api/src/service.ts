@@ -18,7 +18,6 @@ import * as prototypeReuse from './modules/prototype-reuse.js';
 import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, PrototypeSourceBaseResult, ReleasePrototypeTaskRequest, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
 import { visibleEntity } from './modules/visibility.js';
 import { prototypePolicy, validatePrototypePolicy } from './prototype-policy.js';
-import { verifyPrototypeConflict, verifyPrototypeMerge } from './prototype-merge-verifier.js';
 
 type Mutation<T> = (c: Transaction, project: ProjectView, all: EntityView[]) => Promise<T>;
 export class CollaborationService {
@@ -108,7 +107,7 @@ export class CollaborationService {
     validatePrototypePolicy(await prototypePolicy(), input.writeScope, input.policyHash);
     return this.mutate(actor, projectId, `prototype.task.scope:${taskId}`, input, c => prototypes.updateScope(c, projectId, actor, taskId, input));
   }
-  /** The registered base may advance only after the original uploaded source really conflicts. */
+  /** Advance the registered base while retaining the exact uploaded source operation. */
   async updatePrototypeSourceBase(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeSourceBaseRequest): Promise<PrototypeSourceBaseResult> {
     const project = await this.authorize(actor, projectId, true);
     const action = `prototype.task.source-base:${taskId}`;
@@ -120,21 +119,15 @@ export class CollaborationService {
     validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
     requireCondition(!input.sourceOperationId.includes('..') && !input.sourceOperationId.endsWith('.lock') && input.sourceRef === `refs/heads/studio-private/${taskId}/${input.sourceOperationId}/source`, 'INVALID_SOURCE_REF', 'The source ref must identify the original task operation', 422);
     const prefix = `/projects/${project.gitlabProjectId}/repository`;
-    const observe = async () => Promise.all([
+    const [head, ref] = await Promise.all([
       this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch),
       this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.sourceRef)}`),
-      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.sourceSha}`),
     ]);
-    const checkObserved = ([head, ref, source]: Awaited<ReturnType<typeof observe>>): void => {
-      requireCondition(head === input.newBaseHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch does not match the recognized project head', 409);
-      requireCondition(ref.id === input.sourceSha && source.id === input.sourceSha && Array.isArray(source.parent_ids) && source.parent_ids.length === 1 && source.parent_ids[0] === task.sourceBaseHead, 'SOURCE_CANDIDATE_MISMATCH', 'The original source ref or its parent does not match the registered task base', 409);
-    };
-    checkObserved(await observe());
-    const mergeBaseSha = await verifyPrototypeConflict(this.gitlab, project.gitlabProjectId, { sourceBaseHead: task.sourceBaseHead, sourceSha: input.sourceSha, newBaseHead: input.newBaseHead, writeScope: task.writeScope });
-    checkObserved(await observe());
+    requireCondition(head === input.newBaseHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch does not match the recognized project head', 409);
+    requireCondition(ref.id === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'The original source ref does not match the registered source', 409);
     return this.mutate(actor, projectId, action, input, async (c, current) => {
       const updated = await prototypes.updateSourceBase(c, current, actor, taskId, input, task.sourceBaseHead);
-      return { task: updated, source: { operationId: input.sourceOperationId, ref: input.sourceRef, sha: input.sourceSha, previousBaseHead: task.sourceBaseHead, newBaseHead: input.newBaseHead, mergeBaseSha } };
+      return { task: updated, source: { operationId: input.sourceOperationId, ref: input.sourceRef, sha: input.sourceSha, previousBaseHead: task.sourceBaseHead, newBaseHead: input.newBaseHead } };
     });
   }
   /** Revoke the task independently of Git availability and retain the observed recovery state. */
@@ -180,20 +173,15 @@ export class CollaborationService {
     await this.authorize(actor, projectId);
     return this.transact(actor, c => prototypeIntegration.getIntegration(c, projectId, id, actor));
   }
-  private async inspectPrototypeCandidate(project: ProjectView, input: PrototypeIntegrationRequest) {
+  private async verifyPrototypeRefs(project: ProjectView, input: PrototypeIntegrationRequest) {
     const prefix = `/projects/${project.gitlabProjectId}/repository`;
     const expectedPrefix = `refs/heads/studio-private/${input.token.prototypeTaskId}/`;
     requireCondition(input.sourceRef.startsWith(expectedPrefix) && input.sourceRef.endsWith('/source') && input.candidateRef === `${input.sourceRef.slice(0, -'/source'.length)}/candidate`, 'INVALID_SOURCE_REF', 'Source and candidate refs must belong to this task and operation', 422);
-    const [sourceRef, candidateRef, source, candidate] = await Promise.all([
+    const [sourceRef, candidateRef] = await Promise.all([
       this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.sourceRef)}`),
       this.gitlab.json<{ id: string }>(`${prefix}/commits/${encodeURIComponent(input.candidateRef)}`),
-      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.sourceSha}`),
-      this.gitlab.json<{ id: string; parent_ids: string[] }>(`${prefix}/commits/${input.candidateSha}`),
     ]);
-    requireCondition(sourceRef.id === input.sourceSha && candidateRef.id === input.candidateSha && source.id === input.sourceSha && candidate.id === input.candidateSha && source.parent_ids.length === 1 && source.parent_ids[0] === input.sourceBaseHead, 'SOURCE_CANDIDATE_MISMATCH', 'Uploaded refs and source parent must match the confirmed source', 409);
-    if (input.derivation.kind === 'author-confirmed') requireCondition(input.sourceBaseHead === input.expectedHead && input.candidateSha === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Direct candidates must be the confirmed source', 409);
-    else requireCondition(candidate.parent_ids.length === 2 && candidate.parent_ids[0] === input.expectedHead && candidate.parent_ids[1] === input.sourceSha, 'SOURCE_CANDIDATE_MISMATCH', 'Merged candidate must retain the expected head and source as parents', 409);
-    await verifyPrototypeMerge(this.gitlab, project.gitlabProjectId, input);
+    requireCondition(sourceRef.id === input.sourceSha && candidateRef.id === input.candidateSha, 'SOURCE_CANDIDATE_MISMATCH', 'Uploaded refs must match the registered source and candidate', 409);
   }
   async preparePrototypeIntegration(actor: Actor, projectId: string, input: PrototypeIntegrationRequest) {
     const project = await this.authorize(actor, projectId, true), action = 'prototype.integration.prepare';
@@ -201,7 +189,7 @@ export class CollaborationService {
     const task = await this.transact(actor, c => prototypes.getTask(c, projectId, input.token.prototypeTaskId, actor));
     validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
     requireCondition(await this.gitlab.branchHead(project.gitlabProjectId, project.stableBranch) === project.recognizedHead, 'UNRECOGNIZED_GIT_HEAD', 'Stable branch differs from the recognized head', 409);
-    await this.inspectPrototypeCandidate(project, input);
+    await this.verifyPrototypeRefs(project, input);
     return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.prepare(c, current, actor, input));
   }
   async completePrototypeIntegration(actor: Actor, projectId: string, id: string, input: CompletePrototypeIntegrationRequest) {
@@ -213,7 +201,7 @@ export class CollaborationService {
     const request = await this.transact(actor, c => prototypeIntegration.integrationRequest(c, projectId, id, actor));
     const task = await this.transact(actor, c => prototypes.getTask(c, projectId, request.token.prototypeTaskId, actor));
     validatePrototypePolicy(await prototypePolicy(), task.writeScope, task.policyHash);
-    await this.inspectPrototypeCandidate(project, request);
+    await this.verifyPrototypeRefs(project, request);
     return this.mutate(actor, projectId, action, input, (c, current) => prototypeIntegration.complete(c, current, actor, id, input));
   }
   async abortPrototypeIntegration(actor: Actor, projectId: string, id: string, input: AbortPrototypeIntegrationRequest) {

@@ -31,7 +31,6 @@ function request(): PrototypeIntegrationRequest {
     allowedPaths: ['原型代码/src/app.ts'], developmentRequirementIds: ['requirement'],
     developmentClaims: [{ requirementId: 'requirement', claimId: 'claim', generation: 1 }], claimsDigest: 'b'.repeat(64),
     evidence: { candidateSha, sourceTreeHash: 'c'.repeat(64), rulesHash: 'd'.repeat(64), buildArtifactSha256: 'e'.repeat(64), checks: ['engineering', 'mock', 'browser'].map(name => ({ name: name as 'engineering' | 'mock' | 'browser', passed: true as const, evidenceHash: 'f'.repeat(64) })) },
-    derivation: { kind: 'author-confirmed' },
     authorConfirmation: { confirmationId: 'confirmation', sourceSha, authorConfirmed: true, claimsDigest: 'b'.repeat(64), mergePolicy: 'clean-merge-and-recheck' },
   }
 }
@@ -245,7 +244,7 @@ test('merge check registration survives a later conflict reset and accepted clea
     if (method === 'GET' && route.includes('/operations/')) {
       const updated = { ...authorization, sourceBaseHead: secondHead, revision: 2 }
       current = { task: { ...localTask, baseHead: secondHead }, authorization: updated }
-      return { action: 'prototype.task.source-base:task', result: { task: updated, source: { operationId: 'operation', ref: request().sourceRef, sha: sourceSha, previousBaseHead: sourceSha, newBaseHead: secondHead, mergeBaseSha: mergeBase } } }
+      return { action: 'prototype.task.source-base:task', result: { task: updated, source: { operationId: 'operation', ref: request().sourceRef, sha: sourceSha, previousBaseHead: sourceSha, newBaseHead: secondHead } } }
     }
     throw new Error(`unexpected ${method} ${route}`)
   } } as unknown as CollaborationClient
