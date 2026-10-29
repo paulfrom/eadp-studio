@@ -1,16 +1,16 @@
 # 项目原型协同契约技术设计
 
-状态：2026-10-27 设计，已按该设计实施（commit 68f269c／a94405d），未验收部分见[验证记录](validation-2026-10-28.md)。本文承接已确认的 Q1—Q8，接口、类型和表结构如下文所述已落地在契约、SQL 与后台实现中。
+状态：2026-10-29 队列与占用新决定待实现；2026-10-27 其余设计已按该设计实施（commit 68f269c／a94405d），未验收部分见[验证记录](validation-2026-10-28.md)。本文承接已确认的 Q1—Q8，接口、类型和表结构如下文所述已落地在契约、SQL 与后台实现中。
 开发占用只约束业务开发权，不固定单需求材料版本，也不恢复前置完成门禁。
 主入口：[技术设计](technical-design.md)；业务交互：[原型工作台](../03-prototypes.md)；材料规则：[需求协同](../02-requirements.md)。
-实现已修改产品源码、SQL 与持久化结构；产品完整闭环仍未验收。
+既有协议已修改产品源码、SQL 与持久化结构；产品完整闭环仍未验收。以下类型、接口与集成事务描述当前实现，尚不包含每次标记的 commitId 记录、空闲原子领取、完成推送的远端引用核验、管理员直接修改占用标识、完成 hook 及逐需求释放；不能当作新协议的完整接口定义。新业务规则以[本地开发协议](local-development-protocol.md)为准，受影响接口与授权校验须同步替换。
 
 ## 1. 已确认的职责边界
 
 - 一个项目当前只有一个原型聚合，组织多个需求的页面、流程和 Mock；原型身份不取自某条需求或其 materialVersion。
 - 多人按协作事项创建任务，各自分支并行；一个任务可跨需求，多轮沿用该任务的分支与原生会话，集成接受后结束该事项。
 - 实现指令授权 AI 在本任务允许区域直接修改代码；需求 MD 修改仍走需求阶段审阅写入。代码写入授权不包含作者确认、集成接受或发布。
-- 需求确认成功只提示进入原型、准备实现指令；用户发送指令才开始实现，不自动认领任务或发送实现提示。
+- 需求确认成功后自动加入本地串行开发队列；入队失败不回滚需求确认，保留可恢复入口。
 - 允许本人可读取的需求草稿探索；明确草稿身份及读取范围，不将其描述为已确认材料。
 - 需求依赖只作顺序和影响提示；删除原型认领、恢复、检查、集成时的前置需求完成门禁。需求关系自身的合法性校验仍保留。
 - 作者确认当前整体原型成果并形成基线，记录实际涉及需求；不批量将这些需求置为 completed，也不要求先确认需求集合。
@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | ProjectPrototype | prototypeId，项目当前原型聚合 | projectId 唯一；currentBaselineId 指向最后接受的整体成果；不保存代码正文。 |
 | PrototypeTask | prototypeTaskId，明确命名的协作事项 | 属于一个原型；owner、client、branch、taskGeneration、revision；active／cancelled／released／accepted。 |
-| DevelopmentClaim | 任务持有的需求开发权 | 同项目同 requirementId 最多一个 active claim；绑定 task、claimId／generation，任务活动期间只增不减，结束时关闭。 |
+| DevelopmentClaim | 需求排他开发权 | 同项目同 requirementId 最多一个 active claim；首次推送核验后释放，纠偏最终确认并核验后释放；详见本地开发协议，旧数据契约待调整。 |
 | TaskReferenceRequirement | 任务参考的需求 | task 与 requirement 多对多；可动态更新，只读参考不占用，不得据此实现该需求。 |
 | PrototypeAcceptance | acceptanceId，作者确认并被后台接受的成果事件 | 绑定 task、integration、sourceSha、candidateSha、确认人及确认授权；只追加。 |
 | PrototypeBaseline | baselineId，整体项目原型的代码基线 | 与 acceptance 一对一；绑定 prototype、commitSha、基线序号；同原型可有多个版本。 |
@@ -38,7 +38,7 @@
 
 多个 active 任务可以同时属于同一原型并开发不同需求；同一需求按 projectId＋requirementId 互斥，不按 materialVersion、用户或任务版本拆分。同一用户的不同任务也不能同时领取；编辑期不持有项目独占数据库锁。
 
-2026-10-27 用户确认本人队列默认串行、手动继续或切换。此处 active 只表示后台任务／开发占用仍有效，不能据此推断本机正在执行模型；允许多个任务 active 并在本地排队。队列顺序、选中项及本地执行阶段由账号与稳定 clientId 隔离的 Host 状态持久保存，不改后台任务 revision，不因重排重新领取或释放需求。关闭应用保留 active 及 claims，无 TTL 自动释放；重开时查询当前后台事实再恢复现场，不用历史幂等回执当作仍有效的许可。详见[队列与恢复](desktop-runtime.md)。
+2026-10-29 本地自动开发、自动恢复、逐需求纠偏及开发占用生命周期以[本地开发协议](local-development-protocol.md)为准，均待产品实现和真实桌面验收。首次开发由可信 Host 完成 hook 自动 commit/push，后端核验 commitId 与指定 ref 后释放该需求占用并继续下一项；纠偏重新原子领取，占用保持至用户最终确认并经推送核验后释放。每次开发前以后台占用标识为准，空闲时原子检查并置为占用，不以 commitId 与远端一致作为领取前置；已占用即返回正在开发中，commit 相同也不能绕过。每次标记仍携带 commitId 作记录，本地缓存不构成授权。管理员可经权限与审计直接修改标识并使旧 claim 代次失效，该修改不以 Git 核验为前置。重启先核对后台、提交和未知操作，再自动继续，不重发未知模型请求。队列与核对仅本地保存，项目整体接受另行执行。
 prototype.relatedRequirementIds 从当前基线 relatedRequirementIds 投影，用于项目导航；task.developmentRequirementIds 表示本任务开发授权范围，task.referenceRequirementIds 只表示参考。acceptance.requirementIds 冻结开发范围，参考需求不累计进基线，也不把占用或累计关联宣称为逐项实现覆盖。
 任务 owner 只控制该任务现场与提交权，不宣称独占共享组件；共享文件改动在各分支隔离，最终通过 Git 合并处理。
 原型当前视图由已接受基线和本人当前任务现场分别表达；其他人的私有草稿、未提交代码不能进入本人的正式成果。
@@ -146,7 +146,7 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 1. 用户发送实施指令，Host 解析已有需求真实 ID；后台验证权限及 writeScope/policyHash，在项目短事务中登记 task、唯一 branch、代次、参考范围和全部非空初始开发 claims。已有任一需求被别的任务领取则全部回滚；成功后 Host 按 startHead 创建个人 worktree。只读探索不创建可写任务。
 2. 多轮实现只写本分支；用户指令进入可写执行前，Host 校验当前 task 及全部开发 claims，扩范围先完成原子扩领。开发 claim 不要求占用或确认需求材料，也不检查前置需求完成；材料改版提示差异，不释放 claim 或允许按新版本另领同一 requirementId。
 3. Host 保留多轮任务分支历史，从后台登记的 sourceBaseHead（初始 startHead，或经验证的冲突重确认基头）与用户看到的精确工程树归一构造新单提交 source；第一父=sourceBaseHead，原型树与作者所见一致，非原型树来自基头。作者确认该 sourceSha 与 confirmationId，不重写原任务分支历史；先持久化并上传不可变 source ref，确认远端对象可读，再进入合并。
-   若当前授权代码与已有基线无变化，固定候选得到 `no-change` 状态：不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。查看既有基线不发 prepare／complete，任务保持 active、全部 claims 保留，界面说明“没有代码变化；事项仍在开发”。用户明确选择结束事项才走既有 `endPrototypeTask`，核对未决集成后关闭全部 claims、保留现场；不伪造 acceptance 或伪基线。无既有基线时只说明无可接受代码变化，不伪造打开目标。
+   当前授权代码无变化时不创建相同代码基线，也不冒充新增实现覆盖；开发占用的保留与释放按[本地开发协议](local-development-protocol.md)区分首次开发及纠偏，不再绑定整项任务结束。
 4. Host 获取 recognizedHead 作为 expectedHead；若等于 sourceBaseHead，author-confirmed 的 candidate=source；否则合并 expectedHead/source，保留原 source 授权并全量重检新 candidate。冲突后先登记最新 head 为新 sourceBaseHead，在其上归一新 source 并由用户重新确认。
 5. 候选生成后上传其不可变 candidate ref，复核原 source ref；两个对象均按 SHA 可见后才 prepare，API 验证权限、稳定头、父关系、路径、合并树与当前证据。source 先于合并上传，因此冲突发生在 prepare 前时，source-base 接口也能读取并独立验证原源码，不依赖尚未存在的集成；全程不会先推进 stable。
 6. API 在项目短事务锁项目行，再读 task，校验 active、owner/client/generation/revision、expectedHead 和幂等键；核对完整开发集合、每项 claimId／generation／active／task 归属及 claimsDigest；项目无其他 prepared 才写 prepared，并冻结该 claim 集合。
@@ -157,7 +157,7 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 
 项目锁只覆盖数据库状态接受，Git、模型、构建及浏览器检查均在事务外；多任务编辑并行，prepared／accepted 按项目串行。
 两人同时开发 R1：A 先提交领取事务后 B 得到 REQUIREMENT_ALREADY_CLAIMED；同用户的 A/B 两任务结果相同。A 领 R1＋R2、B 领 R2＋R3：只有一个完整集合获领，失败者连无冲突的 R1 或 R3 也不保留，避免部分领取后互相等待。失败事务不遗留新任务或半套 claims。
-开发占用沿用 [PostgreSQL 部分唯一索引](https://www.postgresql.org/docs/current/indexes-partial.html)与[短事务行锁](https://www.postgresql.org/docs/current/explicit-locking.html)；持久 claim 无 TTL，不因退出、断网、模型取消或心跳丢失自动过期，不引入 Redis 锁。人工取消或管理员释放提供显式恢复路径。
+开发占用沿用 [PostgreSQL 部分唯一索引](https://www.postgresql.org/docs/current/indexes-partial.html)与[短事务行锁](https://www.postgresql.org/docs/current/explicit-locking.html)；持久 claim 无 TTL，不因退出、断网、模型取消或心跳丢失自动过期，不引入 Redis 锁。人工取消或管理员修改标识提供显式恢复路径。管理员修改须核验权限、记录审计并失效旧 claim 代次，不增加 Git 核验前置；后台标识空闲后可原子重新领取，不能复活旧 token。
 另一任务先推进认可头：本任务旧 candidate 作废，按新头重建并重检；不能静默覆盖稳定分支或重用旧 evidence。
 干净合并只包含原作者变更与已经接受的项目成果；后台须验证候选树确为该合并结果，不能沿用旧“source diff 与 candidate diff 字面一致”规则误拒合法合并。
 最终 baseline 固定本次代码与已认可成果组成的完整项目源码；候选第一父必须等于 expectedHead，其他成员未接受分支、私有草稿和未提交代码不得混入。
@@ -186,7 +186,7 @@ PT02 后台候选验证工作包中须锁定可用 Git 版本、实现隔离验�
 
 task token 必须同时匹配 prototypeTaskId、generation、clientId、revision、owner，并匹配完整非空 active 开发 claim 集合；prepare 与 complete 双重验证，客户端重新登录不自动转移任务所有权。纯只读会话不具有需求业务写权。
 admin release 在项目短事务中递增 generation/revision、置 released、关闭全部开发 claims、abort 该任务 prepared，并审计原因；取消同样原子失效旧任务与其全部 claims，不能仅释放需求而保留原任务接受权。
-活动开发 claims 只增不减、不降级参考，直到整个任务 accepted／cancelled／released；防止 A 写 R1 后释放给 B，却以剩余 R2 的名义提交仍含 R1 的旧代码。参考范围可更新；从参考转开发先领 claim，从开发删除则结束整个旧任务。
+开发占用生命周期及纠偏结束条件见[本地开发协议](local-development-protocol.md)。原 claims、token、digest、scope 和 prepared 协议须整体调整，不能沿用旧授权提交已释放需求的改动；以下旧接口、类型、表结构及事务顺序尚未实现该协议。
 管理员释放不删除本地 worktree、未提交代码或会话；需要继续时从认可头新建任务、重新领取并显式挑选仍有授权的改动，重新检查确认，不自动整树导入旧现场，不复活旧 token。
 释放与 complete 竞争由同一项目行锁决定：先接受则保留 accepted；先释放则 complete 拒绝。Git 已推但未接受时进入分叉核对。
 cancel／release 只原子撤销后台接受权，数据库锁不能撤回旧客户端已经发出的 Git 网络副作用；Git 读取与释放事务之间也可能出现竞态。
@@ -222,7 +222,7 @@ complete 已接受但响应丢失：原幂等键返回原 baseline；新 key 查
 | --- | --- |
 | 新 studio_prototypes | id PK，project_id UNIQUE FK，current_baseline_id 同原型 FK，创建／修改审计；项目初始化事务创建。 |
 | 新 studio_prototype_tasks | prototype/project FK；owner/client/generation/revision/status/title/branch/start_head/source_base_head/write_scope/policy_hash/claims_digest；记录 sourceBase 冲突 operation 链与 instruction 用户动作有限摘要；project+id、project+branch UNIQUE；不设每原型 active 唯一限制。 |
-| 新 studio_prototype_development_claims | claim id PK；project/task/requirement 同项目 FK；generation、active、审计及结束原因；(project_id,requirement_id) WHERE active 部分唯一，唯一性不含材料版本／owner；任务活动期只增不减。 |
+| 新 studio_prototype_development_claims | claim id PK；project/task/requirement 同项目 FK；generation、active、审计及结束原因；(project_id,requirement_id) WHERE active 部分唯一，唯一性不含材料版本／owner；逐需求释放及重新领取协议待细化。 |
 | 新 studio_prototype_task_references | project/task/requirement 同项目 FK；task_id+requirement_id PK；只读参考关系及审计，不保存正文、固定单需求版本或完成标记。 |
 | studio_integrations | 保留表及一项目一个 prepared 索引；material 用 entity/design occupation，prototype 用 prototype/task/generation/source_base_head/source_ref/candidate_ref、完整 claim token 集合／claims_digest 和固定 SHA，template 用 project revision；CHECK 三分支互斥；不复制业务正文。 |
 | 新 studio_prototype_acceptances | integration_id UNIQUE、task_id UNIQUE、prototype_id、author/source/candidate/confirmation_id 与审计；仅接受成功事务写入。 |
@@ -274,7 +274,7 @@ Host 可在本地记录本轮实际读到的 requirementId、草稿／已确认�
 
 直接按设计工作包实施，将能力验证并入实现与验收，不设置独立技术验证前置环节。PT01 覆盖领域、存储与并发不变量，PT02 覆盖固定 Git 及隔离候选验证器，PT03 覆盖原生会话与跨步骤恢复，PT06 覆盖确认集成及下游；PT08 汇总当前交付版本的完整桌面闭环证据。以下为待执行要求，不能据此声称能力已实现或已验收。
 
-契约检查覆盖额外字段拒绝、跨项目范围、token 重放、旧材料占用冒充开发 claim、遗漏／伪造 claimsDigest、幂等换输入、伪造 scope／用户动作／合并树与旧检查证据；拒绝活动开发范围缩减，不能只测正常请求。
+契约检查覆盖额外字段拒绝、跨项目范围、token 重放、旧材料占用冒充开发 claim、遗漏／伪造 claimsDigest、幂等换输入、伪造 scope／用户动作／合并树与旧检查证据；覆盖逐需求释放、重新领取、旧授权失效和旧成果集成冲突，不能只测正常请求。
 数据库检查覆盖两人抢同需求、同用户双任务互斥、R1＋R2 对 R2＋R3 全领或回滚、扩领冲突无部分占用、参考读取不占用、材料版本变化不绕过互斥、prepare/complete 双重 claims fencing、release/complete 竞争、同候选重复完成、延迟约束整体回滚及材料头推进后基线不变。
 Host／桌面闭环覆盖首次业务写前自动领取、范围不明只读澄清且不擅造需求、空开发集合不得创建可写任务或业务起写、模板维护不成为普通 Agent 绕过占用通道、未知领取结果与旧幂等 token 恢复、取消后旧现场不可提交、干净合并重检、共享文件冲突重新确认、Git 成功后台未知、接受后收尾失败与重启恢复；需求草稿更新仅提示，材料状态保持独立。
 本地浏览器设计稿应演示抢占冲突、动态扩领、参考读取、释放后旧任务失效和保留现场；浏览器交互验证不证明数据库并发、真实桌面或协同验收。
