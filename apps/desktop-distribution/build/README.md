@@ -71,3 +71,5 @@ The fixed archive has 18,674 entries, including 14 real relative symbolic links.
 The archive cache is `.local/upstream/dsh-<commit>.tar.gz`; successful extraction also writes `.local/upstream/dsh.source.json`. Existing source is never overwritten: its receipt and critical hashes must match. This existing-directory check is not a full audit of every source file. A changed or unknown source tree must be inspected explicitly. Concurrent fetches are rejected by the `.local/upstream/.dsh-fetch.lock` directory. Incomplete downloads/extractions remain in `.dsh-fetch-*` directories for inspection. If a process is killed, inspect and manually remove its empty lock directory before retrying. The script performs no recursive deletion.
 
 `release.lock.json` records the last complete source-script run for alpha.4 with its hashes, source commit and dirty-tree status. This is a development-machine unsigned source build; installed startup, clean-machine installation and distribution qualification remain unverified. A successful build does not establish release readiness.
+
+原型预览沿已有 layout 桥接传递 navigation（站内 path 或 reload），复用顶层窗口及 Host 选定实例校验；只允许当前注册 loopback origin 内导航。

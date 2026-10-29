@@ -20,11 +20,11 @@ export function useMaterialDocumentFocus(collapsed: boolean) {
 }
 
 /** Session controls and the next material action share one compact toolbar. */
-export function MaterialWorkspaceHeader({ entity, sessions, activeSessionId, locked, readOnly, reviewCount, onReview, onConfirm, onRefresh, onNewSession, onSelectSession, onTemplates }: {
+export function MaterialWorkspaceHeader({ entity, sessions, activeSessionId, locked, readOnly, reviewCount, onReview, onConfirm, onRefresh, onNewSession, onSelectSession, onTemplates, onOpenPrototype }: {
   entity: EntityView; sessions: TaskView[]; activeSessionId?: string | undefined;
   locked: boolean; readOnly: boolean; reviewCount: number;
   onReview(): void; onConfirm(): void; onRefresh(): void; onNewSession(): void;
-  onSelectSession(sessionId: string): void; onTemplates(): void;
+  onSelectSession(sessionId: string): void; onTemplates(): void; onOpenPrototype?(): void;
 }) {
   return <header className={`${css.panelBar} ${layout.toolbar}`}>
     <div className={css.panelIdentity}><span className={css.codeChip}>{entity.code ?? entity.id}</span><strong title={entity.title}>{entity.title}</strong></div>
@@ -38,6 +38,7 @@ export function MaterialWorkspaceHeader({ entity, sessions, activeSessionId, loc
         <div className={layout.toolMenu} onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open') }}>
           <button disabled={locked} onClick={onNewSession}>新会话</button>
           <button disabled={locked} onClick={onRefresh}>重新读取草稿</button>
+          {onOpenPrototype && <button onClick={onOpenPrototype}>进入项目原型</button>}
           <button onClick={onTemplates}>{entity.kind === 'scenario' ? '场景' : '需求'}模板</button>
         </div>
       </details>

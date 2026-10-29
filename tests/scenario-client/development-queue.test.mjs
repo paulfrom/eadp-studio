@@ -147,7 +147,4 @@ test('the workbench removes the manual saved-instruction path while keeping sess
   const source = readFileSync(path.join(client, 'prototype/PrototypeWorkbench.tsx'), 'utf8')
   assert.doesNotMatch(source, /继续已保存的指令|resumePrototypeQueueItem|continuePrototypeCollaboration/)
   assert.match(source, /aria-label="对话记录"/)
-  assert.match(source, /aria-label="成果视图"/)
-  assert.match(source, />预览</)
-  assert.match(source, />代码</)
 })

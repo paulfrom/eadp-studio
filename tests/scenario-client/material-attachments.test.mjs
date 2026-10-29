@@ -15,6 +15,16 @@ for (const name of ['window', 'document', 'HTMLElement', 'HTMLDialogElement', 'F
   Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name] })
 }
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator })
+// Desktop viewport fixture implements the modern MediaQueryList listener contract.
+dom.window.matchMedia = query => {
+  const listeners = new Set()
+  return { media: query, matches: false, onchange: null,
+    addEventListener(_type, listener) { listeners.add(listener) },
+    removeEventListener(_type, listener) { listeners.delete(listener) },
+    dispatchEvent(event) { for (const listener of [...listeners]) listener(event); return !event.defaultPrevented },
+  }
+}
+
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 // jsdom does not implement modal focus or native Escape cancellation. Keep the
@@ -368,7 +378,7 @@ function requirementPanel(readOnly = false, readComparisons, readSummaries, resp
   return { commands, render: () => render(h(Harness)), project: change => { current = change(current); update(current) } }
 }
 async function selectRequirement(view) {
-  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  fireEvent.click(view.getByRole('button', { name: /^需求协同/ }))
   await waitFor(() => assert.ok(view.getByRole('button', { name: /需求能力/ })))
   fireEvent.click(view.getByRole('button', { name: /需求能力/ }))
   await waitFor(() => assert.ok(view.getByRole('region', { name: '需求对话' })))
@@ -482,7 +492,7 @@ test('comparison summary failures are local and can be retried without opening a
   let fail = true
   const fixture = requirementPanel(false, undefined, (_command, state) => fail ? { ok: false, code: 'UNAVAILABLE', message: '最近结论服务暂不可用' } : { ok: true, state })
   const view = fixture.render()
-  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  fireEvent.click(view.getByRole('button', { name: /^需求协同/ }))
   await act(async () => {})
   assert.match(view.getByRole('alert').textContent, /对比未知：最近结论服务暂不可用/)
   assert.ok(view.getByText('对比未知'))
@@ -496,7 +506,7 @@ test('comparison summary failures are local and can be retried without opening a
 test('the requirement directory periodically reads comparison summaries shared by other members', async t => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const fixture = requirementPanel(), view = fixture.render()
-  fireEvent.click(view.getByRole('button', { name: '需求协同' }))
+  fireEvent.click(view.getByRole('button', { name: /^需求协同/ }))
   await act(async () => {})
   assert.equal(fixture.commands.filter(command => command.action === 'listConsistencySummaries').length, 1)
   await act(async () => t.mock.timers.tick(10_000))

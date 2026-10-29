@@ -37,10 +37,10 @@ async function scenarioHeader() {
     q('#stageCta').click();
     q('#acceptBtn').click();
     check(q('#stageCta').closest('.panel-head') !== null && q('#stageCta').hidden === false, '场景 · 写入后仍在头部');
-    check(q('#stageCta').textContent.trim().startsWith('处理 2 项阻断'), `场景 · 写入后 CTA（实际：${q('#stageCta').textContent.trim()}）`);
+    check(q('#stageCta').textContent.trim().startsWith('处理 1 项阻断'), `场景 · 写入后 CTA（实际：${q('#stageCta').textContent.trim()}）`);
 
     q('#stageCta').click();
-    q('#gateEvidenceAction').click();
+    check(q('#gateEvidenceState').textContent.includes('提醒'), '场景 · 缺正式依据只提醒');
     q('#gateBusinessAction').click();
     q('.decision[data-key="refund"] .choice').click();
     q('.decision[data-key="goods"] .choice').click();

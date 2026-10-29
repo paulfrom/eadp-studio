@@ -16,8 +16,12 @@ Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const React = reactRequire('react')
-const { render, fireEvent, within, waitFor, cleanup } = buildRequire('@testing-library/react')
+const { render, fireEvent, within, waitFor, cleanup, act } = buildRequire('@testing-library/react')
 afterEach(cleanup)
+function revealFilters(view) {
+  const summary = view.getByText('更多筛选')
+  if (!summary.parentElement.open) fireEvent.click(summary)
+}
 
 const modules = new Map()
 function loadClient(relative) {
@@ -96,6 +100,7 @@ test('confirmation status is a segmented tab group and revision filtering covers
   assert.equal(view.queryByText('审批规则'), null)
   fireEvent.click(within(group).getByRole('button', { name: '全部' }))
   assert.ok(view.getAllByText('正在修订').length >= 1)
+  revealFilters(view)
   fireEvent.change(view.getByRole('combobox', { name: '修订状态' }), { target: { value: 'revising' } })
   assert.ok(view.getByText('修订中需求'))
   assert.equal(view.queryByText('审批规则'), null)
@@ -105,6 +110,7 @@ test('confirmation status is a segmented tab group and revision filtering covers
 test('the source filter narrows requirements to the chosen confirmed scenario', () => {
   const { entities, drafts } = fixtures()
   const view = render(catalog({ entities, drafts }))
+  revealFilters(view)
   const filter = view.getByRole('combobox', { name: '来源场景' })
   assert.ok(within(filter).getByRole('option', { name: '全部来源场景' }))
   assert.ok(within(filter).getByRole('option', { name: 'SC-0001 · 订单审批' }))
@@ -116,6 +122,7 @@ test('the source filter narrows requirements to the chosen confirmed scenario', 
 test('a source remains filterable while its newer draft is being revised', () => {
   const { entities, drafts } = fixtures()
   const view = render(catalog({ entities: entities.map(entity => entity.id === 'scene-1' ? { ...entity, confirmationStatus: 'draft' } : entity), drafts }))
+  revealFilters(view)
   const filter = view.getByRole('combobox', { name: '来源场景' })
   fireEvent.change(filter, { target: { value: 'scene-1' } })
   assert.ok(view.getByText('审批规则'))
@@ -126,7 +133,9 @@ test('joint split excludes the builtin general scenario and submits the checked 
   const { entities, drafts } = fixtures()
   const commands = []
   const view = render(catalog({ entities, drafts, call: async command => { commands.push(command); return { ok: false, code: 'X', message: '停止' } } }))
+  revealFilters(view)
   fireEvent.click(view.getByRole('button', { name: '联合拆分需求' }))
+  revealFilters(view)
   const form = view.getByRole('form', { name: '联合拆分需求' })
   assert.match(form.textContent, /选择已确认的普通场景/)
   assert.ok(within(form).getByRole('checkbox', { name: /SC-0001 · 订单审批 · v2/ }))
@@ -153,8 +162,10 @@ test('confirmed metrics identify the accepted bytes and unrecognized rules stay 
 test('the catalog opens project comparison records without selecting a material', async () => {
   const commands = []
   const view = render(catalog({ call: async command => { commands.push(command); return { ok: true, state: {}, comparisons: [] } } }))
+  revealFilters(view)
   fireEvent.click(view.getByRole('button', { name: '项目对比记录' }))
   await waitFor(() => assert.deepEqual(commands, [{ action: 'listConsistencyComparisons', limit: 20, offset: 0 }]))
+  revealFilters(view)
   assert.ok(view.getByRole('region', { name: '项目对比记录' }))
 })
 
@@ -257,7 +268,8 @@ test('builtin scenarios never enter scene cards, counts, search results or pagin
   const { entities } = fixtures()
   const ordinary = Array.from({ length: 12 }, (_, index) => scenario({ id: `scene-${index + 10}`, code: `SC-${index + 10}`, title: `普通场景${index}` }))
   const view = render(catalog({ kind: 'scenario', entities: [...entities.filter(entity => entity.builtinKey), ...ordinary] }))
-  assert.ok(view.getByText('场景目录 · 共 12 项 · 已确认 12 · 草稿 0'))
+  assert.ok(view.getByRole('heading', { name: '业务场景管理矩阵 12 项' }))
+  assert.ok(view.getByText('已确认 12 · 草稿 0 · 正在修订 0'))
   assert.ok(view.getByText('共 12 项 · 第 1 / 1 页'))
   assert.equal(view.queryByText('通用场景'), null)
   assert.equal(view.getByRole('button', { name: '下一页' }).disabled, true)
@@ -269,6 +281,7 @@ test('builtin scenarios never enter scene cards, counts, search results or pagin
 test('only the new requirement source picker offers builtin attribution and submits its stable ID', async () => {
   const { entities } = fixtures(), commands = []
   const view = render(catalog({ entities, call: async command => { commands.push(command); return { ok: false, code: 'STOP', message: '保留输入' } } }))
+  revealFilters(view)
   assert.equal(within(view.getByRole('combobox', { name: '来源场景' })).queryByRole('option', { name: /通用场景/ }), null)
   fireEvent.click(view.getByRole('button', { name: '＋ 新建需求' }))
   const sources = view.getByRole('listbox', { name: '固定场景来源' })
@@ -280,4 +293,35 @@ test('only the new requirement source picker offers builtin attribution and subm
   await waitFor(() => assert.equal(commands.length, 1))
   assert.equal(commands[0].action, 'createMaterial')
   assert.deepEqual(commands[0].scenarioIds, ['scene-general'])
+})
+
+
+test('the scene matrix creates a named scene and keeps its input when creation fails', async () => {
+  const calls = []
+  const view = render(catalog({ kind: 'scenario', entities: [], call: async command => { calls.push(command); return { ok: false, message: '创建失败' } } }))
+  fireEvent.click(view.getByRole('button', { name: '＋ 新建业务场景' }))
+  fireEvent.change(view.getByRole('textbox', { name: '场景标题' }), { target: { value: '采购审批流程' } })
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: '创建场景' })) })
+  assert.ok(view.getByText('创建失败'))
+  assert.equal(calls[0].kind, 'scenario')
+  assert.equal(calls[0].title, '采购审批流程')
+  assert.ok(calls[0].operationId)
+  assert.equal(view.getByRole('textbox', { name: '场景标题' }).value, '采购审批流程')
+})
+
+
+test('advanced filters remain visible as a summary after the disclosure closes and clear restores the matrix', () => {
+  const { entities } = fixtures()
+  const view = render(catalog({ entities }))
+  assert.equal(view.container.querySelector('select[aria-label="修订状态"]').closest('details').open, false)
+  revealFilters(view)
+  fireEvent.change(view.getByRole('combobox', { name: '来源场景' }), { target: { value: 'scene-1' } })
+  const summary = view.getByText('更多筛选')
+  fireEvent.click(summary)
+  assert.equal(summary.parentElement.open, false)
+  assert.match(view.getByRole('status').textContent, /来源 订单审批/)
+  assert.ok(view.getByText('共 1 项 · 第 1 / 1 页'))
+  fireEvent.click(view.getByRole('button', { name: '清空筛选' }))
+  assert.equal(view.queryByRole('status'), null)
+  assert.ok(view.getByText('共 2 项 · 第 1 / 1 页'))
 })

@@ -81,7 +81,7 @@ class PrototypeBridge {
   layout(owner: BrowserWindow, value: unknown): Promise<void> {
     return this.enqueue(async () => {
       if (!value || typeof value !== 'object') throw new Error('Invalid preview layout')
-      const request = value as { identity: unknown; sequence: number; visible: boolean; bounds: StudioPreviewBounds }
+      const request = value as { identity: unknown; sequence: number; visible: boolean; bounds: StudioPreviewBounds; navigation?: { path?: string; reload?: boolean } }
       const id = this.validIdentity(request.identity)
       const selected = this.selected, registered = this.instances.get(id.previewId)
       if (!selected || !registered || !samePreviewIdentity(id, selected) || !samePreviewIdentity(id, registered) || typeof request.visible !== 'boolean') throw new Error('Preview is not selected')
@@ -92,6 +92,10 @@ class PrototypeBridge {
         this.mounted = structuredClone(id)
       }
       this.native.layout(id, request.sequence, request.visible, request.bounds)
+      if (request.navigation) {
+        if (request.navigation.reload !== true && typeof request.navigation.path !== 'string') throw new Error('Invalid preview navigation')
+        await this.native.navigate(owner, registered, request.navigation.reload ? undefined : request.navigation.path)
+      }
     })
   }
   async dispose(): Promise<void> { this.instances.clear(); this.selected = undefined; this.mounted = undefined; this.child = undefined; await this.native.dispose() }

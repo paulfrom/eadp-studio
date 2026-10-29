@@ -655,7 +655,7 @@
         <div class="run-row"><span>本轮</span><span>10 轮 · 15 步 · 149 tok/s</span></div>
         <div class="run-row"><span>用量</span><span>220k tok · 缓存 60%</span></div>
         <div class="run-row"><span>Git</span><span>main · 工作区干净</span></div>
-        <div class="run-row"><span>门禁</span><span class="bad">业务内容 · 资料与引用 阻断</span></div>
+        <div class="run-row"><span>门禁</span><span class="bad">业务流程待核对 · 资料与引用仅提醒</span></div>
       </div>
     </footer>
   </div>
@@ -743,7 +743,7 @@
       <div class="gate-row" data-gate="evidence" data-state="blocked">
         <span class="gate-ico" data-state="blocked">!</span>
         <div class="gate-main">
-          <div class="gate-title">资料与引用 <span class="gate-state" id="gateEvidenceState">阻断</span></div>
+          <div class="gate-title">资料与引用 <span class="gate-state" id="gateEvidenceState">提醒，不阻断</span></div>
           <p class="gate-msg" id="gateEvidenceMsg">尚未归档正式业务依据</p>
         </div>
         <button class="link gate-action" type="button" id="gateEvidenceAction">去归档</button>
@@ -766,12 +766,12 @@
     </div>
 
     <div class="declare">
-      <label><input type="checkbox" id="declCore" checked>核心业务规则已由依据明确</label>
-      <label><input type="checkbox" id="declAccept" checked>验收条件可以客观判断</label>
+      <label><input type="checkbox" id="declCore" checked>业务流程完整</label>
+      <p class="hint">具体规则和验收条件留待需求阶段确认，不阻断场景确认。</p>
       <p class="hint">这是你的声明；「由 AI 修复并确认」会代你补全，但仍由你确认。</p>
     </div>
 
-    <p class="confirm-note">确认后材料只读；需要修改请走「开始修订」，系统会列出受影响的需求。确认表示当前版本的核心规则、验收条件、正式依据与待澄清项已完整。</p>
+    <p class="confirm-note">确认后材料只读；需要修改请走「开始修订」，系统会列出受影响的需求。确认表示当前业务流程完整。具体规则与验收细节留在需求阶段确认；资料与引用只作提醒。</p>
   </div>
   <div class="sheet-foot">
     <span class="confirm-status" id="confirmStatus">门禁通过，可以确认</span>
@@ -901,7 +901,7 @@
   let submitting = false;
   let consistency = 'none';
   const decisions = new Set();
-  const declared = { core: true, acceptance: true };
+  const declared = { core: true };
   let evidenceFixed = false;
   let structure = false;
   let toastTimer = 0;
@@ -1005,9 +1005,9 @@
   }
 
   function blockingOpen() { return Math.max(0, 2 - decisions.size); }
-  function businessBlocked() { return blockingOpen() > 0 || !declared.core || !declared.acceptance; }
+  function businessBlocked() { return blockingOpen() > 0 || !declared.core; }
   function evidenceBlocked() { return !evidenceFixed; }
-  function blockedGates() { return (businessBlocked() ? 1 : 0) + (evidenceBlocked() ? 1 : 0); }
+  function blockedGates() { return businessBlocked() ? 1 : 0; }
 
   function paintGate(row, ok, message, stateLabel) {
     row.dataset.state = ok ? 'passed' : 'blocked';
@@ -1026,10 +1026,9 @@
     gateStatusBtn.classList.toggle('danger', blockers > 0);
 
     paintGate($('.gate-row[data-gate="business"]'), !business,
-      !declared.core ? '核心业务规则尚未声明完整'
-        : !declared.acceptance ? '验收条件尚未声明完整'
+      !declared.core ? '业务流程尚未声明完整'
           : blockingOpen() > 0 ? blockingOpen() + ' 条待澄清被标记为阻断'
-            : '核心规则、验收条件与阻断项均已处理',
+            : '业务流程完整，流程阻断项已处理',
       business ? '阻断' : '通过');
     const businessAction = $('#gateBusinessAction');
     businessAction.hidden = blockingOpen() === 0;
@@ -1037,7 +1036,8 @@
 
     paintGate($('.gate-row[data-gate="evidence"]'), !evidence,
       evidence ? '尚未归档正式业务依据' : '3 份正式依据，引用文件可读',
-      evidence ? '阻断' : '通过');
+      evidence ? '提醒，不阻断' : '通过');
+    if (evidence) { const row = $('.gate-row[data-gate="evidence"]'); row.dataset.state = 'warning'; $('.gate-ico', row).dataset.state = 'warning'; }
     $('#gateEvidenceAction').hidden = !evidence;
 
     $('#gateVersionState').textContent = '通过';
@@ -1167,7 +1167,7 @@
   confirmBtn.addEventListener('click', confirmNow);
   $('#repairBtn').addEventListener('click', () => showToast('已创建授权修复任务：最多 3 轮，缺答案会暂停（演示）'));
   $('#declCore').addEventListener('change', event => { declared.core = event.target.checked; refreshFlow(); });
-  $('#declAccept').addEventListener('change', event => { declared.acceptance = event.target.checked; refreshFlow(); });
+
   $('#gateEvidenceAction').addEventListener('click', () => {
     evidenceFixed = true;
     refreshFlow();

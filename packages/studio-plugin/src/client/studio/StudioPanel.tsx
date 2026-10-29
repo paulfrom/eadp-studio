@@ -13,6 +13,9 @@ import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
 import { ProjectProgressNotice } from '../components/ProjectProgressNotice.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
+import { MaterialNavigation } from '../components/MaterialNavigation.tsx'
+import { MaterialPageHeader } from '../components/MaterialPageHeader.tsx'
+import { StudioSidebar, useStudioSidebar } from '../components/StudioSidebar.tsx'
 import type { ThemeFace } from '../theme.ts'
 import type { StudioProjectionStore } from '../store.ts'
 import { emptyStudioState } from '../state.ts'
@@ -35,7 +38,7 @@ export type StudioProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRen
 const stages: Array<{ id: Stage; name: string; mark: string; description: string; icon: string[] }> = [
   { id: 'scenarios', name: '项目场景', mark: '01', description: '沉淀业务背景，让需求有据可依', icon: ['M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'] },
   { id: 'requirements', name: '需求协同', mark: '02', description: '明确规则、前置与验收条件', icon: ['M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z'] },
-  { id: 'prototype', name: '原型展示', mark: '03', description: '与 AI 一起把需求变为可操作的演示', icon: ['M15 12a3 3 0 11-6 0 3 3 0 016 0z', 'M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'] },
+  { id: 'prototype', name: '交互原型', mark: '03', description: '与 AI 一起把需求变为可操作的演示', icon: ['M15 12a3 3 0 11-6 0 3 3 0 016 0z', 'M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z'] },
   { id: 'baselines', name: '基线确认', mark: '04', description: '查看已接受的原型版本与确认依据', icon: ['M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z'] },
   { id: 'handoffs', name: '交接清单', mark: '05', description: '把固定成果、来源和限制交给研发', icon: ['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'] },
 ]
@@ -54,7 +57,7 @@ export function StudioPanel(props: StudioProps) {
   const [error, setError] = useState('')
   const [comparisonError, setComparisonError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const sidebar = useStudioSidebar()
   const [filter, setFilter] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
   const [naturalConfirmation, setNaturalConfirmation] = useState('')
@@ -139,13 +142,17 @@ export function StudioPanel(props: StudioProps) {
     .filter(e => `${e.title} ${e.id}`.toLowerCase().includes(filter.toLowerCase()))
   const currentStage = stages.find(s => s.id === stage)!
   const materialStage = stage === 'scenarios' || stage === 'requirements'
-  const selectStage = async (next: Stage) => { if (!await flushBeforeLeave()) return; setStage(next); setSelectedId(undefined); setFilter('') }
-  const backToList = async () => { if (await flushBeforeLeave()) setSelectedId(undefined) }
+  const selectStage = async (next: Stage) => { if (!await flushBeforeLeave()) return; setStage(next); setSelectedId(undefined); setFilter(''); sidebar.close() }
+  const backToList = async () => { if (await flushBeforeLeave()) { setSelectedId(undefined); sidebar.close() } }
+  const reloadMaterial = async () => {
+    if (!selected || !await flushBeforeLeave()) return
+    await call({ action: selected.kind === 'scenario' ? 'openScenario' : 'openRequirement', entityId: selected.id })
+  }
   const selectTab = async (next: 'material' | 'versions') => { if (await flushBeforeLeave()) setActiveTab(next) }
   const selectMaterial = async (id: string) => {
     if (entities.find(entity => entity.id === id)?.builtinKey) return
     if (!await flushBeforeLeave()) return
-    setSelectedId(id); setActiveTab('material')
+    setSelectedId(id); setActiveTab('material'); sidebar.close()
     if (stage === 'scenarios') await call({ action: 'openScenario', entityId: id })
     if (stage === 'requirements') await call({ action: 'openRequirement', entityId: id })
   }
@@ -200,9 +207,9 @@ export function StudioPanel(props: StudioProps) {
     {storeError ? <><h2>无法确认工作台状态</h2><p role="alert">{storeError}</p><button className={css.primary} onClick={() => props.sync()}>重新同步</button></> : <><h2>正在读取工作台状态</h2><p>{loading ? '正在与协同工作台核对登录状态与项目目录…' : '等待工作台答复。'}</p></>}
   </div></div>
   return <div className={`${css.studio} studio-root`} data-studio-panel="studio">
-    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => { props.sync(); if (stage === 'requirements' && consistencyProjectId) void refreshComparisons() }, selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => setSidebarCollapsed(collapsed => !collapsed)} />
+    <StudioTopbar faces={{ state, busy, theme: props.theme, stage, stages, refresh: () => { props.sync(); if (stage === 'requirements' && consistencyProjectId) void refreshComparisons() }, selectStage: next => { void selectStage(next) }, startSession: () => { void flushBeforeLeave().then(saved => { if (saved) props.startSession() }) }, openSettings: props.openSettings }} sidebarCollapsed={sidebar.collapsed} onToggleSidebar={sidebar.toggle} />
     <div className={css.shell}>
-      <aside className={`${css.rail} ${sidebarCollapsed ? css.collapsed : ''}`} aria-label="工作台导航">
+      <StudioSidebar narrow={sidebar.narrow} collapsed={sidebar.collapsed} onClose={sidebar.close}>
         <button className={css.repoBox} disabled={!state.connected} onClick={() => void openProjectDialog()} title="切换、新建或获取项目">
           <span className={css.repoMark} aria-hidden="true">&lt;/&gt;</span>
           <span className={css.repoText}>
@@ -214,17 +221,13 @@ export function StudioPanel(props: StudioProps) {
         <nav className={css.stageNav} aria-label="Studio 工作区">
           <div className={css.navCaption}>Studio Navigation</div>
           {stages.flatMap(item => {
-            const chip = stage === item.id && materialStage && selected ? <div className={css.stageChip} key={`${item.id}-chip`}>
-              <span>{selected.code ?? selected.id}</span>
-              <button onClick={() => void backToList()} aria-label={`返回${item.name}列表`}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M19 12H5m0 0l6 6m-6-6l6-6" /></svg>
-              </button>
-            </div> : null
+            const navigation = stage === item.id && materialStage && selected ? <MaterialNavigation key={`${item.id}-materials`} entities={entities} kind={stage === 'scenarios' ? 'scenario' : 'requirement'} selectedId={selected.id} onSelect={id => void selectMaterial(id)} /> : null
+            const count = item.id === 'scenarios' || item.id === 'requirements' ? entities.filter(entity => entity.kind === (item.id === 'scenarios' ? 'scenario' : 'requirement') && !entity.builtinKey).length : undefined
             return [<button key={item.id} aria-current={stage === item.id ? 'page' : undefined} className={`${css.stage} ${stage === item.id ? css.active : ''}`} onClick={() => void selectStage(item.id)}>
               <svg className={css.stageIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}>{item.icon.map((d, index) => <path key={index} d={d} />)}</svg>
-              <span className={css.stageLabel}>{item.name}</span>
+              <span className={css.stageLabel}>{item.name}</span>{count !== undefined && <small className={css.stageCount}>{count}</small>}
               <svg className={css.stageChev} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={13} height={13}><path d="M9 6l6 6-6 6" /></svg>
-            </button>, chip]
+            </button>, navigation]
           })}
         </nav>
         <div className={css.railFoot}>
@@ -237,9 +240,10 @@ export function StudioPanel(props: StudioProps) {
             <svg className={css.accountGear} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" width={15} height={15}><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.11-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.55-1.11 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.55 1z" /></svg>
           </button>
         </div>
-      </aside>
+      </StudioSidebar>
       <main className={css.main}>
-        <header className={`${css.pageHeader} ${materialStage && selected ? css.compactHeader : ''}`}><div>{materialStage && selected && <button className={css.backToList} onClick={() => void backToList()}>← 返回{currentStage.name}列表</button>}{!(materialStage && selected) && <><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{materialStage && selected ? selected.title : currentStage.name}</h1><p>{currentStage.description}</p></>}</div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>
+        {materialStage && selected ? <MaterialPageHeader name={currentStage.name} projectName={state.project?.name} connected={state.connected} busy={busy} onBack={() => void backToList()} onReload={() => void reloadMaterial()} /> : !materialStage && stage !== 'prototype' && <header className={css.pageHeader}><div><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>}
+
         {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
         {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
         {state.projectInitializations.map(operation => <ProjectProgressNotice key={operation.id} operation={operation} progress={progress.find(item => item.operationId === operation.id)} busy={busy} onRetry={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })} />)}

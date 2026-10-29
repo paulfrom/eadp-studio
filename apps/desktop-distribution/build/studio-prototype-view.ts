@@ -106,6 +106,17 @@ export class StudioPrototypeView {
     } catch (error) { if (this.epoch === epoch) await this.close(); throw error }
   }
 
+  /** Navigate only the selected live view within its Host-registered origin. */
+  async navigate(owner: BrowserWindow, instance: StudioPreviewInstance, path?: string): Promise<void> {
+    if (!this.isOpen(owner, instance) || !this.view) throw new Error('Preview is not mounted')
+    if (path === undefined) { this.view.webContents.reload(); return }
+    const origin = previewUrl(instance)
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')) throw new Error('Invalid preview path')
+    const target = new URL(path, origin)
+    if (target.origin !== origin.origin || target.username || target.password) throw new Error('Invalid preview path')
+    await this.view.webContents.loadURL(target.href)
+  }
+
   /** Show only a matching live instance, and ignore stale layout messages. */
   isOpen(owner: BrowserWindow, selected: StudioPreviewIdentity): boolean {
     return !!this.view && !this.view.webContents.isDestroyed() && this.owner === owner && !!this.instance && samePreviewIdentity(this.instance, selected)

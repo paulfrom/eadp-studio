@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { EditorState, Transaction, type Extension } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import { searchKeymap, highlightSelectionMatches, search, openSearchPanel } from '@codemirror/search'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { javascript } from '@codemirror/lang-javascript'
 import { css as cssLanguage } from '@codemirror/lang-css'
@@ -19,12 +19,17 @@ function languageFor(path: string): Extension {
 
 function extensions(path: string, label: string, readOnly: boolean, onChange?: (value: string) => void): Extension[] {
   return [
-    lineNumbers(), drawSelection(), highlightActiveLine(), history(), highlightSelectionMatches(),
+    lineNumbers(), drawSelection(), highlightActiveLine(), history(), highlightSelectionMatches(), search({ top: true }),
+    EditorState.phrases.of({ Find: '在当前文件中搜索…', next: '下一个', previous: '上一个', all: '全部', 'match case': '区分大小写', regexp: '正则', 'by word': '整词', replace: '替换', 'replace all': '替换全部', close: '关闭' }),
     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }), languageFor(path),
     EditorView.theme({
       '&': { height: '100%', backgroundColor: 'var(--surface)', color: 'var(--text)', font: '12px/1.65 var(--mono)' },
       '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)' },
+      '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text-2)', borderColor: 'var(--border)' },
+      '.cm-search': { padding: '8px 10px', font: '12px var(--mono)' },
+      '.cm-search input': { background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 6px' },
+      '.cm-search button': { background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)', borderRadius: '4px', padding: '3px 7px' },
       '.cm-gutters': { backgroundColor: 'var(--surface)', color: 'var(--text-3)', borderColor: 'var(--border)' },
     }),
     EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly),
@@ -55,6 +60,7 @@ export function PrototypeEditor({ path, content, readOnly, onChange }: {
     if (!parent.current) return
     const view = new EditorView({ parent: parent.current, doc: content, extensions: extensions(path, `${path} 文件内容`, readOnly, value => { if (!syncing.current) onChangeRef.current?.(value) }) })
     editor.current = view
+    openSearchPanel(view)
     return () => { editor.current = null; view.destroy() }
   }, [path, readOnly])
   useEffect(() => {

@@ -27,6 +27,7 @@
 ## 5. 浏览器视图承载
 
 现以 `studio-prototype-view.ts`（`WebContentsView`）加 preload 桥承载原型编辑。
+该桥的 layout 请求同时承载刷新与站内路由导航；导航仍绑定 Host 注册并选定的预览身份，只允许该 loopback origin。
 缺：插件在受控沙箱中承载第三方视图的官方能力。
 
 ## 6. 运行时资源准备

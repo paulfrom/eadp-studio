@@ -3,6 +3,8 @@ import type { StudioCommand, StudioReply } from '../../shared/studio.ts'
 import type { PrototypeFileResult, PrototypeFileSource } from '../../shared/prototype.ts'
 import { PrototypeComparison, PrototypeEditor } from './PrototypeEditor.tsx'
 import css from './prototype.module.css'
+import { PrototypeDirectoryTree } from './PrototypeDirectoryTree.tsx'
+import filesCss from './files.module.css'
 
 type FileView = Extract<PrototypeFileResult, { kind: 'file' }>
 type DirectoryView = Extract<PrototypeFileResult, { kind: 'directory' }>
@@ -12,6 +14,7 @@ interface Buffer { file: FileView; content: string; savedContent: string }
 
 interface PrototypeFilesProps {
   source: PrototypeFileSource
+  requestDiff?: number
   call(command: StudioCommand): Promise<StudioReply | undefined>
   registerFlush(flush?: () => Promise<boolean>): void
   onNeedsAttention(): void
@@ -22,7 +25,7 @@ export function PrototypeFiles(props: PrototypeFilesProps) {
   return <PrototypeFilesForSource key={JSON.stringify(props.source)} {...props} />
 }
 
-function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention }: PrototypeFilesProps) {
+function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention, requestDiff }: PrototypeFilesProps) {
   const taskId = source.kind === 'task' ? source.prototypeTaskId : ''
   const sourceKey = JSON.stringify(source)
   const [directory, setDirectory] = useState('')
@@ -36,6 +39,9 @@ function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention
   const [ranges, setRanges] = useState<Record<string, FileView>>({})
   const [selected, setSelected] = useState<string>()
   const [editing, setEditing] = useState(false)
+  const [closed, setClosed] = useState<string[]>([])
+  const [treeHidden, setTreeHidden] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
   const [error, setError] = useState('')
   const [conflict, setConflict] = useState<{ path: string; disk: FileView }>()
   const [comparePath, setComparePath] = useState<string>()
@@ -60,7 +66,7 @@ function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention
   useEffect(() => { void list(''); return () => { request.current += 1 } }, [list])
 
   const open = async (path: string) => {
-    setSelected(path); setDiffPath(undefined); setEditing(false); setError(''); setConflict(undefined); setComparePath(undefined)
+    setClosed(previous => previous.filter(item => item !== path)); setSelected(path); setDiffPath(undefined); setEditing(false); setError(''); setConflict(undefined); setComparePath(undefined)
     if (buffersRef.current[path]) return
     const reply = await call({ action: 'readPrototypeFile', source, path })
     if (!reply?.ok || reply.prototypeFiles?.kind !== 'file') { setError(reply && !reply.ok ? reply.message : '无法读取文件'); return }
@@ -209,6 +215,7 @@ function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention
     if (!cursor) { setSelected(undefined); setDiffPath(undefined) }
     setMatches(undefined); setError('')
   }
+  useEffect(() => { if (requestDiff) void loadDiff() }, [requestDiff])
   const current = selected ? buffers[selected] : undefined
   const range = selected && current && current.content === current.savedContent ? ranges[selected] : undefined
   const displayedFile = range ?? current?.file
@@ -220,17 +227,30 @@ function PrototypeFilesForSource({ source, call, registerFlush, onNeedsAttention
     buffersRef.current = { ...buffersRef.current, [path]: next }
     setBuffers(buffersRef.current); persistBuffer(next)
   }
-  return <div className={css.files}>
-    <aside className={css.fileSidebar} aria-label="工程文件">
+  return <div className={`${css.files} ${filesCss.files}`} style={treeHidden ? { gridTemplateColumns: 'minmax(0, 1fr)' } : undefined}>
+    <aside className={css.fileSidebar} aria-label="工程文件" hidden={treeHidden}>
+      <div className={filesCss.treeHeader}><strong>文件</strong><button aria-pressed={showHidden} title="显示或隐藏点文件" onClick={() => setShowHidden(value => !value)}>隐藏文件</button><button aria-label="收起文件树" onClick={() => setTreeHidden(true)}>‹</button></div>
       <form className={css.fileSearch} onSubmit={event => { event.preventDefault(); void submitSearch() }}>
         <input aria-label="搜索工程文件内容" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索文件内容" maxLength={200} /><button>搜索</button>
       </form>
-      <div className={css.directoryHead}><span>{diff ? '工程变更' : directory || '工程文件'}</span>{diff ? <button onClick={() => void list('')}>文件</button> : taskId && <button onClick={() => void loadDiff()}>变更</button>}{!diff && directory && <button onClick={() => void list(directory.split('/').slice(0, -1).join('/'))}>上一级</button>}</div>
+      <div className={css.directoryHead}><span>{diff ? '工程变更' : directory || '原型代码'}</span>{diff ? <button onClick={() => void list('')}>文件</button> : taskId && <button onClick={() => void loadDiff()}>变更</button>}{!diff && directory && <button onClick={() => void list(directory.split('/').slice(0, -1).join('/'))}>上一级</button>}</div>
       <div className={css.fileList}>
-        {diff ? <>{diff.files.map(file => <button key={file.path} onClick={() => setDiffPath(file.path)}><span>{file.path}</span><small>{file.status === 'added' ? '新增' : file.status === 'deleted' ? '删除' : '修改'}</small></button>)}{diff.nextCursor && <button onClick={() => void loadDiff(diff.nextCursor)}>加载更多</button>}{diff.truncated && <p>部分文件或内容已截断。</p>}{!diff.truncated && !diff.files.length && <p>当前磁盘工程没有变更。</p>}</> : matches ? <>{matches.matches.map((match, index) => <button key={`${match.path}:${match.line}:${match.column}:${index}`} onClick={() => void open(match.path)}><strong>{match.path}:{match.line}</strong><small>{match.excerpt}</small></button>)}{matches.nextCursor && <button onClick={() => void submitSearch(matches.nextCursor)}>加载更多</button>}{matches.truncated && !matches.nextCursor && <p>{matches.truncationReason ?? '结果已截断，请缩小搜索范围。'}</p>}{!matches.truncated && !matches.matches.length && <p>没有找到匹配内容。</p>}</> : <>{listing?.entries.map(entry => <button key={entry.path} onClick={() => entry.kind === 'directory' ? void list(entry.path) : void open(entry.path)}><span>{entry.kind === 'directory' ? '▸ ' : ''}{entry.name}</span>{entry.readOnly && <small>只读</small>}</button>)}{listing?.nextCursor && <button onClick={() => void list(directory, listing.nextCursor)}>加载更多</button>}{listing?.truncated && !listing.nextCursor && <p>{listing.truncationReason ?? '目录结果已截断。'}</p>}{listing && !listing.truncated && !listing.entries.length && <p>目录为空。</p>}</>}
+        {diff ? <>{diff.files.map(file => <button key={file.path} onClick={() => setDiffPath(file.path)}><span>{file.path}</span><small>{file.status === 'added' ? '新增' : file.status === 'deleted' ? '删除' : '修改'}</small></button>)}{diff.nextCursor && <button onClick={() => void loadDiff(diff.nextCursor)}>加载更多</button>}{diff.truncated && <p>部分文件或内容已截断。</p>}{!diff.truncated && !diff.files.length && <p>当前磁盘工程没有变更。</p>}</> : matches ? <>{matches.matches.map((match, index) => <button key={`${match.path}:${match.line}:${match.column}:${index}`} onClick={() => void open(match.path)}><strong>{match.path}:{match.line}</strong><small>{match.excerpt}</small></button>)}{matches.nextCursor && <button onClick={() => void submitSearch(matches.nextCursor)}>加载更多</button>}{matches.truncated && !matches.nextCursor && <p>{matches.truncationReason ?? '结果已截断，请缩小搜索范围。'}</p>}{!matches.truncated && !matches.matches.length && <p>没有找到匹配内容。</p>}</> : <>{listing && <PrototypeDirectoryTree showHidden={showHidden} source={source} listing={listing} call={call} selected={selected} onOpen={path => void open(path)} />}{listing?.nextCursor && <button onClick={() => void list(directory, listing.nextCursor)}>加载更多</button>}{listing?.truncated && !listing.nextCursor && <p>{listing.truncationReason ?? '目录结果已截断。'}</p>}{listing && !listing.truncated && !listing.entries.length && <p>目录为空。</p>}</>}
       </div>
     </aside>
     <section className={css.fileContent} aria-label="文件内容">
+      <div className={filesCss.tabs} role="tablist" aria-label="已打开的文件">
+        {treeHidden && <button aria-label="展开文件树" onClick={() => setTreeHidden(false)}>文件</button>}
+        {Object.keys(buffers).filter(path => !closed.includes(path)).map(path => <div className={filesCss.tab} key={path}>
+          <button role="tab" aria-selected={selected === path && !diffPath} onClick={() => void open(path)} title={path}>{path.split('/').pop()}{buffers[path]!.content !== buffers[path]!.savedContent ? ' ●' : ''}</button>
+          <button aria-label={`关闭 ${path}`} onClick={() => {
+            // Closing a tab preserves its editing buffer, including pending Host writes.
+            setClosed(previous => [...previous, path])
+            if (selected === path) { setSelected(Object.keys(buffers).find(item => item !== path && !closed.includes(item))); setEditing(false) }
+          }}>×</button>
+        </div>)}
+      </div>
+      {selected && <div className={filesCss.breadcrumb} aria-label="文件路径">原型代码 / {selected.split('/').join(' / ')}<small>UTF-8</small></div>}
       {error && <div className={css.fileError} role="alert">{error}</div>}
       {comparePath && comparePath === selected && !conflict && <button onClick={() => void compareDisk(comparePath)}>比较当前磁盘版本</button>}
       {conflict && conflict.path === selected && current && <div className={css.mergeReview}>
