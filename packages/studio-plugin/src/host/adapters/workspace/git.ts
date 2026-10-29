@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, mkdir, mkdtemp, open, readFile, readlink, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.ts'
@@ -181,6 +183,45 @@ export class WorkspaceGit {
     if (result.exitCode === 0) return true
     if (result.exitCode === 1) return false
     throw new Error('无法核对 Git 提交历史。')
+  }
+  /** Fingerprint the exact tracked and untracked changes that commitAll would stage. */
+  async workingFingerprint(root: string): Promise<string> {
+    const args = ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']
+    const before = await this.command(root, args)
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(before.stdoutBytes)
+    const entries = text.split('\0')
+    if (entries.pop() !== '') throw new Error('Git 工作现场状态不完整')
+    const hash = createHash('sha256')
+    const add = (bytes: Buffer): void => { hash.update(`${bytes.length}:`); hash.update(bytes) }
+    const canonicalRoot = await realpath(root)
+    for (const entry of entries.sort()) {
+      if (entry.length < 4 || entry[2] !== ' ') throw new Error('Git 工作现场状态无效')
+      const file = gitRelativePath(entry.slice(3)), full = path.join(canonicalRoot, file)
+      add(Buffer.from(entry))
+      let info
+      try { info = await lstat(full) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' && entry.slice(0, 2).includes('D')) continue; throw error }
+      const parent = await realpath(path.dirname(full)), relative = path.relative(canonicalRoot, parent)
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('工作现场路径离开项目目录')
+      if (info.isSymbolicLink()) { add(Buffer.from('link')); add(Buffer.from(await readlink(full))) }
+      else if (info.isFile()) {
+        add(Buffer.from(`file:${info.mode & 0o111}`))
+        const handle = await open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+        try {
+          const current = await handle.stat()
+          if (current.ino !== info.ino || current.size !== info.size || current.mtimeMs !== info.mtimeMs) throw new Error('工作现场在核对期间发生变化')
+          hash.update(`${info.size}:`)
+          let size = 0
+          for await (const chunk of handle.createReadStream({ autoClose: false })) { size += chunk.length; hash.update(chunk) }
+          if (size !== info.size) throw new Error('工作现场文件未完整读取')
+        } finally { await handle.close() }
+      }
+      else throw new Error('工作现场包含不支持的文件类型')
+      const after = await lstat(full)
+      if (info.size !== after.size || info.mtimeMs !== after.mtimeMs || info.ino !== after.ino || info.mode !== after.mode) throw new Error('工作现场在核对期间发生变化')
+    }
+    const after = await this.command(root, args)
+    if (!before.stdoutBytes.equals(after.stdoutBytes)) throw new Error('工作现场在核对期间发生变化')
+    return hash.digest('hex')
   }
   /** Commit every working-tree change so a fast-forward cannot discard local material. */
   async commitAll(root: string, message: string, identity: GitIdentity): Promise<string> {
@@ -417,11 +458,12 @@ export class WorkspaceGit {
     if (onProgress) await this.streamed(root, args, true, undefined, undefined, onProgress)
     else await this.command(root, args, true)
   }
-  async conditionalUpdate(root: string, branch: string, expectedSha: string, candidateSha: string): Promise<void> {
+  async conditionalUpdate(root: string, branch: string, expectedSha: string | undefined, candidateSha: string): Promise<void> {
     const ref = `refs/heads/${branchName(branch)}`
-    fixedSha(expectedSha); fixedSha(candidateSha)
+    if (expectedSha !== undefined) fixedSha(expectedSha)
+    fixedSha(candidateSha)
     // This lease is the cross-machine compare-and-swap; no local lock can replace it.
-    await this.command(root, ['push', '--porcelain', `--force-with-lease=${ref}:${expectedSha}`, 'origin', `${candidateSha}:${ref}`], true)
+    await this.command(root, ['push', '--porcelain', `--force-with-lease=${ref}:${expectedSha ?? ""}`, 'origin', `${candidateSha}:${ref}`], true)
   }
   async verifyFile(root: string, commit: string, relativePath: string): Promise<void> {
     const expected = await readFile(path.join(root, gitRelativePath(relativePath)))

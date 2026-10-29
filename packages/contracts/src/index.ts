@@ -85,12 +85,23 @@ export const PrototypeTaskTokenSchema = object({ prototypeTaskId: IdSchema, gene
 export type PrototypeTaskToken = Static<typeof PrototypeTaskTokenSchema>;
 export const DevelopmentClaimTokenSchema = object({ requirementId: IdSchema, claimId: IdSchema, generation: Type.Integer({ minimum: 1 }) });
 export type DevelopmentClaimToken = Static<typeof DevelopmentClaimTokenSchema>;
+export interface DevelopmentClaimView extends DevelopmentClaimToken {
+  taskId: string | null; active: boolean; commitId: string; remoteRef: string;
+}
 export const CreatePrototypeTaskSchema = object({ ...keyed, title: Type.String({ minLength: 1, maxLength: 200 }), clientId: IdSchema,
   developmentRequirementIds: prototypeDevelopmentIds, referenceRequirementIds: prototypeRequirementIds,
+  commitId: ShaSchema, remoteRef: Type.String({ minLength: 1, maxLength: 400 }),
   writeScope: prototypePaths, policyHash: Sha256Schema, instruction: prototypeInstruction });
 export type CreatePrototypeTaskRequest = Static<typeof CreatePrototypeTaskSchema>;
-export const UpdatePrototypeClaimsSchema = object({ ...keyed, token: PrototypeTaskTokenSchema, developmentRequirementIds: prototypeDevelopmentIds, instruction: prototypeInstruction });
-export type UpdatePrototypeClaimsRequest = Static<typeof UpdatePrototypeClaimsSchema>;
+export const ClaimPrototypeDevelopmentSchema = object({ key: IdSchema, token: PrototypeTaskTokenSchema,
+  requirementId: IdSchema, commitId: ShaSchema, remoteRef: Type.String({ minLength: 1, maxLength: 400 }) });
+export type ClaimPrototypeDevelopmentRequest = Static<typeof ClaimPrototypeDevelopmentSchema>;
+export const SynchronizePrototypeDevelopmentSchema = object({ key: IdSchema, token: PrototypeTaskTokenSchema, claim: DevelopmentClaimTokenSchema,
+  commitId: ShaSchema, remoteRef: Type.String({ minLength: 1, maxLength: 400 }), release: Type.Boolean() });
+export type SynchronizePrototypeDevelopmentRequest = Static<typeof SynchronizePrototypeDevelopmentSchema>;
+export const AdminPrototypeDevelopmentClaimSchema = object({ key: IdSchema, occupied: Type.Boolean(),
+  commitId: ShaSchema, remoteRef: Type.String({ minLength: 1, maxLength: 400 }), reason: text });
+export type AdminPrototypeDevelopmentClaimRequest = Static<typeof AdminPrototypeDevelopmentClaimSchema>;
 export const UpdatePrototypeReferencesSchema = object({ ...keyed, token: PrototypeTaskTokenSchema, referenceRequirementIds: prototypeRequirementIds });
 export type UpdatePrototypeReferencesRequest = Static<typeof UpdatePrototypeReferencesSchema>;
 export const UpdatePrototypeScopeSchema = object({ ...keyed, token: PrototypeTaskTokenSchema, writeScope: prototypePaths, policyHash: Sha256Schema, instruction: prototypeInstruction });

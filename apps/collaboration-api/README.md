@@ -118,7 +118,9 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 | GET `P` | `ProjectState`：项目、实体、集成操作、基线 |
 | GET `P/prototype`、GET `P/prototype/tasks/:taskId` | 项目原型视图与单个原型协作任务现场 |
 | POST `P/prototype/tasks` | 新建原型协作任务并取得开发占用 |
-| POST `P/prototype/tasks/:taskId/development-claims` | 扩大任务的开发需求占用 |
+| POST `P/prototype/tasks/:taskId/development-claims` | 在任务既有需求范围内原子领取一个需求；空闲不读取 Git，已占用返回冲突 |
+| POST `P/prototype/tasks/:taskId/development-claims/:requirementId/synchronize` | 核验受管 remoteRef 与 commitId 后同步成果；按 release 区分首次／最终释放和纠偏保留，不生成基线 |
+| GET/PUT `P/prototype/requirements/:requirementId/development-claim` | 查询当前占用；PUT 仅供管理员置占用／置空闲并推进代次，不读取 Git且记录审计 |
 | PUT `P/prototype/tasks/:taskId/reference-requirements`、PUT `P/prototype/tasks/:taskId/write-scope`、PUT `P/prototype/tasks/:taskId/source-base` | 更新参考需求、写入范围与源码基线 |
 | POST `P/prototype/tasks/:taskId/cancel`、POST `P/prototype/tasks/:taskId/admin-release` | 取消任务／管理员释放任务占用 |
 | GET `P/prototype/baselines` | 原型基线分页列表（`limit` 1..100、`offset` ≥ 0） |
@@ -159,6 +161,8 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 
 持久业务写请求均含 `idempotencyKey`（短发布授权是一次性签发用途，不落库），同项目内同键只能对应同操作者、同动作和相同请求。重连先查询，404 表示后端尚无该操作者的受理结果，不能推断 Git 未发生。错误结构统一为 `{error:{code,message,details?}}`，冲突通常为 409。
 
+逐需求开发占用使用 `key` 作为操作幂等键，并携带 task token、requirementId、完整 commitId 和任务受管 remoteRef。创建任务及初始 claims 在同一短事务完成；后续纠偏在任务稳定需求范围内原子领取新代次。空闲领取不读取或比较远端 commit，已占用即使 commit 相同也拒绝。成果同步先在事务外读取真实 remoteRef，再在项目短事务重验原 claim／代次：`release=false` 用于纠偏 AI 完成，`release=true` 用于首次或最终完成；该路径不写原型集成或基线。管理员可直接置占用／置空闲，不读取 Git，管理操作推进代次并记录原因、旧代次与替换代次审计。队列、会话、纠偏输入和逐项核对只保存于桌面。
+
 场景新建请求为 `{idempotencyKey,kind:"scenario",title}`，可显式选择已接受的 `templateId`；不传模板时绑定当前共享默认模板。场景不接受分类、编号或来源字段。后台独立提交编号预留，以项目计数器行锁按类型原子分配 `sequence` 与 `SC-0001`/`REQ-0001` 格式的 `code`，超过 9999 自然增长；同一新建键重试复用实体 UUID 与编号，改名/修订不变，失败可留空号但不回收。需求不使用分类，创建时必须传 `templateId`、`templateRef`（指向需求模板目录默认项或显式选择的已接受版本）和 `sources`，每项含同项目场景 ID 与已接受版本（内置通用场景的系统预置版本同样可绑定）。更新需求关联时同时传 `scenarioIds`、`sources`、`prerequisites` 及占用 token，保持来源一一对应；前置必须绑定已接受的需求材料版本（`PREREQUISITE_UNCONFIRMED`），并校验自引用、重复与环（`INVALID_PREREQUISITE`/`DUPLICATE_PREREQUISITE`/`DEPENDENCY_CYCLE`）。
 
 目录更新请求为 `{idempotencyKey,token,title,summary?}`，只接受当前材料设计占用。已确认场景只读打开不领取占用；可先 GET `revision-impact` 查看影响，然后直接以 `purpose:"design"` 占用独立修订并确认，没有批次或冻结概念，修订不自动改写关联需求或其来源绑定。
@@ -188,7 +192,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，受理后以
 
 一次只受理一个项目集成窗口，其他需求的本地任务和占用继续。Git 与数据库没有分布式事务：实际分支与认可头不一致时阻断下一集成和发布；占用释放作废旧操作，但不撤销在途 Git。已推送候选且原占用有效时续办同一操作；占用撤销后保留 Git 证据，由管理员在 Git 做可追溯反向纠正，核验纠正树等于原认可树后登记新头。不执行强推或自动丢弃现场。
 
-前置按明确材料版本绑定已接受完成事件/认可 SHA。编辑新版本不篡改旧完成历史，也不会让新范围提前完成；明确指定旧完成版本仍可使用旧依据。完成产生单需求原型基线并自动释放；清单基线是独立 `handoff`/`baseline` 实体，只聚合已接受的完成版本，不重新批准原型。收悉只记录接收人及固定清单确认依据。
+前置按明确材料版本绑定已接受完成事件/认可 SHA。编辑新版本不篡改旧完成历史，也不会让新范围提前完成；明确指定旧完成版本仍可使用旧依据。自动开发上传只同步逐需求占用，不生成基线；整体原型基线由独立作者确认和集成接受产生，记录实际涉及需求，不批量改写需求材料状态。清单基线是独立 `handoff`/`baseline` 实体，收悉只记录接收人及固定清单确认依据。
 
 ## 通用场景预置
 
@@ -213,7 +217,7 @@ pnpm --filter @eadp/collaboration-api typecheck
 pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
 ```
 
-`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts`、`backend-status-reports.test.ts`、`backend-prototype-recovery.test.ts`、`studio-workflow.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
+`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts`、`backend-status-reports.test.ts`、`backend-prototype-recovery.test.ts`、`local-development-claims.test.ts`、`studio-workflow.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
 
 ```sh
 # 在共用实例中重建空的临时库；实例名与账号按本机实际情况替换。

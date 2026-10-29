@@ -276,7 +276,7 @@ export async function previous(c: Transaction, projectId: string, actor: Pick<Ac
   return { found: true, result: await hydrateResult(row.result, projectId) };
 }
 export async function remember(c: Transaction, projectId: string, actor: Actor, action: string, input: { idempotencyKey: string }, result: unknown) {
-  await c.query(`INSERT INTO studio_operations(project_id,key,action,request_hash,result,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [projectId, input.idempotencyKey, action, requestHash(input), stripMaterial(result), actor.id, actor.username, actor.name]);
+  await c.query(`INSERT INTO studio_operations(project_id,key,action,request_hash,result,${actorColumns}) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [projectId, input.idempotencyKey, action, requestHash(input), JSON.stringify(stripMaterial(result)), actor.id, actor.username, actor.name]);
   await audit(c, projectId, actor, action, { idempotencyKey: input.idempotencyKey });
 }
 export async function operation(c: Transaction, projectId: string, key: string, actor: Pick<Actor, 'id'>): Promise<{ action: string; result: unknown }> {

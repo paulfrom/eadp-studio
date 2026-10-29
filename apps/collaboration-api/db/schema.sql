@@ -1498,18 +1498,31 @@ CREATE TABLE studio_prototype_tasks (
   FOREIGN KEY (project_id,prototype_id) REFERENCES studio_prototypes(project_id,id),
   UNIQUE (project_id,id), UNIQUE (project_id,branch)
 );
-CREATE TABLE studio_prototype_development_claims (
-  id text PRIMARY KEY,
+-- 任务需求范围独立于开发占用；逐需求释放后仍保留整体原型接受所核对的范围。
+CREATE TABLE studio_prototype_task_requirements (
   project_id text NOT NULL,
   task_id text NOT NULL,
   requirement_id text NOT NULL,
+  PRIMARY KEY (project_id,task_id,requirement_id),
+  FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
+  FOREIGN KEY (project_id,requirement_id) REFERENCES studio_entities(project_id,id)
+);
+-- 每次首次开发或纠偏创建新代次；commit 与任务受管引用随占用及成果同步持久保存。
+CREATE TABLE studio_prototype_development_claims (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  task_id text,
+  requirement_id text NOT NULL,
   generation integer NOT NULL CHECK (generation > 0),
+  commit_id text NOT NULL CHECK (commit_id ~ '^[a-f0-9]{40}$'),
+  remote_ref text NOT NULL CHECK (length(remote_ref) BETWEEN 1 AND 400),
   active boolean NOT NULL DEFAULT true,
   ended_reason text,
   created_date timestamptz NOT NULL DEFAULT now(),
+  last_edited_date timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (project_id,task_id) REFERENCES studio_prototype_tasks(project_id,id),
   FOREIGN KEY (project_id,requirement_id) REFERENCES studio_entities(project_id,id),
-  UNIQUE (project_id,task_id,requirement_id), UNIQUE (project_id,requirement_id,generation)
+  UNIQUE (project_id,task_id,requirement_id,generation), UNIQUE (project_id,requirement_id,generation)
 );
 CREATE UNIQUE INDEX studio_one_active_prototype_requirement_claim
   ON studio_prototype_development_claims(project_id,requirement_id) WHERE active;

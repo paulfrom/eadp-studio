@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { isMaterialIntegrationRequest, type EntityView, type IntegrationView, type MaterialIntegrationRequest, type MaterialMetadata, type ProjectState } from '../../packages/contracts/src/index.ts'
 import type { MaterialDraft, StudioCommand, TaskView } from '../../packages/studio-plugin/src/shared/studio.ts'
+import type { PrototypeCollaborationCommand } from '../../packages/studio-plugin/src/shared/prototype.ts'
 import { CollaborationError, type CollaborationClient } from '../../packages/studio-plugin/src/host/adapters/collaboration/client.ts'
 import { digest, parseMaterial, readMaterial, saveMaterial } from '../../packages/studio-plugin/src/host/adapters/assets/materials.ts'
 import type { HostPorts } from '../../packages/studio-plugin/src/host/application/ports.ts'
@@ -357,4 +358,21 @@ test('a late confirmation of an accepted material cannot silently reacquire a de
   assert.equal(f.confirmed.length, 0)
   assert.deepEqual(f.apiWrites, [])
   assert.deepEqual(f.commits, [])
+})
+
+test('an accepted requirement automatically enqueues its own development without changing the accepted material', async t => {
+  const f = await fixture(t)
+  type Start = Extract<PrototypeCollaborationCommand, { action: 'startPrototypeCollaboration' }>
+  const starts: Start[] = []
+  const collaboration = (f.app as unknown as { prototypeCollaboration: { start(command: Start): Promise<void> } }).prototypeCollaboration
+  collaboration.start = async command => { starts.push(structuredClone(command)) }
+  const reply = await f.app.command(f.command('accepted-enqueues-development'))
+  assert.equal(reply.ok, true)
+  await f.app.settle()
+  assert.equal(f.confirmed.length, 1)
+  assert.equal(starts.length, 1)
+  assert.equal(starts[0]!.projectId, 'project')
+  assert.deepEqual(starts[0]!.developmentRequirementIds, [f.entity.id])
+  assert.match(starts[0]!.instruction, /不要修改需求正文/)
+  assert.match(starts[0]!.instruction, /不要自行确认、集成、发布或生成基线/)
 })

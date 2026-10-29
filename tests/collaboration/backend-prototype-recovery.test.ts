@@ -50,8 +50,9 @@ test('prototype Git recovery persists pending and reconciles only through an unc
       templateRef: { commitSha: initialSha, path: '.template/requirement.md', sha256: createHash('sha256').update(requirementTemplate).digest('hex') },
       sources: [{ projectId, entityId: created.generalScenario!.entityId, version: 1 }],
     })
+    const idempotencyKey = key()
     return service.createPrototypeTask(author, projectId, {
-      idempotencyKey: key(), title, clientId: key(), developmentRequirementIds: [requirement.id], referenceRequirementIds: [],
+      idempotencyKey, title, clientId: key(), developmentRequirementIds: [requirement.id], referenceRequirementIds: [], commitId: initialSha, remoteRef: `refs/heads/studio/prototype/${idempotencyKey}`,
       writeScope: ['src/pages/'], policyHash: policy.hash, instruction: { userActionId: key(), summary: '验证原型 Git 恢复状态' },
     })
   }

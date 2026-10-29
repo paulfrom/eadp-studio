@@ -97,3 +97,18 @@ test('changed path statuses use committed tree metadata for large, special and n
   assert.equal(byPath.get('bulk/1199.md'), 'A')
   if (process.platform !== 'win32') assert.equal(byPath.get('link.md'), 'A')
 })
+
+test('working fingerprint detects tracked and untracked content even when Git status is unchanged', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'git-fingerprint-')); t.after(() => rm(root, { recursive: true, force: true }))
+  await exec('git', ['init', '--initial-branch', 'main'], { cwd: root })
+  await exec('git', ['config', 'user.name', identity.name], { cwd: root }); await exec('git', ['config', 'user.email', identity.email], { cwd: root })
+  await writeFile(path.join(root, 'tracked.txt'), 'base'); await exec('git', ['add', '-A'], { cwd: root }); await exec('git', ['commit', '-m', 'base'], { cwd: root })
+  const git = new WorkspaceGit(runtime)
+  await writeFile(path.join(root, 'tracked.txt'), 'first'); await writeFile(path.join(root, 'untracked.txt'), 'first')
+  const before = await git.workingFingerprint(root)
+  assert.equal(await git.workingFingerprint(root), before)
+  await writeFile(path.join(root, 'tracked.txt'), 'other')
+  const tracked = await git.workingFingerprint(root); assert.notEqual(tracked, before)
+  await writeFile(path.join(root, 'untracked.txt'), 'other')
+  assert.notEqual(await git.workingFingerprint(root), tracked)
+})

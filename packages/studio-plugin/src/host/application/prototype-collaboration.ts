@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { canonical, PROTOTYPE_MERGE_POLICY } from '@eadp/asset-domain'
-import type { CreatePrototypeTaskRequest, ProjectState, PrototypeTaskView, UpdatePrototypeClaimsRequest, UpdatePrototypeScopeRequest } from '@eadp/contracts'
-import type { PrototypeCollaborationCommand, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeQueueView } from '../../shared/prototype.ts'
+import type { ClaimPrototypeDevelopmentRequest, CreatePrototypeTaskRequest, DevelopmentClaimToken, ProjectState, PrototypeTaskToken, PrototypeTaskView, SynchronizePrototypeDevelopmentRequest } from '@eadp/contracts'
+import type { PrototypeCollaborationCommand, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeQueueView, PrototypeRequirementDevelopmentStage, PrototypeRequirementReviewStatus } from '../../shared/prototype.ts'
 import type { TaskView } from '../../shared/studio.ts'
 import { digest } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
@@ -15,12 +15,25 @@ import { StudioStore } from './state.ts'
 import { resolvePrototypeRequirements } from './prototype-requirement-identities.ts'
 
 type Start = Extract<PrototypeCollaborationCommand, { action: 'startPrototypeCollaboration' }>
-type Continue = Extract<PrototypeCollaborationCommand, { action: 'continuePrototypeCollaboration' | 'extendPrototypeDevelopment' }>
-type Phase = 'prepared' | 'creating' | 'claimed' | 'scope' | 'workspace' | 'sending' | 'sent' | 'unknown'
-interface Operation { id: string; request: Start | Continue; phase: Phase; resolvedRequirementIds?: string[]; create?: CreatePrototypeTaskRequest; claims?: UpdatePrototypeClaimsRequest; scope?: UpdatePrototypeScopeRequest; taskId?: string; message?: string }
-interface LocalTask { projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string; sessionOpened?: boolean; state: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required'; nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required' }
+type Correct = Extract<PrototypeCollaborationCommand, { action: 'correctPrototypeRequirement' }>
+type Confirm = Extract<PrototypeCollaborationCommand, { action: 'confirmPrototypeRequirement' }>
+type Claim = DevelopmentClaimToken
+type TaskToken = PrototypeTaskToken
+type CreateRequest = CreatePrototypeTaskRequest
+type ClaimRequest = ClaimPrototypeDevelopmentRequest
+type SynchronizeRequest = SynchronizePrototypeDevelopmentRequest
+type Phase = 'prepared' | 'creating' | 'claimed' | 'workspace' | 'sending' | 'sent' | 'unknown' | 'fixing' | 'commit-known' | 'pushing' | 'pushed' | 'synchronizing' | 'awaiting-review' | 'confirming' | 'reviewed'
+interface Operation {
+  id: string; request: Start | Correct | Confirm; phase: Phase; resolvedRequirementIds?: string[]; create?: CreateRequest
+  taskId?: string; message?: string; claimRequest?: ClaimRequest; synchronizeRequest?: SynchronizeRequest; commitId?: string; checksPassed?: boolean; turnSeq?: number; turnStartHead?: string; turnStartFingerprint?: string
+}
+interface RequirementDevelopment {
+  requirementId: string; runId: string; stage: PrototypeRequirementDevelopmentStage; reviewStatus: PrototypeRequirementReviewStatus
+  startCommitId: string; remoteRef: string; claim?: Claim; claimReleased: boolean; commitId?: string; correction?: string; message?: string; lastTurnSeq?: number
+}
+interface LocalTask { projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string; sessionOpened?: boolean; state: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required'; nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; development?: RequirementDevelopment }
 interface FileSaveOperation { id: string; prototypeTaskId: string; path: string; expectedHash: string; contentHash: string; result?: Extract<PrototypeFileResult, { kind: 'saved' }> }
-interface QueueRecord { revision: number; selectedTaskId?: string; tasks: LocalTask[]; operations: Operation[]; queueReorders?: Array<{ id: string; fingerprint: string }>; pauses?: Array<{ id: string; taskId: string; status: 'waiting' | 'settled' }>; drafts?: PrototypeInstructionDraft[]; draftWrites?: Array<{ id: string; fingerprint: string }>; buffers?: PrototypeEditBuffer[]; bufferWrites?: Array<{ id: string; fingerprint: string }>; fileSaves?: FileSaveOperation[] }
+interface QueueRecord { revision: number; queueOrder?: string[]; selectedTaskId?: string; tasks: LocalTask[]; operations: Operation[]; queueReorders?: Array<{ id: string; fingerprint: string }>; pauses?: Array<{ id: string; taskId: string; status: 'waiting' | 'settled' }>; drafts?: PrototypeInstructionDraft[]; draftWrites?: Array<{ id: string; fingerprint: string }>; buffers?: PrototypeEditBuffer[]; bufferWrites?: Array<{ id: string; fingerprint: string }>; fileSaves?: FileSaveOperation[] }
 
 /** Local operations retain their exact user instruction and idempotency keys across restart. */
 export class PrototypeCollaboration {
@@ -58,7 +71,15 @@ export class PrototypeCollaboration {
   private async save(): Promise<void> { if (!this.record || !this.storage) throw new Error('事项队列尚未初始化'); this.record.revision++; await this.storage.write(this.record) }
   async view(): Promise<PrototypeQueueView> {
     const data = await this.data()
-    return { revision: data.revision, ...(data.selectedTaskId ? { selectedTaskId: data.selectedTaskId } : {}), items: data.tasks.map(item => { const pause = (data.pauses ?? []).findLast(value => value.taskId === item.task.id && value.status === 'waiting'); return { projectId: item.projectId, prototypeTaskId: item.task.id, title: item.task.title, sessionId: item.sessionId, taskStatus: item.task.status, localDispatchState: item.state, ...(item.nextAction ? { nextAction: item.nextAction } : {}), ...(item.gitRecovery ? { gitRecovery: item.gitRecovery } : {}), ...(item.endOperationId ? { endOperationId: item.endOperationId } : {}), ...(pause ? { pauseOperationId: pause.id } : {}), developmentRequirementIds: item.task.developmentRequirementIds } }) }
+    const pending = data.operations.filter(value => !value.taskId && value.request.action === 'startPrototypeCollaboration').map(value => {
+      const request = value.request as Start
+      return { projectId: request.projectId, prototypeTaskId: `queued:${value.id}`, title: request.title, taskStatus: 'active' as const, localDispatchState: value.message ? 'recovery-required' as const : 'queued' as const, developmentRequirementIds: request.developmentRequirementIds, ...(request.developmentRequirementIds.length === 1 ? { requirementId: request.developmentRequirementIds[0], developmentStage: value.message ? 'blocked' as const : 'queued' as const, reviewStatus: 'pending' as const } : {}), pendingCreation: true, nextAction: value.message ?? '已保存，等待前一项完成' }
+    })
+    return { revision: data.revision, ...(data.selectedTaskId ? { selectedTaskId: data.selectedTaskId } : {}), items: data.tasks.map<PrototypeQueueView['items'][number]>(item => { const pause = (data.pauses ?? []).findLast(value => value.taskId === item.task.id && value.status === 'waiting'), development = item.development; return { projectId: item.projectId, prototypeTaskId: item.task.id, title: item.task.title, sessionId: item.sessionId, taskStatus: item.task.status, localDispatchState: item.state, ...(item.nextAction ? { nextAction: item.nextAction } : {}), ...(item.gitRecovery ? { gitRecovery: item.gitRecovery } : {}), ...(item.endOperationId ? { endOperationId: item.endOperationId } : {}), ...(pause ? { pauseOperationId: pause.id } : {}), developmentRequirementIds: item.task.developmentRequirementIds, ...(development ? { requirementId: development.requirementId, developmentStage: development.stage, reviewStatus: development.reviewStatus, ...(development.commitId ? { commitId: development.commitId } : {}) } : {}) } }).concat(pending).sort((a, b) => this.queuePosition(data, a.prototypeTaskId) - this.queuePosition(data, b.prototypeTaskId)) }
+  }
+  private queuePosition(data: QueueRecord, id: string): number {
+    const index = data.queueOrder?.indexOf(id) ?? -1
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index
   }
   cancellation(taskId: string): { projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string } {
     const item = this.record?.tasks.find(value => value.task.id === taskId)
@@ -113,8 +134,8 @@ export class PrototypeCollaboration {
   }
   private async current(item: LocalTask): Promise<PrototypeTaskView> {
     const task = await this.api.request<PrototypeTaskView>('GET', this.route(item.projectId, `/prototype/tasks/${encodeURIComponent(item.task.id)}`))
-    const account = this.store.accountId, local = await this.store.read()
-    if (task.status !== 'active' || task.ownerId !== account || task.clientId !== local.clientId || task.generation !== item.task.generation || !task.developmentClaims.length) throw new Error('事项开发占用已变化，现场已保留')
+    const account = this.store.accountId, local = await this.store.read(), development = item.development
+    if (task.status !== 'active' || task.ownerId !== account || task.clientId !== local.clientId || task.generation !== item.task.generation || !development && !task.developmentClaims.length || development && development.remoteRef !== `refs/heads/${task.branch}`) throw new Error('事项开发占用已变化，现场已保留')
     item.task = task
     return task
   }
@@ -131,15 +152,29 @@ export class PrototypeCollaboration {
     return { paths: unique, hash: digest(canonical({ protectedPaths, writablePrefixes: allowed, mergePolicy: PROTOTYPE_MERGE_POLICY })) }
   }
   private localTask(item: LocalTask): TaskView { return { projectId: item.projectId, entityId: item.task.id, purpose: 'prototype', sessionId: item.sessionId, inputHash: '', worktree: item.worktree, baseHead: item.task.sourceBaseHead, writePaths: item.task.writeScope } }
-  private async perform<T>(projectId: string, method: 'POST' | 'PUT', endpoint: string, request: { idempotencyKey: string }): Promise<T> {
-    try { return (await this.api.request<{ result: T }>('GET', this.route(projectId, `/operations/${encodeURIComponent(request.idempotencyKey)}`))).result }
+  private async performKeyed<T>(projectId: string, endpoint: string, request: { key: string }): Promise<T> {
+    try { return (await this.api.request<{ result: T }>('GET', this.route(projectId, `/operations/${encodeURIComponent(request.key)}`))).result }
     catch (error) {
       if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error
-      return this.api.request<T>(method, this.route(projectId, endpoint), request)
+      return this.api.request<T>('POST', this.route(projectId, endpoint), request)
     }
+  }
+  private token(task: PrototypeTaskView): TaskToken { return { prototypeTaskId: task.id, generation: task.generation, clientId: task.clientId, expectedRevision: task.revision } }
+  private async remoteClaim(item: LocalTask): Promise<Claim | null> {
+    const development = item.development!
+    const claim = await this.api.request<Claim | null>('GET', this.route(item.projectId, `/prototype/requirements/${encodeURIComponent(development.requirementId)}/development-claim`))
+    return claim ? { requirementId: claim.requirementId, claimId: claim.claimId, generation: claim.generation } : null
+  }
+  private async requireClaim(item: LocalTask): Promise<Claim> {
+    const development = item.development!, expected = development.claim
+    await this.current(item)
+    const current = expected && !development.claimReleased ? await this.remoteClaim(item) : undefined
+    if (!expected || development.claimReleased || !current || canonical(current) !== canonical(expected)) throw new Error('需求开发占用已变化，代码写入已停止并保留现场')
+    return current
   }
   /** Persist the user's resolved development targets before any claim or scope mutation. */
   private async identify(operation: Operation, projectId: string, existingIds: string[], explicitIds: string[]): Promise<string[]> {
+    if (!('instruction' in operation.request)) throw new Error('该操作没有需求识别指令')
     if (operation.resolvedRequirementIds) return operation.resolvedRequirementIds
     const accountId = this.store.accountId
     if (!accountId || (await this.ports.account())?.id !== accountId) throw new Error('协同账号已变化')
@@ -165,21 +200,35 @@ export class PrototypeCollaboration {
     if ((await this.ports.git.state(item.worktree)).branch !== item.task.branch) throw new Error('事项现场分支已变化，已保留现场')
   }
   async start(command: Start): Promise<void> {
+    try { await this.startQueued(command) }
+    catch (error) {
+      const operation = (await this.data()).operations.find(value => value.id === command.operationId)
+      if (operation && !operation.taskId) { operation.message = error instanceof Error ? error.message : '需求开发领取待恢复'; await this.save() }
+      throw error
+    }
+  }
+  private async startQueued(command: Start): Promise<void> {
     const data = await this.data(), local = await this.store.read(), accountId = this.store.accountId!
-    const manifest = await readTemplateManifest(this.manifest())
-    const scope = await this.scope(command.writeScope.length ? command.writeScope : manifest.contract.writablePrefixes)
     let operation = data.operations.find(value => value.id === command.operationId)
     if (operation && canonical(operation.request) !== canonical(command)) throw new Error('同一操作不能绑定不同实现指令')
     if (!operation) {
-      operation = { id: command.operationId, request: structuredClone(command), phase: 'prepared' }; data.operations.push(operation); await this.save()
+      operation = { id: command.operationId, request: structuredClone(command), phase: 'prepared' }; data.operations.push(operation)
+      data.queueOrder ??= data.tasks.map(value => value.task.id)
+      data.queueOrder.push(`queued:${operation.id}`); await this.save()
     }
+    if (!operation.taskId && data.tasks.some(value => value.state === 'running' || value.state === 'recovery-required' || value.state === 'queued' && value.development && this.queuePosition(data, value.task.id) < this.queuePosition(data, `queued:${operation!.id}`))) return
+    if (!operation.taskId && data.operations.some(value => value !== operation && !value.taskId && value.request.action === 'startPrototypeCollaboration' && ['prepared', 'creating'].includes(value.phase) && this.queuePosition(data, `queued:${value.id}`) < this.queuePosition(data, `queued:${operation!.id}`))) return
+    const manifest = await readTemplateManifest(this.manifest())
+    const scope = await this.scope(command.writeScope.length ? command.writeScope : manifest.contract.writablePrefixes)
     if (operation.phase === 'unknown' || operation.phase === 'sending') throw new Error('原指令的投递结果未知，请核对消息记录；输入已保留')
     if (operation.phase === 'sent') return
     if (!operation.taskId) {
       const ids = operation.phase === 'creating' && operation.create ? operation.create.developmentRequirementIds : await this.identify(operation, command.projectId, [], command.developmentRequirementIds)
       if (!ids.length) { operation.message = '未识别实际开发需求，请补充需求名称或编号；原指令已保留'; await this.save(); throw new Error(operation.message) }
       if (!operation.create) {
-        operation.create = { idempotencyKey: command.operationId, clientId: local.clientId, title: command.title, developmentRequirementIds: ids, referenceRequirementIds: command.referenceRequirementIds.filter(id => !ids.includes(id)), writeScope: scope.paths, policyHash: scope.hash, instruction: { userActionId: command.operationId, summary: '用户发送了原型实现指令' } }
+        const remote = await this.api.request<ProjectState>('GET', this.route(command.projectId, ''))
+        if (!remote.project.recognizedHead) throw new Error('项目尚未形成可开发的固定起点')
+        operation.create = { idempotencyKey: command.operationId, clientId: local.clientId, title: command.title, developmentRequirementIds: ids, referenceRequirementIds: command.referenceRequirementIds.filter(id => !ids.includes(id)), writeScope: scope.paths, policyHash: scope.hash, instruction: { userActionId: command.operationId, summary: '用户发送了原型实现指令' }, commitId: remote.project.recognizedHead, remoteRef: `refs/heads/studio/prototype/${operation.id}` }
         await this.save()
       } else if (canonical(operation.create.developmentRequirementIds) !== canonical(ids)) throw new Error('原创建操作的需求身份与识别结果不一致，请保留原操作核对')
       let task: PrototypeTaskView
@@ -191,61 +240,192 @@ export class PrototypeCollaboration {
         task = await this.api.request<PrototypeTaskView>('POST', this.route(command.projectId, '/prototype/tasks'), operation.create)
       }
       if (this.store.accountId !== accountId || task.ownerId !== accountId || task.clientId !== local.clientId) throw new Error('事项账号或设备身份已变化')
+      if (task.startHead !== operation.create.commitId || `refs/heads/${task.branch}` !== operation.create.remoteRef) throw new Error('后台事项分支或开发起点与原请求不一致，现场已保留')
       operation.taskId = task.id; operation.phase = 'claimed'
-      data.tasks.push({ projectId: command.projectId, task, sessionId: `studio-${randomUUID()}`, worktree: path.join(this.store.directory, 'worktrees', command.projectId, task.id), state: 'queued' })
+      data.queueOrder = (data.queueOrder ?? []).map(id => id === `queued:${operation!.id}` ? task.id : id)
+      const claim = ids.length === 1 ? task.developmentClaims.find(value => value.requirementId === ids[0]) : undefined
+      if (ids.length === 1 && !claim) throw new Error('后台未返回需求开发占用，不能开始写入')
+      const development: RequirementDevelopment | undefined = ids.length === 1 ? { requirementId: ids[0]!, runId: operation.id, stage: 'queued', reviewStatus: 'pending', startCommitId: task.startHead, remoteRef: operation.create.remoteRef, claim: claim!, claimReleased: false } : undefined
+      data.tasks.push({ projectId: command.projectId, task, sessionId: `studio-${randomUUID()}`, worktree: path.join(this.store.directory, 'worktrees', command.projectId, task.id), state: 'queued', ...(development ? { development } : {}) })
       await this.save()
     }
     const item = data.tasks.find(value => value.task.id === operation!.taskId)
     if (!item) throw new Error('事项本地记录不存在')
     await this.current(item); await this.workspace(item); operation.phase = 'workspace'; await this.save()
-    if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) { item.nextAction = '首次指令已保存，等待手动继续'; await this.save(); return }
+    if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) { item.nextAction = item.development ? '首次指令已保存，等待前一项完成' : '首次指令已保存，等待手动继续'; await this.save(); return }
     await this.dispatch(item, operation, command.instruction)
   }
   private async dispatch(item: LocalTask, operation: Operation, instruction: string): Promise<void> {
     const data = await this.data()
-    if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) { item.state = 'queued'; item.nextAction = '等待手动继续'; await this.save(); return }
+    if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) { item.state = 'queued'; item.nextAction = item.development ? '等待前一项完成' : '等待手动继续'; await this.save(); return }
     await this.current(item); await this.scope(item.task.writeScope)
+    if (item.development) { await this.requireClaim(item); item.development.runId = operation.id; item.development.stage = 'sending'; item.development.reviewStatus = operation.request.action === 'correctPrototypeRequirement' ? 'correcting' : 'pending' }
     const requireExisting = item.sessionOpened || data.operations.some(value => value.taskId === item.task.id && ['sending', 'sent', 'unknown'].includes(value.phase))
-    await this.ports.session(this.localTask(item), '按用户明确指令实现项目原型。需求材料只读，不自行确认或发布。', requireExisting)
+    await this.ports.session(this.localTask(item), '按用户明确指令实现项目原型。需求材料只读，不自行确认、集成、发布或生成基线。', requireExisting)
     item.sessionOpened = true; await this.save()
+    if (item.development) { operation.turnStartHead = (await this.ports.git.state(item.worktree)).head; operation.turnStartFingerprint = await this.ports.git.workingFingerprint(item.worktree) }
     operation.phase = 'sending'; item.state = 'running'; delete item.nextAction; data.selectedTaskId = item.task.id; await this.save()
-    try { await this.ports.prompt(item.sessionId, instruction, operation.id, operation.request.attachments); operation.phase = 'sent'; await this.save() }
-    catch (error) { operation.phase = 'unknown'; item.state = 'recovery-required'; item.nextAction = '核对原生会话中的消息结果'; operation.message = error instanceof Error ? error.message : '消息投递结果未知'; await this.save(); throw error }
+    const attachments = 'attachments' in operation.request ? operation.request.attachments : undefined
+    try {
+      await this.ports.prompt(item.sessionId, instruction, operation.id, attachments)
+      operation.phase = 'sent'; if (item.development) item.development.stage = 'developing'; await this.save()
+    } catch (error) {
+      operation.phase = 'unknown'; item.state = 'recovery-required'; item.nextAction = '核对原生会话中的消息结果'; operation.message = error instanceof Error ? error.message : '消息投递结果未知'
+      if (item.development) { item.development.stage = 'sending'; item.development.message = operation.message }
+      await this.save(); throw error
+    }
   }
-  async continue(command: Continue): Promise<void> {
-    const data = await this.data(), item = data.tasks.find(value => value.task.id === command.prototypeTaskId)
-    if (!item) throw new Error('本机未登记该事项')
+  private async claimForRun(item: LocalTask, operation: Operation): Promise<void> {
+    const development = item.development!
+    try {
+      await this.current(item); await this.existingWorkspace(item)
+      const commitId = (await this.ports.git.state(item.worktree)).head
+      operation.claimRequest ??= { key: digest(`${operation.id}:claim`), token: this.token(item.task), requirementId: development.requirementId, commitId, remoteRef: development.remoteRef }
+      development.stage = 'claiming'; development.runId = operation.id; await this.save()
+      const claimed = await this.performKeyed<Claim>(item.projectId, `/prototype/tasks/${encodeURIComponent(item.task.id)}/development-claims`, operation.claimRequest)
+      if (claimed.requirementId !== development.requirementId || !claimed.claimId || !Number.isSafeInteger(claimed.generation) || claimed.generation < 1) throw new Error('后台返回的需求开发占用无效')
+      const claim: Claim = { requirementId: claimed.requirementId, claimId: claimed.claimId, generation: claimed.generation }
+      development.claim = claim; development.claimReleased = false; development.stage = 'queued'; development.reviewStatus = 'correcting'; operation.phase = 'claimed'
+      item.task.developmentRequirementIds = [development.requirementId]; item.task.developmentClaims = [claim]
+      delete development.message; await this.save()
+    } catch (error) {
+      development.stage = 'blocked'; development.message = error instanceof Error ? error.message : '需求开发领取结果未知'
+      item.state = 'recovery-required'; item.nextAction = development.message
+      await this.save(); throw error
+    }
+  }
+  async correct(command: Correct): Promise<void> {
+    const data = await this.data(), item = data.tasks.find(value => value.task.id === command.prototypeTaskId), development = item?.development
+    if (!item || !development) throw new Error('本机未登记该需求开发事项')
     let operation = data.operations.find(value => value.id === command.operationId)
-    if (operation && canonical(operation.request) !== canonical(command)) throw new Error('同一操作不能绑定不同实现指令')
+    if (operation && canonical(operation.request) !== canonical(command)) throw new Error('同一操作不能绑定不同纠偏指令')
+    if (!operation) {
+      operation = { id: command.operationId, request: structuredClone(command), taskId: item.task.id, phase: 'prepared' }
+      data.operations.push(operation); development.correction = command.instruction; await this.save()
+    }
+    if (item.state === 'running' || item.state === 'recovery-required' && development.stage !== 'blocked') throw new Error('请先核对当前会话执行结果；纠偏输入已保留')
+    development.runId = operation.id; development.stage = 'queued'; development.reviewStatus = 'correcting'
+    item.state = 'queued'; item.nextAction = '纠偏输入已保存，等待开发队列'; await this.save()
+    if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) return
+    await this.prepareCorrection(item, operation); await this.dispatch(item, operation, command.instruction)
+  }
+  private async prepareCorrection(item: LocalTask, operation: Operation): Promise<void> {
+    if (item.development?.claim && !item.development.claimReleased) { await this.requireClaim(item); operation.phase = 'claimed'; await this.save(); return }
+    await this.claimForRun(item, operation)
+  }
+  private async advanceQueue(): Promise<void> {
+    const data = await this.data()
+    if (data.tasks.some(value => value.state === 'running' || value.state === 'recovery-required')) return
+    const candidates: Array<{ id: string; item: LocalTask } | { id: string; operation: Operation }> = [...data.tasks.filter(item => item.development && item.state === 'queued').map(item => ({ id: item.task.id, item })), ...data.operations.filter(value => !value.taskId && value.request.action === 'startPrototypeCollaboration' && ['prepared', 'creating'].includes(value.phase)).map(operation => ({ id: `queued:${operation.id}`, operation }))].sort((a, b) => this.queuePosition(data, a.id) - this.queuePosition(data, b.id))
+    for (const candidate of candidates) {
+      if ('operation' in candidate) {
+        const pending = candidate.operation
+        if (pending.request.action === 'startPrototypeCollaboration') {
+          try { await this.start(pending.request); delete pending.message }
+          catch (error) { pending.message = error instanceof Error ? error.message : '需求开发领取待恢复'; await this.save() }
+        }
+        return
+      }
+      const item = candidate.item, development = item.development
+      if (!development) continue
+      const operation = data.operations.find(value => value.id === development.runId)
+      if (!operation) throw new Error('需求开发操作记录缺失，队列已停止')
+      if (operation.phase === 'workspace' && operation.request.action === 'startPrototypeCollaboration') await this.dispatch(item, operation, operation.request.instruction)
+      else if (operation.phase === 'prepared' && operation.request.action === 'correctPrototypeRequirement') { await this.prepareCorrection(item, operation); await this.dispatch(item, operation, operation.request.instruction) }
+      else continue
+      return
+    }
+  }
+  private async finishDevelopment(item: LocalTask, operation: Operation, release: boolean, final = false): Promise<void> {
+    const development = item.development!
+    await this.existingWorkspace(item)
+    if (operation.phase === 'sent') {
+      const observed = await this.ports.git.state(item.worktree)
+      if (!operation.turnStartHead || !operation.turnStartFingerprint) throw new Error('开发轮次的工作现场起点未记录，不能自动固定成果')
+      const unchanged = observed.head === operation.turnStartHead && await this.ports.git.workingFingerprint(item.worktree) === operation.turnStartFingerprint
+      if ((operation.request.action === 'startPrototypeCollaboration' || operation.request.action === 'correctPrototypeRequirement') && unchanged) {
+        item.state = 'awaiting-user'; item.nextAction = '本轮未形成代码改动，请核对答复后决定是否纠偏'; development.stage = operation.request.action === 'correctPrototypeRequirement' ? 'awaiting-review' : 'developing'; if (operation.request.action === 'correctPrototypeRequirement') development.reviewStatus = 'awaiting-review'; development.message = item.nextAction
+        await this.save(); return
+      }
+      operation.phase = 'fixing'; development.stage = 'fixing'; delete development.message; await this.save()
+    }
+    if (operation.phase === 'confirming') { operation.phase = 'fixing'; development.stage = 'fixing'; await this.save() }
+    if (['fixing', 'commit-known', 'pushing'].includes(operation.phase)) await this.requireClaim(item)
+    if (!operation.commitId) {
+      const identity = await this.ports.git.identity(item.worktree)
+      operation.commitId = await this.ports.git.commitAll(item.worktree, `${final ? '确认' : '实现'}需求 ${development.requirementId}`, identity)
+      development.commitId = operation.commitId; operation.phase = 'commit-known'; development.stage = 'commit-known'; await this.save()
+    }
+    if (!operation.checksPassed) {
+      await this.ports.candidateChecks(this.localTask(item), operation.commitId, operation.id)
+      operation.checksPassed = true; await this.save()
+    }
+    if (operation.phase === 'commit-known' || operation.phase === 'fixing') { operation.phase = 'pushing'; development.stage = 'pushing'; await this.save() }
+    if (operation.phase === 'pushing') {
+      let remote = await this.ports.git.optionalRemoteHead(item.worktree, item.task.branch)
+      if (remote !== operation.commitId) {
+        if (remote !== undefined && !await this.ports.git.isAncestor(item.worktree, remote, operation.commitId)) throw new Error('任务远端分支已指向其他提交，现场已保留')
+        await this.ports.git.conditionalUpdate(item.worktree, item.task.branch, remote, operation.commitId)
+        remote = await this.ports.git.optionalRemoteHead(item.worktree, item.task.branch)
+      }
+      if (remote !== operation.commitId) throw new Error('任务远端提交尚未核验，后端状态保持未同步')
+      operation.phase = 'pushed'; development.stage = 'pushed'; await this.save()
+    }
+    if (operation.phase === 'pushed') {
+      if (!development.claim) throw new Error('需求开发占用记录缺失，不能同步后端')
+      operation.synchronizeRequest ??= { key: digest(`${operation.id}:sync`), token: this.token(item.task), claim: development.claim, commitId: operation.commitId, remoteRef: development.remoteRef, release }
+      operation.phase = 'synchronizing'; development.stage = 'synchronizing'; await this.save()
+    }
+    if (operation.phase === 'synchronizing') {
+      await this.performKeyed<unknown>(item.projectId, `/prototype/tasks/${encodeURIComponent(item.task.id)}/development-claims/${encodeURIComponent(development.requirementId)}/synchronize`, operation.synchronizeRequest!)
+      development.claimReleased = release
+      if (final) {
+        operation.phase = 'reviewed'; development.stage = 'reviewed'; development.reviewStatus = 'reviewed'; item.nextAction = '需求成果已确认，未生成整体原型基线'
+      } else {
+        operation.phase = 'awaiting-review'; development.stage = 'awaiting-review'; development.reviewStatus = 'awaiting-review'; item.nextAction = release ? '需求成果待核对，已自动推进下一项' : '纠偏成果待核对，开发占用保留至最终确认'
+      }
+      item.state = 'awaiting-user'; delete development.message; await this.save()
+      if (!final) await this.advanceQueue()
+    }
+  }
+  async confirm(command: Confirm): Promise<void> {
+    const data = await this.data(), item = data.tasks.find(value => value.task.id === command.prototypeTaskId), development = item?.development
+    if (!item || !development) throw new Error('本机未登记该需求开发事项')
+    let operation = data.operations.find(value => value.id === command.operationId)
+    if (operation && canonical(operation.request) !== canonical(command)) throw new Error('同一操作不能绑定其他最终确认')
     if (!operation) { operation = { id: command.operationId, request: structuredClone(command), taskId: item.task.id, phase: 'prepared' }; data.operations.push(operation); await this.save() }
-    if (operation.phase === 'sending' || operation.phase === 'unknown') throw new Error('原指令的投递结果未知，请核对消息记录；输入已保留')
-    if (operation.phase === 'sent') return
-    if (item.state === 'running' || item.state === 'recovery-required') throw new Error('请先核对当前会话执行结果')
-    const initial = data.operations.find(value => value.taskId === item.task.id && value.request.action === 'startPrototypeCollaboration' && value.phase === 'workspace')
-    if (initial && initial.request.action === 'startPrototypeCollaboration') {
-      throw new Error('该事项有待发送的首次指令，请先继续事项；本次输入已保留')
-    }
-    let task = await this.current(item)
-    const explicitIds = command.action === 'extendPrototypeDevelopment' ? command.developmentRequirementIds : []
-    const identified = await this.identify(operation, item.projectId, task.developmentRequirementIds, explicitIds)
-    const targets = [...new Set([...task.developmentRequirementIds, ...identified])]
-    if (operation.claims || targets.some(id => !task.developmentRequirementIds.includes(id))) {
-      const requestedScope = command.action === 'extendPrototypeDevelopment' ? command.writeScope : []
-      const scope = await this.scope(requestedScope.length ? requestedScope : task.writeScope), token = () => ({ prototypeTaskId: task.id, generation: task.generation, clientId: task.clientId, expectedRevision: task.revision }), instruction = { userActionId: command.operationId, summary: '用户发送了扩大开发范围的指令' }
-      if (operation.phase === 'prepared') {
-        operation.claims ??= { idempotencyKey: digest(`${operation.id}:claims`), token: token(), developmentRequirementIds: targets, instruction }
-        await this.save()
-        task = await this.perform<PrototypeTaskView>(item.projectId, 'POST', `/prototype/tasks/${encodeURIComponent(task.id)}/development-claims`, operation.claims)
-        item.task = task; operation.phase = 'claimed'; await this.save()
+    if (operation.phase === 'reviewed') return
+    const resumes = development.runId === operation.id && operation.phase !== 'prepared'
+    if (item.state === 'running' || item.state === 'recovery-required' && !resumes) throw new Error('请先核对当前开发或恢复结果')
+    if ((data.buffers ?? []).some(value => value.prototypeTaskId === item.task.id && value.content !== value.baseContent)) throw new Error('请先保存或处理当前成果编辑缓冲')
+    if (!resumes) { development.runId = operation.id; development.stage = 'confirming'; operation.phase = 'confirming' }
+    item.state = 'running'; item.nextAction = '正在固定并核对当前所阅需求成果'; await this.save()
+    try {
+      await this.current(item); await this.existingWorkspace(item)
+      const observed = await this.ports.git.state(item.worktree)
+      const currentClaim = development.claim && !development.claimReleased ? await this.remoteClaim(item) : null
+      const changed = observed.dirty || observed.head !== development.commitId
+      if (!changed && !currentClaim) {
+        if (development.commitId !== observed.head) throw new Error('当前所阅成果与首次同步提交不一致')
+        if (await this.remoteClaim(item)) throw new Error('需求当前由其他开发占用持有，不能沿用旧授权确认')
+        if (await this.ports.git.optionalRemoteHead(item.worktree, item.task.branch) !== observed.head) throw new Error('当前所阅提交与任务远端不一致')
+        const first = data.operations.find(value => value.taskId === item.task.id && value.synchronizeRequest?.release && value.synchronizeRequest.commitId === observed.head)
+        if (!first) throw new Error('首次成果同步记录缺失，不能伪造新的开发占用')
+        await this.api.request('GET', this.route(item.projectId, `/operations/${encodeURIComponent(first.synchronizeRequest!.key)}`))
+        operation.phase = 'reviewed'; development.stage = 'reviewed'; development.reviewStatus = 'reviewed'; item.state = 'awaiting-user'; item.nextAction = '需求成果已确认，未生成整体原型基线'; await this.save(); return
       }
-      if (operation.phase === 'claimed') {
-        operation.scope ??= { idempotencyKey: digest(`${operation.id}:scope`), token: token(), writeScope: scope.paths, policyHash: scope.hash, instruction }
-        await this.save()
-        task = await this.perform<PrototypeTaskView>(item.projectId, 'PUT', `/prototype/tasks/${encodeURIComponent(task.id)}/write-scope`, operation.scope)
-        item.task = task; operation.phase = 'scope'; await this.save()
+      if (currentClaim && development.claim && canonical(currentClaim) !== canonical(development.claim)) throw new Error('需求开发占用已变化，现场已保留')
+      if (!currentClaim) {
+        item.state = 'awaiting-user'; development.stage = 'awaiting-review'; operation.phase = 'prepared'; await this.save()
+        throw new Error('成果在释放占用后发生变化，请先发起纠偏并重新核对')
       }
+      operation.phase = 'confirming'
+      await this.finishDevelopment(item, operation, true, true)
+    } catch (error) {
+      if (item.state === 'awaiting-user') throw error
+      item.state = 'recovery-required'; item.nextAction = error instanceof Error ? error.message : '最终确认结果待恢复'; development.message = item.nextAction
+      await this.save(); throw error
     }
-    await this.dispatch(item, operation, command.instruction)
   }
   async select(taskId: string, operationId: string): Promise<void> {
     const data = await this.data()
@@ -269,8 +449,11 @@ export class PrototypeCollaboration {
     }
     if (command.expectedRevision !== data.revision) throw new Error('事项队列已变化，请刷新后重新排序')
     const items = new Map(data.tasks.map(item => [item.task.id, item]))
-    if (items.size !== data.tasks.length || command.prototypeTaskIds.length !== items.size || new Set(command.prototypeTaskIds).size !== items.size || command.prototypeTaskIds.some(id => !items.has(id))) throw new Error('队列顺序必须包含本机全部事项')
-    data.tasks = command.prototypeTaskIds.map(id => items.get(id)!)
+    const pending = data.operations.filter(value => !value.taskId && value.request.action === 'startPrototypeCollaboration').map(value => `queued:${value.id}`)
+    const all = new Set([...items.keys(), ...pending])
+    if (items.size !== data.tasks.length || command.prototypeTaskIds.length !== all.size || new Set(command.prototypeTaskIds).size !== all.size || command.prototypeTaskIds.some(id => !all.has(id))) throw new Error('队列顺序必须包含本机全部事项')
+    data.queueOrder = [...command.prototypeTaskIds]
+    data.tasks = command.prototypeTaskIds.flatMap(id => { const item = items.get(id); return item ? [item] : [] })
     ;(data.queueReorders ??= []).push({ id: command.operationId, fingerprint })
     await this.save()
   }
@@ -331,7 +514,9 @@ export class PrototypeCollaboration {
     if (result === 'delivered' && item.state === 'recovery-required') {
       await this.restoreSession(item.sessionId)
       if (await this.ports.settlePrototypeSession(item.sessionId, false)) {
-        item.state = 'awaiting-user'; item.nextAction = '原指令已记录，会话已收敛；可继续发送指令'; await this.save()
+        if (item.development) { item.state = 'recovery-required'; item.nextAction = '原生日志已恢复，等待官方轮次结束事件'; }
+        else { item.state = 'awaiting-user'; item.nextAction = '原指令已记录，会话已收敛；可继续发送指令' }
+        await this.save()
       }
     }
   }
@@ -346,7 +531,7 @@ export class PrototypeCollaboration {
     const data = await this.data(), item = data.tasks.find(value => value.sessionId === sessionId)
     if (!item) return undefined
     await this.current(item); await this.existingWorkspace(item); await this.scope(item.task.writeScope)
-    return this.ports.session(this.localTask(item), '按用户明确指令实现项目原型。需求材料只读，不自行确认或发布。', true)
+    return this.ports.session(this.localTask(item), '按用户明确指令实现项目原型。需求材料只读，不自行确认、集成、发布或生成基线。', true)
   }
   async task(taskId: string): Promise<TaskView> {
     const item = (await this.data()).tasks.find(value => value.task.id === taskId)
@@ -376,6 +561,15 @@ export class PrototypeCollaboration {
     const initial = await this.current(item)
     if (canonical([...(localTask.writePaths ?? [])].sort()) !== canonical([...initial.writeScope].sort())) throw new Error('原型会话写入范围与当前事项授权不一致')
     if ((await this.scope(initial.writeScope)).hash !== initial.policyHash) throw new Error('原型模板写入策略已变化，现场已保留')
+    if (item.development) {
+      const development = item.development, runId = development.runId, expectedClaim = canonical(development.claim)
+      return async () => {
+        const operation = this.record?.operations.find(value => value.id === runId)
+        if (development.runId !== runId || item.state !== 'running' || !operation || !['sending', 'sent'].includes(operation.phase) || canonical(development.claim) !== expectedClaim) throw new Error('需求开发代次或当前操作已变化，原生写入已停止并保留现场')
+        await this.requireClaim(item)
+        if ((await this.scope(item.task.writeScope)).hash !== item.task.policyHash) throw new Error('原型模板写入策略已变化，现场已保留')
+      }
+    }
     const expected = binding(initial)
     return async () => {
       const latest = await this.current(item)
@@ -414,14 +608,83 @@ export class PrototypeCollaboration {
     if (!storage) throw new Error('事项队列尚未初始化')
     data.revision++; await storage.write(data)
   }
+  /** Resume durable development steps without repeating a model request or an already verified Git step. */
+  async recover(): Promise<void> {
+    const data = await this.data(), accountId = this.store.accountId
+    if (!accountId || (await this.ports.account())?.id !== accountId) throw new Error('协同账号已变化，任务现场保留供原账号恢复')
+    for (const item of data.tasks) {
+      const development = item.development
+      if (!development || development.stage === 'reviewed' || development.stage === 'awaiting-review') continue
+      const operation = data.operations.find(value => value.id === development.runId)
+      if (!operation) throw new Error('需求开发操作记录缺失，现场已保留')
+      if (item.state === 'awaiting-user' || development.stage === 'blocked') return
+      if (operation.request.action === 'startPrototypeCollaboration' && ['prepared', 'creating', 'claimed'].includes(operation.phase)) { await this.recoverCall(item, () => this.start(operation.request as Start)); return }
+      if (operation.phase === 'workspace') { item.state = 'queued'; await this.save(); await this.advanceQueue(); return }
+      if (operation.phase === 'unknown' || operation.phase === 'sending') {
+        const delivery = await this.ports.inspectPrompt(item.sessionId, operation.id)
+        if (delivery === 'unknown') { item.state = 'recovery-required'; item.nextAction = '消息结果仍未知，原指令未重发'; development.stage = 'sending'; await this.save(); return }
+        operation.phase = 'sent'; development.stage = 'developing'; item.state = 'recovery-required'; await this.save()
+      }
+      if (operation.phase === 'sent') {
+        await this.restoreSession(item.sessionId)
+        item.nextAction = '原生日志已恢复，正在核对官方轮次结束事件'; await this.save()
+        await this.ports.settlePrototypeSession(item.sessionId, false)
+        return
+      }
+      if (operation.phase === 'claimed' && operation.request.action === 'correctPrototypeRequirement') { await this.recoverCall(item, () => this.dispatch(item, operation, (operation.request as Correct).instruction)); return }
+      if (['fixing', 'commit-known', 'pushing', 'pushed', 'synchronizing', 'confirming'].includes(operation.phase)) {
+        const release = operation.request.action === 'correctPrototypeRequirement' ? false : true
+        await this.recoverCall(item, () => this.finishDevelopment(item, operation, release, operation.request.action === 'confirmPrototypeRequirement')); return
+      }
+      return
+    }
+    await this.advanceQueue()
+  }
+  private async recoverCall(item: LocalTask, work: () => Promise<void>): Promise<void> {
+    try { await work() }
+    catch (error) {
+      if (item.development?.stage !== 'awaiting-review' && item.development?.stage !== 'reviewed') {
+        item.state = 'recovery-required'; item.nextAction = error instanceof Error ? error.message : '需求开发恢复未完成'
+        if (item.development && item.development.stage !== 'blocked') item.development.message = item.nextAction
+        await this.save()
+      }
+      throw error
+    }
+  }
   async accept(sessionId: string, output: SessionOutput): Promise<boolean> {
     const data = await this.data(), item = data.tasks.find(value => value.sessionId === sessionId)
     if (!item) return false
-    if (output.kind === 'turn-ended' && item.state !== 'paused' && !(data.pauses ?? []).some(value => value.taskId === item.task.id && value.status === 'waiting')) {
-      const settled = await this.ports.settlePrototypeSession(item.sessionId, false)
+    if (output.kind !== 'turn-ended' || item.state === 'paused' || (data.pauses ?? []).some(value => value.taskId === item.task.id && value.status === 'waiting')) return true
+    const development = item.development
+    if (!development) {
+      const settled = output.reason === 'completed' && await this.ports.settlePrototypeSession(item.sessionId, false)
       item.state = settled ? 'awaiting-user' : 'recovery-required'
-      if (settled) delete item.nextAction; else item.nextAction = '执行收敛或会话保存待核对'
-      await this.save()
+      if (settled) delete item.nextAction
+      else item.nextAction = output.reason === 'completed' ? '执行收敛或会话保存待核对' : `原生轮次未成功完成：${output.reason}`
+      await this.save(); return true
+    }
+    const operation = data.operations.find(value => value.id === development.runId)
+    if (!operation || !['startPrototypeCollaboration', 'correctPrototypeRequirement'].includes(operation.request.action)) return true
+    if (output.seq === undefined || !Number.isSafeInteger(output.seq)) return true
+    const recoveringTurn = operation.phase === 'sent' && operation.turnSeq === output.seq
+    if (development.lastTurnSeq !== undefined && (output.seq < development.lastTurnSeq || output.seq === development.lastTurnSeq && !recoveringTurn)) return true
+    development.lastTurnSeq = output.seq
+    if (output.reason !== 'completed') {
+      item.state = 'recovery-required'; item.nextAction = `原生轮次未成功完成：${output.reason}；未提交或释放需求`; development.message = item.nextAction
+      await this.save(); return true
+    }
+    if (operation.phase !== 'sent') { await this.save(); return true }
+    operation.turnSeq = output.seq; await this.save()
+    try {
+      if (await this.ports.inspectPrompt(item.sessionId, operation.id) !== 'delivered') throw new Error('原生记录未证明当前开发指令已投递，不能完成开发')
+      if (!await this.ports.settlePrototypeSession(item.sessionId, false)) throw new Error('原生会话尚未收敛或日志尚未保存')
+      item.state = 'running'; await this.save()
+      await this.finishDevelopment(item, operation, operation.request.action !== 'correctPrototypeRequirement')
+    } catch (error) {
+      if (development.stage !== 'awaiting-review' && development.stage !== 'reviewed') {
+        item.state = 'recovery-required'; item.nextAction = error instanceof Error ? error.message : '需求开发完成步骤待恢复'; development.message = item.nextAction
+        await this.save()
+      }
     }
     return true
   }
@@ -431,7 +694,11 @@ export class PrototypeCollaboration {
     const task = await this.api.request<PrototypeTaskView>('GET', this.route(item.projectId, `/prototype/tasks/${encodeURIComponent(taskId)}`))
     const local = await this.store.read()
     if (task.ownerId !== this.store.accountId || task.clientId !== local.clientId) throw new Error('该事项不属于当前账号或设备')
-    const active = task.status === 'active' && task.generation === item.task.generation && task.developmentClaims.length > 0
+    let active = task.status === 'active' && task.generation === item.task.generation && (item.development ? !item.development.claimReleased && !!item.development.claim : task.developmentClaims.length > 0)
+    if (active && item.development) {
+      const claim = await this.remoteClaim(item)
+      active = !!claim && canonical(claim) === canonical(item.development.claim)
+    }
     const scope = active ? await this.scope(task.writeScope) : { paths: [] }
     if (active && 'hash' in scope && scope.hash !== task.policyHash) throw new Error('原型模板写入策略已变化，现场已保留')
     if (task.generation === item.task.generation) item.task = task

@@ -34,7 +34,10 @@ export function registerRoutes(app: FastifyInstance, service: CollaborationServi
   read(`${base}/prototype`, (a, p) => service.prototype(a, p.projectId!));
   read(`${base}/prototype/tasks/:taskId`, (a, p) => service.prototypeTask(a, p.projectId!, p.taskId!));
   write('POST', `${base}/prototype/tasks`, contract.CreatePrototypeTaskSchema, (a, p, b) => service.createPrototypeTask(a, p.projectId!, b));
-  write('POST', `${base}/prototype/tasks/:taskId/development-claims`, contract.UpdatePrototypeClaimsSchema, (a, p, b) => service.extendPrototypeClaims(a, p.projectId!, p.taskId!, b));
+  write('POST', `${base}/prototype/tasks/:taskId/development-claims`, contract.ClaimPrototypeDevelopmentSchema, (a, p, b) => service.claimPrototypeDevelopment(a, p.projectId!, p.taskId!, b));
+  write('POST', `${base}/prototype/tasks/:taskId/development-claims/:requirementId/synchronize`, contract.SynchronizePrototypeDevelopmentSchema, (a, p, b) => service.synchronizePrototypeDevelopment(a, p.projectId!, p.taskId!, p.requirementId!, b));
+  read(`${base}/prototype/requirements/:requirementId/development-claim`, (a, p) => service.prototypeDevelopmentClaim(a, p.projectId!, p.requirementId!));
+  write('PUT', `${base}/prototype/requirements/:requirementId/development-claim`, contract.AdminPrototypeDevelopmentClaimSchema, (a, p, b) => service.administerPrototypeDevelopmentClaim(a, p.projectId!, p.requirementId!, b));
   write('PUT', `${base}/prototype/tasks/:taskId/reference-requirements`, contract.UpdatePrototypeReferencesSchema, (a, p, b) => service.updatePrototypeReferences(a, p.projectId!, p.taskId!, b));
   write('PUT', `${base}/prototype/tasks/:taskId/write-scope`, contract.UpdatePrototypeScopeSchema, (a, p, b) => service.updatePrototypeScope(a, p.projectId!, p.taskId!, b));
   write('PUT', `${base}/prototype/tasks/:taskId/source-base`, contract.UpdatePrototypeSourceBaseSchema, (a, p, b) => service.updatePrototypeSourceBase(a, p.projectId!, p.taskId!, b));

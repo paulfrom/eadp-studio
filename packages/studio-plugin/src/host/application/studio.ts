@@ -55,6 +55,7 @@ export class StudioApplication {
   private readonly progress = new ProjectProgressTracker()
   private projection: Promise<StudioState> | undefined
   private readonly requirementRecoveries = new Set<string>()
+  private prototypeRecovery = false
   private previewState: StudioState['preview']
   private readonly prototypePreviews = new Map<string, NonNullable<StudioState['prototypePreviews']>[number]>()
   private readonly prototypeBaselinePreviews = new Map<string, NonNullable<StudioState['prototypePreviews']>[number]>()
@@ -218,7 +219,8 @@ export class StudioApplication {
       return { ok: true, state: await this.state(), prototypeFiles }
     }
     if (command.action === 'startPrototypeCollaboration') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.start(command) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
-    if (command.action === 'continuePrototypeCollaboration' || command.action === 'extendPrototypeDevelopment') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.continue(command) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'correctPrototypeRequirement') { await this.prototypeCollaboration.correct(command); return { ok: true, state: await this.state() } }
+    if (command.action === 'confirmPrototypeRequirement') { await this.prototypeCollaboration.confirm(command); return { ok: true, state: await this.state() } }
     if (command.action === 'selectPrototypeQueueItem') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; await this.prototypeCollaboration.select(command.prototypeTaskId, command.operationId); await this.syncPrototypePreviewSelection(before); return { ok: true, state: await this.state() } }
     if (command.action === 'reorderPrototypeQueue') { await this.prototypeCollaboration.reorder(command); return { ok: true, state: await this.state() } }
     if (command.action === 'pausePrototypeQueueItem') { await this.prototypeCollaboration.pause(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
@@ -542,6 +544,16 @@ export class StudioApplication {
       void recovery.then(() => this.requirementRecoveries.delete(identity), () => this.requirementRecoveries.delete(identity))
     }
   }
+  private schedulePrototypeRecovery(accountId: number): void {
+    if (this.prototypeRecovery) return
+    this.prototypeRecovery = true
+    const recovery = this.queue.then(async () => {
+      if (this.store.accountId !== accountId || (await this.ports.account())?.id !== accountId) return
+      await this.prototypeCollaboration.recover()
+    })
+    this.queue = recovery.catch(() => undefined)
+    void recovery.then(() => { this.prototypeRecovery = false }, () => { this.prototypeRecovery = false })
+  }
   private async acceptSourceRead(sessionId: string, output: Extract<SessionOutput, { kind: 'source-read' }>): Promise<void> {
     const local = await this.store.read(), task = local.tasks.find(t => t.sessionId === sessionId)
     if (!task) return
@@ -641,6 +653,7 @@ export class StudioApplication {
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
       ] }
     if (selected) await this.scheduleRequirementRecoveries(selected.id)
+    this.schedulePrototypeRecovery(account.id)
     if (selected) this.scenarios.statusReports.resume(selected.id)
     this.lastState = state
     return state
@@ -798,6 +811,11 @@ export class StudioApplication {
     const authority = await this.reviews.confirmation(confirmationChoice(choice), snapshot.review)
     await this.integrations.submit(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map(value => ({ ...value, readHash: value.fixed.sha256, ...authority, authorConfirmed: true as const })) })
   }
+  private enqueuePrototypeDevelopment(command: Parameters<PrototypeCollaboration['start']>[0]): Promise<void> {
+    const result = this.queue.then(() => this.prototypeCollaboration.start(command))
+    this.queue = result.catch(() => undefined)
+    return result
+  }
   /** Deliver accepted facts through independently owned follow-up work, never through confirmation failure. */
   private scheduleAcceptedWork(operation: PendingOperation, integration: IntegrationView, task: TaskView): void {
     const scope = `${operation.accountId}:${operation.projectId}:${integration.id}`
@@ -831,6 +849,8 @@ export class StudioApplication {
       if (entity.kind === 'scenario') {
         const record = await this.scenarios.record(entity.id, operation.projectId)
         record.splitOffered = true; this.scenarios.stopObservation(task); await this.store.save()
+      } else if (entity.kind === 'requirement') {
+        await this.enqueuePrototypeDevelopment({ action: 'startPrototypeCollaboration', projectId: operation.projectId, operationId: digest(`prototype-requirement:${integration.id}`), title: `需求开发：${entity.title}`, instruction: `请实现已确认需求 ${entity.title}（${entity.id}）。读取该需求及关联材料，仅在授权范围内修改原型代码；不要修改需求正文，不要自行确认、集成、发布或生成基线。`, developmentRequirementIds: [entity.id], referenceRequirementIds: [], writeScope: [] })
       }
     })
     for (const adoptionId of operation.adoptionIds ?? []) schedule(`adoption-success:${adoptionId}`, async () => {

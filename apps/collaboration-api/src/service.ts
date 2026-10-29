@@ -15,7 +15,7 @@ import * as templates from './modules/templates.js';
 import * as prototypes from './modules/prototypes.js';
 import * as prototypeIntegration from './modules/prototype-integration.js';
 import * as prototypeReuse from './modules/prototype-reuse.js';
-import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, PrototypeSourceBaseResult, ReleasePrototypeTaskRequest, UpdatePrototypeClaimsRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
+import type { AbortPrototypeIntegrationRequest, AdminPrototypeDevelopmentClaimRequest, CancelPrototypeTaskRequest, ClaimPrototypeDevelopmentRequest, CompletePrototypeIntegrationRequest, CreatePrototypeTaskRequest, PrototypeAdoptRequest, PrototypeAdoptionSuccessRequest, PrototypeIntegrationRequest, PrototypeSourceBaseResult, ReleasePrototypeTaskRequest, SynchronizePrototypeDevelopmentRequest, UpdatePrototypeReferencesRequest, UpdatePrototypeScopeRequest, UpdatePrototypeSourceBaseRequest } from '@eadp/contracts';
 import { visibleEntity } from './modules/visibility.js';
 import { prototypePolicy, validatePrototypePolicy } from './prototype-policy.js';
 
@@ -65,6 +65,17 @@ export class CollaborationService {
       await repository.remember(c, projectId, actor, action, input, result); return result;
     });
   }
+  /** Run control-only mutations without hydrating accepted material or reading Git. */
+  private async mutateControl<T>(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }, change: (c: Transaction, project: ProjectView) => Promise<T>): Promise<T> {
+    return this.transact(actor, async c => {
+      await repository.project(c, projectId, true);
+      const project = await repository.project(c, projectId); repository.assertProjectReady(project);
+      const previous = await repository.previous(c, projectId, actor, action, input);
+      if (previous.found) return previous.result as T;
+      const result = await change(c, project);
+      await repository.remember(c, projectId, actor, action, input, result); return result;
+    });
+  }
   async replay(actor: Actor, projectId: string, action: string, input: { idempotencyKey: string }) {
     return this.transact(actor, c => repository.previous(c, projectId, actor, action, input));
   }
@@ -92,11 +103,31 @@ export class CollaborationService {
   async createPrototypeTask(actor: Actor, projectId: string, input: CreatePrototypeTaskRequest) {
     await this.authorize(actor, projectId, true);
     validatePrototypePolicy(await prototypePolicy(), input.writeScope, input.policyHash);
-    return this.mutate(actor, projectId, 'prototype.task.create', input, (c, project, all) => prototypes.createTask(c, project, all, actor, input));
+    return this.mutateControl(actor, projectId, 'prototype.task.create', input, (c, project) => prototypes.createTask(c, project, actor, input));
   }
-  async extendPrototypeClaims(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeClaimsRequest) {
+  async prototypeDevelopmentClaim(actor: Actor, projectId: string, requirementId: string) {
+    await this.authorize(actor, projectId);
+    return this.transact(actor, async c => prototypes.currentDevelopmentClaim(c, projectId, actor, requirementId));
+  }
+  async claimPrototypeDevelopment(actor: Actor, projectId: string, taskId: string, input: ClaimPrototypeDevelopmentRequest) {
+    const operation = { ...input, idempotencyKey: input.key };
+    return this.mutateControl(actor, projectId, `prototype.development.claim:${taskId}:${input.requirementId}`, operation, c => prototypes.claimDevelopment(c, projectId, actor, taskId, operation));
+  }
+  async synchronizePrototypeDevelopment(actor: Actor, projectId: string, taskId: string, requirementId: string, input: SynchronizePrototypeDevelopmentRequest) {
+    const operation = { ...input, idempotencyKey: input.key }, action = `prototype.development.synchronize:${taskId}:${requirementId}`;
+    const previous = await this.replay(actor, projectId, action, operation); if (previous.found) return previous.result;
+    const project = await this.authorize(actor, projectId, true);
+    const task = await this.transact(actor, c => prototypes.getTask(c, projectId, taskId, actor));
+    requireCondition(input.remoteRef === `refs/heads/${task.branch}`, 'INVALID_DEVELOPMENT_REF', 'The remote ref must be the branch managed for this prototype task', 422);
+    const ref = await this.gitlab.json<{ id: string }>(`/projects/${project.gitlabProjectId}/repository/commits/${encodeURIComponent(input.remoteRef)}`);
+    requireCondition(/^[a-f0-9]{40}$/.test(ref.id), 'GITLAB_INVALID_RESPONSE', 'GitLab returned an invalid commit identity', 502);
+    requireCondition(ref.id === input.commitId, 'DEVELOPMENT_COMMIT_MISMATCH', 'The managed remote ref does not match the submitted commit', 409, { requirementId, remoteRef: input.remoteRef });
+    return this.mutateControl(actor, projectId, action, operation, c => prototypes.synchronizeDevelopment(c, projectId, actor, taskId, requirementId, operation));
+  }
+  async administerPrototypeDevelopmentClaim(actor: Actor, projectId: string, requirementId: string, input: AdminPrototypeDevelopmentClaimRequest) {
     await this.authorize(actor, projectId, true);
-    return this.mutate(actor, projectId, `prototype.task.claims:${taskId}`, input, (c, _project, all) => prototypes.extendClaims(c, projectId, all, actor, taskId, input));
+    const operation = { ...input, idempotencyKey: input.key };
+    return this.mutateControl(actor, projectId, `prototype.development.claim.admin:${requirementId}`, operation, c => prototypes.administerDevelopmentClaim(c, projectId, actor, requirementId, operation));
   }
   async updatePrototypeReferences(actor: Actor, projectId: string, taskId: string, input: UpdatePrototypeReferencesRequest) {
     await this.authorize(actor, projectId, true);

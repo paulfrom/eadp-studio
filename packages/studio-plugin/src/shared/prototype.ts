@@ -23,12 +23,16 @@ export type PrototypeFileCommand =
   | { action: 'savePrototypeBuffer'; operationId: string; buffer: PrototypeEditBuffer }
   | { action: 'clearPrototypeBuffer'; prototypeTaskId: string; path: string; expectedContent: string }
 
+export type PrototypeRequirementDevelopmentStage = 'queued' | 'claiming' | 'sending' | 'developing' | 'fixing' | 'commit-known' | 'pushing' | 'pushed' | 'synchronizing' | 'awaiting-review' | 'confirming' | 'reviewed' | 'blocked'
+export type PrototypeRequirementReviewStatus = 'pending' | 'awaiting-review' | 'correcting' | 'reviewed'
+
 /** Local scheduling is separate from the server's task and claim state. */
 export interface PrototypeQueueItem {
-  projectId: string; prototypeTaskId: string; title: string; sessionId?: string;
+  projectId: string; prototypeTaskId: string; title: string; sessionId?: string; pendingCreation?: boolean;
   taskStatus: 'active' | 'cancelled' | 'released' | 'accepted';
   localDispatchState: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required';
   nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; developmentRequirementIds: string[];
+  requirementId?: string; developmentStage?: PrototypeRequirementDevelopmentStage; reviewStatus?: PrototypeRequirementReviewStatus; commitId?: string;
 }
 export interface PrototypeQueueView { revision: number; selectedTaskId?: string; items: PrototypeQueueItem[] }
 export type PrototypePreviewSource = { kind: 'task'; prototypeTaskId: string } | { kind: 'baseline'; baselineId: string; commitSha: string }
@@ -77,8 +81,8 @@ export interface PrototypeCandidateFile {
 /** Starting is an explicit user instruction; reading and selection do not dispatch it. */
 export type PrototypeCollaborationCommand =
   | { action: 'startPrototypeCollaboration'; projectId: string; operationId: string; title: string; instruction: string; developmentRequirementIds: string[]; referenceRequirementIds: string[]; writeScope: string[]; attachments?: PrototypeInstructionAttachment[] }
-  | { action: 'continuePrototypeCollaboration'; prototypeTaskId: string; operationId: string; instruction: string; attachments?: PrototypeInstructionAttachment[] }
-  | { action: 'extendPrototypeDevelopment'; prototypeTaskId: string; operationId: string; instruction: string; developmentRequirementIds: string[]; writeScope: string[]; attachments?: PrototypeInstructionAttachment[] }
+  | { action: 'correctPrototypeRequirement'; prototypeTaskId: string; operationId: string; instruction: string }
+  | { action: 'confirmPrototypeRequirement'; prototypeTaskId: string; operationId: string }
   | { action: 'readPrototypeQueue' }
   | { action: 'savePrototypeInstructionDraft'; operationId: string; draft: PrototypeInstructionDraft }
   | { action: 'selectPrototypeQueueItem'; prototypeTaskId: string; operationId: string }

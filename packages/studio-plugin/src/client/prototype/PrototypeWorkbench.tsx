@@ -4,9 +4,8 @@ import type { PrototypeCandidateFile, PrototypeConversationMessage, PrototypeIns
 import { PrototypeFiles } from './PrototypeFiles.tsx'
 import { PrototypeCanvas } from './PrototypeCanvas.tsx'
 import { PrototypeComparison } from './PrototypeEditor.tsx'
+import { DevelopmentQueue, type DevelopmentQueueItem } from './DevelopmentQueue.tsx'
 import css from './prototype.module.css'
-
-const dispatchLabels: Record<string, string> = { queued: '等待继续', running: '正在执行', 'awaiting-user': '等待核对', paused: '已暂停', 'recovery-required': '待恢复' }
 export interface PrototypeInstructionDraft { title: string; instruction: string; developmentIds: string[]; attachments?: PrototypeInstructionAttachment[] }
 
 /** Project prototype, its requirements, and this account's local collaboration queue. */
@@ -23,7 +22,6 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const [tab, setTab] = useState<'preview' | 'code'>('preview')
   const [baselineId, setBaselineId] = useState<string>()
   const showCode = useCallback(() => setTab('code'), [])
-  const [mode, setMode] = useState<'new' | 'continue'>('new')
   const initial = (state.prototypeInstructionDrafts ?? []).filter(item => item.projectId === projectId)
   const [drafts, setDrafts] = useState<Record<string, StoredDraft>>(() => {
     const values = Object.fromEntries(initial.map(item => [item.prototypeTaskId ?? '', item]))
@@ -45,12 +43,11 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const adoptionOperation = useRef<{ fingerprint: string; id: string }>()
   const runs = useRef(new Map<string, string>())
   const queue = state.prototypeQueue
-  const tasks = (queue?.items ?? []).filter(item => item.projectId === projectId)
+  const tasks = (queue?.items ?? []).filter(item => item.projectId === projectId) as DevelopmentQueueItem[]
   const selected = tasks.find(item => item.prototypeTaskId === queue?.selectedTaskId)
   const baseline = state.prototypeBaselines?.find(item => item.id === baselineId)
   const fileSource = baseline ? { kind: 'baseline' as const, projectId, baselineId: baseline.id, commitSha: baseline.commitSha } : !baselineId && selected ? { kind: 'task' as const, projectId, prototypeTaskId: selected.prototypeTaskId } : undefined
-  const draftKey = mode === 'continue' && selected ? selected.prototypeTaskId : ''
-  const draft = drafts[draftKey] ?? { projectId, ...(draftKey ? { prototypeTaskId: draftKey } : {}), title: '', instruction: '', developmentRequirementIds: [] }
+  const draft = drafts[''] ?? { projectId, title: '', instruction: '', developmentRequirementIds: [] }
   const { title, instruction, developmentRequirementIds: developmentIds, attachments = [] } = draft
   const preview = state.prototypePreviews?.find(item => baseline ? item.baselineId === baseline.id : item.prototypeTaskId === selected?.prototypeTaskId)
   const checkReport = state.prototypeCheckReports?.find(item => baseline ? item.baselineId === baseline.id && item.projectId === projectId : item.prototypeTaskId === selected?.prototypeTaskId && item.projectId === projectId)
@@ -61,7 +58,6 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   useEffect(() => { void call({ action: 'readPrototypeQueue' }) }, [call, projectId])
   const selectedTaskId = selected?.prototypeTaskId
   useEffect(() => { setCandidateFile(undefined); setCandidateError('') }, [selectedTaskId, candidate?.operationId])
-  useEffect(() => { if (selected && selected.taskStatus !== 'active' && mode === 'continue') setMode('new') }, [selected?.taskStatus, mode])
   useEffect(() => {
     if (!selectedTaskId) { setConversation(undefined); return }
     let cancelled = false, inFlight = false
@@ -125,22 +121,18 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const send = async () => {
     setSendError('')
     await saveQueue.current
-    const text = instruction.trim()
-    const additionalIds = selected ? developmentIds.filter(id => !selected.developmentRequirementIds.includes(id)) : []
-    const command: Omit<Extract<StudioCommand, { action: 'startPrototypeCollaboration' }>, 'operationId'> | Omit<Extract<StudioCommand, { action: 'continuePrototypeCollaboration' }>, 'operationId'> | Omit<Extract<StudioCommand, { action: 'extendPrototypeDevelopment' }>, 'operationId'> = mode === 'continue' && selected
-      ? additionalIds.length ? { action: 'extendPrototypeDevelopment', prototypeTaskId: selected.prototypeTaskId, instruction: text, developmentRequirementIds: [...selected.developmentRequirementIds, ...additionalIds], writeScope: [], attachments } : { action: 'continuePrototypeCollaboration', prototypeTaskId: selected.prototypeTaskId, instruction: text, attachments }
-      : { action: 'startPrototypeCollaboration', projectId, title: title.trim() || '原型协作事项', instruction: text, developmentRequirementIds: developmentIds, referenceRequirementIds: [], writeScope: [], attachments }
+    const command: Omit<Extract<StudioCommand, { action: 'startPrototypeCollaboration' }>, 'operationId'> = { action: 'startPrototypeCollaboration', projectId, title: title.trim() || '原型协作事项', instruction: instruction.trim(), developmentRequirementIds: developmentIds, referenceRequirementIds: [], writeScope: [], attachments }
     const fingerprint = JSON.stringify(command)
     if (operation.current?.fingerprint !== fingerprint) operation.current = { fingerprint, id: crypto.randomUUID() }
     const reply = await call({ ...command, operationId: operation.current.id })
     if (!reply?.ok) { setSendError(reply && !reply.ok ? reply.message : '指令未能提交，输入已保留。'); return }
-    if (draftsRef.current[draftKey] === draft) updateDraft({ ...draft, title: '', instruction: '', developmentRequirementIds: [], attachments: [] })
+    if (draftsRef.current[''] === draft) updateDraft({ ...draft, title: '', instruction: '', developmentRequirementIds: [], attachments: [] })
     operation.current = undefined
   }
   const selectTask = async (id: string) => {
     if (id === selected?.prototypeTaskId || !await flushBeforeLeave()) return
     const reply = await call({ action: 'selectPrototypeQueueItem', prototypeTaskId: id, operationId: crypto.randomUUID() })
-    if (reply?.ok) { setBaselineId(undefined); setMode('continue') }
+    if (reply?.ok) setBaselineId(undefined)
   }
   const moveTask = async (id: string, direction: -1 | 1) => {
     if (!queue) return
@@ -244,19 +236,13 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
         <ul>{requirements.map(entity => <li key={entity.id}><button onClick={() => onOpenRequirement(entity.id)}>{entity.code ?? entity.id} · {entity.title}</button><span>{entity.confirmationStatus === 'confirmed' ? '材料已确认' : '草稿'}</span></li>)}</ul>
         {!requirements.length && <p className={css.muted}>项目中还没有需求材料。</p>}
       </details>
-      <details className={css.tasks} open>
-        <summary>我的协作事项 · {tasks.length} 项</summary>
-        <ul>{tasks.map((task, index) => <li key={task.prototypeTaskId}><button aria-current={selected?.prototypeTaskId === task.prototypeTaskId ? 'true' : undefined} onClick={() => void selectTask(task.prototypeTaskId)}>{task.title}</button><span>{dispatchLabels[task.localDispatchState] ?? task.localDispatchState}</span><button type="button" disabled={busy || index === 0} aria-label={`上移${task.title}`} onClick={() => void moveTask(task.prototypeTaskId, -1)}>↑</button><button type="button" disabled={busy || index === tasks.length - 1} aria-label={`下移${task.title}`} onClick={() => void moveTask(task.prototypeTaskId, 1)}>↓</button></li>)}</ul>
-        {queueError && <p role="alert" className={css.fileError}>{queueError}</p>}
-        {!queue ? <p className={css.muted}>正在读取事项队列。</p> : !tasks.length && <p className={css.muted}>当前项目没有本机事项。</p>}
-      </details>
+      <DevelopmentQueue queue={queue} items={tasks} entities={entities} selectedTaskId={selected?.prototypeTaskId} busy={busy} error={queueError} call={call} onSelect={id => void selectTask(id)} onMove={(id, direction) => void moveTask(id, direction)} />
       <div className={css.content}>
         {selected && materialReads.length > 0 && <details><summary>已读取的需求材料 · {materialReads.length} 次</summary><ul>{materialReads.map((item, index) => <li key={`${item.sessionId}:${item.readAt}:${index}`}>{item.title} · {item.source === 'draft' ? '本人草稿' : `已确认版本 ${item.version}`} · 正文第 {item.startLine}–{item.endLine} 行 · {item.readAt}{item.stale ? ' · 材料已更新，仅提醒，不重绑工程' : ''}</li>)}</ul></details>}
-        {selected && <><div className={css.taskInfo}><strong>{selected.title}</strong><p>{dispatchLabels[selected.localDispatchState] ?? selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}</p>{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{selected.localDispatchState === 'queued' && <button type="button" disabled={busy} onClick={() => void call({ action: 'resumePrototypeQueueItem', prototypeTaskId: selected.prototypeTaskId, operationId: crypto.randomUUID() })}>继续已保存的指令</button>}{selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}{selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}</div><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.map(message => <article key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}{message.operationId ? ` · 操作 ${message.operationId}` : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
+        {selected && <><div className={css.taskInfo}><strong>{selected.title} · 会话与现场</strong><p>逐需求开发进度以队列为准；中断恢复由 Host 按持久记录自动处理。</p>{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}<details><summary>事项技术诊断</summary><p>调度状态：{selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}{selected.gitRecovery ? ` · Git：${selected.gitRecovery}` : ''}</p>{selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}</details></div><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.map(message => <article key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}{message.operationId ? ` · 操作 ${message.operationId}` : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
         <form className={css.instruction} onSubmit={event => { event.preventDefault(); void send() }}>
-          <div className={css.toolbar}><button type="button" aria-selected={mode === 'new'} onClick={() => setMode('new')}>新事项</button>{selected?.taskStatus === 'active' && <button type="button" aria-selected={mode === 'continue'} onClick={() => setMode('continue')}>继续当前事项</button>}</div>
-          <strong>{mode === 'continue' && selected ? `继续 ${selected.title}` : '开始协作事项'}</strong><p>描述希望实现的内容。发送后才会开始处理。</p>
-          {mode === 'new' && <label>事项名称（可选）<input value={title} onChange={event => updateDraft({ ...draft, title: event.target.value })} maxLength={150} /></label>}
+          <strong>补充协作事项</strong><p>仅用于自动队列之外的补充协作；涉及需求仍由 Host 逐项领取，不能绕过开发占用。</p>
+          <label>事项名称（可选）<input value={title} onChange={event => updateDraft({ ...draft, title: event.target.value })} maxLength={150} /></label>
           <label>实现指令<textarea value={instruction} onChange={event => updateDraft({ ...draft, instruction: event.target.value })} rows={5} /></label>
           <label>附件（可选，最多 8 个，共 16 MiB）<input type="file" multiple accept="image/*,.md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={event => { const files = event.target.files; event.target.value = ''; void attachFiles(files) }} /></label>
           {attachments.length > 0 && <ul>{attachments.map((attachment, index) => <li key={`${attachment.name}:${index}`}>{attachment.kind === 'image' ? '图片' : '文件'} · {attachment.name}<button type="button" onClick={() => updateDraft({ ...draft, attachments: attachments.filter((_item, current) => current !== index) })}>移除</button></li>)}</ul>}

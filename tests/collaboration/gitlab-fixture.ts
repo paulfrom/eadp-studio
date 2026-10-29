@@ -21,6 +21,7 @@ export interface RemoteProject {
   generalDocument?: string;
   snapshots?: Map<string, Map<string, Uint8Array>>;
   commits?: Map<string, string[]>;
+  refs?: Map<string, string>;
   comparisons?: Map<string, FixtureDiff[]>;
 }
 
@@ -29,7 +30,7 @@ export async function gitlabFixture() {
   const counts = { creates: 0, members: 0, searches: 0, headReads: 0 }
   /** 已接收请求路径：供测试断言某段交互不触发 Git 内容读取 */
   const paths: string[] = []
-  const controls = { loseNextCreateResponse: false, failNextMember: false, wrongRootParent: false, groupMemberLevel: 30, commitParent: null as string | null }
+  const controls = { loseNextCreateResponse: false, failNextMember: false, failCommitReads: 0, wrongRootParent: false, groupMemberLevel: 30, commitParent: null as string | null }
   const namespaces = [
     { id: 42, name: 'Delivery', path: 'delivery', full_path: 'delivery', project_creation_level: 'developer', visibility: 'private' },
     { id: 99, name: 'Management only', path: 'management', full_path: 'management', project_creation_level: 'maintainer', visibility: 'private' },
@@ -107,8 +108,9 @@ export async function gitlabFixture() {
       }
       if (action === 'repository/compare') return send(response, 200, { compare_timeout: false, compare_same_ref: false, diffs: project.comparisons?.get(`${url.searchParams.get('from')}:${url.searchParams.get('to')}`) ?? [] })
       if (action.startsWith('repository/commits/')) {
+        if (controls.failCommitReads > 0) { controls.failCommitReads--; response.destroy(); return }
         const sha = action.slice('repository/commits/'.length)
-        return send(response, 200, { id: sha, parent_ids: project.commits?.get(sha) ?? (controls.wrongRootParent ? ['b'.repeat(40)] : controls.commitParent ? [controls.commitParent] : []) })
+        return send(response, 200, { id: project.refs?.get(sha) ?? sha, parent_ids: project.commits?.get(sha) ?? (controls.wrongRootParent ? ['b'.repeat(40)] : controls.commitParent ? [controls.commitParent] : []) })
       }
       if (action.startsWith('repository/files/') && action.endsWith('/raw')) {
         const path = action.slice('repository/files/'.length, -'/raw'.length), ref = url.searchParams.get('ref')!
