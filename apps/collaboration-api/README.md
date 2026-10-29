@@ -19,7 +19,7 @@ GitLab 当前实例按计划使用 `http://rddgit.changhong.com`，后端保留 
 
 上游暂不可用按请求方法区别处理：GET 读取未收到响应（连接拒绝、DNS 失败等）或收到 502/503/504 时，等待 250ms 后重试一次；单次调用已耗尽 15 秒超时的请求不重试，避免同一次 API 请求里叠加多次超时；写入与其它非 GET 请求从不重试，结果未知时仍须先核对原操作。重试只吸收瞬时链路故障，失败时仍然阻断，不改变任何授权或确认结论。
 
-GitLab 只在需要它裁决或写入时被请求：建仓与成员分配、写操作的成员权限、接受 Git 结果时的远端分支头与内容校验、建仓群组目录、登录时的账号绑定。读取只使用数据库与进程内已验证的固定内容：项目列表、场景与需求卡片、历史版本、对比结论、已接受内容展示都不访问 GitLab，因此后台轮询不产生任何 GitLab 请求。已接受材料与项目模板按固定提交在进程内记忆，后端进程启动后首次展示某个项目时读取一次。
+GitLab 只在需要它裁决或写入时被请求：建仓与成员分配、写操作的成员权限、接受材料时的固定内容校验、原型集成的远端分支与候选引用状态、建仓群组目录、登录时的账号绑定。读取只使用数据库与进程内已验证的固定内容：项目列表、场景与需求卡片、历史版本、对比结论、已接受内容展示都不访问 GitLab，因此后台轮询不产生任何 GitLab 请求。已接受材料与项目模板按固定提交在进程内记忆，后端进程启动后首次展示某个项目时读取一次。
 
 Host 只配置 `collaborationUrl`，安全存储 `collaboration-session` 保存后端会话 token/expiresAt；桌面不配置 GitLab OAuth 应用、PKCE/回调或 GitHub Device Flow。用户本机 Git 凭据独立用于 canonical HTTP(S) remote 的 init/push/clone，经可信 system/global credential helper 取用；协同 token 和管理 token 都不注入 Git 授权头、remote 或 askpass。
 
@@ -165,7 +165,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 
 材料与原型复用集成底座，材料分支的 `stage` 为 `material` 或 `prototype`，携带 `entityId`、`token`、`sourceSha`、`expectedHead`、`candidateSha`、`allowedPaths`、`checks` 和 `confirmations`。每次集成只确认其占用的单个实体（`confirmations` 长度必须为 1 且指向根实体，否则 `SINGLE_ENTITY_REQUIRED`）。每项 confirmation 包含 `{entityId,expectedRevision,fixed,readHash,authorConfirmed:true,confirmationMethod}`，其中 `fixed={commitSha,path,sha256}`，`readHash` 必须等于最终固定材料的 SHA-256；不传 `metadata` 或业务清单。`direct` 对应用户阅读版本；`ai-assisted` 另传绑定候选与输入的 `reviewEvidence`；`ai-repair` 另传 `repairTaskId`，对应任务最终已记录 hash。
 
-Host 从 `recognizedHead` 构造候选并推送临时任务引用，API 读取固定内容并校验当前占用、代次/revision、输入/前置、来源、完整 diff 及稳定分支。受理后 Host 以旧 SHA 条件更新稳定分支，再 complete。候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致；认可头变化后重新预览、构造和检查。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；项目根目录只允许 `CONTEXT.md`，其余根目录文件不进入写入范围。材料改名时仅允许删除该确认材料自己的旧路径。原型只允许 `原型代码/` 范围并保持已确认需求输入字节不变。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`、`relations`。complete 重新校验固定内容、权限、占用与来源，后台接受后才算确认。
+Host 从 `recognizedHead` 构造候选并推送临时任务引用，受理后以旧 SHA 条件更新稳定分支，再 complete；认可头变化后重新预览、构造和检查。材料分支由 API 读取固定内容并校验当前占用、代次/revision、输入/前置、来源、完整 diff 及稳定分支，候选第一父提交须为 `expectedHead`，源与候选相对该头的差异须一致。材料 diff 仅允许本批确认材料及其显式关联文件，不得借附件清单修改其他场景/需求、项目清单或模板；项目根目录只允许 `CONTEXT.md`，其余根目录文件不进入写入范围。材料改名时仅允许删除该确认材料自己的旧路径。原型分支由桌面 Host 负责合并、冲突处理、实际路径与候选树验证及工程重检，只允许 `原型代码/` 范围并保持已确认需求输入字节不变；API 只核对任务、权限、认可头、稳定分支和 source/candidate ref/SHA 状态，不读取代码树或重算合并。普通材料检查名为 `materials`、`relations`；原型检查名为 `engineering`、`mock`、`browser`。材料 complete 重新校验固定内容、权限、占用与来源，原型 complete 复核项目和任务状态，后台接受后才算确认。
 
 场景模板保存在 `.template/<模板ID>.md`。项目 `project.assets.json` 的共享模板声明为：
 

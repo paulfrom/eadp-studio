@@ -84,12 +84,11 @@ test('retained merge-tree conflicts restore exact files and modes without touchi
   assert.ok(writeback?.files.every(value => value.status === 'written'))
 
   await writeFile(path.join(root, '原型代码/app.txt'), 'author source\n')
-  await writeFile(path.join(root, '原型代码/delete.txt'), 'delete me\n')
   await restore()
   assert.equal(await readFile(path.join(root, '原型代码/app.txt'), 'utf8'), conflictText)
   assert.equal(await readFile(path.join(root, '原型代码/delete.txt'), 'utf8').then(() => 'present', error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'; throw error }), 'absent')
 
-  const temporary = writeback!.files.find(value => value.path === 'new.sh')!.temporary
+  const temporary = writeback!.files.find(value => value.path === 'app.txt')!.temporary
   const temporaryPath = path.join(root, '原型代码', temporary), otherTemporary = path.join(root, '原型代码/.other-operation.tmp')
   await writeFile(temporaryPath, 'interrupted temporary bytes'); await writeFile(otherTemporary, 'unrelated user bytes')
   await restore()

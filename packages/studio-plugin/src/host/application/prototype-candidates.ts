@@ -70,7 +70,7 @@ export class PrototypeCandidates {
   }
   private sourceBaseResult(record: CandidateRecord, recovery: ConflictRecovery, result: PrototypeSourceBaseResult): PrototypeSourceBaseResult {
     const request = recovery.request, source = result.source, original = record.authorization, updated = result.task
-    if (source.operationId !== record.id || source.ref !== request.sourceRef || source.sha !== request.sourceSha || source.previousBaseHead !== record.summary?.sourceBaseHead || source.newBaseHead !== request.newBaseHead || source.mergeBaseSha !== recovery.mergeBaseSha) throw new Error('source-base 响应与原冲突操作不一致')
+    if (source.operationId !== record.id || source.ref !== request.sourceRef || source.sha !== request.sourceSha || source.previousBaseHead !== record.summary?.sourceBaseHead || source.newBaseHead !== request.newBaseHead) throw new Error('source-base 响应与原冲突操作不一致')
     const identity = (task: PrototypeTaskView) => canonical({ ...task, developmentClaims: [...task.developmentClaims].sort((a, b) => a.requirementId.localeCompare(b.requirementId)), developmentRequirementIds: [...task.developmentRequirementIds].sort(), referenceRequirementIds: [...task.referenceRequirementIds].sort(), writeScope: [...task.writeScope].sort() })
     if (updated.sourceBaseHead !== request.newBaseHead || updated.revision !== original.revision + 1 || identity({ ...updated, sourceBaseHead: original.sourceBaseHead, revision: original.revision }) !== identity(original)) throw new Error('source-base 响应改变了原事项授权或现场')
     return structuredClone(result)
@@ -295,7 +295,6 @@ export class PrototypeCandidates {
     const expectedHead = project.project.recognizedHead
     if (project.project.id !== current.task.projectId || !expectedHead || !project.project.stableBranch) throw new Error('项目认可头不可用，请保留原候选')
     let candidateSha = record.summary.sourceSha, evidence = record.evidence
-    let derivation: PrototypeIntegrationRequest['derivation'] = { kind: 'author-confirmed' }
     if (expectedHead !== record.summary.sourceBaseHead) {
       await this.ports.git.fetch(current.task.worktree, project.project.stableBranch)
       await this.account(record.accountId)
@@ -330,7 +329,6 @@ export class PrototypeCandidates {
       await this.account(record.accountId); await storage.write(data)
       candidateSha = merged.candidateSha
       evidence = await this.checkMerged(record, storage, data, `${checkOperationId}-merged`)
-      derivation = { kind: 'clean-merge', mergeBaseSha: merged.mergeBaseSha }
     }
     const fixed = await this.ports.git.prototypeSource(current.task.worktree, current.authorization.sourceBaseHead, operationId, current.authorization.writeScope, await this.ports.git.identity(current.task.worktree))
     if (fixed.sha !== record.summary.sourceSha) throw new Error('原作者来源已变化，请重新固定成果')
@@ -343,7 +341,7 @@ export class PrototypeCandidates {
       candidateSha, sourceRef: `${prefix}/source`, candidateRef: `${prefix}/candidate`,
       allowedPaths: record.summary.changes.map(value => value.path), developmentRequirementIds: current.authorization.developmentRequirementIds,
       developmentClaims: current.authorization.developmentClaims, claimsDigest: current.authorization.claimsDigest, evidence,
-      derivation, authorConfirmation: { confirmationId: record.confirmationId, sourceSha: record.summary.sourceSha, authorConfirmed: true, claimsDigest: current.authorization.claimsDigest, mergePolicy: 'clean-merge-and-recheck' },
+      authorConfirmation: { confirmationId: record.confirmationId, sourceSha: record.summary.sourceSha, authorConfirmed: true, claimsDigest: current.authorization.claimsDigest, mergePolicy: 'clean-merge-and-recheck' },
     }
     await this.integrations.submitConfirmed(current.task, request)
   }

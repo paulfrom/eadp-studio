@@ -18,7 +18,7 @@
 
 ## 2. 沿用的基础与必须替换的现状
 
-沿用现有项目权限、固定 Git 提交、项目短事务、幂等操作表、审计和 integrations 的 prepared／accepted／aborted 协议，不新建通用工作流框架；服务端验证用 Git 运行工具见 6.1。
+沿用现有项目权限、固定 Git 提交、项目短事务、幂等操作表、审计和 integrations 的 prepared／accepted／aborted 协议，不新建通用工作流框架；桌面合并与后台状态核对的职责边界见 6.1。
 现有证据：[集成模块](../../../apps/collaboration-api/src/modules/integration.ts)、[服务编排](../../../apps/collaboration-api/src/service.ts)、[契约](../../../packages/contracts/src/index.ts)、[SQL](../../../apps/collaboration-api/db/schema.sql)。
 原型成果基线由 `studio_prototype_baselines` 承载，原型路径不再按需求版本生成基线，也不再绑定前置完成输入；旧 `studio_baselines`、`studio_occupation_inputs` 两表已删除，不保留为兼容路径。
 材料设计占用、固定场景来源、材料独立确认、前置 DAG 校验、材料复用与交接自身规则继续按原职责运行。
@@ -81,7 +81,6 @@ type PrototypeIntegrationRequest = {
   sourceRef: string; candidateRef: string;
   developmentRequirementIds: string[]; developmentClaims: DevelopmentClaimToken[]; claimsDigest: string;
   evidence: PrototypeEngineeringEvidence;
-  derivation: { kind: 'author-confirmed' } | { kind: 'clean-merge'; mergeBaseSha: string };
   authorConfirmation: {
     confirmationId: string; sourceSha: string; authorConfirmed: true;
     claimsDigest: string; mergePolicy: 'clean-merge-and-recheck';
@@ -107,7 +106,7 @@ checks 必须且仅出现一次 engineering／mock／browser，全部 passed:tru
 authorConfirmation 由可信 Host 在作者明确确认后构造；sourceSha 必须等于本次请求 sourceSha，不接受预览页面或普通 AI 工具代发确认。
 真实客户端身份取认证上下文，不接受请求自填 ownerId／confirmedBy；token 中 clientId 仍须匹配已登记的任务客户端。
 工程证据只绑定工程源码、规则、构建产物与精确候选，不绑定固定需求 MD、materialVersion 或前置完成状态。
-后台校验形状、SHA、候选差异及权限，不能凭 evidenceHash 宣称自己重跑了桌面检查或验证了业务正确性。
+后台校验请求形状、SHA、候选引用及权限，不能凭 evidenceHash 宣称自己重跑了桌面检查、验证了合并结果或证明了业务正确性。
 
 ## 5. HTTP 接口
 
@@ -121,7 +120,7 @@ authorConfirmation 由可信 Host 在作者明确确认后构造；sourceSha 必
 | POST /prototype/tasks/:prototypeTaskId/development-claims | key、旧 token、developmentRequirementIds、instruction | 200，新任务 token、完整 claims／claimsDigest；提交目标完整开发集合，只允许原集合的超集；新增项一次全领或回滚，转开发项同步移出参考集合，不隐式转移其他任务 claim。 |
 | PUT /prototype/tasks/:prototypeTaskId/reference-requirements | key、token、referenceRequirementIds | 200，新任务 revision 与参考范围；可空，按权限读取，不领取或释放开发 claim，不改材料正文或状态。 |
 | PUT /prototype/tasks/:prototypeTaskId/write-scope | key、旧 token、writeScope、policyHash、instruction | 200，新 token/revision、服务端核验后的 scope；存在 prepared 时先完成核对，不覆盖旧候选。 |
-| PUT /prototype/tasks/:prototypeTaskId/source-base | key、旧 token、原 operationId/sourceRef/sourceSha、newBaseHead | 200，后台从已上传的原 source ref 独立校验当前登记基头、源码范围及与新认可头的实际冲突，再登记新 sourceBaseHead；已有 prepared／未知 Git 状态拒绝，不接受任意自报基头。 |
+| PUT /prototype/tasks/:prototypeTaskId/source-base | key、旧 token、原 operationId/sourceRef/sourceSha、newBaseHead | 200，后台核对当前认可头、稳定分支和原 source ref/SHA 后登记新 sourceBaseHead；桌面负责判定实际冲突及源码范围。已有 prepared／未知 Git 状态拒绝，不接受任意自报基头。 |
 | POST /prototype/tasks/:prototypeTaskId/cancel | key、token、reason | 200，cancelled；撤销后台接受权，结果另含 gitRecovery: clear／unknown／reconcile-required。 |
 | POST /prototype/tasks/:prototypeTaskId/admin-release | key、expectedGeneration、expectedRevision、reason | 200，released；仅管理员，撤销后台接受权并返回 gitRecovery；不承诺撤回 Git 副作用。 |
 | POST /integrations | 现有 union 增加新版 PrototypeIntegrationRequest，删除旧 prototype 分支 | 200，prepared，返回 integrationId、candidateSha、prototypeTaskId。材料与模板分支继续各自契约。 |
@@ -134,7 +133,7 @@ authorConfirmation 由可信 Host 在作者明确确认后构造；sourceSha 必
 新原型投影不加载本地需求草稿正文。材料 versions、relations、claim、confirm 继续原接口，不为原型写入伪材料确认。
 HTTP 401 表示会话失效；403 表示项目写权限、task owner 或管理员权限不足；404 表示对象不存在或对该用户不可见。
 HTTP 422：INVALID_REQUEST、PROTOTYPE_PATH_SCOPE、CHECKS_REQUIRED、CHECK_CANDIDATE_MISMATCH、INVALID_REQUIREMENT_SCOPE。
-HTTP 403：WRITE_SCOPE_EXPANSION_UNAUTHORIZED；409：TASK_POLICY_CHANGED、MERGE_CONFLICT、CANDIDATE_TREE_MISMATCH；503：MERGE_VERIFIER_UNAVAILABLE，均不得按 Host 自报结果放行。
+HTTP 403：WRITE_SCOPE_EXPANSION_UNAUTHORIZED；409：TASK_POLICY_CHANGED。合并冲突、候选树错误和验证器不可用由桌面合并流程报告，不再作为后端错误码。
 HTTP 409：TASK_REVISION_CONFLICT、STALE_PROTOTYPE_TASK、INTEGRATION_PENDING、INTEGRATION_HEAD_CHANGED、UNRECOGNIZED_GIT_HEAD、IDEMPOTENCY_CONFLICT。
 HTTP 409：REQUIREMENT_ALREADY_CLAIMED、STALE_DEVELOPMENT_CLAIM、DEVELOPMENT_SCOPE_SHRINK_FORBIDDEN；占用冲突只返回当前用户可见的需求、占用人和事项摘要，不暴露他人草稿。
 HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_SOURCE_MISMATCH；响应 details 仅含可公开对象、状态和预期 revision/SHA。
@@ -145,13 +144,13 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 
 1. 用户发送实施指令，Host 解析已有需求真实 ID；后台验证权限及 writeScope/policyHash，在项目短事务中登记 task、唯一 branch、代次、参考范围和全部非空初始开发 claims。已有任一需求被别的任务领取则全部回滚；成功后 Host 按 startHead 创建个人 worktree。只读探索不创建可写任务。
 2. 多轮实现只写本分支；用户指令进入可写执行前，Host 校验当前 task 及全部开发 claims，扩范围先完成原子扩领。开发 claim 不要求占用或确认需求材料，也不检查前置需求完成；材料改版提示差异，不释放 claim 或允许按新版本另领同一 requirementId。
-3. Host 保留多轮任务分支历史，从后台登记的 sourceBaseHead（初始 startHead，或经验证的冲突重确认基头）与用户看到的精确工程树归一构造新单提交 source；第一父=sourceBaseHead，原型树与作者所见一致，非原型树来自基头。作者确认该 sourceSha 与 confirmationId，不重写原任务分支历史；先持久化并上传不可变 source ref，确认远端对象可读，再进入合并。
+3. Host 保留多轮任务分支历史，从后台登记的 sourceBaseHead（初始 startHead，或桌面冲突恢复后登记的新基头）与用户看到的精确工程树归一构造新单提交 source；第一父=sourceBaseHead，原型树与作者所见一致，非原型树来自基头。作者确认该 sourceSha 与 confirmationId，不重写原任务分支历史；先持久化并上传不可变 source ref，确认远端对象可读，再进入合并。
    若当前授权代码与已有基线无变化，固定候选得到 `no-change` 状态：不创建无意义的相同代码基线，不因查看或需求关联变化冒充新代码成果。查看既有基线不发 prepare／complete，任务保持 active、全部 claims 保留，界面说明“没有代码变化；事项仍在开发”。用户明确选择结束事项才走既有 `endPrototypeTask`，核对未决集成后关闭全部 claims、保留现场；不伪造 acceptance 或伪基线。无既有基线时只说明无可接受代码变化，不伪造打开目标。
-4. Host 获取 recognizedHead 作为 expectedHead；若等于 sourceBaseHead，author-confirmed 的 candidate=source；否则合并 expectedHead/source，保留原 source 授权并全量重检新 candidate。冲突后先登记最新 head 为新 sourceBaseHead，在其上归一新 source 并由用户重新确认。
-5. 候选生成后上传其不可变 candidate ref，复核原 source ref；两个对象均按 SHA 可见后才 prepare，API 验证权限、稳定头、父关系、路径、合并树与当前证据。source 先于合并上传，因此冲突发生在 prepare 前时，source-base 接口也能读取并独立验证原源码，不依赖尚未存在的集成；全程不会先推进 stable。
+4. Host 获取 recognizedHead 作为 expectedHead；若等于 sourceBaseHead，candidate=source；否则合并 expectedHead/source，验证父关系、实际路径和候选树，保留原 source 授权并全量重检新 candidate。冲突后先登记最新 head 为新 sourceBaseHead，在其上归一新 source 并由用户重新确认。
+5. 候选生成后上传其不可变 candidate ref，复核原 source ref；两个对象均按 SHA 可见后才 prepare，API 只验证权限、稳定头、候选 ref/SHA 和当前状态证据。source 先于合并上传，因此冲突发生在 prepare 前时，source-base 接口也能核对原 source 引用，不依赖尚未存在的集成；全程不会先推进 stable。
 6. API 在项目短事务锁项目行，再读 task，校验 active、owner/client/generation/revision、expectedHead 和幂等键；核对完整开发集合、每项 claimId／generation／active／task 归属及 claimsDigest；项目无其他 prepared 才写 prepared，并冻结该 claim 集合。
 7. 返回 prepared 后，Host 按 expectedHead 条件推送稳定分支至精确 candidate；普通 push 成功不能直接显示已接受。
-8. complete 在事务外确认真实稳定分支恰为 candidate、重新验证候选；随后短事务重检项目头、task fencing、integration prepared，以及与 prepared 一致的全部 claim 身份／代次／归属／active 和 claimsDigest；不能只在 prepare 校验一次。
+8. complete 在事务外确认真实稳定分支恰为 candidate、候选 ref/SHA 未变化；随后短事务重检项目头、task fencing、integration prepared，以及与 prepared 一致的全部 claim 身份／代次／归属／active 和 claimsDigest；不能只在 prepare 校验一次。
 9. 同事务写 acceptance 及本次 developmentRequirementIds，写 baseline 及“上一基线 relatedRequirementIds ∪ 本次开发需求”的累计关联；更新 prototype.currentBaselineId、project.recognizedHead，任务 accepted、令牌失效、全部开发 claims 关闭，集成 accepted，保存幂等结果与审计。
 10. 提交成功后 Host 才显示基线；本机收尾独立重试，不撤销已接受成果，也不覆盖新任务的本地内容。
 
@@ -159,28 +158,24 @@ HTTP 409：GIT_COMPLETION_UNVERIFIED、SOURCE_CANDIDATE_MISMATCH、CONFIRMATION_
 两人同时开发 R1：A 先提交领取事务后 B 得到 REQUIREMENT_ALREADY_CLAIMED；同用户的 A/B 两任务结果相同。A 领 R1＋R2、B 领 R2＋R3：只有一个完整集合获领，失败者连无冲突的 R1 或 R3 也不保留，避免部分领取后互相等待。失败事务不遗留新任务或半套 claims。
 开发占用沿用 [PostgreSQL 部分唯一索引](https://www.postgresql.org/docs/current/indexes-partial.html)与[短事务行锁](https://www.postgresql.org/docs/current/explicit-locking.html)；持久 claim 无 TTL，不因退出、断网、模型取消或心跳丢失自动过期，不引入 Redis 锁。人工取消或管理员释放提供显式恢复路径。
 另一任务先推进认可头：本任务旧 candidate 作废，按新头重建并重检；不能静默覆盖稳定分支或重用旧 evidence。
-干净合并只包含原作者变更与已经接受的项目成果；后台须验证候选树确为该合并结果，不能沿用旧“source diff 与 candidate diff 字面一致”规则误拒合法合并。
+干净合并只包含原作者变更与已经接受的项目成果；Host 须验证候选树确为该合并结果，不能只用“source diff 与 candidate diff 字面一致”规则误拒合法合并。
 最终 baseline 固定本次代码与已认可成果组成的完整项目源码；候选第一父必须等于 expectedHead，其他成员未接受分支、私有草稿和未提交代码不得混入。
 出现冲突时停止自动集成，保留原 source 和冲突现场；AI 只在任务授权范围解决，解决后形成新 source、新 confirmationId，作者重新确认，再重检与提交。
 同任务替换 prepared 先调用 abort 收敛原操作：stable=expectedHead 才可 abort；stable=candidate 应补 complete／结果核对；其他头或未知必须 reconcile，不允许覆盖 prepared 或改任务 revision 掩盖已推送事实。
 并发竞争失败返回明确 409，Host 刷新后继续；不无限自旋，不以长项目锁阻止其他成员编辑。
 sourceRef/candidateRef 由 Host 以已登记 prototypeTaskId 和 operationId 生成，限定在当前项目 `refs/heads/studio-private/<prototypeTaskId>/<operationId>/{source,candidate}`；沿用标准 GitLab 权限，不放宽保护规则，不得 update／force 重写或推进 stable。可见性仍由 GitLab 项目权限控制，“私有操作 ref”不承诺绕过项目成员权限隔离。
 Host 先将 ref 名、准确 SHA、sourceBaseHead 和上传进度写入本地 operation；push 响应未知先查询同名 ref 是否精确匹配，再重试原操作。上传失败／不可见不得 prepare，远端这些 ref 也不代表业务 accepted。
-后台记录并核对 ref→SHA，但读取内容一律使用固定 SHA；ref 保留到任务接受及必要追溯满足，由明确保留策略再清理，不能提前删除触发 GC；abort／release 后仍保留原 refs 定位晚到 push，不以 ref 存在冒充正式成果。
+后台记录并核对 ref→SHA，不读取原型代码内容；ref 保留到任务接受及必要追溯满足，由明确保留策略再清理，不能提前删除触发 GC；abort／release 后仍保留原 refs 定位晚到 push，不以 ref 存在冒充正式成果。
 
-### 6.1 后台验证候选树
+### 6.1 桌面合并与后台状态核对
 
-[Dockerfile](../../../apps/collaboration-api/Dockerfile) 以 `git-verifier` 阶段自编 Git 2.56.0 并复制进运行镜像（`Dockerfile:8-18,41-42`），[package.json](../../../apps/collaboration-api/package.json) 仍不引入 Git npm 依赖。现有 Git API 适配不能独立证明合并树，因此服务端保留独立的 Git 验证运行工具。
-Git 以 GPLv2 许可的独立进程运行，不新增 npm 包或把 Git 链接进应用。版本路线沿用[桌面运行锁](../../../apps/desktop-distribution/build/studio-runtime.lock.json)中的 `2.56.0.windows.2`，服务端采用同一上游 `2.56.0` 的 Linux 构建；使用固定的三方合并策略，规则版本进入 policyHash。实施时在服务镜像构建中锁定来源、包摘要和镜像摘要，不能依赖浮动系统包。Windows 补丁与 Linux 的合并树一致性必须通过同一组冲突／重命名样本核对；尚未取得该运行证据，不能提前宣称行为一致。维护成本包括镜像与许可告知、升级和漏洞修复，不升级 DSH 宿主。
-后台先验证 sourceBaseHead 与 task 已登记起点或原冲突 operation 链吻合，source 必须恰有一个父提交且为该基头；不能只信请求自报。clean-merge 的真实 candidate 必须恰有两个父提交，顺序为 expectedHead、sourceSha；derivation.mergeBaseSha 匹配真实共同祖先，不要求旧 source 的父提交变成新 expectedHead。此步骤使用原仓库 SHA。
-只经 Git API 读取共同祖先、expectedHead、sourceSha 的 `原型代码/` code tree/blob，校验对象 ID；不 fetch 完整业务仓库，不读取材料正文，不保留仓库缓存。仅在隔离临时对象库为这三个子树重建“合成祖先、合成 head、合成 source”三个提交，执行 `git merge-tree --write-tree syntheticHead syntheticSource`。
-合成提交只用于强制该共同祖先的三方树计算，SHA 与原提交不同，不得写回 sourceSha／expectedHead／candidateSha 或冒充原提交父关系证明；只比较计算结果树与真实 candidate 的 `原型代码/` 子树。
-仅当无冲突、对象完整、退出成功且原型子树精确一致时放行；candidate 非原型区域必须与 expectedHead 逐 tree 一致，source 非原型区域相对真实共同祖先有任何改动均拒绝；原型改动仍须满足持久 writeScope，工程证据全部绑定真实 candidate。
-author-confirmed 分支只在 sourceBaseHead=expectedHead 时使用：candidateSha=sourceSha，验证完整 diff 均在持久授权范围内，再验证新确认与当前工程证据；冲突解决新 source 使用此路径，不套用旧冲突 source 的 clean 算法。
-冲突解决时 Host 在最新 head 上固定包含已解决内容的新 source，由用户重新确认；该 derivation 与新 confirmationId 一起保存，旧确认不能用来接受新增解决代码。
-Host 必须采用同版本、同策略的原型子树三方合并，回填完整候选时其余树来自 expectedHead；不能用 Host 声明代替后台独立计算。author-confirmed 分支也核验非原型区域与 expectedHead 一致。
-PT02 后台候选验证工作包中须锁定可用 Git 版本、实现隔离验证器，并在该工作包验收时核对 merge-tree 行为及 Windows／Linux 样本一致性；限制对象数／字节、进程并发、CPU、内存、磁盘与超时，使用非特权身份和受限临时目录，禁 hooks/custom merge driver/仓库配置执行，不在数据库事务中运行。
-操作成功、失败及超时均终止子进程并销毁临时对象，崩溃遗留须受管清理；仅留 SHA、策略版本、退出状态和有限控制摘要。此新增工具未安装、未验收，维护和权限隔离有真实成本；缺失时停止验证，不提供信任 Host 的 fallback。
+2026-10-29 用户明确将原型合并及结果验证全部归入桌面 Host。Host 使用固定 Git 运行工具和三方合并策略构造 source/candidate，核对父关系、真实共同祖先、实际变更路径、非原型区域和候选树，并对精确 candidate 重新执行工程检查。冲突判定、冲突现场恢复及冲突后重新确认也在桌面完成，不由协同后端重算。
+
+协同后端不安装或调用 Git，不读取原型 tree/blob，不请求 merge-base，也不执行 `merge-tree`。后端只核对有效会话与仓库权限、任务 owner/client/generation/revision、完整开发 claims、当前认可头、稳定分支头，以及 source/candidate 私有引用是否精确指向登记的 SHA。引用和 SHA 可见只表示候选状态可核对，不表示后台重新证明合并结果。
+
+prepare 登记 prepared 状态后，Host 才以 expectedHead 为条件推进稳定分支；complete 先确认稳定分支已到 candidate，再在项目短事务内复核任务和 claims、写入接受记录与原型基线、结束开发占用并更新认可头。Git 与数据库仍不假装原子，未知结果按原 operation/integration 恢复。
+
+冲突后的 source-base 更新只登记桌面已确认的冲突处理前提：当前认可头等于 newBaseHead、稳定分支保持一致、原 source ref 指向登记的 sourceSha。后端不再判断是否真实冲突或计算 mergeBaseSha；这些事实由桌面合并现场和恢复记录保存。
 
 ## 7. fencing、分叉与未知结果恢复
 

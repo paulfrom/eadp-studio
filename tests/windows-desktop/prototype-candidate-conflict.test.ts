@@ -33,7 +33,7 @@ for (const scenario of ['put', 'receipt', 'writeback'] as const) {
       sourceOperationId: 'old-operation', sourceRef: 'refs/heads/studio-private/task/old-operation/source', sourceSha: oldSource, newBaseHead: expectedHead,
       developmentClaims: authorization.developmentClaims, claimsDigest: authorization.claimsDigest,
     }
-    const result: PrototypeSourceBaseResult = { task: updated, source: { operationId: 'old-operation', ref: request.sourceRef, sha: oldSource, previousBaseHead: oldBase, newBaseHead: expectedHead, mergeBaseSha: mergeBase } }
+    const result: PrototypeSourceBaseResult = { task: updated, source: { operationId: 'old-operation', ref: request.sourceRef, sha: oldSource, previousBaseHead: oldBase, newBaseHead: expectedHead } }
     const plan: PrototypeConflictWriteback = { files: [{ path: 'src/app.txt', before: { kind: 'file', sha256: '0'.repeat(64), mode: '100644' }, temporary: '.eadp-conflict-old-operation-deadbeef.tmp', status: 'pending' }] }
     const original = {
       id: 'old-operation', accountId: 1, task: scenario === 'writeback' ? { ...task, baseHead: expectedHead } : task, authorization: scenario === 'writeback' ? updated : authorization,
