@@ -7,6 +7,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { after, test } from 'node:test'
+import { runInNewContext } from 'node:vm'
 import { DESKTOP_POLICY_EDITS } from '../../apps/desktop-distribution/build/desktop-policy-edits.mjs'
 
 // This regression executes edited fixed-upstream code with the build tree's real
@@ -55,10 +56,10 @@ function policy(origin) {
 test('fixed-upstream edits reject drift, replay idempotently, and never modify the verified source', async () => {
   for (const edit of DESKTOP_POLICY_EDITS) {
     assert.equal(edit.apply(generated.get(edit.file)), generated.get(edit.file))
+    assert.throws(() => edit.apply('upstream changed'), /anchor missing or duplicated/)
     const bytes = await readFile(path.join(upstream, edit.file))
     assert.equal(createHash('sha256').update(bytes).digest('hex'), createHash('sha256').update(original.get(edit.file)).digest('hex'))
   }
-  assert.throws(() => DESKTOP_POLICY_EDITS[0].apply('upstream changed'), /anchor missing or duplicated/)
 })
 
 test('package and runtime accept HTTP/HTTPS policy origins while retaining URL and login/page restrictions', () => {
@@ -76,6 +77,69 @@ test('package and runtime accept HTTP/HTTPS policy origins while retaining URL a
     allowedPageOrigins: ['https://www.zyjsm.top'], authentication: 'feishu-test', allowedAuthOrigins: ['http://login.example.com'] }))
   assert.equal(desktopPolicyPage('http://www.zyjsm.top/download', ['http://www.zyjsm.top']), undefined)
   assert.equal(desktopPolicyPage('https://www.zyjsm.top/download', ['https://www.zyjsm.top']), 'https://www.zyjsm.top/download')
+})
+
+test('desktop startup enables the Windows preload only after policy IPC is registered', () => {
+  const main = generated.get('apps/desktop/src/main.ts')
+  const windowFactory = main.slice(main.indexOf('function createWindow('), main.indexOf('\nasync function main()'))
+  const startup = main.slice(main.indexOf("  if (typeof manifest !== 'object'"), main.indexOf('\n  automaticCheck()\n  await reconcileBackend()'))
+  const preload = stripTypeScriptTypes(generated.get('apps/desktop/src/preload-app.ts').replace(/^import .*\n/gm, ''), { mode: 'transform' })
+  for (const enabled of [false, true]) {
+    for (const platform of ['win32', 'darwin']) {
+      const handlers = new Map()
+      let options
+      let subscriptions = 0
+      let queries = 0
+      let mandatoryPolicy
+      let mandatoryUI
+      let mainWindow
+      const context = {
+        process: { platform, arch: 'x64', env: enabled ? { DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: '{}' } : {} },
+        app: { isPackaged: false, getVersion: () => 'test' }, manifest: {}, URL, policyAuth: undefined,
+        resolveDesktopPolicyConfig: input => input === undefined ? undefined : { allowedPageOrigins: [] },
+        DesktopMandatoryUpdatePolicy: class {
+          state = { blocking: false, checking: false }
+          check() { return Promise.resolve(this.state) }
+        },
+        DesktopMandatoryUpdateWindow: class {
+          constructor() { handlers.set('status', () => mandatoryPolicy.state) }
+          sync() { assert.ok(mainWindow); subscriptions++ }
+        },
+        BrowserWindow: class {
+          constructor(value) {
+            options = value
+            if (enabled) assert.ok(handlers.has('status'), 'register policy IPC before creating the renderer')
+          }
+          webContents = { setWindowOpenHandler() {}, on() {} }
+          on() {}
+        },
+        nativeTheme: { shouldUseDarkColors: false }, chromeFallbackFill: () => '#fff', WINDOWS_TITLEBAR_HEIGHT: 40,
+        updateChannel: 'test', updateOverlays: {}, locale: {}, updates: { state: {} },
+        fileURLToPath: () => 'preload', updateSchedule: {}, downloadUpdate() {}, checkPolicyManually() {},
+        get mandatoryPolicy() { return mandatoryPolicy }, set mandatoryPolicy(value) { mandatoryPolicy = value },
+        get mandatoryUI() { return mandatoryUI }, set mandatoryUI(value) { mandatoryUI = value },
+        get mainWindow() { return mainWindow }, set mainWindow(value) { mainWindow = value },
+      }
+      runInNewContext(`${stripTypeScriptTypes(windowFactory)}\nglobalThis.createWindow = createWindow`, context)
+      context.createMainWindow = () => context.createWindow('preload', false, true, mandatoryPolicy !== undefined)
+      runInNewContext(stripTypeScriptTypes(startup.replace('import.meta.url', "'file:///desktop/main.js'")), context)
+      assert.equal(subscriptions, enabled ? 1 : 0)
+      for (let load = 0; load < 2; load++) {
+        runInNewContext(preload, {
+          location: { protocol: 'dsh-app:', hostname: 'app' }, SCHEME: 'dsh-app',
+          process: { platform, argv: options.webPreferences.additionalArguments, isMainFrame: true },
+          contextBridge: { exposeInMainWorld() {} }, ipcRenderer: { on() {} }, DESKTOP_IPC: {},
+          createDesktopBrowserBridge() {}, markDocumentPlatform() {}, syncWindowFullscreen() {}, syncNativeTheme() {}, syncWindowsAppearance() {},
+          installMandatoryUpdateOverlay() {
+            queries++
+            assert.ok(handlers.has('status'), 'preload must never invoke an unregistered policy handler')
+            assert.equal(handlers.get('status')().blocking, false)
+          },
+        })
+      }
+      assert.equal(queries, enabled && platform === 'win32' ? 2 : 0)
+    }
+  }
 })
 
 test('real HTTP failures remain unavailable without gating launch; force survives failures until a valid allow', async () => {
@@ -103,7 +167,7 @@ test('real HTTP failures remain unavailable without gating launch; force survive
     const instance = makePolicy()
     const main = generated.get('apps/desktop/src/main.ts')
     const start = main.indexOf("    void mandatoryPolicy.check('launch').then((state) => {")
-    const end = main.indexOf('\n  }\n  automaticCheck()', start)
+    const end = main.indexOf('\n  }\n  mainWindow = createMainWindow()', start)
     assert.ok(start >= 0 && end > start, 'main must launch the policy check without awaiting its result')
     let continued = false
     const launch = new Function('mandatoryPolicy', 'app', 'isQuitting', 'queuePolicyAuthentication', 'continueStartup',

@@ -17,10 +17,10 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const lane = new BackgroundLane()
   t.after(async () => { await lane.settle(); await rm(root, { recursive: true, force: true }) })
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
-  const local = await store.read(), directory = path.join(root, 'project')
-  await mkdir(directory)
+  const local = await store.read(), workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
   await writeFile(path.join(directory, 'author-draft.md'), '作者未保存的业务内容')
-  local.projects.push({ id: 'project', name: '项目', directory, repositoryUrl: 'https://example.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://example.test/project.git' })
   const originalHead = 'a'.repeat(40), candidateSha = 'b'.repeat(40)
   const remote = { project: { id: 'project', revision: 1, recognizedHead: originalHead, stableBranch: 'main' } } as ProjectState
   const bodies = { default: '# 场景模板\n', 'requirement-default': '# 需求模板\n' }

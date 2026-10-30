@@ -11,9 +11,10 @@ import css from './prototype.module.css'
 export interface PrototypeInstructionDraft { title: string; instruction: string; developmentIds: string[]; attachments?: PrototypeInstructionAttachment[] }
 
 /** Project prototype, its requirements, and this account's local collaboration queue. */
-export function PrototypeWorkbench({ state, entities, busy, call, registerFlush, flushBeforeLeave, onOpenRequirement, initialDraft, onDraftChange }: {
+export function PrototypeWorkbench({ state, entities, busy, call, refresh, registerFlush, flushBeforeLeave, onOpenRequirement, initialDraft, onDraftChange }: {
   state: StudioState; entities: EntityView[]; busy: boolean
   call(command: StudioCommand): Promise<StudioReply | undefined>
+  refresh(): void
   registerFlush(flush?: () => Promise<boolean>): void
   flushBeforeLeave(): Promise<boolean>
   onOpenRequirement(id: string): void
@@ -27,6 +28,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const [requestDiff, setRequestDiff] = useState(0)
   const [output, setOutput] = useState<'runtime' | 'checks' | 'problems'>()
   const [baselineId, setBaselineId] = useState<string>()
+  const [starting, setStarting] = useState<string>()
   const showCode = useCallback(() => setTab('code'), [])
   const initial = (state.prototypeInstructionDrafts ?? []).filter(item => item.projectId === projectId)
   const [drafts, setDrafts] = useState<Record<string, StoredDraft>>(() => {
@@ -48,6 +50,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const candidateCheckOperation = useRef<{ candidateId: string; id: string }>()
   const adoptionOperation = useRef<{ fingerprint: string; id: string }>()
   const runs = useRef(new Map<string, string>())
+  const startingRef = useRef<string>()
   const queue = state.prototypeQueue
   const tasks = (queue?.items ?? []).filter(item => item.projectId === projectId) as DevelopmentQueueItem[]
   const selected = tasks.find(item => item.prototypeTaskId === queue?.selectedTaskId)
@@ -61,7 +64,15 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
   const adoption = state.prototypeAdoptions?.findLast(item => item.source.projectId === projectId && item.source.baselineId === baseline?.id && item.targetTaskId === selected?.prototypeTaskId)
   const materialReads = (state.prototypeMaterialReads ?? []).filter(item => item.projectId === projectId && item.prototypeTaskId === selected?.prototypeTaskId)
   const requirements = entities.filter(entity => entity.kind === 'requirement' && !entity.builtinKey)
+  const sourceKey = baseline ? `baseline:${baseline.id}` : selected ? `task:${selected.prototypeTaskId}` : undefined
+  const startingCurrent = !!sourceKey && starting === sourceKey
   useEffect(() => { void call({ action: 'readPrototypeQueue' }) }, [call, projectId])
+  useEffect(() => {
+    if (!starting && checkReport?.status !== 'running') return
+    refresh()
+    const timer = setInterval(refresh, 1000)
+    return () => clearInterval(timer)
+  }, [starting, checkReport?.status, refresh])
   const selectedTaskId = selected?.prototypeTaskId
   useEffect(() => { setCandidateFile(undefined); setCandidateError('') }, [selectedTaskId, candidate?.operationId])
   useEffect(() => {
@@ -238,12 +249,27 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
     setCandidateError(reply?.ok ? '' : reply && !reply.ok ? reply.message : '结果待核对，请保留原操作')
     if (!reply?.ok) await call({ action: 'readPrototypeQueue' })
   }
-  const toggleRun = () => baseline
-    ? runBaseline(preview ? 'stopPrototypeBaselinePreview' : 'startPrototypeBaselinePreview')
-    : run(preview ? 'stopProjectPrototypePreview' : 'startProjectPrototypePreview')
+  const startPreview = async () => {
+    if (!sourceKey || startingRef.current) return
+    startingRef.current = sourceKey
+    setStarting(sourceKey)
+    setRunError('')
+    setOutput(undefined)
+    setAiCollapsed(false)
+    try { await (baseline ? runBaseline('startPrototypeBaselinePreview') : run('startProjectPrototypePreview')) }
+    finally {
+      if (startingRef.current === sourceKey) startingRef.current = undefined
+      setStarting(current => current === sourceKey ? undefined : current)
+      refresh()
+    }
+  }
+  const toggleRun = () => preview
+    ? baseline ? runBaseline('stopPrototypeBaselinePreview') : run('stopProjectPrototypePreview')
+    : startPreview()
   const restartPreview = async () => {
+    if (startingRef.current) return
     if (preview && !await (baseline ? runBaseline('stopPrototypeBaselinePreview') : run('stopProjectPrototypePreview'))) return
-    await (baseline ? runBaseline('startPrototypeBaselinePreview') : run('startProjectPrototypePreview'))
+    await startPreview()
   }
   return <div className={css.workbench}>
     <header className={css.projectHeader}><div><span>交互原型 / </span><strong>{state.project?.name}</strong></div><button onClick={() => setDrawer('collection')}><Icon name="files" />需求集合 <small>{requirements.length}</small></button></header>
@@ -253,7 +279,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
       <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button aria-label="收起 AI 协作" onClick={() => setAiCollapsed(true)}><Icon name="panel-left" /></button></header>
       <div className={css.sessionLine}><i />{selected ? '原生会话' : '项目原型'}<span>{selected?.title}</span></div>
       <div className={css.content}>
-        {selected && <><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.map(message => <article key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}{message.operationId ? ` · 操作 ${message.operationId}` : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
+        {selected && <><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.filter(message => message.kind !== 'tool').map(message => <article key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
 
       </div>
         <form className={css.instruction} onSubmit={event => { event.preventDefault(); void send() }}>
@@ -276,21 +302,33 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
         {aiCollapsed && <button aria-label="展开 AI 协作" onClick={() => setAiCollapsed(false)}><Icon name="panel-left" /></button>}
         <div className={css.modeSwitch} role="tablist" aria-label="工作区模式"><button id="prototype-preview-tab" role="tab" aria-controls="prototype-preview" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}><Icon name="eye" />预览</button><button id="prototype-code-tab" role="tab" aria-controls="prototype-code" aria-selected={tab === 'code'} onClick={() => setTab('code')}><Icon name="code" />代码</button></div>
         <span className={css.spacer} />
-        <button disabled={busy || !fileSource} onClick={() => void toggleRun()}><Icon name={preview ? "square" : "play"} />{preview ? "停止" : "运行"}</button>
-        <button disabled={busy || !fileSource} onClick={() => { setOutput('checks'); void (baseline ? runBaseline('checkPrototypeBaseline') : run('checkProjectPrototype')) }}><Icon name="check-circle" />工程检查</button>
+        <button disabled={busy || !fileSource || !!starting} onClick={() => void toggleRun()}><Icon name={preview ? "square" : "play"} />{startingCurrent ? "启动中" : preview ? "停止" : "运行"}</button>
+        <button disabled={busy || !fileSource || !!starting} onClick={() => { setOutput('checks'); void (baseline ? runBaseline('checkPrototypeBaseline') : run('checkProjectPrototype')) }}><Icon name="check-circle" />工程检查</button>
         <button className={css.primaryButton} disabled={!selected || !!baseline} onClick={() => setDrawer('confirm')}>确认原型<Icon name="arrow-right" /></button>
-        <details className={css.moreMenu} data-prototype-menu><summary aria-label="更多操作"><Icon name="more" /></summary><div role="menu"><button role="menuitem" disabled={busy || !fileSource} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void restartPreview() }}>重新运行预览</button><button role="menuitem" disabled={!fileSource || !!baseline} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setTab('code'); setRequestDiff(value => value + 1) }}>变更对比</button><button role="menuitem" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setDrawer('diagnostics') }}>诊断信息</button></div></details>
+        <details className={css.moreMenu} data-prototype-menu><summary aria-label="更多操作"><Icon name="more" /></summary><div role="menu"><button role="menuitem" disabled={busy || !fileSource || !!starting} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void restartPreview() }}>重新运行预览</button><button role="menuitem" disabled={!fileSource || !!baseline} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setTab('code'); setRequestDiff(value => value + 1) }}>变更对比</button><button role="menuitem" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setDrawer('diagnostics') }}>诊断信息</button></div></details>
       </div>
-      {runError && <p className={css.fileError} role="alert">{runError}</p>}
+      {runError && <p className={css.fileError} role="alert">运行尚未成功，请查看 AI 反馈或诊断信息</p>}
+      {!baseline && selected?.nextAction && <p aria-live="polite">{selected.nextAction}{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停 AI 处理</button>}</p>}
       <div className={css.previewPane} role="tabpanel" id="prototype-preview" aria-labelledby="prototype-preview-tab" hidden={tab !== 'preview'}>
-        {checkReport?.validity === 'stale' && <div className={css.fileError}>源码已变更，当前显示上一次运行的预览。<button disabled={busy} onClick={() => void restartPreview()}>重新运行</button></div>}
-        <PrototypePreview key={preview?.identity.previewId ?? 'empty'} identity={preview?.identity} externalUrl={preview?.url} visible={tab === 'preview' && !drawer} />
+        <PrototypePreview key={preview?.identity.previewId ?? 'empty'} identity={preview?.identity} externalUrl={preview?.url} starting={startingCurrent} visible={tab === 'preview' && !drawer} />
       </div>
       <div className={css.content} hidden={tab !== 'code'} role="tabpanel" id="prototype-code" aria-labelledby="prototype-code-tab">
         {fileSource ? <PrototypeFiles key={JSON.stringify(fileSource)} source={fileSource} requestDiff={requestDiff} call={call} registerFlush={registerFlush} onNeedsAttention={showCode} /> : <div className={css.empty}>{baselineId ? '所选基线不可用，请重新选择工程来源。' : '选择事项或已接受基线，查看工程文件。'}</div>}
       </div>
 
-      <section className={css.outputPanel} aria-label="运行与检查输出"><div className={css.outputTabs}>{(['runtime', 'checks', 'problems'] as const).map(value => <button key={value} aria-expanded={output === value} onClick={() => setOutput(output === value ? undefined : value)}>{value === 'runtime' ? '运行输出' : value === 'checks' ? '工程检查' : '问题'}{value === 'checks' && checkReport ? ` · ${checkReport.status === 'passed' ? '通过' : checkReport.status === 'running' ? '运行中' : '待处理'}` : ''}</button>)}<span className={css.spacer} /><button aria-label={output ? '折叠输出' : '展开输出'} onClick={() => setOutput(output ? undefined : 'runtime')}>{output ? '⌄' : '⌃'}</button></div>{output && <div className={css.outputContent}>{output === 'problems' ? <p>{runError || checkReport?.message || '暂无已记录问题。'}</p> : checkReport ? <>{checkReport && <details><summary>最近{checkReport.kind === 'preview' ? '预览构建' : '工程检查'} · {checkReport.status === 'passed' ? '完成' : checkReport.status === 'failed' ? '失败' : checkReport.status === 'interrupted' ? '中断，待核对' : '运行中'}</summary><p>{checkReport.validity === 'stale' ? '源码、产物或工具已变化，历史检查已失效。' : checkReport.validity === 'current' ? '当前源码与产物指纹匹配。' : '历史记录尚未核对当前工程指纹。'}</p><p>开始于 {checkReport.startedAt}{checkReport.completedAt ? `，结束于 ${checkReport.completedAt}` : ''}</p><ul>{checkReport.steps.map(step => <li key={step.name}>{step.name} · {step.status === 'passed' ? '完成' : step.status === 'failed' ? '失败' : '运行中'}{step.exitCode === undefined ? '' : `（退出码 ${step.exitCode}）`}{step.diagnostic && <details><summary>进程诊断</summary>{step.diagnostic.stdout && <pre>{step.diagnostic.stdout}</pre>}{step.diagnostic.stderr && <pre>{step.diagnostic.stderr}</pre>}{step.diagnostic.error && <p>{step.diagnostic.error}</p>}{step.diagnostic.truncated && <p>输出超过显示上限，日志已截断。</p>}</details>}</li>)}</ul>{checkReport.message && <p>{checkReport.message}</p>}<p>静态浏览器检查不等于业务用例验收。</p></details>}</> : <p>尚无运行与检查记录。</p>}</div>}</section>
+      <section className={css.outputPanel} aria-label="运行与检查输出">
+        <div className={css.outputTabs}>{(['runtime', 'checks', 'problems'] as const).map(value => <button key={value} aria-expanded={output === value} onClick={() => setOutput(output === value ? undefined : value)}>{value === 'runtime' ? '运行输出' : value === 'checks' ? '工程检查' : '问题'}{value === 'checks' && checkReport ? ` · ${checkReport.status === 'passed' ? '通过' : checkReport.status === 'running' ? '运行中' : '待处理'}` : ''}</button>)}<span className={css.spacer} /><button aria-label={output ? '折叠输出' : '展开输出'} onClick={() => setOutput(output ? undefined : 'runtime')}>{output ? '⌄' : '⌃'}</button></div>
+        {output && <div className={css.outputContent}>{output === 'problems' ? <p>{runError || checkReport?.message || '暂无已记录问题。'}</p> : checkReport ? <details open={output === 'runtime' || checkReport.status === 'running'}>
+          <summary>最近{checkReport.kind === 'preview' ? '预览构建' : '工程检查'} · {checkReport.status === 'passed' ? '完成' : checkReport.status === 'failed' ? '失败' : checkReport.status === 'interrupted' ? '中断，待核对' : '运行中'}</summary>
+          <p>结果对应本次运行记录。</p>
+          <p>开始于 {checkReport.startedAt}{checkReport.completedAt ? `，结束于 ${checkReport.completedAt}` : ''}</p>
+          <ul>{checkReport.steps.map(step => <li key={step.name}>{step.name} · {step.status === 'passed' ? '完成' : step.status === 'failed' ? '失败' : '运行中'}{step.exitCode === undefined ? '' : `（退出码 ${step.exitCode}）`}
+            {step.status === 'running' && !step.diagnostic && <p>等待进程输出…</p>}
+            {step.diagnostic && <details><summary>进程诊断</summary>{step.diagnostic.stdout && <pre>{step.diagnostic.stdout}</pre>}{step.diagnostic.stderr && <pre>{step.diagnostic.stderr}</pre>}{step.diagnostic.error && <p>{step.diagnostic.error}</p>}{step.diagnostic.truncated && <p>输出超过显示上限，日志已截断。</p>}</details>}
+          </li>)}</ul>
+          {checkReport.message && <p>{checkReport.message}</p>}<p>静态浏览器检查不等于业务用例验收。</p>
+        </details> : <p>{startingCurrent ? '正在等待 Host 记录启动操作…' : '尚无运行与检查记录。'}</p>}</div>}
+      </section>
     </section>
     </div>
     <footer className={css.workbenchFooter}><span>● 项目原型</span><span>页面与 Mock · 未连接真实业务服务 <button onClick={() => setDrawer('diagnostics')}>诊断</button></span></footer>
@@ -301,7 +339,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, registerFlush,
         {!requirements.length && <p className={css.muted}>项目中还没有需求材料。</p>}
       </div></>}
       {drawer === 'tasks' && <><DevelopmentQueue queue={queue} items={tasks} entities={entities} selectedTaskId={selected?.prototypeTaskId} busy={busy} error={queueError} call={call} onSelect={id => void selectTask(id)} onMove={(id, direction) => void moveTask(id, direction)} /></>}
-      {drawer === 'diagnostics' && <><label>工程来源 <select value={baseline?.id ?? ''} onChange={event => void selectBaseline(event.target.value)}><option value="">{selected ? '当前事项' : '选择已接受基线'}</option>{state.prototypeBaselines?.map(item => <option key={item.id} value={item.id}>原型基线 {item.sequence} · 只读</option>)}</select></label>{selected && materialReads.length > 0 && <details><summary>已读取的需求材料 · {materialReads.length} 次</summary><ul>{materialReads.map((item, index) => <li key={`${item.sessionId}:${item.readAt}:${index}`}>{item.title} · {item.source === 'draft' ? '本人草稿' : `已确认版本 ${item.version}`} · 正文第 {item.startLine}–{item.endLine} 行 · {item.readAt}{item.stale ? ' · 材料已更新，仅提醒，不重绑工程' : ''}</li>)}</ul></details>}{selected && <div className={css.taskInfo}><strong>{selected.title} · 会话与现场</strong><p>逐需求开发进度以队列为准；中断恢复由 Host 按持久记录自动处理。</p>{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}<details><summary>事项技术诊断</summary><p>调度状态：{selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}{selected.gitRecovery ? ` · Git：${selected.gitRecovery}` : ''}</p>{selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}</details></div>}{baseline && selected?.taskStatus === 'active' && <details><summary>复用到当前事项</summary><p>登记只固定来源与目标事项；后续代码调整仍需在当前事项中检查、确认并由后台接受。</p>{adoption ? <p>{adoption.status === 'succeeded' ? `复用已完成，目标基线 ${adoption.targetBaselineId}` : '复用已登记；等待当前事项形成并接受目标基线。'}</p> : <button type="button" disabled={busy} onClick={() => void adoptBaseline()}>登记复用来源</button>}</details>}</>}
+      {drawer === 'diagnostics' && <>{conversation?.messages.some(message => message.kind === 'tool') && <details><summary>AI 工具执行记录</summary>{conversation.messages.filter(message => message.kind === 'tool').map(message => <details key={message.sequence}><summary>{message.tool?.name} · {message.tool?.status}</summary><pre>{message.text}</pre>{message.tool?.arguments && <pre>{message.tool.arguments}</pre>}{message.tool?.result && <pre>{message.tool.result}</pre>}</details>)}</details>}<button type="button" onClick={() => { setDrawer(undefined); setOutput('runtime') }}>查看运行与检查日志</button>{runError && <p role="alert">{runError}</p>}<label>工程来源 <select value={baseline?.id ?? ''} onChange={event => void selectBaseline(event.target.value)}><option value="">{selected ? '当前事项' : '选择已接受基线'}</option>{state.prototypeBaselines?.map(item => <option key={item.id} value={item.id}>原型基线 {item.sequence} · 只读</option>)}</select></label>{selected && materialReads.length > 0 && <details><summary>已读取的需求材料 · {materialReads.length} 次</summary><ul>{materialReads.map((item, index) => <li key={`${item.sessionId}:${item.readAt}:${index}`}>{item.title} · {item.source === 'draft' ? '本人草稿' : `已确认版本 ${item.version}`} · 正文第 {item.startLine}–{item.endLine} 行 · {item.readAt}{item.stale ? ' · 材料已更新，仅提醒，不重绑工程' : ''}</li>)}</ul></details>}{selected && <div className={css.taskInfo}><strong>{selected.title} · 会话与现场</strong><p>逐需求开发进度以队列为准；中断恢复由 Host 按持久记录自动处理。</p>{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}<details><summary>事项技术诊断</summary><p>调度状态：{selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}{selected.gitRecovery ? ` · Git：${selected.gitRecovery}` : ''}</p>{selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}</details></div>}{baseline && selected?.taskStatus === 'active' && <details><summary>复用到当前事项</summary><p>登记只固定来源与目标事项；后续代码调整仍需在当前事项中检查、确认并由后台接受。</p>{adoption ? <p>{adoption.status === 'succeeded' ? `复用已完成，目标基线 ${adoption.targetBaselineId}` : '复用已登记；等待当前事项形成并接受目标基线。'}</p> : <button type="button" disabled={busy} onClick={() => void adoptBaseline()}>登记复用来源</button>}</details>}</>}
       {drawer === 'confirm' && <>{selected && <details open><summary>审阅原型成果</summary>{selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void prepareCandidate()}>固定当前成果</button>}{candidateError && <p role="alert">{candidateError}</p>}{candidate && <><p>{selected.taskStatus === 'accepted' ? '后台已接受；原事项现场已保留。' : candidate.status === 'conflict' ? '发生冲突，请在当前事项中修复后重新固定并确认。' : candidate.status === 'no-change' ? '没有代码变化；事项仍在开发。' : candidate.status === 'confirmed' ? '作者已确认；后台接受尚未完成。' : '请阅读本次固定成果。'}</p><p>关联开发需求：{candidate.developmentRequirementIds.join('、')}</p>{candidate.conflict && <div role="alert"><strong>冲突涉及文件</strong><ul>{candidate.conflict.files.map(file => <li key={file}>{file}</li>)}</ul></div>}<ul>{candidate.changes.map(change => <li key={change.path}><button type="button" onClick={() => void readCandidate(change.path)}>{change.path} · {change.status === 'added' ? '新增' : change.status === 'deleted' ? '删除' : '修改'}</button></li>)}</ul>{candidateFile && <div><strong>{candidateFile.path}</strong>{candidateFile.binary ? <p>二进制文件不显示正文。</p> : <PrototypeComparison path={candidateFile.path} base={candidateFile.baseContent ?? ''} current={candidateFile.sourceContent ?? ''} baseLabel={candidateFile.baseContent === undefined ? '原始版本（无文件）' : '原始版本'} currentLabel={candidateFile.sourceContent === undefined ? '固定成果（无文件）' : '固定成果'} />}</div>}{selected.taskStatus === 'active' && (candidate.status === 'ready' || candidate.status === 'confirmed') && <button type="button" disabled={busy} onClick={() => void processCandidate(false)}>检查固定成果</button>}{candidate.checks && <p>固定成果的工程、Mock 和静态浏览器保护检查已记录；业务用例仍需核对。</p>}{selected.taskStatus === 'active' && candidate.status === 'ready' && <button type="button" disabled={busy} onClick={() => void confirmCandidate()}>确认这份成果</button>}{candidate.status === 'confirmed' && selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void processCandidate(true)}>{candidate.integrationPhase ? '核对原提交' : '检查并提交成果'}</button>}{candidate.integrationPhase === 'accepted' && selected.taskStatus === 'accepted' && <button type="button" disabled={busy} onClick={() => void processCandidate(true)}>重试本机收尾</button>}</>}</details>}{!selected && <p>请先选择一个协作事项。</p>}</>}
     </WorkbenchDrawer>}
   </div>

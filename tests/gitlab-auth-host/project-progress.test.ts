@@ -100,7 +100,7 @@ test('a project whose local checkout disappeared is acquired again instead of fa
     await f.service.open('project-1'); f.release(); await f.lane.settle()
     const opened = await f.store.read(), directory = opened.projects[0]!.directory
     assert.equal(f.clones(), 1)
-    await rm(directory, { recursive: true, force: true }); await rm(`${directory}.studio-owner.json`, { force: true })
+    await rm(directory, { recursive: true, force: true })
     await f.service.open('project-1'); await f.lane.settle()
     const reopened = await f.store.read()
     assert.equal(f.clones(), 2, 'a checkout that is gone is cloned again, not assumed to exist')
@@ -162,15 +162,15 @@ test('a stopped operation keeps its bar with the reason so the record can be ret
   const f = await fixture()
   try {
     // A directory with foreign bytes is preserved, never adopted by the clone.
-    const directory = path.join(f.root, 'workspace', 'users', '1', 'project-project-1')
+    const directory = path.join(f.root, 'workspace', 'selected-project')
     await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'private.txt'), 'preserve me')
-    await f.service.open('project-1'); await f.lane.settle().catch(() => undefined)
+    await f.service.open('project-1', directory); await f.lane.settle().catch(() => undefined)
     const [bar] = f.tracker.views()
     assert.equal(bar?.phase, 'failed')
-    assert.match(bar?.label ?? '', /缺少本项目的持久归属记录/)
+    assert.match(bar?.label ?? '', /请选择空的项目文件夹/)
     const local = await f.store.read()
     assert.equal(local.projectInitializations[0]!.phase, 'unknown')
-    assert.match(local.projectInitializations[0]!.message ?? '', /缺少本项目的持久归属记录/)
+    assert.match(local.projectInitializations[0]!.message ?? '', /请选择空的项目文件夹/)
     assert.deepEqual(local.projects, [])
   } finally { await f.dispose() }
 })

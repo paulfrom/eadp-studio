@@ -23,14 +23,14 @@ async function bounded<T>(work: Promise<T>): Promise<T> {
 function successful(reply: StudioReply): StudioState { assert.equal(reply.ok, true, JSON.stringify(reply)); if (!reply.ok) throw new Error(reply.message); return reply.state }
 
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }, automatic = false) {
-  const root = await mkdtemp(path.join(tmpdir(), 'eadp-consistency-command-')), directory = path.join(root, 'main'), worktree = path.join(root, 'task')
-  await mkdir(directory); await mkdir(worktree)
+  const root = await mkdtemp(path.join(tmpdir(), 'eadp-consistency-command-')), workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo'), worktree = path.join(workspaceDirectory, 'task')
+  await mkdir(directory, { recursive: true }); await mkdir(worktree)
   await mkdir(path.join(directory, '需求')); await mkdir(path.join(worktree, '需求'))
   const oldDraft = await saveMaterial(directory, metadata, 'MAIN-OLD-CONTENT：旧规则。')
   const draft = await saveMaterial(worktree, metadata, 'TASK-ACCEPTED-CONTENT：本次确认的新规则。')
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
   const local = await store.read(); local.selectedProjectId = 'project'
-  local.projects.push({ id: 'project', name: '项目', directory, repositoryUrl: 'https://example.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://example.test/project.git' })
   const task: TaskView = { projectId: 'project', entityId: 'scene', sessionId: 'material-session', purpose: 'material', inputHash: draft.sha256, worktree }
   local.tasks.push(task)
   const candidateSha = 'c'.repeat(40)

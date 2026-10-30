@@ -7,12 +7,13 @@ import type { PrototypeCollaborationCommand, PrototypeEditBuffer, PrototypeFileC
 import type { TaskView } from '../../shared/studio.ts'
 import { digest } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { ProjectRecord } from '../adapters/project-record.ts'
 import { readTemplateManifest } from '../prototype/template.ts'
 import { PrototypeFiles, type PrototypeFileWorkspace } from '../prototype/files.ts'
 import type { HostPorts, SessionOutput } from './ports.ts'
 import { StudioStore } from './state.ts'
 import { resolvePrototypeRequirements } from './prototype-requirement-identities.ts'
+import { runtimeRepairInstruction } from './prototype-runtime-repair.ts'
 
 type Start = Extract<PrototypeCollaborationCommand, { action: 'startPrototypeCollaboration' }>
 type Correct = Extract<PrototypeCollaborationCommand, { action: 'correctPrototypeRequirement' }>
@@ -22,16 +23,17 @@ type TaskToken = PrototypeTaskToken
 type CreateRequest = CreatePrototypeTaskRequest
 type ClaimRequest = ClaimPrototypeDevelopmentRequest
 type SynchronizeRequest = SynchronizePrototypeDevelopmentRequest
-type Phase = 'prepared' | 'creating' | 'claimed' | 'workspace' | 'sending' | 'sent' | 'unknown' | 'fixing' | 'commit-known' | 'pushing' | 'pushed' | 'synchronizing' | 'awaiting-review' | 'confirming' | 'reviewed'
+type Phase = 'not-delivered' | 'prepared' | 'creating' | 'claimed' | 'workspace' | 'sending' | 'sent' | 'unknown' | 'fixing' | 'commit-known' | 'pushing' | 'pushed' | 'synchronizing' | 'awaiting-review' | 'confirming' | 'reviewed'
 interface Operation {
-  id: string; request: Start | Correct | Confirm; phase: Phase; resolvedRequirementIds?: string[]; create?: CreateRequest
+  automaticRepair?: true; id: string; request: Start | Correct | Confirm; phase: Phase; resolvedRequirementIds?: string[]; create?: CreateRequest
   taskId?: string; message?: string; claimRequest?: ClaimRequest; synchronizeRequest?: SynchronizeRequest; commitId?: string; checksPassed?: boolean; turnSeq?: number; turnStartHead?: string; turnStartFingerprint?: string
 }
 interface RequirementDevelopment {
   requirementId: string; runId: string; stage: PrototypeRequirementDevelopmentStage; reviewStatus: PrototypeRequirementReviewStatus
   startCommitId: string; remoteRef: string; claim?: Claim; claimReleased: boolean; commitId?: string; correction?: string; message?: string; lastTurnSeq?: number
 }
-interface LocalTask { projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string; sessionOpened?: boolean; state: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required'; nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; development?: RequirementDevelopment }
+interface RuntimeRun { operationId: string; kind: 'preview' | 'checks'; status: 'running' | 'repairing' | 'passed' | 'blocked'; repairOperationId?: string }
+interface LocalTask { runtimeRun?: RuntimeRun; projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string; sessionOpened?: boolean; state: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required'; nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; development?: RequirementDevelopment }
 interface FileSaveOperation { id: string; prototypeTaskId: string; path: string; expectedHash: string; contentHash: string; result?: Extract<PrototypeFileResult, { kind: 'saved' }> }
 interface QueueRecord { revision: number; queueOrder?: string[]; selectedTaskId?: string; tasks: LocalTask[]; operations: Operation[]; queueReorders?: Array<{ id: string; fingerprint: string }>; pauses?: Array<{ id: string; taskId: string; status: 'waiting' | 'settled' }>; drafts?: PrototypeInstructionDraft[]; draftWrites?: Array<{ id: string; fingerprint: string }>; buffers?: PrototypeEditBuffer[]; bufferWrites?: Array<{ id: string; fingerprint: string }>; fileSaves?: FileSaveOperation[] }
 
@@ -40,9 +42,9 @@ export class PrototypeCollaboration {
   private readonly files = new PrototypeFiles()
   private record?: QueueRecord
   private accountId?: number
-  private storage?: AtomicState<QueueRecord>
+  private storage?: ProjectRecord<QueueRecord>
   private loading: Promise<QueueRecord> | undefined
-  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) {}
+  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly executeRuntime?: (task: TaskView, kind: 'preview' | 'checks', operationId: string) => Promise<void>) {}
   private route(projectId: string, suffix: string): string { return `/v1/projects/${encodeURIComponent(projectId)}${suffix}` }
   private async data(): Promise<QueueRecord> {
     const account = this.store.accountId
@@ -50,7 +52,16 @@ export class PrototypeCollaboration {
     if (this.accountId === account && this.loading) return this.loading
     if (this.accountId !== account || !this.record) {
       this.accountId = account
-      this.storage = new AtomicState(path.join(this.store.directory, 'prototype-queue.json'))
+      this.storage = new ProjectRecord<QueueRecord>(this.store, 'prototype-queue.json', () => ({ revision: 0, tasks: [], operations: [] }), (value, id) => {
+        const tasks = value.tasks.filter(x => x.projectId === id), taskIds = new Set(tasks.map(x => x.task.id))
+        return { revision: value.revision, tasks, operations: value.operations.filter(x => ('projectId' in x.request ? x.request.projectId === id : taskIds.has(x.request.prototypeTaskId))),
+          drafts: (value.drafts ?? []).filter(x => x.projectId === id), buffers: (value.buffers ?? []).filter(x => taskIds.has(x.prototypeTaskId)),
+          pauses: (value.pauses ?? []).filter(x => taskIds.has(x.taskId)), fileSaves: (value.fileSaves ?? []).filter(x => taskIds.has(x.prototypeTaskId)) }
+      }, values => ({ revision: Math.max(0, ...values.map(x => x.revision)), tasks: values.flatMap(x => x.tasks), operations: values.flatMap(x => x.operations),
+        drafts: values.flatMap(x => x.drafts ?? []), buffers: values.flatMap(x => x.buffers ?? []), pauses: values.flatMap(x => x.pauses ?? []), fileSaves: values.flatMap(x => x.fileSaves ?? []) }), {
+        select: value => ({ revision: value.revision, tasks: [], operations: [], queueOrder: value.queueOrder ?? [], ...(value.selectedTaskId ? { selectedTaskId: value.selectedTaskId } : {}), queueReorders: value.queueReorders ?? [], draftWrites: value.draftWrites ?? [], bufferWrites: value.bufferWrites ?? [] }),
+        merge: (value, metadata) => ({ ...value, revision: Math.max(value.revision, metadata.revision), queueOrder: metadata.queueOrder ?? [], ...(metadata.selectedTaskId ? { selectedTaskId: metadata.selectedTaskId } : {}), queueReorders: metadata.queueReorders ?? [], draftWrites: metadata.draftWrites ?? [], bufferWrites: metadata.bufferWrites ?? [] }),
+      })
       const storage = this.storage
       const loading = (async () => {
         const record = await storage.read() ?? { revision: 0, tasks: [], operations: [] }
@@ -59,6 +70,7 @@ export class PrototypeCollaboration {
         // A previous process cannot establish that a model call has settled.
         let changed = false
         for (const task of record.tasks) if (task.state === 'running') { task.state = 'recovery-required'; task.nextAction = '核对原生会话中的执行结果'; changed = true }
+        for (const task of record.tasks) if (task.runtimeRun?.status === 'running') { task.runtimeRun.status = 'blocked'; task.nextAction = '上次运行已中断，现场已保留，可重新运行'; changed = true }
         for (const operation of record.operations) if (operation.phase === 'sending') { operation.phase = 'unknown'; operation.message = '消息投递结果未知，请核对原生会话'; changed = true }
         if (changed) await this.save()
         return record
@@ -75,7 +87,10 @@ export class PrototypeCollaboration {
       const request = value.request as Start
       return { projectId: request.projectId, prototypeTaskId: `queued:${value.id}`, title: request.title, taskStatus: 'active' as const, localDispatchState: value.message ? 'recovery-required' as const : 'queued' as const, developmentRequirementIds: request.developmentRequirementIds, ...(request.developmentRequirementIds.length === 1 ? { requirementId: request.developmentRequirementIds[0], developmentStage: value.message ? 'blocked' as const : 'queued' as const, reviewStatus: 'pending' as const } : {}), pendingCreation: true, nextAction: value.message ?? '已保存，等待前一项完成' }
     })
-    return { revision: data.revision, ...(data.selectedTaskId ? { selectedTaskId: data.selectedTaskId } : {}), items: data.tasks.map<PrototypeQueueView['items'][number]>(item => { const pause = (data.pauses ?? []).findLast(value => value.taskId === item.task.id && value.status === 'waiting'), development = item.development; return { projectId: item.projectId, prototypeTaskId: item.task.id, title: item.task.title, sessionId: item.sessionId, taskStatus: item.task.status, localDispatchState: item.state, ...(item.nextAction ? { nextAction: item.nextAction } : {}), ...(item.gitRecovery ? { gitRecovery: item.gitRecovery } : {}), ...(item.endOperationId ? { endOperationId: item.endOperationId } : {}), ...(pause ? { pauseOperationId: pause.id } : {}), developmentRequirementIds: item.task.developmentRequirementIds, ...(development ? { requirementId: development.requirementId, developmentStage: development.stage, reviewStatus: development.reviewStatus, ...(development.commitId ? { commitId: development.commitId } : {}) } : {}) } }).concat(pending).sort((a, b) => this.queuePosition(data, a.prototypeTaskId) - this.queuePosition(data, b.prototypeTaskId)) }
+    const projectId = (await this.store.read()).selectedProjectId
+    const projectTasks = projectId ? data.tasks.filter(item => item.projectId === projectId).sort((a, b) => this.queuePosition(data, a.task.id) - this.queuePosition(data, b.task.id)) : data.tasks
+    const selectedTaskId = projectTasks.find(item => item.task.id === data.selectedTaskId)?.task.id ?? projectTasks[0]?.task.id
+    return { revision: data.revision, ...(selectedTaskId ? { selectedTaskId } : {}), items: data.tasks.map<PrototypeQueueView['items'][number]>(item => { const pause = (data.pauses ?? []).findLast(value => value.taskId === item.task.id && value.status === 'waiting'), development = item.development; return { projectId: item.projectId, prototypeTaskId: item.task.id, title: item.task.title, sessionId: item.sessionId, taskStatus: item.task.status, localDispatchState: item.state, ...(item.nextAction ? { nextAction: item.nextAction } : {}), ...(item.gitRecovery ? { gitRecovery: item.gitRecovery } : {}), ...(item.endOperationId ? { endOperationId: item.endOperationId } : {}), ...(pause ? { pauseOperationId: pause.id } : {}), developmentRequirementIds: item.task.developmentRequirementIds, ...(development ? { requirementId: development.requirementId, developmentStage: development.stage, reviewStatus: development.reviewStatus, ...(development.commitId ? { commitId: development.commitId } : {}) } : {}) } }).concat(pending).sort((a, b) => this.queuePosition(data, a.prototypeTaskId) - this.queuePosition(data, b.prototypeTaskId)) }
   }
   private queuePosition(data: QueueRecord, id: string): number {
     const index = data.queueOrder?.indexOf(id) ?? -1
@@ -211,6 +226,8 @@ export class PrototypeCollaboration {
     const data = await this.data(), local = await this.store.read(), accountId = this.store.accountId!
     let operation = data.operations.find(value => value.id === command.operationId)
     if (operation && canonical(operation.request) !== canonical(command)) throw new Error('同一操作不能绑定不同实现指令')
+    const existingTask = operation?.taskId ? data.tasks.find(value => value.task.id === operation!.taskId) : undefined
+    if (existingTask?.development && existingTask.development.runId !== operation!.id) return
     if (!operation) {
       operation = { id: command.operationId, request: structuredClone(command), phase: 'prepared' }; data.operations.push(operation)
       data.queueOrder ??= data.tasks.map(value => value.task.id)
@@ -221,7 +238,7 @@ export class PrototypeCollaboration {
     const manifest = await readTemplateManifest(this.manifest())
     const scope = await this.scope(command.writeScope.length ? command.writeScope : manifest.contract.writablePrefixes)
     if (operation.phase === 'unknown' || operation.phase === 'sending') throw new Error('原指令的投递结果未知，请核对消息记录；输入已保留')
-    if (operation.phase === 'sent') return
+    if (operation.taskId && !['claimed', 'workspace'].includes(operation.phase)) return
     if (!operation.taskId) {
       const ids = operation.phase === 'creating' && operation.create ? operation.create.developmentRequirementIds : await this.identify(operation, command.projectId, [], command.developmentRequirementIds)
       if (!ids.length) { operation.message = '未识别实际开发需求，请补充需求名称或编号；原指令已保留'; await this.save(); throw new Error(operation.message) }
@@ -246,7 +263,7 @@ export class PrototypeCollaboration {
       const claim = ids.length === 1 ? task.developmentClaims.find(value => value.requirementId === ids[0]) : undefined
       if (ids.length === 1 && !claim) throw new Error('后台未返回需求开发占用，不能开始写入')
       const development: RequirementDevelopment | undefined = ids.length === 1 ? { requirementId: ids[0]!, runId: operation.id, stage: 'queued', reviewStatus: 'pending', startCommitId: task.startHead, remoteRef: operation.create.remoteRef, claim: claim!, claimReleased: false } : undefined
-      data.tasks.push({ projectId: command.projectId, task, sessionId: `studio-${randomUUID()}`, worktree: path.join(this.store.directory, 'worktrees', command.projectId, task.id), state: 'queued', ...(development ? { development } : {}) })
+      data.tasks.push({ projectId: command.projectId, task, sessionId: `studio-${randomUUID()}`, worktree: path.join(await this.store.projectDirectory(command.projectId), 'worktrees', task.id), state: 'queued', ...(development ? { development } : {}) })
       await this.save()
     }
     const item = data.tasks.find(value => value.task.id === operation!.taskId)
@@ -268,7 +285,7 @@ export class PrototypeCollaboration {
     const attachments = 'attachments' in operation.request ? operation.request.attachments : undefined
     try {
       await this.ports.prompt(item.sessionId, instruction, operation.id, attachments)
-      operation.phase = 'sent'; if (item.development) item.development.stage = 'developing'; await this.save()
+      operation.phase = 'sent'; if (item.runtimeRun?.status === 'repairing') item.nextAction = 'AI 正在修复运行问题，完成后将自动重试'; if (item.development) item.development.stage = 'developing'; await this.save()
     } catch (error) {
       operation.phase = 'unknown'; item.state = 'recovery-required'; item.nextAction = '核对原生会话中的消息结果'; operation.message = error instanceof Error ? error.message : '消息投递结果未知'
       if (item.development) { item.development.stage = 'sending'; item.development.message = operation.message }
@@ -336,6 +353,73 @@ export class PrototypeCollaboration {
       return
     }
   }
+  /** Retain the requested outcome while the authorized session repairs failed checks. */
+  async runRuntime(taskId: string, kind: 'preview' | 'checks', operationId: string): Promise<void> {
+    const data = await this.data(), item = data.tasks.find(value => value.task.id === taskId)
+    if (!item) throw new Error('本机未登记该事项')
+    if (item.runtimeRun?.operationId === operationId) { if (item.runtimeRun.kind !== kind) throw new Error('同一运行操作不能绑定其他目标'); return }
+    const repair = data.operations.find(value => value.id === item.runtimeRun?.repairOperationId)
+    if (item.state === 'queued' && item.runtimeRun?.status === 'repairing' && repair?.automaticRepair && ['prepared', 'claimed'].includes(repair.phase)) {
+      repair.phase = 'not-delivered'; item.runtimeRun.status = 'blocked'; item.state = 'awaiting-user'
+      if (item.development) item.development.stage = 'blocked'
+      await this.save()
+    }
+    if (item.state === 'recovery-required') await this.reconcileUndelivered(item)
+    if (item.state === 'running' || item.state === 'recovery-required' || item.runtimeRun?.status === 'repairing') throw new Error('AI 正在处理当前事项，请稍候或暂停后继续')
+    if ((data.buffers ?? []).some(value => value.prototypeTaskId === taskId && value.content !== value.baseContent)) throw new Error('请先保存当前编辑内容')
+    await this.current(item); await this.existingWorkspace(item)
+    item.runtimeRun = { operationId, kind, status: 'running' }
+    item.nextAction = '正在准备运行并检查工程'; await this.save()
+    await this.attemptRuntime(item, operationId)
+  }
+  /** Absence is conclusive only after the restored native Agent and its inbox have settled. */
+  private async reconcileUndelivered(item: LocalTask): Promise<void> {
+    const data = await this.data(), operation = [...data.operations].reverse().find(value => value.taskId === item.task.id && ['sending', 'unknown', 'sent'].includes(value.phase))
+    if (!operation) return
+    await this.restoreSession(item.sessionId)
+    if (!await this.ports.settlePrototypeSession(item.sessionId, false)) return
+    const delivery = await this.ports.inspectPrompt(item.sessionId, operation.id)
+    const lastTurn = await this.ports.lastPrototypeTurn?.(item.sessionId)
+    // A settled, empty inbox with an admitted but unconsumed prompt proves native pre-step rejection.
+    if (delivery !== 'absent' && !(delivery === 'admitted' && lastTurn && lastTurn.reason !== 'completed' && lastTurn.seq !== undefined)) return
+    if (item.development && lastTurn?.seq !== undefined) item.development.lastTurnSeq = Math.max(item.development.lastTurnSeq ?? -1, lastTurn.seq)
+    operation.phase = 'not-delivered'; delete operation.message
+    item.state = 'awaiting-user'; item.nextAction = '已核实上次指令未发送，原输入已保留，可以重新运行或继续说明'
+    if (item.development) { item.development.stage = 'blocked'; item.development.message = item.nextAction }
+    await this.save()
+  }
+  private async attemptRuntime(item: LocalTask, checkId: string): Promise<void> {
+    const run = item.runtimeRun!
+    try {
+      const task = this.localTask(item)
+      if (!this.executeRuntime) throw new Error('工程运行入口未配置')
+      await this.executeRuntime(task, run.kind, checkId)
+      run.status = 'passed'; item.nextAction = run.kind === 'preview' ? '原型已运行，可以开始体验' : '工程检查已完成'
+      await this.save()
+    } catch (error) {
+      if (await this.repairCheckFailure(item, checkId)) return
+      run.status = 'blocked'; item.nextAction = '本次运行未完成，请在诊断中查看具体原因'; await this.save(); throw error
+    }
+  }
+  /** Only a failed report for this exact attempt can authorize a diagnostic repair. */
+  private async repairCheckFailure(item: LocalTask, checkId: string): Promise<boolean> {
+    const reports = await this.ports.prototypeCheckReports?.([{ projectId: item.projectId, prototypeTaskId: item.task.id }])
+    const report = reports?.find(value => value.operationId === checkId && value.projectId === item.projectId && value.prototypeTaskId === item.task.id && value.status === 'failed' && !value.baselineId)
+    const engineeringFailure = report?.steps.some(step => step.status === 'failed' && (step.exitCode !== undefined && step.exitCode !== 0 || step.name === 'browser' || step.name === 'preview'))
+    if (!report || !engineeringFailure || !item.development) return false
+    const data = await this.data()
+    await this.current(item); await this.existingWorkspace(item)
+    const command: Correct = { action: 'correctPrototypeRequirement', prototypeTaskId: item.task.id, operationId: randomUUID(), instruction: runtimeRepairInstruction(report) }
+    const operation: Operation = { automaticRepair: true, id: command.operationId, request: command, taskId: item.task.id, phase: 'prepared' }
+    data.operations.push(operation)
+    item.runtimeRun ??= { operationId: checkId, kind: 'checks', status: 'repairing' }
+    item.runtimeRun.status = 'repairing'; item.runtimeRun.repairOperationId = operation.id
+    item.development.runId = operation.id; item.development.stage = 'queued'; item.development.reviewStatus = 'correcting'
+    item.state = 'queued'; item.nextAction = '运行遇到问题，AI 将自动修复并重新尝试'; await this.save()
+    // The shared queue remains the only model dispatcher, including across projects.
+    await this.advanceQueue()
+    return true
+  }
   private async finishDevelopment(item: LocalTask, operation: Operation, release: boolean, final = false): Promise<void> {
     const development = item.development!
     await this.existingWorkspace(item)
@@ -345,6 +429,7 @@ export class PrototypeCollaboration {
       const unchanged = observed.head === operation.turnStartHead && await this.ports.git.workingFingerprint(item.worktree) === operation.turnStartFingerprint
       if ((operation.request.action === 'startPrototypeCollaboration' || operation.request.action === 'correctPrototypeRequirement') && unchanged) {
         item.state = 'awaiting-user'; item.nextAction = '本轮未形成代码改动，请核对答复后决定是否纠偏'; development.stage = operation.request.action === 'correctPrototypeRequirement' ? 'awaiting-review' : 'developing'; if (operation.request.action === 'correctPrototypeRequirement') development.reviewStatus = 'awaiting-review'; development.message = item.nextAction
+        if (item.runtimeRun?.status === 'repairing') { item.runtimeRun.status = 'blocked'; item.nextAction = 'AI 本轮未能修复运行问题，请查看 AI 的说明后继续'; development.message = item.nextAction }
         await this.save(); return
       }
       operation.phase = 'fixing'; development.stage = 'fixing'; delete development.message; await this.save()
@@ -357,7 +442,12 @@ export class PrototypeCollaboration {
       development.commitId = operation.commitId; operation.phase = 'commit-known'; development.stage = 'commit-known'; await this.save()
     }
     if (!operation.checksPassed) {
-      await this.ports.candidateChecks(this.localTask(item), operation.commitId, operation.id)
+      try { await this.ports.candidateChecks(this.localTask(item), operation.commitId, operation.id) }
+      catch (error) {
+        item.state = 'awaiting-user'
+        if (await this.repairCheckFailure(item, operation.id)) return
+        item.state = 'running'; throw error
+      }
       operation.checksPassed = true; await this.save()
     }
     if (operation.phase === 'commit-known' || operation.phase === 'fixing') { operation.phase = 'pushing'; development.stage = 'pushing'; await this.save() }
@@ -385,6 +475,10 @@ export class PrototypeCollaboration {
         operation.phase = 'awaiting-review'; development.stage = 'awaiting-review'; development.reviewStatus = 'awaiting-review'; item.nextAction = release ? '需求成果待核对，已自动推进下一项' : '纠偏成果待核对，开发占用保留至最终确认'
       }
       item.state = 'awaiting-user'; delete development.message; await this.save()
+      if (item.runtimeRun?.status === 'repairing' && item.runtimeRun.repairOperationId === operation.id) {
+        item.runtimeRun.status = 'running'; item.nextAction = 'AI 已完成修复，正在重新检查并运行'; await this.save()
+        await this.attemptRuntime(item, randomUUID())
+      }
       if (!final) await this.advanceQueue()
     }
   }
@@ -475,7 +569,7 @@ export class PrototypeCollaboration {
     if (!first) await this.restoreSession(item.sessionId)
     const settled = await this.ports.settlePrototypeSession(item.sessionId, first)
     if (!settled) { item.state = 'recovery-required'; item.nextAction = '暂停结果待核对，现场和开发占用已保留'; await this.save(); throw new Error(item.nextAction) }
-    operation!.status = 'settled'; item.state = 'paused'; item.nextAction = '已暂停，继续时请发送指令'; await this.save()
+    operation!.status = 'settled'; if (item.runtimeRun) item.runtimeRun.status = 'blocked'; item.state = 'paused'; item.nextAction = '已暂停，继续时请发送指令'; await this.save()
   }
   /** Keep the original end-operation identity and settle native execution before changing server state. */
   async prepareCancellation(taskId: string, operationId: string): Promise<string> {
@@ -506,6 +600,7 @@ export class PrototypeCollaboration {
       ?? [...data.operations].reverse().find(value => value.taskId === taskId && value.phase === 'sent')
     if (!operation) throw new Error('没有待核对的消息操作')
     const result = await this.ports.inspectPrompt(item.sessionId, operation.id)
+    if (result === 'absent') { await this.reconcileUndelivered(item); return }
     if (result === 'delivered' || result === 'admitted') {
       operation.phase = 'sent'; delete operation.message
       item.nextAction = result === 'delivered' ? '原生记录中已找到该指令；请核对执行结果' : '原指令曾进入原生队列；请核对执行结果'
@@ -524,8 +619,11 @@ export class PrototypeCollaboration {
     const data = await this.data(), item = data.tasks.find(value => value.task.id === taskId)
     if (!item) throw new Error('本机未登记该事项')
     const queued = data.operations.some(value => value.taskId === taskId && value.request.action === 'startPrototypeCollaboration' && value.phase === 'workspace')
-    if (queued) return []
-    return this.ports.readPrototypeConversation(item.sessionId)
+    if (queued && !item.sessionOpened) return []
+    const messages = await this.ports.readPrototypeConversation(item.sessionId)
+    const repairs = new Set(data.operations.filter(value => value.taskId === taskId && value.automaticRepair).map(value => value.id))
+    return messages.map(message => message.role === 'user' && message.operationId && repairs.has(message.operationId)
+      ? { ...message, text: '运行检查遇到问题，已交给 AI 自动修复并重试', source: 'studio-runtime-repair' } : message)
   }
   async restoreSession(sessionId: string): Promise<string | undefined> {
     const data = await this.data(), item = data.tasks.find(value => value.sessionId === sessionId)
@@ -614,6 +712,7 @@ export class PrototypeCollaboration {
     if (!accountId || (await this.ports.account())?.id !== accountId) throw new Error('协同账号已变化，任务现场保留供原账号恢复')
     for (const item of data.tasks) {
       const development = item.development
+      if (item.state === 'paused' || item.endOperationId) continue
       if (!development || development.stage === 'reviewed' || development.stage === 'awaiting-review') continue
       const operation = data.operations.find(value => value.id === development.runId)
       if (!operation) throw new Error('需求开发操作记录缺失，现场已保留')
@@ -622,12 +721,13 @@ export class PrototypeCollaboration {
       if (operation.phase === 'workspace') { item.state = 'queued'; await this.save(); await this.advanceQueue(); return }
       if (operation.phase === 'unknown' || operation.phase === 'sending') {
         const delivery = await this.ports.inspectPrompt(item.sessionId, operation.id)
+        if (delivery === 'absent') { await this.reconcileUndelivered(item); return }
         if (delivery === 'unknown') { item.state = 'recovery-required'; item.nextAction = '消息结果仍未知，原指令未重发'; development.stage = 'sending'; await this.save(); return }
         operation.phase = 'sent'; development.stage = 'developing'; item.state = 'recovery-required'; await this.save()
       }
       if (operation.phase === 'sent') {
         await this.restoreSession(item.sessionId)
-        item.nextAction = '原生日志已恢复，正在核对官方轮次结束事件'; await this.save()
+        item.nextAction = item.runtimeRun?.status === 'repairing' ? 'AI 正在修复运行问题，完成后将自动重试' : '正在恢复 AI 处理进度'; await this.save()
         await this.ports.settlePrototypeSession(item.sessionId, false)
         return
       }
@@ -664,12 +764,13 @@ export class PrototypeCollaboration {
       await this.save(); return true
     }
     const operation = data.operations.find(value => value.id === development.runId)
-    if (!operation || !['startPrototypeCollaboration', 'correctPrototypeRequirement'].includes(operation.request.action)) return true
+    if (!operation || operation.phase !== 'sent' || !['startPrototypeCollaboration', 'correctPrototypeRequirement'].includes(operation.request.action)) return true
     if (output.seq === undefined || !Number.isSafeInteger(output.seq)) return true
     const recoveringTurn = operation.phase === 'sent' && operation.turnSeq === output.seq
     if (development.lastTurnSeq !== undefined && (output.seq < development.lastTurnSeq || output.seq === development.lastTurnSeq && !recoveringTurn)) return true
     development.lastTurnSeq = output.seq
     if (output.reason !== 'completed') {
+      if (item.runtimeRun) item.runtimeRun.status = 'blocked'
       item.state = 'recovery-required'; item.nextAction = `原生轮次未成功完成：${output.reason}；未提交或释放需求`; development.message = item.nextAction
       await this.save(); return true
     }

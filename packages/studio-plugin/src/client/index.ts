@@ -53,7 +53,7 @@ function openSettings(section?: string): void {
  * store handle the workbench panel uses, so both surfaces read one projection.
  */
 function registerSettingsSections(ctx: ClientContext, session: StudioSession, theme: ThemeFace): void {
-  const faces: StudioSettingsFaces = { login: session.login, logout: session.logout, sync: session.sync, run: session.run, theme }
+  const faces: StudioSettingsFaces = { login: session.login, logout: session.logout, sync: session.sync, run: session.run, theme, pickDirectory: () => ctx.uiWorkspace.pickDirectory() }
   for (const section of settingsSections) {
     ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section',
@@ -83,7 +83,7 @@ function registerStudio(ctx: ClientContext, session: StudioSession, theme: Theme
   const dispose = ctx.slots.register({ name: 'main', key: PANEL_ID,
     store: session.store,
     children: { 'studio.session': { kind: 'single', scope: 'session' } },
-    inject: () => ({ run: session.run, sync: session.sync, progress: session.progress, retainSession, openSettings, startSession, theme }),
+    inject: () => ({ run: session.run, sync: session.sync, progress: session.progress, retainSession, openSettings, startSession, theme, pickDirectory: () => ctx.uiWorkspace.pickDirectory() }),
   }, StudioPanel)
   ctx.layout.selectPanel(PANEL_ID)
   return dispose

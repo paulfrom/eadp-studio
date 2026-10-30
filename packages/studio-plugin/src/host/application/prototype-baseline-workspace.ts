@@ -31,7 +31,7 @@ export class PrototypeBaselineWorkspaces {
 
   private async create(source: BaselineSource, project: ProjectState, account: number): Promise<Snapshot> {
     if (!this.ports.prototypeManifestPath) throw new Error('原型模板未配置')
-    const base = path.join(this.store.directory, 'prototype-baseline-snapshots')
+    const base = path.join(await this.store.projectDirectory(source.projectId), 'prototype-baseline-snapshots')
     await mkdir(base, { recursive: true, mode: 0o700 })
     const directory = await mkdtemp(path.join(base, 'snapshot-'))
     const repository = path.join(directory, 'repository'), root = path.join(directory, '原型代码')

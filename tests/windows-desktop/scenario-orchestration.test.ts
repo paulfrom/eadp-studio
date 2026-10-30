@@ -22,10 +22,17 @@ async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
   const parent = await mkdtemp(path.join(tmpdir(), 'eadp-scenario-orchestration-')), root = path.join(parent, 'project'), localRoot = path.join(parent, 'local')
   await mkdir(root)
   const background: Promise<unknown>[] = []
-  t.after(async () => { workspaces.dispose(); await Promise.allSettled(background); await rm(parent, { recursive: true, force: true }) })
+  t.after(async () => {
+    workspaces.dispose()
+    let settled = 0
+    while (settled < background.length) { const pending = background.slice(settled); settled = background.length; await Promise.allSettled(pending) }
+    // A finishing save may open observation again; match the application's disposal order.
+    workspaces.dispose()
+    await rm(parent, { recursive: true, force: true })
+  })
   const store = new StudioStore(localRoot); store.useUser(1)
   const local = await store.read(); local.selectedProjectId = 'project'
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.example/project.git' })
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: 'https://git.example/project.git' })
   const token: OccupationToken = { occupationId: 'occupation', generation: 1, taskId: path.basename(root), clientId: local.clientId, expectedRevision: 1 }
   const task: TaskView = { entityId: 'scene', projectId: 'project', sessionId: 'original-session', purpose: 'material', inputHash: '', worktree: root }
   local.tasks.push(task)
@@ -265,7 +272,7 @@ for (const failure of ['format', 'unread-evidence', 'expired-context'] as const)
   assert.match(snapshot?.writeProposalError ?? '', reason)
   assert.equal(snapshot?.writeProposal, undefined)
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, before.sha256)
-  const saved = JSON.parse(await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8'))
+  const saved = JSON.parse(await readFile(path.join(await f.store.projectDirectory('project'), 'local-state.json'), 'utf8'))
   assert.equal(saved.scenarios[0].writeProposalError, snapshot?.writeProposalError, 'failure survives a restart')
   assert.equal(saved.scenarios[0].writeProposal, undefined)
 
@@ -457,7 +464,7 @@ test('a lost resume response preserves the explicit business answer across persi
   await f.repairs.accept(sessionId, reply({ baseHash: f.draft.sha256, question: '失败后是否允许重试？' }))
   f.loseNext('resume')
   await assert.rejects(f.repairs.resume({ action: 'resumeScenarioRepair', entityId: 'scene', expectedHash: f.draft.sha256, answer: '允许重试三次', userActionId: 'resume-action' }), /response lost/)
-  const persisted = JSON.parse(await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8'))
+  const persisted = JSON.parse(await readFile(path.join(await f.store.projectDirectory('project'), 'local-state.json'), 'utf8'))
   assert.equal(persisted.scenarioRepairs[0].pendingAnswer, '允许重试三次')
   const restartedStore = new StudioStore(f.localRoot); restartedStore.useUser(1)
   const restarted = new ScenarioWorkspaces(restartedStore, f.api, f.ports, f.projects, f.workspaces.deps)
@@ -524,7 +531,7 @@ test('replayed DSH assistant and turn-end sequences cannot alter the current rep
   assert.equal(repair.waiting, true); assert.equal(f.getRepair()!.status, 'active')
   assert.equal(f.getRepair()!.roundsUsed, 1); assert.equal(f.prompts.length, 2)
   assert.equal((await readMaterial(f.root, 'scenario', 'scene')).sha256, draft.sha256)
-  const persisted = JSON.parse(await readFile(path.join(f.store.directory, 'studio-state.json'), 'utf8'))
+  const persisted = JSON.parse(await readFile(path.join(await f.store.projectDirectory('project'), 'local-state.json'), 'utf8'))
   assert.equal(persisted.scenarioRepairs[0].lastHandledSeq, 11)
 })
 

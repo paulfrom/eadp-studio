@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { CandidateMerges } from '../../packages/studio-plugin/src/host/application/candidate-merges.ts'
@@ -25,6 +25,9 @@ const draft = { path: '场景/e.md', sha256: sha('d'), body: 'merged', entityId:
 async function fixture(t: { after(fn: () => unknown): void }, conflict: boolean, outOfScope = false, wrongParent = false, crashAfterComplete = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'merges-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const local = await store.read(); local.tasks.push(structuredClone(task)); await store.save()
   const calls: string[] = [], mergeCommits: string[] = [], cancelled: string[] = [], sessionTasks: TaskView[] = []
   const checkouts: Array<{ branch: string; baseSha: string }> = [], switches: Array<{ branch: string; commit: string }> = [], deletions: Array<{ branch: string; commit: string }> = []

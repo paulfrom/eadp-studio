@@ -1,6 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { WorkspaceLocation } from './workspace-location.ts'
 import { isProjectManifest, type ProjectState, type ProjectView } from '@eadp/contracts'
 import { generalScenarioDocument } from '@eadp/asset-domain'
 import { defaultRequirementTemplate, defaultRequirementTemplateBody, defaultScenarioTemplate, defaultScenarioTemplateBody } from './default-material-templates.ts'
@@ -20,17 +22,21 @@ async function writeInitialFile(target: string, value: string): Promise<void> {
 
 /** Backend owns repository provisioning. This service owns only attributable local Git workspaces. */
 export class ProjectWorkspaces {
+  readonly location: WorkspaceLocation
   private readonly caches = new Map<string, string>()
   private readonly fixedBytes = new Map<string, Uint8Array>()
-  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly lane: BackgroundLane, private readonly progress: ProjectProgressTracker) {}
+  constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly lane: BackgroundLane, private readonly progress: ProjectProgressTracker) {
+    this.location = new WorkspaceLocation(store.rootDirectory, [store.rootDirectory, fileURLToPath(new URL('../../../', import.meta.url))], ports.workspaceRoot)
+  }
   async create(command: Extract<StudioCommand, { action: 'createProject' }>): Promise<void> {
     if (!command.name.trim() || command.name.length > 200 || !Number.isSafeInteger(command.namespaceId) || command.namespaceId <= 0 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(command.path) || command.path.length > 100) throw new Error('请填写项目名称、群组和有效的仓库路径。')
     const local = await this.store.read()
     // A ready record already produced a project, so a new request for the same path
     // is a new creation the backend must judge, never a replay of the finished one.
     const previous = local.projectInitializations.find(op => op.namespaceId === command.namespaceId && op.path === command.path && op.phase !== 'ready')
-    if (previous) { if (previous.name !== command.name.trim()) throw new Error('此仓库路径已有创建记录，请从待处理记录恢复。'); this.start(previous); return }
-    const operation: ProjectInitialization = { id: randomUUID(), name: command.name.trim(), namespaceId: command.namespaceId, path: command.path, phase: 'creating' }
+    if (previous) { if (previous.name !== command.name.trim() || command.workspaceDirectory && path.resolve(command.workspaceDirectory) !== previous.workspaceDirectory) throw new Error('此仓库路径已有创建记录，请从待处理记录恢复。'); this.start(previous); return }
+    const operationId = randomUUID()
+    const operation: ProjectInitialization = { id: operationId, name: command.name.trim(), namespaceId: command.namespaceId, path: command.path, phase: 'creating', workspaceDirectory: await this.location.project(operationId, command.path, command.workspaceDirectory) }
     local.projectInitializations.push(operation); await this.store.save()
     this.start(operation)
   }
@@ -39,9 +45,10 @@ export class ProjectWorkspaces {
    * holds is opened from the local checkout; anything else is acquired on the
    * background lane, which reports its progress until the record reaches `ready`.
    */
-  async open(projectId: string): Promise<void> {
+  async open(projectId: string, workspaceDirectory?: string): Promise<void> {
     const project = await this.project(projectId), local = await this.store.read()
     const existing = local.projects.find(p => p.id === project.id)
+    if (existing && workspaceDirectory && path.resolve(workspaceDirectory) !== existing.workspaceDirectory) throw new Error('已登记项目沿用原项目文件夹，不能通过重新打开移动现场。')
     // A pending project has no accepted version yet, so only the local checkout of an
     // accepted one can be opened as it is.
     if (project.initializationStatus === 'ready' && existing && await this.holdsCheckout(existing, project)) {
@@ -53,7 +60,7 @@ export class ProjectWorkspaces {
     if (!operation) {
       // `path` only matters to the creation request that started a pending record.
       const pending = project.initializationStatus === 'pending'
-      operation = { id: randomUUID(), name: project.name, namespaceId: project.namespaceId, path: pending ? project.repositoryUrl.split('/').at(-1)!.replace(/\.git$/, '') : '', projectId: project.id, phase: 'initializing' }
+      operation = { id: randomUUID(), name: project.name, namespaceId: project.namespaceId, path: pending ? project.repositoryUrl.split('/').at(-1)!.replace(/\.git$/, '') : '', projectId: project.id, phase: 'initializing', workspaceDirectory: existing?.workspaceDirectory ?? await this.location.project(project.id, project.repositoryUrl, workspaceDirectory) }
       local.projectInitializations.push(operation); await this.store.save()
     }
     this.start(operation)
@@ -159,7 +166,7 @@ export class ProjectWorkspaces {
   }
   /** Read an accepted fixed material that is already local; the sync lane brings missing objects. */
   async readFixed(projectId: string, commitSha: string, relativePath: string, expectedHash?: string): Promise<Uint8Array> {
-    const bytes = await this.localFixed(projectId, commitSha, relativePath, expectedHash)
+    const bytes = await this.localFixed(await this.project(projectId), commitSha, relativePath, expectedHash)
     if (bytes) return bytes
     throw new Error('固定材料正在后台同步，请稍后重试。')
   }
@@ -167,15 +174,14 @@ export class ProjectWorkspaces {
    * Read a fixed material from what is already local and queue the
    * synchronization it still needs. Returning undefined keeps the render path
    * free of the network: the next read sees the object the lane fetched.
-   * @param projectId - project holding the fixed commit.
+   * @param project - project already authorized by this operation or projection.
    * @param commitSha - accepted fixed commit.
    * @param relativePath - repository-relative file path inside the commit.
    * @param expectedHash - sha256 the bytes must match before they are cached.
    * @returns the bytes, or undefined while the mirror or commit is synchronizing.
    */
-  async localFixed(projectId: string, commitSha: string, relativePath: string, expectedHash?: string): Promise<Uint8Array | undefined> {
-    const project = await this.project(projectId)
-    const cacheKey = `${this.store.directory}:${projectId}:${commitSha}:${relativePath}`
+  async localFixed(project: ProjectView, commitSha: string, relativePath: string, expectedHash?: string): Promise<Uint8Array | undefined> {
+    const cacheKey = `${this.store.directory}:${project.id}:${project.repositoryUrl}:${commitSha}:${relativePath}`
     const cached = this.fixedBytes.get(cacheKey)
     if (cached && expectedHash && createHash('sha256').update(cached).digest('hex') === expectedHash) return new Uint8Array(cached)
     if (project.initializationStatus !== 'ready') throw new Error('项目尚未完成初始化。')
@@ -241,26 +247,33 @@ export class ProjectWorkspaces {
   private async project(id: string): Promise<ProjectView> { if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(id)) throw new Error('项目身份无效。'); return (await this.api.request<ProjectState>('GET', `/v1/projects/${encodeURIComponent(id)}`)).project }
   private async ownedDirectory(project: ProjectView, operation: ProjectInitialization): Promise<string> {
     const account = await this.ports.account(); if (!account) throw new Error('请先登录协同工作台。')
-    const directory = path.join(this.ports.workspaceRoot, 'users', String(account.id), `project-${project.id}`)
+    if (!operation.workspaceDirectory) throw new Error('项目初始化记录缺少已选定的项目文件夹。')
+    const workspace = await this.location.validate(operation.workspaceDirectory)
+    const directory = path.join(workspace, 'repo')
     if (operation.directory && operation.directory !== directory) throw new Error('项目初始化目录与当前用户不一致。')
-    const marker = `${directory}.studio-owner.json`
+    const marker = path.join(workspace, '.eadp', 'owner.json')
+    const metadata = await lstat(path.dirname(marker)).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
+    if (metadata && (!metadata.isDirectory() || metadata.isSymbolicLink())) throw new Error('项目过程数据目录不能是符号链接或文件。')
+    const owner = await readFile(marker, 'utf8').then(value => JSON.parse(value) as { projectId: string; accountId: number }).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
+    if (owner && (owner.projectId !== project.id || owner.accountId !== account.id)) throw new Error('项目文件夹已属于其他项目或账号，请选择空文件夹。')
+    if (!owner) {
+      if (await exists(workspace) && (await readdir(workspace)).length) throw new Error('请选择空的项目文件夹，已有文件不会被覆盖。')
+      await mkdir(path.dirname(marker), { recursive: true })
+      await writeFile(marker, JSON.stringify({ projectId: project.id, accountId: account.id }), { flag: 'wx', mode: 0o600 })
+    }
     if (await exists(directory)) {
       if ((await lstat(directory)).isSymbolicLink()) throw new Error('项目目录不能是符号链接，请保留并核对原现场。')
       // The marker names the project the directory belongs to, so a record that no
       // longer holds this operation adopts the directory instead of abandoning it.
-      const owner = await readFile(marker, 'utf8').then(value => JSON.parse(value) as { projectId: string }).catch(() => undefined)
-      if (owner?.projectId !== project.id) throw new Error('项目目录缺少本项目的持久归属记录，请保留并核对原现场。')
       operation.directory = directory; operation.directoryOwned = true; await this.store.save()
     }
     else {
       operation.directory = directory; operation.directoryOwned = false; await this.store.save()
       await mkdir(path.dirname(directory), { recursive: true }); await mkdir(directory)
-      // Deleting a checkout outside the app leaves its sibling ownership marker behind.
-      // The empty directory holds nothing to protect, so the marker is rewritten after
-      // confirming it does not name another project.
+      // The workspace ownership record survives loss of only its repository directory.
       const previous = await readFile(marker, 'utf8').then(value => JSON.parse(value) as { projectId?: string }).catch(() => undefined)
       if (previous && previous.projectId !== project.id) throw new Error('项目目录归属记录与当前项目不一致，请核对原现场。')
-      await writeFile(marker, JSON.stringify({ projectId: project.id }), { mode: 0o600 })
+      if (!previous) throw new Error('项目文件夹归属记录缺失。')
       operation.directoryOwned = true; await this.store.save()
     }
     return directory
@@ -315,8 +328,8 @@ export class ProjectWorkspaces {
   private async holdsCheckout(local: LocalProject, project: ProjectView): Promise<boolean> {
     if (local.repositoryUrl !== project.repositoryUrl) throw new Error('本地项目与后台仓库身份不一致。')
     if (!await exists(path.join(local.directory, '.git'))) return false
-    const owner = await readFile(`${local.directory}.studio-owner.json`, 'utf8').then(value => JSON.parse(value) as { projectId?: string }).catch(() => undefined)
-    return owner?.projectId === project.id
+    const owner = await readFile(path.join(local.workspaceDirectory, '.eadp', 'owner.json'), 'utf8').then(value => JSON.parse(value) as { projectId?: string; accountId?: number }).catch(() => undefined)
+    return owner?.projectId === project.id && owner.accountId === this.store.accountId
   }
   /**
    * Move files left in a directory whose checkout is gone, so the clone does not
@@ -358,11 +371,11 @@ export class ProjectWorkspaces {
   }
   private async bind(project: ProjectView, operation: ProjectInitialization): Promise<void> {
     const local = await this.store.read()
-    if (!operation.directory) throw new Error('项目本地目录缺失。')
+    if (!operation.directory || !operation.workspaceDirectory) throw new Error('项目本地目录缺失。')
     const record = local.projects.find(p => p.id === project.id)
     // Reacquiring a checkout replaces the path and the sync verdict the stale record held.
-    if (record) { record.name = project.name; record.directory = operation.directory; record.repositoryUrl = project.repositoryUrl; delete record.sync }
-    else local.projects.push({ id: project.id, name: project.name, directory: operation.directory, repositoryUrl: project.repositoryUrl })
+    if (record) { record.name = project.name; record.workspaceDirectory = operation.workspaceDirectory; record.directory = operation.directory; record.repositoryUrl = project.repositoryUrl; delete record.sync }
+    else await this.store.registerProject({ id: project.id, name: project.name, workspaceDirectory: operation.workspaceDirectory, directory: operation.directory, repositoryUrl: project.repositoryUrl })
     local.selectedProjectId = project.id; operation.phase = 'ready'; delete operation.message; await this.store.save()
     this.progress.end(operation.id)
   }

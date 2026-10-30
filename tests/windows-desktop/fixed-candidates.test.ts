@@ -17,6 +17,7 @@ async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'eadp-fixed-candidates-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'local')); store.useUser(1)
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
   const local = await store.read(), worktree = path.join(root, 'original-task')
   await mkdir(path.dirname(path.join(worktree, evidencePath)), { recursive: true })
   await writeFile(path.join(worktree, evidencePath), evidence)

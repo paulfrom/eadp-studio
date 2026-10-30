@@ -47,15 +47,16 @@ async function integrationFixture(t: test.TestContext, options: { release?: bool
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-accepted-delivery-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
-  await mkdir(store.directory, { recursive: true })
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
+  await mkdir(await store.projectDirectory('project'), { recursive: true })
   const original = acceptedOperation(root)
-  await writeFile(path.join(store.directory, 'prototype-integrations.json'), JSON.stringify({ operations: [original], taskEnds: [] }))
+  await writeFile(path.join(await store.projectDirectory('project'), 'prototype-integrations.json'), JSON.stringify({ operations: [original], taskEnds: [] }))
   let accountId = 1, failure: Step | undefined
   const calls: Step[] = [], hooks = new Map<Step, () => Promise<void>>(), effects: Partial<Record<Step, string>> = {}
   const api = { request: async () => { throw new Error('accepted cleanup must not prepare, push, or complete again') } } as unknown as CollaborationClient
   const ports = { account: async () => ({ id: accountId }) } as unknown as HostPorts
   const act = async (step: Step, effect: string) => {
-    const persisted = JSON.parse(await readFile(path.join(store.directory, 'prototype-integrations.json'), 'utf8')) as { operations: PrototypeIntegrationOperation[] }
+    const persisted = JSON.parse(await readFile(path.join(await store.projectDirectory('project'), 'prototype-integrations.json'), 'utf8')) as { operations: PrototypeIntegrationOperation[] }
     assert.equal(persisted.operations[0]?.delivery?.step, step, `${step} must be persisted before its side effect`)
     calls.push(step)
     const hook = hooks.get(step); hooks.delete(step); await hook?.()
@@ -79,7 +80,7 @@ async function integrationFixture(t: test.TestContext, options: { release?: bool
     during(step: Step, hook: () => Promise<void>) { hooks.set(step, hook) },
     account(value: number) { accountId = value; store.useUser(value) },
     enableRelease() { deps.releaseTask = release },
-    async saved() { return (JSON.parse(await readFile(path.join(root, 'state', 'users', '1', 'prototype-integrations.json'), 'utf8')) as { operations: PrototypeIntegrationOperation[] }).operations[0]! },
+    async saved() { return (JSON.parse(await readFile(path.join(root, '.eadp', 'users', '1', 'prototype-integrations.json'), 'utf8')) as { operations: PrototypeIntegrationOperation[] }).operations[0]! },
   }
 }
 
@@ -158,13 +159,14 @@ async function candidateFixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-accepted-cleanup-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
-  await mkdir(store.directory, { recursive: true })
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
+  await mkdir(await store.projectDirectory('project'), { recursive: true })
   const localTask = task(root)
   const authorization: PrototypeTaskView = {
     id: 'task', prototypeId: 'prototype', ownerId: 1, clientId: 'client', generation: 1, revision: 1, status: 'accepted', title: 'Prototype', branch: 'studio/task', startHead: sourceSha, sourceBaseHead: sourceSha,
     developmentRequirementIds: ['requirement'], referenceRequirementIds: [], developmentClaims: request().developmentClaims, claimsDigest: request().claimsDigest, writeScope: ['src/'], policyHash: '0'.repeat(64),
   }
-  const mergeRoot = path.join(store.directory, 'prototype-merges'), checkRoot = path.join(store.directory, 'prototype-candidate-checks')
+  const mergeRoot = path.join(await store.projectDirectory('project'), 'prototype-merges'), checkRoot = path.join(await store.projectDirectory('project'), 'prototype-candidate-checks')
   const mergedDirectory = path.join(mergeRoot, 'prototype-merge-accepted'), conflictDirectory = path.join(mergeRoot, 'prototype-merge-conflict'), otherDirectory = path.join(mergeRoot, 'prototype-merge-other'), checkDirectory = path.join(checkRoot, 'candidate-accepted')
   for (const directory of [mergedDirectory, conflictDirectory, otherDirectory, checkDirectory, localTask.worktree]) { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'keep-or-remove.txt'), directory) }
   const record = {
@@ -175,7 +177,7 @@ async function candidateFixture(t: test.TestContext) {
     ],
     merged: { expectedHead, candidateSha, mergeBaseSha: sourceSha },
   }
-  const write = async () => writeFile(path.join(store.directory, 'prototype-candidates.json'), JSON.stringify({ operations: [record] }))
+  const write = async () => writeFile(path.join(await store.projectDirectory('project'), 'prototype-candidates.json'), JSON.stringify({ operations: [record] }))
   await write()
   const integrations = { operation: async () => acceptedOperation(root) } as unknown as PrototypeIntegrations
   const candidates = new PrototypeCandidates(store, {} as CollaborationClient, { account: async () => ({ id: 1 }) } as HostPorts, {} as PrototypeCollaboration, integrations)
@@ -213,7 +215,8 @@ test('merge check registration survives a later conflict reset and accepted clea
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-check-conflict-history-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
-  await mkdir(store.directory, { recursive: true })
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
+  await mkdir(await store.projectDirectory('project'), { recursive: true })
   const localTask = task(root), firstHead = '1'.repeat(40), secondHead = '2'.repeat(40), mergedCandidate = '3'.repeat(40), mergeBase = '4'.repeat(40)
   const authorization: PrototypeTaskView = {
     id: 'task', prototypeId: 'prototype', ownerId: 1, clientId: 'client', generation: 1, revision: 1, status: 'active', title: 'Prototype', branch: 'studio/task', startHead: sourceSha, sourceBaseHead: sourceSha,
@@ -227,8 +230,8 @@ test('merge check registration survives a later conflict reset and accepted clea
     sourceUpload: { ref: request().sourceRef, sha: sourceSha, status: 'uploaded' },
     summary: { operationId: 'operation', projectId: 'project', prototypeTaskId: 'task', title: 'Prototype', sourceBaseHead: sourceSha, sourceSha, claimsDigest: request().claimsDigest, developmentRequirementIds: ['requirement'], summaryHash: 'summary', changes: [{ path: '原型代码/src/app.ts', status: 'modified' }], status: 'confirmed', checks: 'passed' },
   }
-  await writeFile(path.join(store.directory, 'prototype-candidates.json'), JSON.stringify({ operations: [record] }))
-  const mergeRoot = path.join(store.directory, 'prototype-merges'), mergedDirectory = path.join(mergeRoot, 'prototype-merge-first'), conflictDirectory = path.join(mergeRoot, 'prototype-merge-conflict')
+  await writeFile(path.join(await store.projectDirectory('project'), 'prototype-candidates.json'), JSON.stringify({ operations: [record] }))
+  const mergeRoot = path.join(await store.projectDirectory('project'), 'prototype-merges'), mergedDirectory = path.join(mergeRoot, 'prototype-merge-first'), conflictDirectory = path.join(mergeRoot, 'prototype-merge-conflict')
   for (const directory of [mergedDirectory, conflictDirectory, localTask.worktree]) { await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'scene.txt'), directory) }
   let current = { task: localTask, authorization }, expected = firstHead, projectReads = 0, merges = 0, accepted = false, checkDirectory = ''
   const collaboration = { confirmationTask: async () => structuredClone(current) } as unknown as PrototypeCollaboration
@@ -265,7 +268,7 @@ test('merge check registration survives a later conflict reset and accepted clea
   } as unknown as HostPorts
   const candidates = new PrototypeCandidates(store, api, ports, collaboration, integrations)
   await assert.rejects(candidates.submit('operation', 'check'), /retry after merged check/)
-  const persisted = async () => (JSON.parse(await readFile(path.join(store.directory, 'prototype-candidates.json'), 'utf8')) as { operations: Array<{ merged?: unknown; mergeCheckDirectories?: string[] }> }).operations[0]!
+  const persisted = async () => (JSON.parse(await readFile(path.join(await store.projectDirectory('project'), 'prototype-candidates.json'), 'utf8')) as { operations: Array<{ merged?: unknown; mergeCheckDirectories?: string[] }> }).operations[0]!
   assert.ok(checkDirectory)
   assert.deepEqual((await persisted()).mergeCheckDirectories, [checkDirectory])
   await assert.rejects(candidates.submit('operation', 'check'), /发生冲突/)

@@ -37,7 +37,7 @@ function loadClient(relative) {
   new Function('require', 'module', 'exports', compiled)(specifier => {
     if (specifier.endsWith('.css')) return new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) })
     if (specifier.endsWith('/PrototypeFiles.tsx')) return { PrototypeFiles: FilesStub }
-    if (specifier.endsWith('/PrototypePreview.tsx')) return { PrototypePreview: () => h('div', null, 'Preview') }
+    if (specifier.endsWith('/PrototypePreview.tsx')) return { PrototypePreview: ({ starting }) => h('div', { role: starting ? 'status' : undefined }, starting ? '正在安装依赖、构建并启动预览…' : 'Preview') }
     if (specifier.endsWith('/PrototypeEditor.tsx')) return { PrototypeComparison: () => null }
     if (specifier.startsWith('.')) return loadClient(path.relative(client, path.resolve(path.dirname(filename), specifier)))
     return reactRequire(specifier)
@@ -49,10 +49,11 @@ const { PrototypeWorkbench } = loadClient('prototype/PrototypeWorkbench.tsx')
 const h = React.createElement
 const task = { projectId: 'p', prototypeTaskId: 't', title: '采购事项', taskStatus: 'active', localDispatchState: 'queued', developmentRequirementIds: ['r'], developmentStage: 'queued' }
 const state = { project: { id: 'p', name: '采购项目' }, prototypeQueue: { revision: 1, selectedTaskId: 't', items: [task] } }
-function setup(overrides = {}) {
+function setup(overrides = {}, invoke) {
   const commands = [], opened = []
-  const props = { state: { ...state, ...overrides }, entities: [{ id: 'r', code: 'REQ-1', kind: 'requirement', title: '订单', confirmationStatus: 'confirmed' }], busy: false, call: async command => { commands.push(command); return { ok: true, prototypeConversation: [] } }, registerFlush() {}, flushBeforeLeave: async () => true, onOpenRequirement: id => opened.push(id), onDraftChange() {} }
-  return { view: render(h(PrototypeWorkbench, props)), commands, opened, props }
+  let refreshes = 0
+  const props = { state: { ...state, ...overrides }, entities: [{ id: 'r', code: 'REQ-1', kind: 'requirement', title: '订单', confirmationStatus: 'confirmed' }], busy: false, call: async command => { commands.push(command); return invoke ? invoke(command) : { ok: true, prototypeConversation: [] } }, refresh: () => { refreshes += 1 }, registerFlush() {}, flushBeforeLeave: async () => true, onOpenRequirement: id => opened.push(id), onDraftChange() {} }
+  return { view: render(h(PrototypeWorkbench, props)), commands, opened, props, refreshes: () => refreshes }
 }
 test('design toolbar opens requirement, queue and diagnostic drawers without inline diagnostics', async () => {
   const { view, opened } = setup()
@@ -93,6 +94,29 @@ test('run, check and restart actions dispatch real Host commands for the selecte
   view.rerender(h(PrototypeWorkbench, { ...props, state: { ...state, prototypePreviews: [{ prototypeTaskId: 't', identity: 'preview-1', url: 'http://127.0.0.1:1234' }] } }))
   fireEvent.click(view.getByRole('button', { name: /^停止$/ }))
   await waitFor(() => assert.ok(commands.some(c => c.action === 'stopProjectPrototypePreview')))
+})
+
+test('run shows loading while keeping technical output collapsed', async () => {
+  let release
+  const pending = new Promise(resolve => { release = resolve })
+  const { view, commands, props, refreshes } = setup({}, command => command.action === 'startProjectPrototypePreview' ? pending : Promise.resolve({ ok: true, prototypeConversation: [] }))
+  fireEvent.click(view.getByRole('button', { name: /^运行$/ }))
+  await waitFor(() => assert.equal(commands.filter(c => c.action === 'startProjectPrototypePreview').length, 1))
+  assert.ok(view.getByRole('status').textContent.includes('正在安装依赖、构建并启动预览'))
+  assert.equal(view.getByRole('button', { name: '启动中' }).disabled, true)
+  assert.equal(view.getByRole('button', { name: '运行输出' }).getAttribute('aria-expanded'), 'false')
+  fireEvent.click(view.getByRole('button', { name: '启动中' }))
+  assert.equal(commands.filter(c => c.action === 'startProjectPrototypePreview').length, 1)
+  view.rerender(h(PrototypeWorkbench, { ...props, state: { ...state, prototypeCheckReports: [{ operationId: 'run', projectId: 'p', prototypeTaskId: 't', kind: 'preview', sourceSha: 'sha', startedAt: 'now', status: 'running', steps: [{ name: 'install', status: 'running', diagnostic: { stdout: '安装依赖输出', stderr: '', truncated: false } }] }] } }))
+  assert.equal(view.queryByText('安装依赖输出'), null)
+  fireEvent.click(view.getByRole('button', { name: '运行输出' }))
+  const output = view.getByText('安装依赖输出')
+  assert.equal(output.closest('details').open, false)
+  assert.ok(refreshes() > 0)
+  release({ ok: true })
+  await waitFor(() => assert.ok(view.getByRole('button', { name: /^运行$/ })))
+  view.rerender(h(PrototypeWorkbench, { ...props, state: { ...state, prototypePreviews: [{ prototypeTaskId: 't', identity: 'preview-1', url: 'http://127.0.0.1:1234' }] } }))
+  assert.ok(view.getByRole('button', { name: /^停止$/ }))
 })
 
 test('composer sends Enter once, preserves Shift Enter and blocks blank or busy dispatch', async () => {

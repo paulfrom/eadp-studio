@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { canonicalWritePath, withPathWriteLock } from './path-write-lock.ts'
 
@@ -71,20 +71,6 @@ function relativePolicyPath(value: string): string {
 function matches(relative: string, entries: readonly string[], prefix: boolean): boolean {
   return entries.some(entry => relative === entry || (prefix && relative.startsWith(`${entry}/`)))
 }
-function noEscapingLinks(root: string, target: string): void {
-  let count = 0
-  const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (++count > 100_000) throw new Error('搜索范围过大，请缩小到业务目录。')
-      if (entry.name.toLowerCase() === '.git') continue
-      const filename = path.join(directory, entry.name)
-      if (entry.isSymbolicLink()) { if (!under(root, canonical(filename))) throw new Error('搜索目录包含指向项目之外的链接。') }
-      else if (entry.isDirectory()) visit(filename)
-    }
-  }
-  if (lstatSync(target).isDirectory()) visit(target)
-}
-
 /** Install with the actual DSH ctx.tools.guard(); guards are monotonic after approval policies. */
 export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) => string | undefined {
   return execution => {
@@ -128,7 +114,6 @@ export function createStudioToolGuard(): (execution: Readonly<GuardExecution>) =
       if (matches(actual, protectedPaths, true) || matches(logical, protectedPaths, true)) return '此文件属于工作台固定契约，Agent 无权修改。'
       if (!matches(actual, policy.writablePaths ?? [], false) && !matches(actual, policy.writablePrefixes ?? [], true)) return '此任务只能修改已授权的材料或原型业务文件。'
     }
-    if (execution.name === 'glob' || execution.name === 'grep') noEscapingLinks(root, target)
   } catch { return '无法验证文件路径位于当前项目中。' }
   return undefined
   }

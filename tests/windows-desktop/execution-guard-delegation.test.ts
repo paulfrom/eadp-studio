@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -54,4 +56,31 @@ test('the actual DSH effective-cwd resolver cannot read a harmless file outside 
   }
   assert.notEqual(observed, 'OUTSIDE SNAPSHOT', 'delegation escaped: the real DSH resolver read the harmless outside fixture')
   assert.ok(denied)
+})
+
+
+test('root search uses fixed no-follow rg commands while explicit external links remain denied', async t => {
+  const f = await fixture(t)
+  const globSource = path.resolve('.local/upstream/dsh/packages/fs/tool-fs-search/src/glob.ts')
+  const grepSource = path.resolve('.local/upstream/dsh/packages/fs/tool-fs-search/src/grep.ts')
+  const source = await Promise.all([globSource, grepSource].map(file => readFile(file, 'utf8')))
+  for (const text of source) assert.ok(!text.includes("'--follow'") && !text.includes("'-L'"))
+  // Execute the fixed official argv against a real junction, including ignored files.
+  const buildGlobCommand = (_input: unknown) => ['--files', '--glob=**/*', '--sort=modified', '--no-ignore', '--hidden', '--glob=!**/.git', '--glob=!**/.git/**', '--glob=!**/.hg', '--glob=!**/.hg/**', '--glob=!**/.svn', '--glob=!**/.svn/**', '--', '.']
+  const buildGrepCommand = (_input: unknown) => ['--json', '--regexp=SNAPSHOT', '--', '.']
+  for (const name of ['glob', 'grep', 'read', 'write']) {
+    const arguments_ = name === 'glob' || name === 'grep' ? { path: 'external-link', pattern: '*' } : { file_path: 'external-link/probe.txt', content: 'forbidden' }
+    assert.ok(studioToolGuard({ name, arguments: arguments_, agent: f.agent }))
+  }
+  for (const [name, args, argv] of [
+    ['glob', { pattern: '**/*', path: '.' }, buildGlobCommand({ pattern: '**/*', path: '.' })],
+    ['grep', { pattern: 'SNAPSHOT', path: '.' }, buildGrepCommand({ pattern: 'SNAPSHOT', path: '.' })],
+  ] as const) {
+    assert.equal(studioToolGuard({ name, arguments: args, agent: f.agent }), undefined)
+    assert.ok(!argv.includes('--follow') && !argv.includes('-L'))
+    const { stdout } = await promisify(execFile)('rg', argv, { cwd: f.current })
+    assert.ok(stdout.includes('probe.txt'))
+    assert.ok(!stdout.includes('external-link'))
+    assert.ok(!stdout.includes('OUTSIDE SNAPSHOT'))
+  }
 })

@@ -28,9 +28,10 @@ import { checkStaticPreview } from './adapters/dsh/browser-check.ts'
 import { desktopPreviewCanvas } from './adapters/dsh/prototype-canvas.ts'
 import { PrototypeBrowserTools } from './adapters/dsh/prototype-browser-tools.ts'
 import { PrototypeBrowserAttachmentStore } from './prototype/browser-attachments.ts'
-import { copyTemplate, prototypeInputHash, sha256, verifyPrototypeContract } from './prototype/template.ts'
+import { copyTemplate } from './prototype/template.ts'
 import { assertCurrentPrototypeChecks, buildPrototypePreview, installPrototypeDependencies, runPrototypeChecks } from './prototype/checks.ts'
 import { PrototypeCheckJournal } from './prototype/check-journal.ts'
+import { preparePrototypeBuildWorkspace } from './prototype/build-workspace.ts'
 import { startPrototypePreview, type PrototypePreview } from './prototype/preview.ts'
 import type { PrototypeTaskIdentity } from './prototype/generation.ts'
 import type { PrototypePreviewIdentity } from '../shared/prototype.ts'
@@ -55,7 +56,7 @@ export interface Config {
 export async function composeStudio(ctx: Context, config: Config): Promise<StudioApplication> {
   const collaborationUrl = config.collaborationUrl ?? 'http://100.119.183.44:6972'
   const stateDirectory = config.stateDirectory ?? path.join(process.env.APPDATA ?? path.join(homedir(), '.local/share'), 'eadp-studio', 'studio')
-  const workspaceRoot = config.workspaceRoot ?? path.join(homedir(), 'EADP 项目')
+  const workspaceRoot = config.workspaceRoot ?? path.join(homedir(), 'EADP')
   const runtimeRoot = config.runtimeRoot ?? path.join(path.dirname(process.argv[4] ?? ''), 'studio-tools')
   const runtime = await PlatformRuntime.load(path.join(runtimeRoot, 'runtime-manifest.json'), runtimeRoot, ctx.subprocess)
   const credentials = new DesktopSecretStore()
@@ -67,20 +68,12 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
   const assets = fileURLToPath(new URL('../assets/', import.meta.url))
   const manifestPath = path.join(assets, 'prototype-template.manifest.json')
   const store = new StudioStore(stateDirectory)
-  const checkJournal = new PrototypeCheckJournal(store, digest(JSON.stringify(runtime.manifest.tools)), async report => {
-    const local = await store.read()
-    const task = local.tasks.find(item => item.projectId === report.projectId && item.entityId === report.prototypeTaskId && item.purpose === 'prototype')
-    if (!task) return undefined
-    const root = path.join(task.worktree, '原型代码')
-    await verifyPrototypeContract(root, manifestPath)
-    return report.sourceSha === (await git.state(task.worktree)).head && report.inputHash === await prototypeInputHash(root) &&
-      report.outputHash === await prototypeInputHash(path.join(root, 'dist')) && report.rulesHash === sha256(await readFile(path.join(root, 'AGENT.md')))
-  })
+  const checkJournal = new PrototypeCheckJournal(store, digest(JSON.stringify(runtime.manifest.tools)))
   let app: StudioApplication
   const previews = new Map<string, { preview: PrototypePreview; identity: PrototypePreviewIdentity }>()
   const browserTools = new PrototypeBrowserTools({
     ...await installedBrowserRuntime(assets),
-    attachments: new PrototypeBrowserAttachmentStore(path.join(stateDirectory, 'prototype-browser-attachments')),
+    attachments: new PrototypeBrowserAttachmentStore(async scope => path.join(await store.projectDirectory(scope.projectId), 'prototype-browser-attachments')),
     scope: async (task, validationRunId) => {
       const entry = previews.get(task.sessionId)
       if (!entry || entry.identity.source.kind !== 'task' || entry.identity.source.prototypeTaskId !== task.entityId || task.purpose !== 'prototype' || task.prototypeBaseline) return undefined
@@ -117,26 +110,35 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     }
     if (failures.length) throw new AggregateError(failures, '部分预览未能完整关闭，请核对桌面状态')
   }
-  const runCandidateChecks = async (task: TaskView, sourceSha: string, operationId: string): Promise<PrototypeEngineeringEvidence> => {
+  const runCandidateBuild = async (task: TaskView, sourceSha: string, operationId: string): Promise<{ evidence: PrototypeEngineeringEvidence; directory: string; dispose(): Promise<void> }> => {
     const journal = await checkJournal.begin(task, sourceSha, operationId, 'checks')
+    let workspace: Awaited<ReturnType<typeof preparePrototypeBuildWorkspace>> | undefined
     try {
-      const input = await prototypeInput(task, sourceSha)
+      workspace = await preparePrototypeBuildWorkspace(await prototypeInput(task, sourceSha))
+      const input = workspace.input
       await installPrototypeDependencies(runtime, input, undefined, journal.step)
       const result = await runPrototypeChecks(runtime, input, undefined, journal.step)
       await journal.step('browser', 'running')
-      const current = await startPrototypePreview(runtime, input, result, await availablePort())
+      const current = await startPrototypePreview(runtime, input, result, await availablePort(), undefined, journal.step)
       let browser: Awaited<ReturnType<typeof checkStaticPreview>>
       try { browser = await checkStaticPreview(`${current.url}/`) } finally { await current.stop() }
       await assertCurrentPrototypeChecks(input, result)
+      await workspace.verify()
       await journal.step('browser', 'passed')
       await journal.finish('passed', result)
       const binding = { candidateSha: sourceSha, inputHash: result.inputHash, outputHash: result.outputHash, rulesHash: result.rulesSha256 }
-      return { candidateSha: sourceSha, sourceTreeHash: result.inputHash, rulesHash: result.rulesSha256, buildArtifactSha256: result.outputHash, checks: [
+      const evidence: PrototypeEngineeringEvidence = { candidateSha: sourceSha, sourceTreeHash: result.inputHash, rulesHash: result.rulesSha256, buildArtifactSha256: result.outputHash, checks: [
         { name: 'engineering', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result, tools: runtime.manifest.tools })) },
         { name: 'mock', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.mockHash })) },
         { name: 'browser', passed: true, evidenceHash: digest(JSON.stringify({ ...binding, result: browser.browserHash })) },
       ] }
-    } catch (error) { await journal.finish('failed', undefined, error); throw error }
+      const completed = workspace
+      return { evidence, directory: path.join(input.prototypeRoot, 'dist'), dispose: () => completed.dispose() }
+    } catch (error) { try { await workspace?.dispose() } finally { await journal.finish('failed', undefined, error) }; throw error }
+  }
+  const runCandidateChecks = async (task: TaskView, sourceSha: string, operationId: string): Promise<PrototypeEngineeringEvidence> => {
+    const build = await runCandidateBuild(task, sourceSha, operationId)
+    try { return build.evidence } finally { await build.dispose() }
   }
   const runChecks = async (task: TaskView, sourceSha: string, operationId = crypto.randomUUID()): Promise<CheckEvidence> => {
     const evidence = await runCandidateChecks(task, sourceSha, operationId)
@@ -162,12 +164,11 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
       if (!project) throw new Error('发布项目未在本机登记')
       await git.fetch(project.directory, (await api.request<ProjectState>('GET', `/v1/projects/${project.id}`)).project.stableBranch)
       const operationId = crypto.randomUUID()
-      const worktree = path.join(store.directory, 'publication', operationId)
+      const worktree = path.join(await store.projectDirectory(project.id), 'publication', operationId)
       await git.createWorktree(project.directory, worktree, `publication/${operationId}`, baseline.commitSha)
       const task: TaskView = { projectId: project.id, entityId: baseline.prototypeId, purpose: 'prototype', sessionId: `studio-publication-${operationId}`, inputHash: baseline.commitSha, worktree }
-      try { await runChecks(task, baseline.commitSha) }
-      catch (error) { await stopPreview(task.sessionId); throw error }
-      return { directory: path.join(worktree, '原型代码/dist'), dispose: async () => { await stopPreview(task.sessionId); await git.removeWorktree(project.directory, worktree) } }
+      const build = await runCandidateBuild(task, baseline.commitSha, operationId)
+      return { directory: build.directory, dispose: async () => { await build.dispose(); await stopPreview(task.sessionId); await git.removeWorktree(project.directory, worktree) } }
     },
     ...(config.publication ? { target: new SshPublicationTarget(runtime, { ...config.publication, credentials, authority: baselineId => api.request('POST', `/v1/projects/${config.publication!.projectId}/publication-authorizations`, { baselineId }) }) } : {}),
   })
@@ -178,26 +179,32 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules, requireExisting) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined, requireExisting),
-    prompt: (id, text, operationId, attachments) => sessions.prompt(id, text, operationId, attachments), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), identifyPrototypeRequirements: (input, signal) => identifyPrototypeRequirements(ctx, input, signal), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), settlePrototypeSession: (id, cancel) => sessions.settlePrototype(id, cancel), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks, candidateChecks: runCandidateChecks, prototypeCheckReports: tasks => checkJournal.latest(tasks),
+    prompt: (id, text, operationId, attachments) => sessions.prompt(id, text, operationId, attachments), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), lastPrototypeTurn: id => sessions.lastPrototypeTurn(id), identifyPrototypeRequirements: (input, signal) => identifyPrototypeRequirements(ctx, input, signal), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), settlePrototypeSession: (id, cancel) => sessions.settlePrototype(id, cancel), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks, candidateChecks: runCandidateChecks, prototypeCheckReports: tasks => checkJournal.latest(tasks),
     preview: async (task, operationId) => {
-        const input = await prototypeInput(task, task.prototypeBaseline?.commitSha)
-        const journal = await checkJournal.begin(task, input.sourceSha, operationId, 'preview')
+        const source = await prototypeInput(task, task.prototypeBaseline?.commitSha)
+        const journal = await checkJournal.begin(task, source.sourceSha, operationId, 'preview')
         let next: PrototypePreview | undefined
+        let workspace: Awaited<ReturnType<typeof preparePrototypeBuildWorkspace>> | undefined
         try {
+          workspace = await preparePrototypeBuildWorkspace(source)
+          const input = workspace.input
           await installPrototypeDependencies(runtime, input, undefined, journal.step)
           const result = await buildPrototypePreview(runtime, input, undefined, journal.step)
           await journal.step('browser', 'running')
-          next = await startPrototypePreview(runtime, input, result, await availablePort())
+          next = await startPrototypePreview(runtime, input, result, await availablePort(), undefined, journal.step)
           await checkStaticPreview(`${next.url}/`)
+          await workspace.verify()
+          const running = next, prepared = workspace
+          next = { ...running, stop: async () => { try { await running.stop() } finally { await prepared.dispose() } } }
           await journal.step('browser', 'passed')
           const identity: PrototypePreviewIdentity = { projectId: task.projectId, source: task.prototypeBaseline ? { kind: 'baseline', baselineId: task.prototypeBaseline.id, commitSha: task.prototypeBaseline.commitSha } : { kind: 'task', prototypeTaskId: task.entityId }, previewId: next.previewId, generation: ++previewGeneration, buildHash: next.buildHash }
           await desktopPreviewCanvas.register({ ...identity, url: next.url })
           try { await stopPreview(task.sessionId); await journal.finish('passed', result) }
           catch (error) { await desktopPreviewCanvas.revoke(identity).catch(() => {}); throw error }
           const entry = { preview: next, identity }; previews.set(task.sessionId, entry)
-          void next.process.done.finally(() => { if (previews.get(task.sessionId) === entry) { previews.delete(task.sessionId); app.prototypePreviewStopped(identity); void browserTools.close(task.sessionId).catch(() => {}); void desktopPreviewCanvas.revoke(identity).catch(() => {}) } }).catch(() => {})
+          void next.process.done.finally(() => { if (previews.get(task.sessionId) === entry) { previews.delete(task.sessionId); app.prototypePreviewStopped(identity); void browserTools.close(task.sessionId).catch(() => {}); void desktopPreviewCanvas.revoke(identity).catch(() => {}) }; void prepared.dispose().catch(() => {}) }).catch(() => {})
           return { url: next.url, identity }
-        } catch (error) { if (next) await next.stop().catch(() => {}); await journal.finish('failed', undefined, error); throw error }
+        } catch (error) { if (next) await next.stop().catch(() => {}); try { await workspace?.dispose() } finally { await journal.finish('failed', undefined, error) }; throw error }
     }, selectPreview: identity => identity ? desktopPreviewCanvas.select(identity) : desktopPreviewCanvas.deselect(), stopPreview,
     publication: async action => {
       const local = await store.read(); if (!local.selectedProjectId) throw new Error('请先选择项目')

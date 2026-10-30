@@ -109,7 +109,7 @@ export class TaskMaintenance {
   }
   /** Copy every readable change the worktree still holds, with a manifest of what was skipped and why. */
   private async archive(task: TaskView, directory: string): Promise<string> {
-    const target = path.join(this.store.directory, 'archive', task.projectId, path.basename(directory))
+    const target = path.join(await this.store.projectDirectory(task.projectId), 'archive', path.basename(directory))
     await mkdir(target, { recursive: true, mode: 0o700 })
     const entries: ArchiveEntry[] = []
     let total = 0

@@ -30,7 +30,7 @@ interface Dependencies {
   context(entityId: string, projectId?: string): Promise<SaveContext>
   owned(entity: EntityView): Promise<OccupationToken>
   record(entityId: string, projectId?: string): Promise<RequirementSaveOwner>
-  documents(): ScenarioDocumentService
+  documents(projectId: string): Promise<ScenarioDocumentService>
   applied?(operation: RequirementSaveOperation): void
 }
 class SaveProblem extends Error { constructor(readonly reason: Reason, message: string) { super(message) } }
@@ -204,7 +204,7 @@ export class RequirementSaves {
       await this.persist(operation)
       this.revision(operation, (await this.context(operation)).token)
       if (canonical(await syncProjectContext(operation.root!, operation.request.metadata)) !== canonical(operation.metadata)) throw new SaveProblem('invalid', '项目上下文在保存期间变化，请核对后重新保存')
-      operation.document = await this.deps.documents().save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: operation.operationId })
+      operation.document = await (await this.deps.documents(operation.projectId)).save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: operation.operationId })
       await this.persist(operation)
     }
   }
@@ -228,7 +228,7 @@ export class RequirementSaves {
   /** Re-asserts the submitted document when the file moved after this save wrote it, so the published title and the material stay one version. */
   private async ensureDocument(operation: RequirementSaveOperation): Promise<void> {
     if ((await this.read(operation)).sha256 === operation.document!.sha256) return
-    operation.document = await this.deps.documents().save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: `${operation.operationId}-reassert` })
+    operation.document = await (await this.deps.documents(operation.projectId)).save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: `${operation.operationId}-reassert` })
     await this.persist(operation)
   }
   private async run(owner: RequirementSaveOwner, operation: RequirementSaveOperation): Promise<void> {

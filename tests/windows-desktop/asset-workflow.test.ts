@@ -68,10 +68,10 @@ async function fixedFiles(directory: string): Promise<void> {
   await writeFile(path.join(directory, templateRef.path), templateBody)
 }
 async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirement') {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-asset-workflow-')), apps: StudioApplication[] = []
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-asset-workflow-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true }); const apps: StudioApplication[] = []
   // Confirmations finish on the background lane; teardown waits for it so no
   // local state write races removal of the temporary directory.
-  t.after(async () => { for (const created of apps) await created.dispose(); await rm(root, { recursive: true, force: true }) })
+  t.after(async () => { for (const created of apps) await created.dispose(); await rm(workspace, { recursive: true, force: true }) })
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
   const local = await store.read(), value = entity('target', kind), worktree = path.join(root, 'task')
   await mkdir(worktree)
@@ -82,14 +82,14 @@ async function fixture(t: test.TestContext, kind: EntityView['kind'] = 'requirem
   const originDraft = await saveMaterial(worktree, metadata(origin), body)
   origin.current = { version: 1, fixed: { commitSha: head, path: originDraft.path, sha256: originDraft.sha256 }, metadata: originDraft.metadata, confirmationId: 'origin-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
   const remote: ProjectState = { project, entities: [value, origin], integrations: [], baselines: [] }
-  local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id
+  local.projects.push({ id: project.id, name: project.name, directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id
   local.tasks.push({ projectId: project.id, entityId: value.id, worktree, purpose: kind === 'handoff' ? 'handoff' : 'material', inputHash: '', sessionId: 'material-session' })
   await saveMaterial(worktree, metadata(value), body)
   await store.save()
   const sourceEntity = entity('source'), sourceMetadata = { ...metadata(sourceEntity), sources: [{ projectId: 'source-project', entityId: 'origin', version: 1 }] }
   const sourceDirectory = path.join(root, 'source'); await mkdir(sourceDirectory); await fixedFiles(sourceDirectory)
   const sourceDraft = await saveMaterial(sourceDirectory, sourceMetadata, body)
-  local.projects.push({ id: 'source-project', name: '来源项目', directory: sourceDirectory, repositoryUrl: project.repositoryUrl }); await store.save()
+  local.projects.push({ id: 'source-project', name: '来源项目', directory: sourceDirectory, workspaceDirectory: sourceDirectory, repositoryUrl: project.repositoryUrl }); await store.save()
   const source: FixedVersion = { version: 2, fixed: { commitSha: head, path: sourceDraft.path, sha256: sourceDraft.sha256 }, metadata: sourceMetadata, confirmationId: 'source-confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
   const records = new Map<string, unknown>(), integrationInputs = new Map<string, PrepareIntegrationRequest>(), calls = { prompts: [] as string[], sessions: [] as string[], adoptions: 0, successEffects: 0, successRequests: [] as object[], commits: [] as Array<readonly string[]>, prepared: [] as PrepareIntegrationRequest[], pushes: [] as string[], conditionalUpdates: 0 }
   const gitState = { head, remote: head, dirtyFiles: [(await readMaterial(worktree, kind, value.id)).path], changedFiles: [] as string[],
@@ -720,7 +720,7 @@ test('requirement attachments share source extraction, retry, context, formal ar
   assert.equal(imported.ok, true, JSON.stringify(imported)); await app.settle()
   const record = f.local.scenarios.find(value => value.entityId === f.value.id)!, source = record.sources[0]!
   assert.equal(source.status, 'failed'); assert.match(source.error!, /转换服务/)
-  assert.ok(record.sourcePaths[source.id]!.includes(`${path.sep}scenario-sources${path.sep}project${path.sep}target${path.sep}`))
+  assert.ok(record.sourcePaths[source.id]!.includes(`${path.sep}scenario-sources${path.sep}target${path.sep}`))
   let reply = await app.command({ action: 'selectScenarioSource', entityId: f.value.id, sourceId: source.id, selected: true, formal: true })
   assert.equal(reply.ok, false, 'unread requirement sources cannot become formal evidence')
   reply = await app.command({ action: 'retryScenarioSource', entityId: f.value.id, sourceId: source.id })

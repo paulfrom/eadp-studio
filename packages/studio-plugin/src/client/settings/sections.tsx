@@ -13,6 +13,7 @@ import { MaterialTemplateSettings } from './ScenarioTemplateSettings.tsx'
 
 /** Faces the Studio settings sections act through (wired from the client context); project progress is the workbench panel's. */
 export interface StudioSettingsFaces extends Omit<StudioSessionActions, 'progress'> {
+  pickDirectory(): Promise<string | null>
   theme: ThemeFace
 }
 
@@ -62,6 +63,7 @@ export const settingsSections: Array<{ id: string; order: number; label: string;
   { id: 'studio-collab', order: -9, label: '协同账号', component: CollabAccountSection },
   { id: 'studio-scenario-templates', order: 4, label: '场景模板', component: ScenarioTemplateSection },
   { id: 'studio-requirement-templates', order: 4.5, label: '需求模板', component: RequirementTemplateSection },
+  { id: 'studio-workspace', order: 4.8, label: '项目位置', component: WorkspaceSection },
   { id: 'studio-appearance', order: 5, label: '外观', component: AppearanceSection },
   { id: 'studio-connection', order: 6, label: '协同连接', component: ConnectionSection },
   { id: 'studio-about', order: 200, label: '关于', component: AboutSection },
@@ -241,5 +243,27 @@ function MaterialTemplateSection(props: SectionProps & { kind: 'scenario' | 'req
   return <Section>
     <MaterialTemplateSettings key={props.kind} kind={props.kind} state={projection} run={props.run} />
     {error && <p role="alert" className={css.inlineError}>{error}<button onClick={props.sync}>重试</button></p>}
+  </Section>
+}
+
+/** Chooses the default location without moving existing project files. */
+function WorkspaceSection(props: SectionProps) {
+  const { projection, loading, error } = useStudioSettings(props)
+  const [busy, setBusy] = useState(false), [failure, setFailure] = useState('')
+  const choose = async () => {
+    setBusy(true); setFailure('')
+    try {
+      const directory = await props.pickDirectory()
+      if (directory === null) return
+      const reply = await props.run({ action: 'setWorkspaceDirectory', directory })
+      if (!reply.ok) setFailure(reply.message)
+    } catch (error) { setFailure(error instanceof Error ? error.message : '无法更改默认位置') }
+    finally { setBusy(false) }
+  }
+  return <Section>
+    <p className={css.sectionIntro}>新建和首次打开项目的默认存放位置，每个项目也可以单独选择文件夹。</p>
+    <div className={css.settingRow}><div className={css.settingText}><div className={css.settingTitle}>默认项目位置</div><div className={css.settingDesc}>{projection?.workspace?.defaultDirectory ?? (loading ? '正在读取…' : '尚未读取')}</div></div><button className={css.ghostBtn} disabled={busy || !projection?.workspace} onClick={() => void choose()}>{busy ? '正在处理…' : '选择文件夹'}</button></div>
+    <p className={css.formNote}>更改默认位置只影响后续项目，已登记项目继续使用原目录。账号、程序设置、工具和运行缓存独立保存。</p>
+    {(failure || error) && <p className={css.inlineError} role="alert">{failure || error}</p>}
   </Section>
 }

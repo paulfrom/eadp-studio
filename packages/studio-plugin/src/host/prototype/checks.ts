@@ -4,6 +4,7 @@ import type { PlatformRuntime } from '../adapters/platform/runtime.ts';
 import type { PrototypeTaskIdentity } from './generation.ts';
 import { prototypeInputHash, sha256, verifyPrototypeContract } from './template.ts';
 import type { PrototypeCheckDiagnostic } from '../../shared/prototype.ts';
+import { capturePrototypeOutput } from './output.ts';
 
 export interface PrototypeCheckResult {
   templateVersion: string;
@@ -19,37 +20,38 @@ export interface PrototypeCheckResult {
   commands: { name: 'typecheck' | 'lint' | 'build'; exitCode: number }[];
 }
 
-export type PrototypeCheckStep = 'install' | 'typecheck' | 'lint' | 'build' | 'browser';
+export type PrototypeCommandStep = 'install' | 'typecheck' | 'lint' | 'build';
+export type PrototypeCheckStep = PrototypeCommandStep | 'browser' | 'preview';
 export type CheckStepObserver = (name: PrototypeCheckStep, status: 'running' | 'passed' | 'failed', exitCode?: number, diagnostic?: PrototypeCheckDiagnostic) => Promise<void>;
 
-async function command(runtime: PlatformRuntime, input: PrototypeTaskIdentity, name: Exclude<PrototypeCheckStep, 'browser'>, args: string[], timeoutMs: number, observer?: CheckStepObserver, signal?: AbortSignal): Promise<number> {
+async function command(runtime: PlatformRuntime, input: PrototypeTaskIdentity, name: PrototypeCommandStep, args: string[], timeoutMs: number, observer?: CheckStepObserver, signal?: AbortSignal): Promise<number> {
   await observer?.(name, 'running');
-  const diagnostic: PrototypeCheckDiagnostic = { stdout: '', stderr: '', truncated: false };
-  const append = (channel: 'stdout' | 'stderr', text: string) => {
-    const remaining = 65536 - diagnostic[channel].length;
-    diagnostic[channel] += text.slice(0, remaining);
-    if (text.length > remaining) diagnostic.truncated = true;
-  };
-  let unsubscribe: (() => void) | undefined;
+  let capture: ReturnType<typeof capturePrototypeOutput> | undefined;
+  let status: 'running' | 'passed' | 'failed' = 'running';
   try {
-    const process = await runtime.start('pnpm', args, { cwd: input.prototypeRoot, ...(signal ? { signal } : {}), timeoutMs });
-    unsubscribe = process.onOutput(append);
+    const process = await runtime.start('pnpm', args, { cwd: input.prototypeRoot, ...(name === 'install' ? { env: { CI: 'true' } } : {}), ...(signal ? { signal } : {}), timeoutMs });
+    capture = capturePrototypeOutput(process, async diagnostic => { await observer?.(name, status, undefined, diagnostic); });
     const result = await process.done;
-    diagnostic.stdout = ''; diagnostic.stderr = ''; diagnostic.truncated = false;
-    append('stdout', result.stdout); append('stderr', result.stderr);
-    await observer?.(name, result.exitCode === 0 ? 'passed' : 'failed', result.exitCode, diagnostic);
+    capture.replace(result.stdout, result.stderr);
+    status = result.exitCode === 0 ? 'passed' : 'failed';
+    await capture.flush();
+    await observer?.(name, status, result.exitCode, capture.snapshot());
     if (result.exitCode !== 0) throw new Error(`工程检查 ${name} 失败（退出码 ${result.exitCode}）`);
     return result.exitCode;
   } catch (error) {
-    diagnostic.error = error instanceof Error ? error.message : '工程检查中断';
+    status = 'failed';
+    capture?.fail(error);
+    await capture?.flush();
+    const diagnostic = capture?.snapshot() ?? { stdout: '', stderr: '', truncated: false, error: error instanceof Error ? error.message : '工程检查中断' };
     await observer?.(name, 'failed', undefined, diagnostic);
     throw error;
-  } finally { unsubscribe?.(); }
+  } finally { capture?.dispose(); }
 }
 
 export async function installPrototypeDependencies(runtime: PlatformRuntime, input: PrototypeTaskIdentity, signal?: AbortSignal, observer?: CheckStepObserver): Promise<void> {
   await verifyPrototypeContract(input.prototypeRoot, input.manifestPath);
-  await command(runtime, input, 'install', ['install', '--frozen-lockfile'], 600_000, observer, signal);
+  // Keep resolved package resources inside the same boundary as the source, even after a cached install.
+  await command(runtime, input, 'install', ['install', '--frozen-lockfile', '--virtual-store-dir=node_modules/.pnpm'], 600_000, observer, signal);
 }
 
 /** No arbitrary shell strings or task-provided script names enter this boundary. */

@@ -12,11 +12,12 @@ async function fixture(t: test.TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-queue-recovery-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
   const local = await store.read(), worktree = path.join(root, 'worktree')
   await mkdir(worktree)
   const task = { id: 'task', status: 'active', ownerId: 1, clientId: local.clientId, generation: 1, title: '项目事项', branch: 'studio/task', sourceBaseHead: 'a'.repeat(40), writeScope: ['src/pages/'], developmentClaims: [{ requirementId: 'requirement' }], developmentRequirementIds: ['requirement'] }
   const operation = { id: 'original-message', taskId: 'task', phase: 'sending', request: { action: 'startPrototypeCollaboration', instruction: '原指令' } }
-  await writeFile(path.join(store.directory, 'prototype-queue.json'), JSON.stringify({ revision: 1, selectedTaskId: 'task', tasks: [{ projectId: 'project', task, sessionId: 'session', worktree, state: 'running' }], operations: [operation] }))
+  await writeFile(path.join(await store.projectDirectory('project'), 'prototype-queue.json'), JSON.stringify({ revision: 1, selectedTaskId: 'task', tasks: [{ projectId: 'project', task, sessionId: 'session', worktree, state: 'running' }], operations: [operation] }))
   const calls = { prompts: 0, restores: 0, inspected: [] as string[] }
   let delivery = 'unknown'
   const ports = { prototypeManifestPath: path.resolve('packages/studio-plugin/assets/prototype-template.manifest.json'),

@@ -5,7 +5,7 @@ import type { EntityView, ProjectState } from '@eadp/contracts'
 import type { PrototypeMaterialRead } from '../../shared/prototype.ts'
 import type { TaskView } from '../../shared/studio.ts'
 import { containedFile, digest, findMaterialFile, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { ProjectRecord } from '../adapters/project-record.ts'
 import type { CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import type { StudioStore } from './state.ts'
@@ -98,7 +98,7 @@ export class PrototypeMaterialContext {
   record(receipt: PrototypeMaterialRead): Promise<void> {
     const accountId = receipt.accountId
     if (this.store.accountId !== accountId) return Promise.reject(new Error('账号授权已变化'))
-    const storage = new AtomicState<PrototypeMaterialRead[]>(path.join(this.store.directory, 'prototype-material-reads.json'))
+    const storage = new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads.json', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat())
     const work = this.pending.catch(() => undefined).then(async () => {
       if (this.store.accountId !== accountId) throw new Error('账号授权已变化')
       const records = await storage.read() ?? []
@@ -112,7 +112,7 @@ export class PrototypeMaterialContext {
   async reads(taskIds: string[]): Promise<PrototypeMaterialRead[]> {
     const accountId = this.store.accountId
     if (!accountId) return []
-    const records = await new AtomicState<PrototypeMaterialRead[]>(path.join(this.store.directory, 'prototype-material-reads.json')).read() ?? []
+    const records = await new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads.json', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat()).read() ?? []
     if (this.store.accountId !== accountId) throw new Error('账号授权已变化')
     const local = await this.store.read(), projects = new Map<string, ProjectState>(), result: PrototypeMaterialRead[] = []
     for (const record of records.filter(value => taskIds.includes(value.prototypeTaskId))) {

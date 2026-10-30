@@ -6,7 +6,7 @@ import type { ProjectState, PrototypeEngineeringEvidence, PrototypeIntegrationRe
 import type { PrototypeCandidateFile, PrototypeCandidateSummary } from '../../shared/prototype.ts'
 import type { TaskView } from '../../shared/studio.ts'
 import { digest } from '../adapters/assets/materials.ts'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { ProjectRecord } from '../adapters/project-record.ts'
 import { CollaborationError, type CollaborationClient } from '../adapters/collaboration/client.ts'
 import type { PrototypeConflictWriteback } from '../adapters/workspace/git.ts'
 import type { HostPorts } from './ports.ts'
@@ -38,9 +38,9 @@ function snapshotHash(files: Array<{ path: string; bytes: Buffer }>): string {
 /** Retains the exact source and task authority shown to its author. */
 export class PrototypeCandidates {
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly collaboration: PrototypeCollaboration, private readonly integrations: PrototypeIntegrations) {}
-  private storage(): AtomicState<CandidateState> {
+  private storage(): ProjectRecord<CandidateState> {
     if (!this.store.accountId) throw new Error('请先登录后固定原型成果')
-    return new AtomicState(path.join(this.store.directory, 'prototype-candidates.json'))
+    return new ProjectRecord<CandidateState>(this.store, 'prototype-candidates.json', () => ({ operations: [] }), (value, id) => ({ operations: value.operations.filter(x => x.task.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations) }))
   }
   private async account(accountId: number): Promise<void> {
     if (this.store.accountId !== accountId || (await this.ports.account())?.id !== accountId || this.store.accountId !== accountId) throw new Error('账号已变化，原型候选已保留')
@@ -59,7 +59,7 @@ export class PrototypeCandidates {
     if (this.binding(current) !== this.binding(record)) throw new Error('事项授权、现场或需求范围已变化，请重新固定成果')
     return current
   }
-  private async state(): Promise<{ accountId: number; storage: AtomicState<CandidateState>; data: CandidateState }> {
+  private async state(): Promise<{ accountId: number; storage: ProjectRecord<CandidateState>; data: CandidateState }> {
     const accountId = this.store.accountId, storage = this.storage()
     if (!accountId) throw new Error('请先登录')
     await this.account(accountId)
@@ -76,7 +76,7 @@ export class PrototypeCandidates {
     return structuredClone(result)
   }
   /** Recover the original conflict request before allowing any replacement operation. */
-  private async recoverConflict(record: CandidateRecord, storage: AtomicState<CandidateState>, data: CandidateState): Promise<void> {
+  private async recoverConflict(record: CandidateRecord, storage: ProjectRecord<CandidateState>, data: CandidateState): Promise<void> {
     const recovery = record.recovery
     if (!recovery || record.status !== 'conflict' || !record.summary || recovery.phase === 'restored') return
     const request = recovery.request
@@ -210,7 +210,7 @@ export class PrototypeCandidates {
     return structuredClone(record.summary)
   }
   /** Preserve the author's source ref before attempting any merge or backend preparation. */
-  private async uploadSource(record: CandidateRecord, storage: AtomicState<CandidateState>, data: CandidateState): Promise<void> {
+  private async uploadSource(record: CandidateRecord, storage: ProjectRecord<CandidateState>, data: CandidateState): Promise<void> {
     const summary = record.summary!
     const ref = `refs/heads/studio-private/${record.task.entityId}/${record.id}/source`, branch = ref.slice('refs/heads/'.length)
     if (record.sourceUpload && (record.sourceUpload.ref !== ref || record.sourceUpload.sha !== summary.sourceSha)) throw new Error('原来源上传记录与固定成果不一致')
@@ -244,7 +244,7 @@ export class PrototypeCandidates {
     const operation = await this.integrations.operation(operationId)
     await this.account(accountId)
     if (!operation || operation.phase !== 'accepted' || operation.accountId !== accountId || operation.projectId !== record.task.projectId || operation.taskId !== record.task.entityId) throw new Error('候选临时目录与原 accepted operation 身份不一致，现场已保留')
-    const mergeRoot = path.join(this.store.directory, 'prototype-merges'), checkRoot = path.join(this.store.directory, 'prototype-candidate-checks')
+    const mergeRoot = path.join(await this.store.projectDirectory(record.task.projectId), 'prototype-merges'), checkRoot = path.join(await this.store.projectDirectory(record.task.projectId), 'prototype-candidate-checks')
     for (const scene of record.mergeScenes ?? []) if (scene.status === 'merged') {
       await this.account(accountId)
       await this.removeManagedDirectory(mergeRoot, scene.directory, 'prototype-merge-')
@@ -258,14 +258,14 @@ export class PrototypeCandidates {
   }
 
   /** Check the merged Git tree in a separate snapshot, without changing the author's worktree. */
-  private async checkMerged(record: CandidateRecord, storage: AtomicState<CandidateState>, data: CandidateState, checkOperationId: string): Promise<PrototypeEngineeringEvidence> {
+  private async checkMerged(record: CandidateRecord, storage: ProjectRecord<CandidateState>, data: CandidateState, checkOperationId: string): Promise<PrototypeEngineeringEvidence> {
     const merged = record.merged!
     const files = await this.ports.git.prototypeSnapshot(record.task.worktree, merged.candidateSha)
     const expectedInputHash = snapshotHash(files)
     if (merged.checkOperationId === checkOperationId && merged.evidence?.candidateSha === merged.candidateSha && merged.evidence.sourceTreeHash === expectedInputHash) return merged.evidence
     delete merged.evidence; delete merged.checkOperationId
     await this.account(record.accountId); await storage.write(data)
-    const root = path.join(this.store.directory, 'prototype-candidate-checks')
+    const root = path.join(await this.store.projectDirectory(record.task.projectId), 'prototype-candidate-checks')
     await mkdir(root, { recursive: true, mode: 0o700 })
     const directory = await mkdtemp(path.join(root, 'candidate-')), prototype = path.join(directory, '原型代码')
     ;(record.mergeCheckDirectories ??= []).push(directory)
@@ -300,7 +300,7 @@ export class PrototypeCandidates {
       await this.account(record.accountId)
       if (await this.ports.git.remoteHead(current.task.worktree, project.project.stableBranch) !== expectedHead) throw new Error('项目 Git 头与认可头不一致，请保留原候选核对')
       await this.account(record.accountId)
-      const merged = await this.ports.git.prototypeCleanMerge(current.task.worktree, { operationRoot: path.join(this.store.directory, 'prototype-merges'), operationId,
+      const merged = await this.ports.git.prototypeCleanMerge(current.task.worktree, { operationRoot: path.join(await this.store.projectDirectory(record.task.projectId), 'prototype-merges'), operationId,
         sourceBaseHead: record.summary.sourceBaseHead, sourceSha: record.summary.sourceSha, expectedHead,
         writeScope: current.authorization.writeScope, identity: await this.ports.git.identity(current.task.worktree) })
       await this.current(record)

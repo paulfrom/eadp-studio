@@ -13,8 +13,8 @@ import type { CollaborationClient } from '../../packages/studio-plugin/src/host/
 import type { StudioCommand, TaskView } from '../../packages/studio-plugin/src/shared/studio.ts'
 
 async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 'handoff' = 'material') {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-cold-conversation-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-cold-conversation-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true })
+  t.after(() => rm(workspace, { recursive: true, force: true }))
   const templateBody = '# 场景模板\n\n## 目标与范围\n'
   const template = { id: 'default', name: '默认场景模板', fixed: { commitSha: 'a'.repeat(40), path: '.template/default.md', sha256: createHash('sha256').update(templateBody).digest('hex') } }
   await mkdir(path.join(root, '.template')); await writeFile(path.join(root, template.fixed.path), templateBody)
@@ -25,14 +25,14 @@ async function fixture(t: test.TestContext, purpose: 'material' | 'prototype' | 
     occupation: { entityId: 'asset', occupationId: 'owned', generation: 1, taskId: 'task', clientId: local.clientId, ownerId: 1, expectedRevision: 1, purpose: purpose === 'prototype' ? 'prototype' : 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' } }
   const project = { id: 'project', name: '恢复项目', gitlabProjectId: 1, repositoryUrl: 'https://example.invalid/project.git', stableBranch: 'main', namespaceId: 1, namespacePath: 'test', initializationStatus: 'ready' as const, recognizedHead: 'a'.repeat(40), revision: 1 }
   const remote: ProjectState = { project, entities: [entity], integrations: [], baselines: [] }
-  const worktree = path.join(store.directory, 'worktrees', project.id, 'task'); await mkdir(worktree, { recursive: true })
+  const worktree = path.join(path.dirname(root), '.eadp', 'users', '1', 'worktrees', 'task'); await mkdir(worktree, { recursive: true })
   const draft = await saveMaterial(worktree, initialMetadata(entity), '# 恢复材料\n\n正文。')
   if (purpose === 'prototype') {
     entity.materialVersion = 1; entity.confirmationStatus = 'confirmed'; entity.occupation!.inputVersion = 1
     entity.current = { version: 1, fixed: { commitSha: project.recognizedHead, path: draft.path, sha256: draft.sha256 }, metadata: draft.metadata, confirmationId: 'confirmation', confirmedBy: 1, confirmedAt: '', reuse: { enabled: true, reason: '' } }
   }
   const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: 'studio-existing', purpose, inputHash: entity.current?.fixed.sha256 ?? '', worktree }
-  local.projects.push({ id: project.id, name: project.name, directory: root, repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id; local.tasks.push(task); await store.save()
+  local.projects.push({ id: project.id, name: project.name, directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: project.repositoryUrl }); local.selectedProjectId = project.id; local.tasks.push(task); await store.save()
   const sessions: TaskView[] = [], requests: string[] = [], active = new Set<string>()
   const api = { request: async (method: string, route: string) => { requests.push(method + ' ' + route); if (method !== 'GET') throw new Error('restoration must not mutate collaboration'); if (route.startsWith('/v1/projects/project/prototype/baselines?') || route === '/v1/projects/project/prototype/adoptions') return []
     if (route === '/v1/projects') return [project]; if (route === '/v1/projects/project') return remote; if (route === '/v1/projects/project/templates') { const catalog = { defaultTemplateId: template.id, templates: [template] }; return { acceptedHead: project.recognizedHead, scenarios: catalog, requirements: catalog } } throw new Error(route) } } as unknown as CollaborationClient
@@ -62,7 +62,7 @@ for (const mutation of ['missing', 'other-owner', 'other-client', 'replaced-task
   if (mutation === 'wrong-purpose') f.entity.occupation!.purpose = 'design'
   if (mutation === 'old-hash') f.entity.current!.fixed.sha256 = 'b'.repeat(64)
   if (mutation === 'old-version') f.entity.occupation!.inputVersion = 0
-  if (mutation === 'other-project') f.task.projectId = 'another-project'
+  if (mutation === 'other-project') { f.task.projectId = 'another-project'; const local = await f.store.read(); local.projects.push({ id: 'another-project', name: 'Other', workspaceDirectory: path.join(path.dirname(f.task.worktree), 'other'), directory: path.join(path.dirname(f.task.worktree), 'other', 'repo'), repositoryUrl: 'https://git.test/other.git' }); await mkdir(local.projects.at(-1)!.workspaceDirectory, { recursive: true }) }
   if (mutation === 'wrong-worktree') f.task.worktree = path.join(f.task.worktree, '..', 'wrong')
   await f.store.save()
   const reply = await restore(f.reboot())

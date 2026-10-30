@@ -29,7 +29,7 @@ export class ScenarioTemplates {
     if (cached) return cached
     const catalog = await this.api.request<TemplateCatalogResponse>('GET', `/v1/projects/${project.id}/templates`)
     const withBodies = async (entry: TemplateCatalogResponse['scenarios']): Promise<TemplateCatalogView | undefined> => {
-      const bodies = await Promise.all(entry.templates.map(template => this.projects.localFixed(project.id, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)))
+      const bodies = await Promise.all(entry.templates.map(template => this.projects.localFixed(project, template.fixed.commitSha, template.fixed.path, template.fixed.sha256)))
       if (bodies.some(bytes => bytes === undefined)) return undefined
       return { ...entry, templates: entry.templates.map((template, index) => ({ ...template, body: Buffer.from(bodies[index]!).toString('utf8') })) }
     }
@@ -77,7 +77,7 @@ export class ScenarioTemplates {
       if (!op.request) {
         if (remote.project.recognizedHead !== op.preview.expectedHead || remote.project.revision !== op.preview.expectedRevision) throw new Error('项目版本已变化，请刷新并重新预览模板')
         const project = local.projects.find(p => p.id === remote.project.id)!
-        const directory = path.join(this.store.directory, 'template-worktrees', remote.project.id, operationId)
+        const directory = path.join(await this.store.projectDirectory(remote.project.id), 'template-worktrees', operationId)
         if (!op.directory) {
           await this.ports.git.fetch(project.directory, remote.project.stableBranch)
           await this.ports.git.createWorktree(project.directory, directory, `studio/templates/${operationId}`, op.preview.expectedHead)

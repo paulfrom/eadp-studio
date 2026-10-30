@@ -22,6 +22,7 @@ for (const scenario of ['put', 'receipt', 'writeback'] as const) {
     const root = await mkdtemp(path.join(tmpdir(), 'prototype-candidate-conflict-'))
     t.after(() => rm(root, { recursive: true, force: true }))
     const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
     const task: TaskView = { projectId: 'project', entityId: 'task', purpose: 'prototype', sessionId: 'session', inputHash: '', worktree: path.join(root, 'worktree'), baseHead: oldBase, writePaths: ['src/'] }
     const authorization: PrototypeTaskView = {
       id: task.entityId, prototypeId: 'prototype', ownerId: 1, clientId: 'client', generation: 1, revision: 1, status: 'active', title: 'Prototype task', branch: 'studio/task', startHead: oldBase, sourceBaseHead: oldBase,
@@ -47,8 +48,8 @@ for (const scenario of ['put', 'receipt', 'writeback'] as const) {
         ...(scenario === 'writeback' ? { result, writeback: plan } : {}),
       },
     }
-    await mkdir(store.directory, { recursive: true })
-    await writeFile(path.join(store.directory, 'prototype-candidates.json'), JSON.stringify({ operations: [original] }))
+    await mkdir(await store.projectDirectory('project'), { recursive: true })
+    await writeFile(path.join(await store.projectDirectory('project'), 'prototype-candidates.json'), JSON.stringify({ operations: [original] }))
     const requests: Array<{ method: string; route: string; body?: object }> = []
     const api = { request: async (method: string, route: string, body?: object) => {
       assert.notEqual(scenario, 'writeback', 'a persisted source-base result must not be requested again')
@@ -98,7 +99,7 @@ for (const scenario of ['put', 'receipt', 'writeback'] as const) {
     await candidates.check('new-operation', 'new-check')
     const confirmed = await candidates.confirm('new-operation', summary.summaryHash)
     assert.equal(confirmed.status, 'confirmed'); assert.equal(confirmed.checks, 'passed')
-    const persisted = JSON.parse(await readFile(path.join(store.directory, 'prototype-candidates.json'), 'utf8'))
+    const persisted = JSON.parse(await readFile(path.join(await store.projectDirectory('project'), 'prototype-candidates.json'), 'utf8'))
     assert.equal(persisted.operations[0].recovery.phase, 'restored'); assert.equal(persisted.operations[0].authorization.sourceBaseHead, expectedHead); assert.equal(persisted.operations[0].task.baseHead, expectedHead)
     assert.ok(persisted.operations[0].recovery.writeback.files.every((value: { status: string }) => value.status === 'written'))
     assert.equal(persisted.operations[0].summary.status, 'conflict'); assert.equal(persisted.operations[1].id, 'new-operation')

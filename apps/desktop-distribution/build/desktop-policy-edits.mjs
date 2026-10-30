@@ -30,6 +30,17 @@ export const DESKTOP_POLICY_EDITS = [
   ]),
   edit('apps/desktop/src/main.ts', [
     ['resolveDesktopPolicyConfig(policyInput, !app.isPackaged)', 'resolveDesktopPolicyConfig(policyInput)'],
+    ['function createWindow(preload: string, show = false, primary = false): BrowserWindow {',
+      'function createWindow(preload: string, show = false, primary = false, mandatoryUpdates = false): BrowserWindow {'],
+    ['      webviewTag: primary,', "      webviewTag: primary,\n      additionalArguments: mandatoryUpdates ? ['--dsh-mandatory-updates'] : [],"],
+    ['const window = createWindow(appPreload, false, true)', 'const window = createWindow(appPreload, false, true, mandatoryPolicy !== undefined)'],
+    ['  mainWindow = createMainWindow()\n  if (typeof manifest', '  if (typeof manifest'],
+    ['  }\n  automaticCheck()\n  await reconcileBackend()',
+      '  }\n  mainWindow = createMainWindow()\n  mandatoryUI?.sync()\n  automaticCheck()\n  await reconcileBackend()'],
+  ]),
+  edit('apps/desktop/src/preload-app.ts', [
+    ["if (process.platform === 'win32') installMandatoryUpdateOverlay()",
+      "if (process.platform === 'win32' && process.argv.includes('--dsh-mandatory-updates')) installMandatoryUpdateOverlay()"],
   ]),
   // Keep upstream regression sources aligned with the removed loopback-only contract.
   edit('apps/desktop/tests/mandatory-update-policy.spec.ts', [

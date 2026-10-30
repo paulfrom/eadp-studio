@@ -30,7 +30,7 @@ export interface ProjectProgressReply { operations: ProjectProgress[] }
 export type Stage = 'scenarios' | 'requirements' | 'prototype' | 'baselines' | 'handoffs'
 /** Main checkout synchronization after an accepted integration; `blocked` keeps the accepted business state. */
 export interface ProjectSync { status: 'pending' | 'blocked' | 'synced'; commit: string; message?: string }
-export interface LocalProject { id: string; name: string; directory: string; repositoryUrl: string; sync?: ProjectSync }
+export interface LocalProject { id: string; name: string; workspaceDirectory: string; directory: string; repositoryUrl: string; sync?: ProjectSync }
 /** Per-task settlement: released resources, archived worktree bytes and removed Git registrations. */
 export interface TaskCleanup {
   status: 'pending' | 'blocked' | 'done';
@@ -42,6 +42,7 @@ export interface TaskView { projectId: string; entityId: string; sessionId: stri
 /** A local recovery record the Host could not use, and where its bytes were preserved. */
 export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
+  workspace?: { defaultDirectory: string; applicationDirectory: string };
   connected: boolean; account?: StudioUser;
   /** Set once per rebuild, so the surfaces can report where the unusable record was kept. */
   recovery?: StudioRecovery;
@@ -69,8 +70,9 @@ export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWo
   | { action: 'namespaces' }
   | { action: 'login'; username: string; password: string }
   | { action: 'logout' }
-  | { action: 'createProject'; name: string; namespaceId: number; path: string }
-  | { action: 'openProject'; projectId: string }
+  | { action: 'createProject'; name: string; namespaceId: number; path: string; workspaceDirectory?: string }
+  | { action: 'openProject'; projectId: string; workspaceDirectory?: string }
+  | { action: 'setWorkspaceDirectory'; directory: string }
   | { action: 'retryProjectInitialization'; operationId: string }
   | { action: 'bindScenarioTemplate'; entityId: string; templateId: string }
   | { action: 'splitRequirements'; scenarioIds: string[] }

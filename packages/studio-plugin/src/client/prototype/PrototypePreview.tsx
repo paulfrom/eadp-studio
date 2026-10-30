@@ -10,10 +10,11 @@ export interface PrototypePreviewProps {
   onNavigate?(route: string): Promise<void>
   onRefresh?(): Promise<void>
   externalUrl?: string | undefined
+  starting?: boolean
 }
 
 /** Preview controls delegate navigation to the Host; only layout is managed here. */
-export function PrototypePreview({ identity, visible, route = '/', onNavigate, onRefresh, externalUrl }: PrototypePreviewProps) {
+export function PrototypePreview({ identity, visible, route = '/', onNavigate, onRefresh, externalUrl, starting = false }: PrototypePreviewProps) {
   const navigation = useRef<((request: { path?: string; reload?: boolean }) => Promise<void>)>()
   const registerNavigation = useCallback((handler?: (request: { path?: string; reload?: boolean }) => Promise<void>) => { navigation.current = handler }, [])
   const navigate = async (request: { path?: string; reload?: boolean }) => { if (!navigation.current) throw new Error('预览尚未就绪'); await navigation.current(request) }
@@ -26,9 +27,9 @@ export function PrototypePreview({ identity, visible, route = '/', onNavigate, o
   const invoke = async (action?: () => Promise<void>) => {
     try { await action?.(); setError('') } catch (error) { setError(error instanceof Error ? error.message : '预览操作失败') }
   }
-  return <section hidden={!visible} className={`${css.preview} ${expanded ? css.expanded : ''}`} aria-label="项目预览">
+  return <section hidden={!visible} className={`${css.preview} ${expanded ? css.expanded : ''}`} aria-label="项目预览" aria-busy={starting}>
     <div className={css.toolbar}>
-      <span className={css.runtime}><i data-running={!!identity} />{identity ? '预览运行中' : '预览未运行'}</span>
+      <span className={css.runtime}><i data-running={!!identity} data-starting={starting} />{starting ? '预览启动中' : identity ? '预览运行中' : '预览未运行'}</span>
       <form className={css.route} onSubmit={event => { event.preventDefault(); void invoke(onNavigate ? () => onNavigate(path) : undefined) }}>
         <input aria-label="预览页面" value={path} disabled={!identity || !onNavigate} title={onNavigate ? '输入页面路径后按 Enter' : '当前桌面暂未提供页面导航接口'} onChange={event => setPath(event.target.value)} />
       </form>
@@ -40,7 +41,7 @@ export function PrototypePreview({ identity, visible, route = '/', onNavigate, o
     </div>
     {error && <p role="alert">{error}</p>}
     <div className={css.canvas}><div className={css.frame} style={{ width: device === 'desktop' ? '100%' : device === 'tablet' ? 768 : 390 }}>
-      {identity ? <PrototypeCanvas identity={identity} visible={visible} registerNavigation={registerNavigation} /> : <div className={css.empty}>运行项目后，在这里核对页面和业务流程。</div>}
+      {identity ? <PrototypeCanvas identity={identity} visible={visible} registerNavigation={registerNavigation} /> : <div className={css.empty} role={starting ? 'status' : undefined}>{starting && <span className={css.spinner} aria-hidden="true" />}{starting ? '正在安装依赖、构建并启动预览…' : '运行项目后，在这里核对页面和业务流程。'}</div>}
     </div></div>
     <footer className={css.footnote}><span>合成业务数据 · 仅用于需求核对</span><span>{device === 'desktop' ? '自适应桌面' : device === 'tablet' ? '768 px' : '390 px'}</span></footer>
   </section>

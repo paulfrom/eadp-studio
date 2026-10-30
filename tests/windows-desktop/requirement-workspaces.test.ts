@@ -22,7 +22,7 @@ async function fixture(t: { after(work: () => Promise<unknown>): unknown }) {
   await mkdir(root)
   const store = new StudioStore(path.join(parent, 'local')); store.useUser(1)
   const local = await store.read(); local.selectedProjectId = 'project'
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: 'https://git.test/project.git' })
   const token: OccupationToken = { occupationId: 'occupation', generation: 1, clientId: local.clientId, taskId: path.basename(root), expectedRevision: 1 }
   const entity = { id: 'requirement', kind: 'requirement', generation: 1, revision: 1, title: '审批需求', scenarioIds: ['scene'], scenarioSources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], templateId: 'default-requirement', templateRef, materialVersion: 0, occupation: { ...token, ownerId: 1, purpose: 'design' } } as unknown as EntityView
   const task: TaskView = { entityId: entity.id, projectId: 'project', sessionId: 'original-session', purpose: 'material', inputHash: '', worktree: root }

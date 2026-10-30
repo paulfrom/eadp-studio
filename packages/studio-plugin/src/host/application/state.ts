@@ -2,8 +2,9 @@ import type { LocalScenarioRepair } from './scenario-repairs.ts'
 import type { ScenarioRecord } from './scenario-workspaces.ts'
 import type { TemplateOperation } from './scenario-templates.ts'
 import type { LocalConsistencyComparison } from './consistency-comparisons.ts'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { AtomicState } from '../adapters/local-state/atomic-state.ts'
 import { randomUUID } from 'node:crypto'
 import type { AdoptRequest, AssetSource, FixedReference, IntegrationView, MaterialMetadata } from '@eadp/contracts'
 import type { LocalReview } from './reviews.ts'
@@ -11,9 +12,10 @@ import type { Candidate, LocalProject, TaskView, StudioRecovery } from '../../sh
 
 const recordName = 'studio-state.json'
 /** Only this format carries the task and request identities required for safe recovery. */
-const formatVersion = 2
+const formatVersion = 3
 /** Collections every current-version record carries; a record missing one is a previous version's. */
 const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
+const projectCollections = ['tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
 const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -48,11 +50,11 @@ export interface MaterialReservation {
 }
 export interface ProjectInitialization {
   id: string; name: string; namespaceId: number; path: string; projectId?: string;
-  directory?: string; directoryOwned?: boolean; commitSha?: string;
+  workspaceDirectory?: string; directory?: string; directoryOwned?: boolean; commitSha?: string;
   phase: 'creating' | 'initializing' | 'pushing' | 'verifying' | 'ready' | 'unknown'; message?: string;
 }
 export interface LocalState {
-  formatVersion: 2; clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
+  formatVersion: 3; clientId: string; selectedProjectId?: string; projects: LocalProject[]; tasks: TaskView[];
   candidates: Candidate[]; operations: PendingOperation[]; reviews: LocalReview[]; adoptions: AdoptionOperation[]; projectInitializations: ProjectInitialization[];
   materialReservations: MaterialReservation[]; templateOperations: TemplateOperation[]; scenarios: ScenarioRecord[]; scenarioStructureCheck: boolean; scenarioRepairs: LocalScenarioRepair[];
   consistencyComparisons: LocalConsistencyComparison[];
@@ -99,6 +101,7 @@ export class StudioStore {
   private userId: number | undefined
   private preserved: StudioRecovery | undefined
   constructor(private readonly root: string) {}
+  get rootDirectory(): string { return this.root }
   get directory(): string { if (!this.userId) throw new Error('请先登录协同工作台。'); return path.join(this.root, 'users', String(this.userId)) }
   get accountId(): number | undefined { return this.userId }
   get scoped(): boolean { return this.userId !== undefined }
@@ -127,7 +130,7 @@ export class StudioStore {
       const text = await readFile(file, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('本地恢复记录无法读取，请保留现场并修复') })
       const stored = text === undefined ? undefined : parseRecord(text)
       if (userId !== this.userId) throw new Error('协同登录身份已变化，请重新查询。')
-      if (stored) { this.value = stored; return stored }
+      if (stored) { if (projectCollections.some(key => stored[key].length > 0)) throw new Error('程序索引含有项目正文，请保留现场。'); await this.hydrateProjects(stored); this.value = stored; return stored }
       const identity = text === undefined ? undefined : carriedIdentity(text)
       if (text !== undefined) this.preserved = { preservedPath: await this.preserve(file) }
       const rebuilt = { ...emptyState(), ...(identity ? { clientId: identity } : {}) }
@@ -136,6 +139,72 @@ export class StudioStore {
       return rebuilt
     })().finally(() => { if (userId === this.userId) this.loading = undefined })
     return this.loading
+  }
+  /** Private project files belong to the selected project folder, never program data. */
+  async projectDirectory(projectId: string): Promise<string> {
+    const value = await this.read()
+    const project = value.projects.find(item => item.id === projectId)
+    const root = project?.workspaceDirectory ?? value.projectInitializations.find(item => item.projectId === projectId)?.workspaceDirectory
+    if (!root || !path.isAbsolute(root)) throw new Error('项目尚未登记有效的本地文件夹。')
+    return path.join(root, '.eadp', 'users', String(this.userId))
+  }
+  private projectPath(project: LocalProject): string {
+    if (!project.workspaceDirectory || !path.isAbsolute(project.workspaceDirectory)) throw new Error('项目文件夹登记无效，请重新打开项目。')
+    return path.join(project.workspaceDirectory, '.eadp', 'users', String(this.userId), 'local-state.json')
+  }
+  /** Rebinds an orphaned project record before publishing its program index. */
+  async registerProject(project: LocalProject): Promise<void> {
+    const accountId = this.userId, value = await this.read()
+    if (value.projects.some(item => item.id === project.id)) throw new Error('项目已在本机登记。')
+    const stored = await new AtomicState<Record<string, unknown>>(this.projectPath(project)).read()
+    if (accountId !== this.userId) throw new Error('协同身份已变化，项目登记已停止')
+    if (stored) {
+      const hydrated = { ...emptyState(), clientId: value.clientId, projects: [project] }
+      await this.hydrateProjects(hydrated)
+      if (accountId !== this.userId) throw new Error('协同身份已变化，项目登记已停止')
+      for (const key of projectCollections) {
+        if ((value[key] as Array<{ projectId: string }>).some(item => item.projectId === project.id)) throw new Error('项目已存在尚未登记的过程数据，请保留现场。')
+      }
+      for (const key of projectCollections) (value[key] as unknown[]).push(...hydrated[key])
+    }
+    value.projects.push(project)
+    await this.save()
+  }
+  private async workspaceExists(project: LocalProject): Promise<boolean> {
+    try { return (await stat(project.workspaceDirectory)).isDirectory() }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error }
+  }
+  private async hydrateProjects(value: LocalState): Promise<void> {
+    const accountId = this.userId
+    for (const project of value.projects) {
+      const file = this.projectPath(project)
+      if (!await this.workspaceExists(project)) continue
+      if (accountId !== this.userId) throw new Error('协同身份已变化，旧读取已停止')
+      const stored = await new AtomicState<Record<string, unknown>>(file).read()
+      if (!stored || stored.projectId !== project.id || stored.accountId !== this.userId || projectCollections.some(key => !Array.isArray(stored[key]))) throw new Error(`项目本地记录缺失或损坏，请保留现场并重新打开项目：${project.name}`)
+      for (const key of projectCollections) {
+        const entries = stored[key] as Array<{ projectId?: string }>
+        if (entries.some(item => item.projectId !== project.id)) throw new Error('项目本地记录包含其他项目的数据，请保留现场。')
+        ;(value[key] as unknown[]).push(...entries)
+      }
+    }
+    if (!parseRecord(JSON.stringify(value))) throw new Error('项目本地恢复记录无效，请保留现场。')
+  }
+  private async persistProjects(value: LocalState): Promise<LocalState> {
+    const accountId = this.userId
+    const known = new Set(value.projects.map(project => project.id))
+    for (const key of projectCollections) if ((value[key] as Array<{ projectId: string }>).some(item => !known.has(item.projectId))) throw new Error('项目过程数据缺少对应的本地项目登记。')
+    for (const project of value.projects) {
+      if (!await this.workspaceExists(project)) continue
+      if (accountId !== this.userId) throw new Error('协同身份已变化，旧保存已停止')
+      const data: Record<string, unknown> = { projectId: project.id, accountId: this.userId }
+      for (const key of projectCollections) data[key] = (value[key] as Array<{ projectId: string }>).filter(item => item.projectId === project.id)
+      await new AtomicState<Record<string, unknown>>(this.projectPath(project)).write(data)
+      if (accountId !== this.userId) throw new Error('协同身份已变化，旧保存已停止')
+    }
+    const index = { ...value }
+    for (const key of projectCollections) (index[key] as unknown[]) = []
+    return index
   }
   private saving: Promise<void> = Promise.resolve()
   save(): Promise<void> {
@@ -159,7 +228,7 @@ export class StudioStore {
     if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
     const temp = path.join(directory, `${recordName}.${randomUUID()}.tmp`)
     try {
-      await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+      await writeFile(temp, `${JSON.stringify(await this.persistProjects(value), null, 2)}\n`, { mode: 0o600 })
       if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
       await rename(temp, path.join(directory, recordName))
     } finally { await rm(temp, { force: true }) }

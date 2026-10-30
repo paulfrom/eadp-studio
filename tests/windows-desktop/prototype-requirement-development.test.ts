@@ -18,10 +18,11 @@ type Claim = PrototypeTaskView['developmentClaims'][number]
 type Start = Extract<PrototypeCollaborationCommand, { action: 'startPrototypeCollaboration' }>
 type Phase = 'sent' | 'unknown' | 'commit-known' | 'pushing' | 'synchronizing'
 
-async function fixture(t: test.TestContext, options: { phase?: Phase; second?: boolean; delivery?: 'unknown' | 'delivered' } = {}) {
+async function fixture(t: test.TestContext, options: { phase?: Phase; second?: boolean; delivery?: 'unknown' | 'delivered' | 'absent' | 'admitted' } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-requirement-development-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const stateRoot = path.join(root, 'state'), store = new StudioStore(stateRoot); store.useUser(1)
+  const registered = await store.read(); registered.projects.push({ id: 'project', name: '项目', workspaceDirectory: root, directory: path.join(root, 'repo'), repositoryUrl: 'https://git.test/project.git' }); await store.save()
   const clientId = (await store.read()).clientId, worktree = path.join(root, 'worktree'); await mkdir(worktree)
   const base = 'a'.repeat(40), firstCommit = digest('first-commit').slice(0, 40), branch = 'studio/prototype/initial'
   const claim: Claim = { requirementId: 'requirement-1', claimId: 'claim-1', generation: 1 }
@@ -50,11 +51,11 @@ async function fixture(t: test.TestContext, options: { phase?: Phase; second?: b
     claims.set(secondClaim.requirementId, secondClaim)
   }
   await store.save()
-  const queuePath = path.join(store.directory, 'prototype-queue.json')
+  const queuePath = path.join(await store.projectDirectory('project'), 'prototype-queue.json')
   const receipts = new Map<string, unknown>()
   if (phase === 'synchronizing') receipts.set(synchronizeRequest.key, null)
   const initialRecord = { revision: 1, selectedTaskId: task.id, tasks, operations }
-  const { writeFile } = await import('node:fs/promises'); await writeFile(queuePath, JSON.stringify(initialRecord))
+  const { writeFile } = await import('node:fs/promises'); await writeFile(queuePath, JSON.stringify(initialRecord)); await writeFile(path.join(store.directory, 'prototype-queue.json'), JSON.stringify({ revision: 1, selectedTaskId: task.id, queueOrder: tasks.map(value => (value as { task: PrototypeTaskView }).task.id), tasks: [], operations: [] }))
   const calls = { commits: 0, pushes: 0, checks: 0, prompts: 0, sessions: 0, inspections: 0, syncPosts: 0, claimPosts: 0, routes: [] as string[], releases: [] as boolean[] }
   let delivery = options.delivery ?? 'delivered', claimConflict = false, loseSync = false, commitSequence = 0
   const remoteTask = (id: string) => tasks.map(value => (value as { task: PrototypeTaskView }).task).find(value => value.id === id)!
@@ -114,7 +115,7 @@ async function fixture(t: test.TestContext, options: { phase?: Phase; second?: b
     collaboration, store, stateRoot, api, ports, calls, task, claim, worktree, queuePath, firstCommit,
     get head() { return head }, get remote() { return remote }, get dirty() { return dirty },
     setDirty(value: boolean) { dirty = value },
-    setDelivery(value: 'unknown' | 'delivered') { delivery = value },
+    setDelivery(value: 'unknown' | 'delivered' | 'absent' | 'admitted') { delivery = value },
     setClaimConflict(value: boolean) { claimConflict = value },
     loseNextSync() { loseSync = true },
     setClaim(value: Claim | null) { if (value) claims.set(value.requirementId, value); else claims.delete(claim.requirementId) },
@@ -269,8 +270,9 @@ test('task creation persists the atomic claim and managed ref before any native 
   const root = await mkdtemp(path.join(tmpdir(), 'prototype-development-create-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'state')); store.useUser(1)
+
   const local = await store.read(), base = 'a'.repeat(40), branch = 'studio/prototype/create-run'
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.test/project.git' }); await store.save()
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: root, repositoryUrl: 'https://git.test/project.git' }); await store.save()
   const claim: Claim = { requirementId: 'requirement-1', claimId: 'claim-new', generation: 1 }
   let task: PrototypeTaskView | undefined, prompts = 0
   const api = { async request(method: string, route: string, input?: Record<string, unknown>) {
@@ -297,7 +299,7 @@ test('task creation persists the atomic claim and managed ref before any native 
     session: async () => 'session-new',
     prompt: async () => {
       prompts++
-      const record = JSON.parse(await readFile(path.join(store.directory, 'prototype-queue.json'), 'utf8')) as { tasks: Array<{ development: { claim: Claim; stage: string } }> }
+      const record = JSON.parse(await readFile(path.join(await store.projectDirectory('project'), 'prototype-queue.json'), 'utf8')) as { tasks: Array<{ development: { claim: Claim; stage: string } }> }
       assert.deepEqual(record.tasks[0]!.development.claim, claim)
       assert.equal(record.tasks[0]!.development.stage, 'sending')
     },
@@ -354,4 +356,182 @@ test('a question-only correction leaves an already dirty worktree untouched', as
   await f.collaboration.accept('session-1', { ...completed, seq: 11 })
   assert.equal(f.calls.syncPosts, syncs); assert.equal(f.calls.commits, commits)
   assert.equal(f.dirty, true)
+})
+
+
+test('runtime failure sends actual diagnostics to AI, retries until preview succeeds, and ignores duplicate events', async t => {
+  const f = await fixture(t)
+  f.setDirty(true); await f.collaboration.accept('session-1', completed)
+  let report: import('../../packages/studio-plugin/src/shared/prototype.ts').PrototypeCheckReport | undefined
+  const prompts: string[] = [], originalPrompt = f.ports.prompt
+  f.ports.prompt = async (id, text, op) => { prompts.push(text); await originalPrompt(id, text, op) }
+  f.ports.prototypeCheckReports = async () => report ? [report] : []
+  let attempts = 0
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async (task, kind, operationId) => {
+    assert.equal(task.entityId, f.task.id); assert.equal(kind, 'preview'); attempts++
+    if (attempts < 3) {
+      report = { operationId, projectId: task.projectId, prototypeTaskId: task.entityId, kind, sourceSha: f.head, startedAt: 'now', status: 'failed', steps: [{ name: 'build', status: 'failed', exitCode: 1, diagnostic: { stdout: '', stderr: `actual compiler failure ${attempts}`, truncated: false } }] }
+      throw new Error('build failed')
+    }
+  })
+  await service.runRuntime(f.task.id, 'preview', 'preview-1')
+  assert.equal(attempts, 1); assert.equal(prompts.length, 1); assert.match(prompts[0]!, /actual compiler failure 1/)
+  assert.equal((await service.view()).items[0]!.localDispatchState, 'running')
+  const repairId = (await f.record()).operations.at(-1)!.id as string
+  f.ports.readPrototypeConversation = async () => [{ sequence: 1, role: 'user', text: 'internal diagnostic code', operationId: repairId }]
+  const conversation = await service.conversation(f.task.id)
+  assert.equal(conversation[0]!.source, 'studio-runtime-repair'); assert.doesNotMatch(conversation[0]!.text, /internal diagnostic code/)
+  await service.runRuntime(f.task.id, 'preview', 'preview-1')
+  assert.equal(prompts.length, 1)
+  await service.accept('session-1', { ...completed, seq: 11 })
+  assert.equal(attempts, 2); assert.equal(prompts.length, 2); assert.match(prompts[1]!, /actual compiler failure 2/)
+  await service.accept('session-1', { ...completed, seq: 11 })
+  assert.equal(prompts.length, 2)
+  await service.accept('session-1', { ...completed, seq: 12 })
+  assert.equal(attempts, 3); assert.equal(prompts.length, 2)
+  assert.match((await service.view()).items[0]!.nextAction!, /原型已运行/)
+  assert.deepEqual(f.calls.releases, [true, false, false])
+})
+
+test('development check failure automatically repairs before push and retains the claim', async t => {
+  const f = await fixture(t)
+  let report: import('../../packages/studio-plugin/src/shared/prototype.ts').PrototypeCheckReport | undefined
+  let attempts = 0
+  f.ports.prototypeCheckReports = async () => report ? [report] : []
+  f.ports.candidateChecks = async (task, sha, operationId) => {
+    attempts++
+    if (attempts === 1) {
+      report = { operationId, projectId: task.projectId, prototypeTaskId: task.entityId, kind: 'checks', sourceSha: sha, startedAt: 'now', status: 'failed', steps: [{ name: 'build', status: 'failed', exitCode: 1 }] }
+      throw new Error('build failed')
+    }
+    return {} as never
+  }
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => {})
+  f.setDirty(true); await service.accept('session-1', completed)
+  assert.equal(f.calls.prompts, 1); assert.equal(f.calls.pushes, 0)
+  await service.accept('session-1', { ...completed, seq: 11 })
+  assert.equal(f.calls.pushes, 1); assert.deepEqual(f.calls.releases, [false])
+  assert.match((await service.view()).items[0]!.nextAction!, /工程检查已完成/)
+})
+
+test('non-check failures are not fabricated into repair tasks', async t => {
+  const f = await fixture(t)
+  f.setDirty(true); await f.collaboration.accept('session-1', completed)
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => { throw new Error('missing credentials') })
+  await assert.rejects(service.runRuntime(f.task.id, 'preview', 'missing'), /missing credentials/)
+  assert.equal(f.calls.prompts, 0)
+})
+
+test('pausing automatic repair stops continuation and restart never resends it', async t => {
+  const f = await fixture(t)
+  f.setDirty(true); await f.collaboration.accept('session-1', completed)
+  let report: import('../../packages/studio-plugin/src/shared/prototype.ts').PrototypeCheckReport
+  f.ports.prototypeCheckReports = async () => [report]
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async (task, kind, operationId) => {
+    report = { operationId, projectId: task.projectId, prototypeTaskId: task.entityId, kind, sourceSha: f.head, startedAt: 'now', status: 'failed', steps: [{ name: 'build', status: 'failed', exitCode: 1 }] }
+    throw new Error('build failed')
+  })
+  await service.runRuntime(f.task.id, 'preview', 'pause-preview')
+  await service.pause(f.task.id, 'pause')
+  await service.accept('session-1', { ...completed, seq: 11 })
+  const restarted = await f.restart(); await restarted.recover()
+  assert.equal(f.calls.prompts, 1); assert.equal((await restarted.view()).items[0]!.localDispatchState, 'paused')
+})
+
+
+test('an absent message after native settlement unblocks a new run without resending the original', async t => {
+  const f = await fixture(t, { phase: 'unknown', delivery: 'absent' })
+  let runs = 0
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => { runs++ })
+  await service.runRuntime(f.task.id, 'preview', 'new-runtime')
+  assert.equal(runs, 1); assert.equal(f.calls.prompts, 0)
+  assert.equal((await f.record()).operations[0]!.phase, 'not-delivered')
+  assert.match((await service.view()).items[0]!.nextAction!, /原型已运行/)
+})
+
+test('an unknown message still blocks new runs and is never resent', async t => {
+  const f = await fixture(t, { phase: 'unknown', delivery: 'unknown' })
+  let runs = 0
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => { runs++ })
+  await assert.rejects(service.runRuntime(f.task.id, 'preview', 'new-runtime'), /请稍候/)
+  assert.equal(runs, 0); assert.equal(f.calls.prompts, 0)
+})
+
+
+test('a native rejected prompt is reconciled before run and its replay cannot interrupt the new repair', async t => {
+  const f = await fixture(t, { delivery: 'admitted' })
+  f.ports.lastPrototypeTurn = async () => ({ kind: 'turn-ended', reason: 'blocked', seq: 7 })
+  let report: import('../../packages/studio-plugin/src/shared/prototype.ts').PrototypeCheckReport
+  f.ports.prototypeCheckReports = async () => [report]
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async (task, kind, operationId) => {
+    report = { operationId, projectId: task.projectId, prototypeTaskId: task.entityId, kind, sourceSha: f.head, startedAt: 'now', status: 'failed', steps: [{ name: 'build', status: 'failed', exitCode: 1 }] }
+    throw new Error('build failed')
+  })
+  await service.runRuntime(f.task.id, 'preview', 'new-preview')
+  assert.equal(f.calls.prompts, 1)
+  const op = (await f.record()).operations.at(-1)!.id
+  await service.accept('session-1', { kind: 'turn-ended', reason: 'blocked', seq: 7 })
+  const view = (await service.view()).items[0]!
+  assert.equal(view.localDispatchState, 'running'); assert.equal(f.calls.prompts, 1)
+  assert.equal((await f.record()).tasks[0]!.development.runId, op)
+})
+
+
+test('background dispatch in another project does not remove the current project runtime source', async t => {
+  const f = await fixture(t, { second: true })
+  const { writeFile } = await import('node:fs/promises')
+  const record = JSON.parse(await readFile(f.queuePath, 'utf8'))
+  const otherRoot = path.join(path.dirname(f.worktree), 'other-project'); await mkdir(otherRoot)
+  const local = await f.store.read(); local.projects.push({ id: 'other-project', name: 'Other', workspaceDirectory: otherRoot, directory: path.join(otherRoot, 'repo'), repositoryUrl: 'https://git.test/other.git' }); local.selectedProjectId = 'project'; await f.store.save()
+  const otherTask = record.tasks.pop(); otherTask.projectId = 'other-project'
+  await writeFile(f.queuePath, JSON.stringify(record))
+  const otherDirectory = await f.store.projectDirectory('other-project'); await mkdir(otherDirectory, { recursive: true })
+  await writeFile(path.join(otherDirectory, 'prototype-queue.json'), JSON.stringify({ ...record, tasks: [otherTask], operations: [] }))
+  const programQueue = path.join(f.store.directory, 'prototype-queue.json')
+  const scheduling = JSON.parse(await readFile(programQueue, 'utf8')); scheduling.selectedTaskId = 'task-2'; await writeFile(programQueue, JSON.stringify(scheduling))
+  const service = await f.restart()
+  const view = await service.view()
+  assert.equal(view.selectedTaskId, 'task-1')
+  assert.equal(view.items.length, 2, 'the global serial queue is preserved')
+  assert.equal(JSON.parse(await readFile(programQueue, 'utf8')).selectedTaskId, 'task-2', 'a projection does not dispatch or rewrite scheduling')
+  assert.equal(f.calls.prompts, 0)
+})
+
+
+test('journal persistence failure is not sent to an AI code repair session', async t => {
+  const f = await fixture(t)
+  f.setDirty(true); await f.collaboration.accept('session-1', completed)
+  f.ports.prototypeCheckReports = async () => [{ operationId: 'save-failure', projectId: 'project', prototypeTaskId: f.task.id, kind: 'preview', sourceSha: f.head, startedAt: 'now', status: 'failed', message: 'EPERM rename', steps: [{ name: 'build', status: 'failed' }] }]
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => { throw new Error('EPERM rename') })
+  await assert.rejects(service.runRuntime(f.task.id, 'preview', 'save-failure'), /EPERM/)
+  assert.equal(f.calls.prompts, 0)
+})
+
+test('a new run can replace an automatic repair that has never been dispatched', async t => {
+  const f = await fixture(t, { second: true })
+  const record = JSON.parse(await readFile(f.queuePath, 'utf8'))
+  record.tasks[0].state = 'queued'; record.tasks[0].development.stage = 'queued'; record.tasks[0].development.runId = 'queued-repair'
+  record.tasks[0].runtimeRun = { operationId: 'old-preview', kind: 'preview', status: 'repairing', repairOperationId: 'queued-repair' }
+  record.operations.push({ id: 'queued-repair', taskId: f.task.id, phase: 'prepared', automaticRepair: true, request: { action: 'correctPrototypeRequirement', prototypeTaskId: f.task.id, operationId: 'queued-repair', instruction: 'repair old diagnostic' } })
+  const { writeFile } = await import('node:fs/promises'); await writeFile(f.queuePath, JSON.stringify(record))
+  let runs = 0
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports, async () => { runs++ })
+  await service.runRuntime(f.task.id, 'preview', 'new-preview')
+  assert.equal(runs, 1); assert.equal(f.calls.prompts, 0)
+  assert.equal((await f.record()).operations.at(-1)!.phase, 'not-delivered')
+  assert.match((await service.view()).items[0]!.nextAction!, /原型已运行/)
+})
+
+
+test('repeated initial delivery never resets a newer repair or hides its native conversation', async t => {
+  const f = await fixture(t)
+  const record = JSON.parse(await readFile(f.queuePath, 'utf8'))
+  record.operations[0].phase = 'workspace'; record.tasks[0].state = 'queued'; record.tasks[0].development.runId = 'newer-repair'
+  const { writeFile } = await import('node:fs/promises'); await writeFile(f.queuePath, JSON.stringify(record))
+  f.ports.readPrototypeConversation = async () => [{ sequence: 20, role: 'assistant', text: 'native repair feedback' }]
+  const service = new PrototypeCollaboration(f.store, f.api, f.ports)
+  await service.start(record.operations[0].request)
+  assert.equal((await f.record()).tasks[0]!.development.runId, 'newer-repair')
+  assert.equal(f.calls.prompts, 0)
+  assert.equal((await service.conversation(f.task.id))[0]!.text, 'native repair feedback')
 })

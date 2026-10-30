@@ -19,10 +19,11 @@ const identity = (entityId: string, kind: 'scenario' | 'requirement', title: str
   scenarioIds: kind === 'requirement' ? ['scene'] : [], prerequisites: [], sources: [], referencedAssets: [], businessEvidence: [], openQuestions: [], ...(kind === 'scenario' ? { flowComplete: false } : { coreRulesPresent: false, acceptanceCriteriaPresent: false }) } as MaterialMetadata)
 
 async function fixture(t: { after(fn: () => Promise<unknown>): unknown }) {
-  const root = await mkdtemp(path.join(tmpdir(), 'eadp-consistency-host-')), worktree = path.join(root, 'project')
-  await mkdir(worktree)
+  const root = await mkdtemp(path.join(tmpdir(), 'eadp-consistency-host-')), workspaceDirectory = path.join(root, 'project'), worktree = path.join(workspaceDirectory, 'repo')
+  await mkdir(worktree, { recursive: true })
   const store = new StudioStore(path.join(root, 'local')); store.useUser(1)
   const local = await store.read()
+  local.projects.push({ id: 'project', name: '项目', workspaceDirectory, directory: worktree, repositoryUrl: 'https://example.test/project.git' })
   const scene = await saveMaterial(worktree, identity('scene', 'scenario', '审批场景'), 'SCENE-BUSINESS-CONTENT：允许提交后退回。')
   const requirement = await saveMaterial(worktree, identity('requirement', 'requirement', '提交审批'), 'REQUIREMENT-BUSINESS-CONTENT：退回后允许再次提交。')
   const context: ConsistencyContextView = {

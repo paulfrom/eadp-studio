@@ -79,7 +79,7 @@ export class StudioApplication {
   readonly prototypeMaterials: PrototypeMaterialContext
   private lastState: StudioState | undefined
   constructor(readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts) {
-    this.prototypeCollaboration = new PrototypeCollaboration(store, api, ports)
+    this.prototypeCollaboration = new PrototypeCollaboration(store, api, ports, (task, kind, operationId) => this.runPrototypeRuntime(task, kind, operationId))
     this.prototypeBaselineWorkspaces = new PrototypeBaselineWorkspaces(store, api, ports, this.prototypeCollaboration.fileService)
     this.prototypeMaterials = new PrototypeMaterialContext(store, api, ports)
     this.projects = new ProjectWorkspaces(store, api, ports, this.lane, this.progress)
@@ -196,8 +196,16 @@ export class StudioApplication {
     const id = identity.source.kind === 'task' ? identity.source.prototypeTaskId : identity.source.baselineId
     if (previews.get(id)?.identity.previewId === identity.previewId) previews.delete(id)
   }
+  /** Publish a preview only after the Host has built and checked the requested workspace. */
+  private async runPrototypeRuntime(task: TaskView, kind: 'preview' | 'checks', operationId: string): Promise<void> {
+    if (kind === 'checks') { await this.ports.checks(task, (await this.ports.git.state(task.worktree)).head, operationId); return }
+    const preview = await this.ports.preview(task, operationId)
+    this.prototypePreviews.set(task.entityId, { prototypeTaskId: task.entityId, ...preview })
+    if ((await this.prototypeCollaboration.view()).selectedTaskId === task.entityId) await this.ports.selectPreview(preview.identity)
+  }
   private async execute(command: Exclude<StudioCommand, { action: 'state' }>): Promise<StudioReply> {
     let sessionId: string | undefined
+    if (command.action === 'setWorkspaceDirectory') { await this.projects.location.set(command.directory); return { ok: true, state: await this.state() } }
     if (command.action !== 'login' && command.action !== 'logout') await this.requireAccount()
     if (command.action === 'readPrototypeBuffer') return { ok: true, state: await this.state(), prototypeBuffer: await this.prototypeCollaboration.readBuffer(command.prototypeTaskId, command.path) }
     if (command.action === 'savePrototypeBuffer') { await this.prototypeCollaboration.saveBuffer(command.operationId, command.buffer); return { ok: true, state: await this.state() } }
@@ -236,13 +244,7 @@ export class StudioApplication {
     if (command.action === 'confirmPrototype') { await this.prototypeCandidates.confirm(command.operationId, command.expectedSummaryHash); return { ok: true, state: await this.state() } }
     if (command.action === 'submitPrototypeCandidate') { await this.prototypeCandidates.submit(command.operationId, command.checkOperationId); return { ok: true, state: await this.state() } }
     if (command.action === 'checkProjectPrototype' || command.action === 'startProjectPrototypePreview') {
-      const task = await this.prototypeCollaboration.task(command.prototypeTaskId)
-      const sha = (await this.ports.git.state(task.worktree)).head
-      if (command.action === 'startProjectPrototypePreview') {
-        const preview = await this.ports.preview(task, command.operationId)
-        this.prototypePreviews.set(command.prototypeTaskId, { prototypeTaskId: command.prototypeTaskId, ...preview })
-        if ((await this.prototypeCollaboration.view()).selectedTaskId === command.prototypeTaskId) await this.ports.selectPreview(preview.identity)
-      } else await this.ports.checks(task, sha, command.operationId)
+      await this.prototypeCollaboration.runRuntime(command.prototypeTaskId, command.action === 'startProjectPrototypePreview' ? 'preview' : 'checks', command.operationId)
       return { ok: true, state: await this.state() }
     }
     if (command.action === 'stopProjectPrototypePreview') {
@@ -303,7 +305,7 @@ export class StudioApplication {
       case 'logout': { try { await this.comparisons.dispose(); await this.ports.logout() } finally { this.scenarios.dispose(); await this.prototypeBaselineWorkspaces.dispose(); this.store.useUser(); await this.ports.stopPreview(); await this.projects.dispose(); this.previewState = undefined; this.prototypePreviews.clear(); this.prototypeBaselinePreviews.clear(); this.lastState = undefined; this.namespaces = [] } break }
       case 'namespaces': this.namespaces = await this.api.request<NamespaceView[]>('GET', '/v1/namespaces', undefined, 180_000); break
       case 'createProject': await this.projects.create(command); break
-      case 'openProject': await this.projects.open(command.projectId); break
+      case 'openProject': await this.projects.open(command.projectId, command.workspaceDirectory); break
       case 'retryProjectInitialization': await this.projects.retry(command.operationId); break
       case 'bindScenarioTemplate': await this.bindScenarioTemplate(command.entityId, command.templateId); break
       case 'splitRequirements': sessionId = await this.splitRequirements(command.scenarioIds); break
@@ -575,12 +577,13 @@ export class StudioApplication {
    * @returns the current workbench projection.
    */
   async state(): Promise<StudioState> {
+    const workspaceLocation = await this.projects.location.view()
     const account = await this.ports.account()
     if (!account) {
       await this.comparisons.dispose(); this.lastState = undefined
       if (this.store.scoped) { await this.ports.stopPreview(); await this.projects.dispose() }
       this.scenarios.dispose(); this.store.useUser(); this.previewState = undefined
-      return { connected: false, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] }
+      return { connected: false, workspace: workspaceLocation, projects: [], availableProjects: [], namespaces: [], projectInitializations: [], drafts: [], tasks: [], candidates: [], reviews: [], pending: [] }
     }
     if (this.store.scoped && this.store.accountId !== account.id) await this.comparisons.dispose()
     this.store.useUser(account.id)
@@ -607,7 +610,7 @@ export class StudioApplication {
         try { drafts.push(await readMaterial(task.worktree, entity.kind, entity.id)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       } else if ('current' in entity && entity.current) {
-        const bytes = await this.projects.localFixed(remote.project.id, entity.current.fixed.commitSha, entity.current.fixed.path, entity.current.fixed.sha256)
+        const bytes = await this.projects.localFixed(remote.project, entity.current.fixed.commitSha, entity.current.fixed.path, entity.current.fixed.sha256)
         if (bytes) drafts.push(parseMaterial(Buffer.from(bytes), entity.current.fixed.path))
       }
     }
@@ -630,7 +633,7 @@ export class StudioApplication {
     const prototypeMaterialReads = await this.prototypeMaterials.reads(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeCandidates = await this.prototypeCandidates.latest(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeAdoptions = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeAdoptionView[]>('GET', this.route(selected.id, '/prototype/adoptions')) : undefined
-    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeMaterialReads, prototypeCandidates, ...(prototypeCheckReports ? { prototypeCheckReports } : {}), prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values(), ...this.prototypeBaselinePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}), ...(prototypeAdoptions ? { prototypeAdoptions } : {}),
+    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, workspace: workspaceLocation, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeMaterialReads, prototypeCandidates, ...(prototypeCheckReports ? { prototypeCheckReports } : {}), prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values(), ...this.prototypeBaselinePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}), ...(prototypeAdoptions ? { prototypeAdoptions } : {}),
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
         // record the account can no longer read cannot be finished, so it stops being a task
@@ -695,7 +698,7 @@ export class StudioApplication {
     const token = await this.requireOwned(entity)
     const occupation = entity.occupation!
     if (occupation.purpose !== 'design' || occupation.inputVersion !== entity.materialVersion) throw new Error('会话任务占用类型或输入版本已失效')
-    if (path.resolve(task.worktree) !== path.join(this.store.directory, 'worktrees', remote.project.id, token.taskId)) throw new Error('会话现场与当前任务占用不一致')
+    if (path.resolve(task.worktree) !== path.join(await this.store.projectDirectory(remote.project.id), 'worktrees', token.taskId)) throw new Error('会话现场与当前任务占用不一致')
     if (task.inputHash !== (entity.current?.fixed.sha256 ?? '')) throw new Error('材料已修订，旧会话输入已失效')
     const draft = await readMaterial(task.worktree, entity.kind, entity.id)
     return this.ports.session(task, this.materialRules(draft))
@@ -777,7 +780,7 @@ export class StudioApplication {
     await this.scenarios.bindTemplate(entity.id, templateId, draft.sha256, key())
   }
   private async designTask(remote: ProjectState, entity: EntityView): Promise<TaskView> {
-    const accountId = this.store.accountId, directory = this.store.directory
+    const accountId = this.store.accountId, directory = await this.store.projectDirectory(remote.project.id)
     if (!accountId) throw new Error('请登录后打开任务')
     const local = await this.taskAccount(accountId, () => this.store.read())
     const claimed = !entity.occupation
@@ -794,7 +797,7 @@ export class StudioApplication {
     const project = local.projects.find(p => p.id === remote.project.id)!
     if (!project) throw new Error('原项目未在本机登记')
     await this.taskAccount(accountId, () => this.projects.requireCommit(project, remote.project.stableBranch, remote.project.recognizedHead!))
-    const worktree = path.join(directory, 'worktrees', remote.project.id, token.taskId)
+    const worktree = path.join(directory, 'worktrees', token.taskId)
     await this.taskAccount(accountId, () => this.ports.git.createWorktree(project.directory, worktree, `studio/${entity.id}/${token.generation}`, remote.project.recognizedHead!))
     const task: TaskView = { projectId: project.id, entityId: entity.id, sessionId: `studio-${key()}`, purpose: entity.kind === 'handoff' ? 'handoff' : 'material', inputHash: entity.current?.fixed.sha256 ?? '', worktree, baseHead: remote.project.recognizedHead! }
     if (entity.kind === 'handoff') local.tasks = local.tasks.filter(t => !(t.projectId === project.id && t.entityId === entity.id && t.purpose === task.purpose)); local.tasks.push(task); await this.taskAccount(accountId, () => this.store.save())

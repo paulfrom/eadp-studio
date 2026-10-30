@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { canonical } from '@eadp/asset-domain'
-import { isMaterialMetadata, type EntityView, type IntegrationView, type MaterialIntegrationRequest, type MaterialMetadata, type OccupationToken, type ProjectState } from '@eadp/contracts'
+import { isMaterialMetadata, type EntityView, type IntegrationView, type MaterialIntegrationRequest, type MaterialMetadata, type OccupationToken, type ProjectState, type ProjectView } from '@eadp/contracts'
 import type { ConfirmationChoice, MaterialDraft, TaskView } from '../../shared/studio.ts'
 import { containedFile, digest, identityBlockCount, parseMaterial, readMaterial } from '../adapters/assets/materials.ts'
 import { checkScenarioDocument, invalidScenarioEvidenceIndexes, scenarioFileErrors } from './scenario-documents.ts'
@@ -36,7 +36,7 @@ export interface MaterialConfirmationOperation {
   recovered?: string;
 }
 export interface MaterialInspectionRequest {
-  projectId: string; entity: EntityView; task?: TaskView; draft?: MaterialDraft;
+  project: ProjectView; entity: EntityView; task?: TaskView; draft?: MaterialDraft;
 }
 export interface MaterialInspection extends ReturnType<typeof checkScenarioDocument> { draft: MaterialDraft; templateBody: string; readOnly: boolean }
 interface Dependencies {
@@ -76,7 +76,8 @@ export class MaterialConfirmationChecks {
 
   /** Collect trusted gate facts for display, explicit confirmation and authorized repair alike. */
   async inspect(input: MaterialInspectionRequest): Promise<MaterialInspection | undefined> {
-    const { projectId, entity, task } = input
+    const { project, entity, task } = input
+    const projectId = project.id
     if ((entity.kind !== 'scenario' && entity.kind !== 'requirement') || entity.builtinKey) throw new Error('请选择可确认的场景或需求')
     const local = await this.store.read(), account = await this.ports.account(), owner = await this.workspaces.record(entity.id, projectId)
     const occupied = entity.occupation?.ownerId === account?.id && entity.occupation?.clientId === local.clientId && entity.occupation?.purpose === 'design'
@@ -84,7 +85,7 @@ export class MaterialConfirmationChecks {
     let draft = input.draft
     if (!draft) {
       if (readOnly && !recovering(owner) && !this.workspaces.requirementSaves.view(owner)) {
-        const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(projectId, fixed.commitSha, fixed.path, fixed.sha256)
+        const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(project, fixed.commitSha, fixed.path, fixed.sha256)
         if (!bytes) return undefined
         draft = parseMaterial(Buffer.from(bytes), fixed.path)
       } else {
@@ -95,7 +96,7 @@ export class MaterialConfirmationChecks {
     if (draft.entityId !== entity.id || draft.metadata.kind !== entity.kind) throw new Error('当前材料身份或类型已变化')
     const ref = draft.metadata.templateRef
     if (!ref) throw new Error('材料缺少固定模板')
-    const template = await this.projects.localFixed(projectId, ref.commitSha, ref.path, ref.sha256)
+    const template = await this.projects.localFixed(project, ref.commitSha, ref.path, ref.sha256)
     if (!template) return undefined
     const templateBody = Buffer.from(template).toString('utf8')
     const inspectFiles = task && (!readOnly || recovering(owner))
@@ -112,8 +113,8 @@ export class MaterialConfirmationChecks {
   }
 
   async inspectTask(task: TaskView, draft: MaterialDraft): Promise<MaterialInspection> {
-    const { entity } = await this.workspaces.deps.entity(task.entityId, task.projectId)
-    const inspection = await this.inspect({ projectId: task.projectId, entity, task, draft })
+    const { remote, entity } = await this.workspaces.deps.entity(task.entityId, task.projectId)
+    const inspection = await this.inspect({ project: remote.project, entity, task, draft })
     if (!inspection) throw new Error('所选模板固定版本正在后台同步，请稍后重试')
     return inspection
   }
@@ -273,7 +274,7 @@ export class MaterialConfirmations {
   private async alignIdentity(operation: MaterialConfirmationOperation, task: TaskView, draft: MaterialDraft): Promise<MaterialDraft> {
     const text = await readFile(await containedFile(task.worktree, draft.path), 'utf8')
     if (identityBlockCount(text) === 1) return draft
-    const saved = await this.workspaces.documents.save({ root: task.worktree, metadata: draft.metadata, body: draft.body,
+    const saved = await (await this.workspaces.documents(task.projectId)).save({ root: task.worktree, metadata: draft.metadata, body: draft.body,
       operationId: `${operation.operationId}-identity` })
     operation.recovered = '已移除正文中重复的材料身份块'
     return saved
@@ -335,7 +336,7 @@ export class MaterialConfirmations {
     })))
     const metadata = { ...withContext, ...(files ? { files } : {}), businessEvidence }
     if (canonical(metadata) === canonical(draft.metadata)) return draft
-    const saved = await this.workspaces.documents.save({ root: task.worktree, metadata, body: draft.body,
+    const saved = await (await this.workspaces.documents(task.projectId)).save({ root: task.worktree, metadata, body: draft.body,
       operationId: `${operation.operationId}-remote-merge` })
     operation.recovered = '已纳入远端更新的关联文件与正式依据'
     return saved
@@ -388,7 +389,7 @@ export class MaterialConfirmations {
       // so the later checks run against these bytes instead of a stale hash.
       operation.savedHash = draft.sha256; operation.phase = 'checking'; delete operation.message
       await this.store.save()
-      const inspection = await this.workspaces.confirmationChecks.inspect({ projectId: operation.projectId, entity, task })
+      const inspection = await this.workspaces.confirmationChecks.inspect({ project: remote.project, entity, task })
       if (!inspection) throw new Error('所选模板固定版本正在后台同步，请稍后重试')
       if (!inspection.passed) throw new Error(inspection.groups.filter(gate => gate.status === 'blocked').flatMap(gate => gate.messages).join('；'))
       const candidateRequest = { projectId: operation.projectId, entityId: operation.entityId,

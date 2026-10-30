@@ -23,7 +23,9 @@ export interface HostPorts {
   installTemplate(destination: string): Promise<void>
   session(task: TaskView, rules: string, requireExisting?: boolean): Promise<string>
   prompt(sessionId: string, text: string, operationId?: string, attachments?: PrototypeInstructionAttachment[]): Promise<void>
-  inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'unknown'>
+  inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'absent' | 'unknown'>
+  /** Last durable native turn is an observation, never a request to resume model work. */
+  lastPrototypeTurn?(sessionId: string): Promise<Extract<SessionOutput, { kind: 'turn-ended' }> | undefined>
   readPrototypeConversation(sessionId: string): Promise<import('../../shared/prototype.ts').PrototypeConversationMessage[]>
   /** Read-only one-shot identification; its result is checked against the original instruction and project directory. */
   identifyPrototypeRequirements?(input: { instruction: string; requirements: RequirementIdentity[]; existingIds: string[]; explicitIds: string[] }, signal: AbortSignal): Promise<string>

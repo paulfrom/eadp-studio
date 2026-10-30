@@ -58,7 +58,7 @@ export class ScenarioWorkspaces {
   readonly requirementSaves: RequirementSaves
   readonly confirmationChecks: MaterialConfirmationChecks
   readonly statusReports: MaterialStatusReports
-  get documents(): ScenarioDocumentService { return new ScenarioDocumentService(this.store.directory) }
+  async documents(projectId: string): Promise<ScenarioDocumentService> { return new ScenarioDocumentService(await this.store.projectDirectory(projectId)) }
   activeEntityId: string | undefined
   private observer: ScenarioFileObserver | undefined
   private observerDirectory: string | undefined
@@ -70,7 +70,7 @@ export class ScenarioWorkspaces {
     })
     this.requirementSaves = new RequirementSaves(store, api, {
       context: (entityId, projectId) => this.requirementContext(entityId, projectId),
-      owned: entity => deps.owned(entity), record: (entityId, projectId) => this.record(entityId, projectId), documents: () => this.documents,
+      owned: entity => deps.owned(entity), record: (entityId, projectId) => this.record(entityId, projectId), documents: projectId => this.documents(projectId),
       applied: operation => {
         void this.statusReports.report({ projectId: operation.projectId, entityId: operation.entityId, trigger: 'save', worktree: operation.root! })
       },
@@ -164,7 +164,7 @@ export class ScenarioWorkspaces {
     const readOnly = !!entity.current && !owned
     let draft: MaterialDraft
     if (readOnly && !recoveringRequirement) {
-      const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(remote.project.id, fixed.commitSha, fixed.path, fixed.sha256)
+      const fixed = entity.current!.fixed, bytes = await this.projects.localFixed(remote.project, fixed.commitSha, fixed.path, fixed.sha256)
       // The fixed version is not local yet: the lane is fetching it, and the
       // workspace appears on the read that follows.
       if (!bytes) return undefined
@@ -175,7 +175,7 @@ export class ScenarioWorkspaces {
     }
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
     const fixed = draft.metadata.templateRef
-    const check = await this.confirmationChecks.inspect({ projectId: remote.project.id, entity, ...(task ? { task } : {}), draft })
+    const check = await this.confirmationChecks.inspect({ project: remote.project, entity, ...(task ? { task } : {}), draft })
     if (!check) return undefined
     const templateBody = check.templateBody
     const gates = check.groups
@@ -272,7 +272,7 @@ export class ScenarioWorkspaces {
       }
       context = await this.editable(entityId, binding.projectId)
       if (context.entity.kind !== binding.kind || occupationKey(await this.deps.owned(context.entity)) !== occupationKey(request.token) || context.entity.templateId !== request.templateId || !context.entity.templateRef || !sameTemplate(context.entity.templateRef, request.templateRef)) throw new Error('后台材料绑定已变化，请核对原模板操作')
-      await this.documents.bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, operationId: application.operationId })
+      await (await this.documents(binding.projectId)).bindTemplate({ root: context.task.worktree, kind: binding.kind, entityId, templateId: request.templateId, templateRef: request.templateRef, operationId: application.operationId })
       binding.status = 'applied'; delete binding.message
       delete record.writeProposal; delete record.writeProposalError; delete record.requestContexts; delete record.writeReceipt
       await this.store.save()
@@ -292,7 +292,7 @@ export class ScenarioWorkspaces {
     if (command.metadata.kind !== draft.metadata.kind || command.metadata.entityId !== draft.entityId) throw new Error('材料身份不能通过编辑改变')
     if (command.metadata.templateId !== draft.metadata.templateId || !command.metadata.templateRef || !draft.metadata.templateRef || !sameTemplate(command.metadata.templateRef, draft.metadata.templateRef)) throw new Error('材料模板绑定不能通过编辑改变')
     this.observe(task, draft.path)
-    await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, operationId: command.operationId })
+    await (await this.documents(task.projectId)).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, command.metadata), body: command.body, operationId: command.operationId })
   }
   /**
    * Consumes a proposal only on an explicit user decision. Every bound version
@@ -350,7 +350,7 @@ export class ScenarioWorkspaces {
     }
     await this.store.save()
     try {
-      await this.documents.save({ root: task.worktree, metadata, body, operationId: proposal.id })
+      await (await this.documents(task.projectId)).save({ root: task.worktree, metadata, body, operationId: proposal.id })
     } catch (error) {
       delete record.writeReceipt; await this.store.save(); throw error
     }
@@ -372,7 +372,7 @@ export class ScenarioWorkspaces {
       // The confirmation package must carry the new hash; writing it here avoids a manual save step.
       const draft = await this.localMaterial(task)
       const metadata = await syncProjectContext(task.worktree, draft.metadata)
-      if (digest(materialText(metadata, draft.body)) !== draft.sha256) await this.documents.save({ root: task.worktree, metadata, body: draft.body, operationId: `${proposal.id}-context` })
+      if (digest(materialText(metadata, draft.body)) !== draft.sha256) await (await this.documents(task.projectId)).save({ root: task.worktree, metadata, body: draft.body, operationId: `${proposal.id}-context` })
     } catch (error) {
       // Never leave a written context whose package hash was not recorded.
       if (current.bytes) await atomicWriteFile(target, current.bytes)
@@ -389,7 +389,7 @@ export class ScenarioWorkspaces {
     const draft = await this.localMaterial(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料元数据无效')
     if (draft.sha256 !== receipt.afterHash || command.expectedHash !== draft.sha256) throw new Error('正文已变化，无法撤销本次写入，请先处理当前编辑')
-    await this.documents.save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, operationId: `${receipt.operationId}-undo` })
+    await (await this.documents(task.projectId)).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, operationId: `${receipt.operationId}-undo` })
     receipt.undone = true; await this.store.save()
   }
   async newSession(entityId: string): Promise<string> {

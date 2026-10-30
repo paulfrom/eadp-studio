@@ -14,6 +14,9 @@
 现改 `desktop-policy-environment.mjs` 与两个上游测试允许 HTTP。
 缺：发行方可配置允许的 origin／scheme（或固定后端 HTTPS 化后即可回归）。
 
+`desktop-policy-edits.mjs` 同时调整强制更新初始化：先注册策略 IPC，再创建主窗口并同步策略 UI；主窗口仅在配置策略时通过 `additionalArguments` 向 preload 传递启用标志，Windows preload 据此安装更新遮罩，避免无策略开发模式调用不存在的 handler。
+缺：官方对可选强制更新策略的 preload 能力声明及 IPC 就绪启动契约。
+
 ## 3. 面板级设置入口
 
 现以 `eadp:open-settings` CustomEvent 桥接 `ui-settings-general`。
@@ -44,3 +47,8 @@
 
 现改 `packaging` scope、commit hash、并发与 tar basename、typert `analyzeInBatches`。
 缺：上游构建脚本对 Windows 盘符／大仓规模的官方支持。
+
+## 9. 按项目指定原生会话存储位置
+
+`SessionCommandController.create` 仅接收 `cwd`／workspace 身份，`JsonlSessionPersistence` 的 `Config.root` 是全局根，持久化接口没有逐项目存储路由或日志重定位能力。当前保持官方全局日志目录，不手工搬动会话文件，不新增绕过。
+缺：可由可信 Host 按项目配置的会话存储路由，以及可核对完成结果的导出／重定位接口。在此能力具备并验证前，项目文件夹包含业务文件与插件过程数据，但不能宣称包含全部原生对话历史。目录设计见 `docs/design/project-workspace.md`。

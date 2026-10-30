@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { MaterialStatusReports } from '../../packages/studio-plugin/src/host/application/material-status.ts'
@@ -17,6 +17,9 @@ async function waitFor(condition: () => boolean): Promise<void> {
 test('status reports carry mechanical plus optional AI summaries and recover after failure', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   const posts: Array<{ url: string; body: { summary: string; worktreeHead: string; changedPathCount: number; idempotencyKey: string } }> = []
@@ -48,6 +51,9 @@ test('status reports carry mechanical plus optional AI summaries and recover aft
 test('committed changes join uncommitted changes and uncommitted status wins per path', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-committed-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   const posts: Array<{ summary: string; changedPathCount: number }> = []
@@ -82,6 +88,9 @@ test('committed changes join uncommitted changes and uncommitted status wins per
 test('collection failures persist their input and resume recollects before submitting', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-recollect-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   const posts: Array<{ changedPathCount: number }> = []
@@ -109,6 +118,9 @@ test('collection failures persist their input and resume recollects before submi
 test('resume does not duplicate slow collection and shared records stay idle', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-collect-inflight-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   let release!: () => void, summaries = 0, requests = 0
@@ -138,6 +150,9 @@ test('resume does not duplicate slow collection and shared records stay idle', a
 test('resume does not duplicate an inflight submission', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-inflight-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   let release!: () => void, requests = 0
@@ -161,6 +176,9 @@ test('resume does not duplicate an inflight submission', async t => {
 test('changed path count is capped while the mechanical summary keeps the actual total', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-limit-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   const posts: Array<{ summary: string; changedPathCount: number }> = []
@@ -181,6 +199,9 @@ test('changed path count is capped while the mechanical summary keeps the actual
 test('status report setup failures stay local and never reject', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'status-setup-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
   const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
   ;(await store.read()).scenarios.push(owner); await store.save()
   const api = {} as CollaborationClient, ports = {} as HostPorts
@@ -203,6 +224,9 @@ test('AI summary failures and overlong results preserve bounded mechanical submi
   for (const kind of ['failure', 'long'] as const) {
     const root = await mkdtemp(path.join(tmpdir(), 'status-summary-')); t.after(() => rm(root, { recursive: true, force: true }))
     const store = new StudioStore(root); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  ;(await store.read()).projects.push({ id: 'p', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://gitlab.test/p.git' })
     const owner: ScenarioRecord = { projectId: 'p', entityId: 'e', sources: [], sourcePaths: {} }
     ;(await store.read()).scenarios.push(owner); await store.save()
     const posts: Array<{ summary: string }> = []

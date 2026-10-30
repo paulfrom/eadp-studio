@@ -16,11 +16,11 @@ const head = 'a'.repeat(40), candidate = 'b'.repeat(40)
 type Step = 'lookup' | 'push' | 'prepare' | 'get' | 'project' | 'head' | 'update' | 'complete' | 'delivery'
 
 async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['stage'] = 'material') {
-  const root = await mkdtemp(path.join(tmpdir(), 'eadp-git-integrations-')), stateRoot = path.join(root, 'state'), worktree = path.join(root, 'task')
+  const workspace = await mkdtemp(path.join(tmpdir(), 'eadp-git-integrations-')), root = path.join(workspace, 'repo'), stateRoot = path.join(workspace, 'state'), worktree = path.join(workspace, 'task'); await mkdir(root, { recursive: true })
   await mkdir(worktree)
   const store = new StudioStore(stateRoot); store.useUser(1)
   const local = await store.read()
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: 'https://git.test/project.git' })
   const task: TaskView = { projectId: 'project', entityId: 'requirement', worktree, purpose: stage === 'prototype' ? 'prototype' : 'material', sessionId: 'original-session', inputHash: 'input' }
   local.tasks.push({ ...task, worktree: path.join(root, 'different-task'), sessionId: 'earlier-session', purpose: 'review' }, task)
   await store.save()
@@ -36,7 +36,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
   const api = { async request(method: string, route: string, input?: MaterialIntegrationRequest) {
     if (method === 'GET' && route.includes('/operations/')) {
       // The first remote action must observe a fully persisted pending record.
-      const persisted = JSON.parse(await readFile(path.join(stateRoot, 'users', '1', 'studio-state.json'), 'utf8')) as { operations: PendingOperation[] }
+      const persisted = JSON.parse(await readFile(path.join(workspace, '.eadp', 'users', '1', 'local-state.json'), 'utf8')) as { operations: PendingOperation[] }
       assert.equal(persisted.operations[0]?.id, prepare.idempotencyKey)
       await step('lookup')
       if (!integration) throw new CollaborationError('OPERATION_NOT_FOUND', 'missing', 404)
@@ -74,8 +74,8 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
   const create = (nextStore = store, now: () => number = Date.now) => {
     const lane = new BackgroundLane(); lanes.push(lane)
     const runner = new GitIntegrations(nextStore, api, ports, lane, { async accepted(operation, accepted, originalTask) {
-      assert.equal(operation.phase, 'accepted')
-      const saved = JSON.parse(await readFile(path.join(stateRoot, 'users', '1', 'studio-state.json'), 'utf8')) as { operations: PendingOperation[] }
+      assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
+      const saved = JSON.parse(await readFile(path.join(workspace, '.eadp', 'users', '1', 'local-state.json'), 'utf8')) as { operations: PendingOperation[] }
       assert.equal(saved.operations[0]?.accepted?.id, accepted.id)
       await step('delivery')
       if (failures.delivery) throw new Error('delivery not recorded')
@@ -83,7 +83,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
     } }, now)
     return { runner, lane }
   }
-  t.after(async () => { for (const lane of lanes) await lane.settle(); await rm(root, { recursive: true, force: true }) })
+  t.after(async () => { for (const lane of lanes) await lane.settle(); await rm(workspace, { recursive: true, force: true }) })
   return { root, stateRoot, store, api, ports, local, task, draft, prepare, calls, delivered, failures, create, ...create(),
     during(name: Step, hook: () => Promise<void>) { hooks.set(name, hook) },
     remote(value: string) { remoteHead = value },
@@ -96,7 +96,7 @@ async function fixture(t: test.TestContext, stage: MaterialIntegrationRequest['s
 for (const stage of ['material'] as const) test(`${stage} persists before remote work and accepts its fixed original task`, async t => {
   const f = await fixture(t, stage), operation = await f.runner.submit(f.task, f.draft, f.prepare)
   await f.lane.settle()
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
   assert.equal(operation.accepted?.id, 'integration')
   assert.deepEqual(f.calls, ['lookup', 'push', 'prepare', 'get', 'project', 'head', 'update', 'complete', 'delivery'])
   assert.equal(f.delivered[0]?.task.sessionId, f.task.sessionId)
@@ -146,7 +146,7 @@ test('unknown operations recover automatically at most once per retry interval',
   now += 61_000
   runner.recover(operation)
   await lane.settle()
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
 })
 
 test('a lost complete response queries the accepted integration without completing it twice', async t => {
@@ -156,7 +156,7 @@ test('a lost complete response queries the accepted integration without completi
   assert.equal(operation.phase, 'unknown')
   assert.equal(f.integration?.status, 'accepted')
   await f.runner.resume(operation)
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
   assert.equal(f.calls.filter(value => value === 'complete').length, 1)
   assert.equal(f.calls.filter(value => value === 'prepare').length, 1)
   assert.equal(f.completeEffects, 1)
@@ -172,7 +172,7 @@ test('a nonaccepted complete reply remains recoverable and cannot produce accept
   assert.equal(f.delivered.length, 0)
   f.failures.completePending = false
   await f.runner.resume(operation)
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
   assert.equal(f.calls.filter(value => value === 'update').length, 1, 'the original branch update is not repeated')
   assert.equal(f.completeEffects, 1)
 })
@@ -196,7 +196,7 @@ test('one operation rejects different fixed inputs and a missing original task i
   await f.store.save()
   const count = f.delivered.length
   await assert.rejects(f.runner.resume(operation), /原集成任务现场缺失/)
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
   assert.equal(f.delivered.length, count)
 })
 
@@ -204,7 +204,7 @@ test('delivery failure retains accepted facts and an independent accepted key ca
   const f = await fixture(t); f.failures.delivery = true
   const operation = await f.runner.submit(f.task, f.draft, f.prepare)
   await f.lane.settle()
-  assert.equal(operation.phase, 'accepted')
+  assert.equal(operation.phase, 'accepted', JSON.stringify(operation))
   assert.equal(operation.accepted?.status, 'accepted')
   assert.equal(operation.message, undefined)
   assert.match(operation.deliveryMessage!, /delivery/)

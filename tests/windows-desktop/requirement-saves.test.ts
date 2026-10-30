@@ -21,7 +21,7 @@ async function fixture(t: { after(work: () => Promise<unknown>): unknown }) {
   await mkdir(root)
   const store = new StudioStore(localRoot); store.useUser(1)
   const local = await store.read(); local.selectedProjectId = 'project'
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: 'https://git.test/project.git' })
   const token = { occupationId: 'occupation', generation: 1, taskId: path.basename(root), clientId: local.clientId, expectedRevision: 1 }
   const entity = { id: 'requirement', kind: 'requirement', title: '审批需求', revision: 1, generation: 1, materialVersion: 0, templateId: 'requirement-template', templateRef, scenarioIds: ['scene-a'], scenarioSources: metadata().sources, prerequisites: [], occupation: { ...token, ownerId: 1, purpose: 'design' } } as unknown as EntityView
   const task: TaskView = { projectId: 'project', entityId: entity.id, purpose: 'material', sessionId: 'session', worktree: root, inputHash: '' }
@@ -74,7 +74,7 @@ async function fixture(t: { after(work: () => Promise<unknown>): unknown }) {
       if (!record) throw new Error('missing record')
       return record
     },
-    documents: () => new ScenarioDocumentService(scoped.directory),
+    documents: async projectId => new ScenarioDocumentService(await scoped.projectDirectory(projectId)),
   })
   const saves = create(store)
   const command = (operationId = 'save', changes: Partial<MaterialMetadata> = {}, body = '用户正文') => ({ action: 'saveRequirement' as const, entityId: entity.id, operationId, metadata: { ...metadata(), ...changes } as MaterialMetadata, body })

@@ -33,7 +33,7 @@ export class AuthorReviews {
     let review = [...local.reviews].reverse().find(value => same(value, snapshot) && (value.status !== 'failed' || !value.sent))
     if (!review) {
       const id = randomUUID()
-      const task: TaskView = { projectId: snapshot.projectId, entityId: snapshot.entityId, sessionId: 'studio-review-' + id, purpose: 'review', reviewId: id, inputHash: snapshot.inputHash, worktree: path.join(this.store.directory, 'reviews', id) }
+      const task: TaskView = { projectId: snapshot.projectId, entityId: snapshot.entityId, sessionId: 'studio-review-' + id, purpose: 'review', reviewId: id, inputHash: snapshot.inputHash, worktree: path.join(await this.store.projectDirectory(snapshot.projectId), 'reviews', id) }
       review = { id, projectId: snapshot.projectId, entityId: snapshot.entityId, purpose: snapshot.purpose, head: snapshot.head, inputHash: snapshot.inputHash, files: [...snapshot.files], paths: [...snapshot.paths], status: 'pending', task, sent: false }
       local.reviews.push(review); local.tasks.push(task); await this.store.save()
     }

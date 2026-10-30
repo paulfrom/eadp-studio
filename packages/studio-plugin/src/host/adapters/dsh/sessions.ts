@@ -60,8 +60,8 @@ export class DshTaskSessions {
     // Requirements and scenarios share the same read-only design orchestration and bundled skills.
     const scenarioTask = task.scenarioRepair === true || scenarioFile !== undefined || requirementFile !== undefined
     if (scenarioTask && input) throw new Error('场景会话不能取得原型写入权限')
-    const replay = task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
-    if (task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
+    const replay = task.purpose === 'prototype' || task.purpose === 'material' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff'
+    if (task.purpose === 'prototype' || task.purpose === 'split' || task.purpose === 'review' || task.purpose === 'handoff') this.durableSessions.add(task.sessionId)
     if (this.handles.has(task.sessionId)) {
       if (input) {
         const handle = this.handles.get(task.sessionId)!
@@ -125,10 +125,10 @@ export class DshTaskSessions {
       if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
       if (input) {
         const manifest = await readTemplateManifest(this.manifestPath)
-        scope.on('agent/pre-step', async (_payload, next) => {
-          const decision = await next()
-          if (decision.kind === 'enter' && decision.messages.some(message => message.source.kind !== 'studio-task')) return { kind: 'reject' }
-          return decision
+        scope.on('agent/pre-step', async (payload, next) => {
+          // Only claimed inputs carry send authority; downstream middleware adds trusted runtime context.
+          if (payload.messages.some(message => message.source.kind !== 'studio-task')) return { kind: 'reject' }
+          return next()
         })
         if (!this.prototypeWriteAuthorization) throw new Error('原型事项缺少后台授权核对')
         const authorizeWrite = await this.prototypeWriteAuthorization(task)
@@ -201,6 +201,14 @@ export class DshTaskSessions {
     void this.onOutput(sessionId, output).catch(() => { /* Persisted events remain available for the next recovery attempt. */ })
   }
 
+  /** Read the persisted terminal watermark without dispatching or replaying a model turn. */
+  async lastPrototypeTurn(sessionId: string): Promise<Extract<SessionOutput, { kind: 'turn-ended' }> | undefined> {
+    const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
+    const event = inspection.events.findLast(event => event.type === 'turn/end')
+    if (!event || event.type !== 'turn/end') return undefined
+    return { kind: 'turn-ended', reason: event.data.reason.kind, ...(Number.isSafeInteger(event.seq) ? { seq: event.seq } : {}) }
+  }
+
   async bind(task: TaskView, input: PrototypeTaskIdentity): Promise<PrototypeRuleBinding> {
     const handle = this.handles.get(task.sessionId)
     if (!handle) throw new Error('会话尚未加载规则')
@@ -244,13 +252,13 @@ export class DshTaskSessions {
     }
   }
   /** A missing log entry does not prove that an in-flight request was not delivered. */
-  async inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'unknown'> {
+  async inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'absent' | 'unknown'> {
     const handle = this.handles.get(sessionId)
     if (handle && !await this.ctx.sessions.flush(handle.agent.session).catch(() => false)) return 'unknown'
     const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined)
     if (inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task' && event.data.source.operationId === operationId)) return 'delivered'
     if (inspection?.events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'studio-task' && message.source.operationId === operationId))) return 'admitted'
-    return 'unknown'
+    return inspection ? 'absent' : 'unknown'
   }
   async readPrototypeConversation(sessionId: string): Promise<PrototypeConversationMessage[]> {
     const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)

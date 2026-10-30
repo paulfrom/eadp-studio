@@ -33,7 +33,7 @@ const material = (version: number) => materialText(scenarioMetadata(), `# 固定
 const hash = (version: number) => createHash('sha256').update(material(version)).digest('hex')
 const output = (title: string, sourceId = 'scenario') => '```eadp-candidates\n' + JSON.stringify([{ title, summary: '需求摘要', goal: '采购可追溯', scope: '已提交采购申请', rules: ['申请完成后保留流水'], acceptanceCriteria: ['用户可核对申请结果'], openQuestions: [], sources: [{ entityId: sourceId, excerpts: [{ startLine: 3, endLine: 3, text: '采购业务规则。' }] }], body: `# ${title}\n\n采购可追溯\n\n已提交采购申请\n\n申请完成后保留流水\n\n用户可核对申请结果` }]) + '\n```'
 async function fixture(failure?: 'session' | 'prompt') {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-split-recovery-'))
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-split-recovery-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true })
   const storeRoot = path.join(root, 'state')
   const store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
@@ -61,7 +61,7 @@ async function fixture(failure?: 'session' | 'prompt') {
     local.operations.push(operation); return operation
   }
   const first = addOperation(1)
-  local.selectedProjectId = 'project'; local.projects.push({ id: 'project', name: '测试项目', directory: root, repositoryUrl: remote.project.repositoryUrl })
+  local.selectedProjectId = 'project'; local.projects.push({ id: 'project', name: '测试项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: remote.project.repositoryUrl })
   await store.save()
   const calls = { sessions: [] as string[], prompts: [] as string[], promptTexts: [] as string[], creates: 0 }; const reservations = new Map<string, EntityView>(); let failed = false, corrupted = false
   const api = { request: async (method: string, route: string, body?: Record<string, unknown>) => {
@@ -86,7 +86,7 @@ async function fixture(failure?: 'session' | 'prompt') {
   const ports = { git: { state: async () => ({ root, head: 'a'.repeat(40), branch: 'main', dirty: false, repositoryUrl: remote.project.repositoryUrl }), createWorktree: async (_source: string, target: string) => mkdir(target, { recursive: true }), hasCommit: async () => true, fetchCommit: async () => {}, readBlob: async (_directory: string, sha: string, file: string) => Buffer.from(file === '.template/default.md' ? template : file === '.template/requirement-default.md' ? requirementTemplate : corrupted ? 'modified input' : material(Number(sha[0]))) }, account: async () => ({ id: 1 }), stopPreview: async () => {}, session: async (task: { sessionId: string }) => { calls.sessions.push(task.sessionId); if (failure === 'session' && !failed) { failed = true; throw new Error('injected session failure') }; return task.sessionId }, prompt: async (sessionId: string, text: string) => { calls.prompts.push(sessionId); calls.promptTexts.push(text); if (failure === 'prompt' && !failed) { failed = true; throw new Error('injected prompt failure') } } } as unknown as HostPorts
   const apps: StudioApplication[] = []
   const createApp = (nextStore = store) => { const app = new StudioApplication(nextStore, api, ports); apps.push(app); return app }
-  return { root, ports, api, store, storeRoot, remote, local, calls, first, addOperation, createApp, corruptInput: (value: boolean) => { corrupted = value }, nextVersion: (version: number) => { remote.entities = [scenario(version)] }, dispose: async () => { for (const app of apps) await app.dispose(); await rm(root, { recursive: true, force: true }) } }
+  return { root, ports, api, store, storeRoot, remote, local, calls, first, addOperation, createApp, corruptInput: (value: boolean) => { corrupted = value }, nextVersion: (version: number) => { remote.entities = [scenario(version)] }, dispose: async () => { for (const app of apps) await app.dispose(); await rm(workspace, { recursive: true, force: true }) } }
 }
 
 test('accepted confirmation recovery offers splitting and waits for an explicit split command', async () => {
@@ -440,7 +440,7 @@ test('only an exact studio-task request suppresses split delivery', async () => 
 
 
 test('review setup is read-only before the official Agent handle is published and cannot receive prototype capabilities', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-review-guard-'))
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-review-guard-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true })
   const disposers: Array<() => void> = []
   try {
     await writeFile(path.join(root, 'reviewed.md'), 'fixed candidate')
@@ -469,7 +469,7 @@ test('review setup is read-only before the official Agent handle is published an
     assert.equal(creates, 1)
     await assert.rejects(sessions.open(task, 'readonly', {} as never), /不能取得原型写入权限/)
     await sessions.dispose()
-  } finally { for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
+  } finally { for (const dispose of disposers.reverse()) dispose(); await rm(workspace, { recursive: true, force: true }) }
 })
 
 
@@ -489,7 +489,7 @@ for (const reason of [{ kind: 'completed' }, { kind: 'error', error: { code: 'UN
 
 
 for (const restore of [false, true]) test('task sessions mount the resolved official preset before publishing ' + (restore ? 'resumed' : 'new') + ' Agents', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-preset-'))
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-preset-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true })
   const disposers: Array<() => void> = [], mounted: string[] = [], resolved: Array<string | undefined> = [], sections: string[] = [], variables: string[] = []
   let published = 0
   const setupAgent = async (options: any) => {
@@ -521,7 +521,7 @@ for (const restore of [false, true]) test('task sessions mount the resolved offi
     assert.equal(published, 1, 'opening an existing handle does not remount its preset')
     assert.deepEqual(resolved, [restore ? 'selected' : undefined])
     assert.deepEqual(variables, [], 'official loop owns provider/model prompt variables')
-  } finally { await sessions.dispose(); for (const dispose of disposers.reverse()) dispose(); await rm(root, { recursive: true, force: true }) }
+  } finally { await sessions.dispose(); for (const dispose of disposers.reverse()) dispose(); await rm(workspace, { recursive: true, force: true }) }
 })
 
 
@@ -539,7 +539,7 @@ test('a broken official preset prevents publication and cannot fall through to a
 })
 
 test('an already live conversation Agent is reused and receives the Studio task scope', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'studio-live-reuse-'))
+  const workspace = await mkdtemp(path.join(tmpdir(), 'studio-live-reuse-')), root = path.join(workspace, 'repo'); await mkdir(root, { recursive: true })
   const material = await saveMaterial(root, initialMetadata({ id: 'entity', kind: 'requirement', title: '合成需求', templateId: 'default', templateRef: { commitSha: 'b'.repeat(40), path: '.template/default.md', sha256: templateHash } }), '# entity\n')
   const live = {
     session: { header: { id: 'live-session', cwd: root }, requestHeader: () => undefined },
@@ -564,5 +564,64 @@ test('an already live conversation Agent is reused and receives the Studio task 
     assert.equal(studioToolGuard({ name: 'read', arguments: { file_path: material.path }, agent: live }), undefined)
     assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: material.path }, agent: live }))
     assert.ok(studioToolGuard({ name: 'write', arguments: { file_path: '需求/other.md' }, agent: live }))
-  } finally { await sessions.dispose(); await rm(root, { recursive: true, force: true }) }
+  } finally { await sessions.dispose(); await rm(workspace, { recursive: true, force: true }) }
+})
+
+
+test('prototype resumes and replays persisted terminal events on an existing handle without sending another prompt', async () => {
+  const task = { projectId: 'p', entityId: 't', purpose: 'prototype' as const, sessionId: 'prototype-replay', worktree: '.', inputHash: '' }
+  const event = { seq: 17, type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } }
+  const dsh = dshFixture(new Map([[task.sessionId, [event]]]))
+  const outputs: unknown[] = []
+  const sessions = new DshTaskSessions(dsh.context as never, '', async (_id, output) => { outputs.push(output) })
+  try {
+    await sessions.open(task, '', undefined, true)
+    await sessions.open(task, '', undefined, true)
+    assert.deepEqual(outputs, [
+      { kind: 'turn-ended', reason: 'completed', seq: 17 },
+      { kind: 'turn-ended', reason: 'completed', seq: 17 },
+    ])
+    assert.deepEqual(dsh.counts, { creates: 0, resumes: 1, followups: 0 })
+  } finally { await sessions.dispose() }
+})
+
+
+test('prototype input authority allows downstream runtime context but rejects external claimed messages', async () => {
+  const dsh = dshFixture(new Map())
+  let preStep: any
+  const scope = { systemPrompt: { section() {} }, on(name: string, callback: unknown) { if (name === 'agent/pre-step') preStep = callback } }
+  dsh.context.agents.create = (async ({ setup }: any) => {
+    await setup(scope, {})
+    throw new Error('setup must stop at authorization fixture')
+  }) as never
+  const manifest = path.resolve('packages/studio-plugin/assets/prototype-template.manifest.json')
+  const task = { projectId: 'p', entityId: 't', purpose: 'prototype' as const, sessionId: 'authority', worktree: '.', inputHash: '' }
+  const sessions = new DshTaskSessions(dsh.context as never, manifest, async () => {}, undefined, undefined, async () => { throw new Error('authorization fixture') })
+  await assert.rejects(sessions.open(task, '', { prototypeRoot: '.', manifestPath: manifest, projectId: 'p', prototypeTaskId: 't', sessionId: task.sessionId, sourceSha: 'a'.repeat(40) }), /authorization fixture/)
+  const authorized = { source: { kind: 'studio-task' } }
+  const runtimeContext = { source: { kind: 'runtime-context' } }
+  const decision = { kind: 'enter', messages: [authorized, runtimeContext] }
+  let calls = 0
+  const next = async () => { calls++; return decision }
+  assert.equal(await preStep({ messages: [authorized] }, next), decision)
+  assert.deepEqual(await preStep({ messages: [{ source: { kind: 'user' } }] }, next), { kind: 'reject' })
+  assert.equal(calls, 1)
+  await sessions.dispose()
+})
+
+
+test('prototype terminal watermark reads the latest persisted end without dispatch or replay', async () => {
+  const events = new Map<string, unknown[]>([['persisted', [
+    { seq: 3, type: 'turn/end', data: { reason: { kind: 'completed' } } },
+    { seq: 7, type: 'turn/end', data: { reason: { kind: 'blocked' } } },
+    { seq: 8, type: 'turn/start', data: { turn: 3 } },
+  ]], ['empty', []]])
+  const dsh = dshFixture(events)
+  let deliveries = 0
+  const sessions = new DshTaskSessions(dsh.context as never, '', async () => { deliveries++ })
+  assert.deepEqual(await sessions.lastPrototypeTurn('persisted'), { kind: 'turn-ended', reason: 'blocked', seq: 7 })
+  assert.equal(await sessions.lastPrototypeTurn('empty'), undefined)
+  assert.equal(deliveries, 0)
+  assert.deepEqual(dsh.counts, { creates: 0, resumes: 0, followups: 0 })
+  await sessions.dispose()
 })

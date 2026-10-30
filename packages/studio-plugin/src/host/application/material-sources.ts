@@ -88,8 +88,9 @@ export class MaterialSources {
     const source = record.sources.find(value => value.selected && ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(value.format) && record.sourcePaths[value.id] && path.resolve(record.sourcePaths[value.id]!) === path.resolve(task.worktree, output.path))
     if (!source) return
     const filename = record.sourcePaths[source.id]!
-    const relative = path.relative(this.store.directory, filename).split(path.sep).join('/')
-    try { if (digest(await readFile(await containedFile(this.store.directory, relative))) !== source.sha256) return } catch { return }
+    const projectDirectory = await this.store.projectDirectory(task.projectId)
+    const relative = path.relative(projectDirectory, filename).split(path.sep).join('/')
+    try { if (digest(await readFile(await containedFile(projectDirectory, relative))) !== source.sha256) return } catch { return }
     source.status = 'read'; source.ranges = output.ranges; source.text = `原生 read_image 已读取图像，attachmentId=${output.attachmentId}；范围=${output.ranges.join('；')}`; delete source.error
     await this.store.save()
   }
@@ -100,7 +101,7 @@ export class MaterialSources {
     const bytes = Buffer.from(command.base64, 'base64'), record = await this.record(command.entityId)
     if (record.sources.some(s => s.id === command.operationId)) return
     const source: ScenarioSource = { id: command.operationId, name: path.basename(command.name), format: path.extname(command.name).slice(1).toLowerCase(), sha256: digest(bytes), status: 'failed', ranges: [], text: '', selected: true, formal: false }
-    const directory = path.join(this.store.directory, 'scenario-sources', record.projectId, command.entityId)
+    const directory = path.join(await this.store.projectDirectory(record.projectId), 'scenario-sources', command.entityId)
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(source.id)) throw new Error('资料操作标识无效')
     await mkdir(directory, { recursive: true }); const filename = path.join(directory, `${source.id}.${source.format.replace(/[^a-z0-9]/g, '') || 'bin'}`)
     await writeFile(filename, bytes, { flag: 'wx', mode: 0o600 }); record.sources.push(source); record.sourcePaths[source.id] = filename; await this.store.save()
@@ -142,7 +143,7 @@ export class MaterialSources {
       const businessEvidence = await archiveSelectedEvidence(task.worktree, records, records.map(r => r.source.id))
       record.localEvidencePaths = [...new Set([...(record.localEvidencePaths ?? []), ...businessEvidence.flatMap(evidence => evidence.files.map(file => file.path))])]
       await this.store.save()
-      await new ScenarioDocumentService(this.store.directory).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, { ...draft.metadata, businessEvidence }), body: draft.body, operationId: randomUUID() })
+      await new ScenarioDocumentService(await this.store.projectDirectory(task.projectId)).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, { ...draft.metadata, businessEvidence }), body: draft.body, operationId: randomUUID() })
     } catch (error) {
       Object.assign(source, previous)
       await this.store.save()

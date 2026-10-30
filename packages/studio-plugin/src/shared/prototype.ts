@@ -41,8 +41,8 @@ export interface PrototypePreviewIdentity { projectId: string; source: Prototype
 export interface PrototypeCheckDiagnostic { stdout: string; stderr: string; truncated: boolean; error?: string }
 export interface PrototypeCheckReport {
   operationId: string; projectId: string; prototypeTaskId: string; baselineId?: string; kind: 'checks' | 'preview'; sourceSha: string; startedAt: string; completedAt?: string
-  status: 'running' | 'passed' | 'failed' | 'interrupted'; steps: Array<{ name: 'install' | 'typecheck' | 'lint' | 'build' | 'browser'; status: 'running' | 'passed' | 'failed'; exitCode?: number; diagnostic?: PrototypeCheckDiagnostic }>
-  inputHash?: string; outputHash?: string; rulesHash?: string; toolsHash?: string; validity?: 'current' | 'stale' | 'unverified'; message?: string
+  status: 'running' | 'passed' | 'failed' | 'interrupted'; steps: Array<{ name: 'install' | 'typecheck' | 'lint' | 'build' | 'preview' | 'browser'; status: 'running' | 'passed' | 'failed'; exitCode?: number; diagnostic?: PrototypeCheckDiagnostic }>
+  inputHash?: string; outputHash?: string; rulesHash?: string; toolsHash?: string; message?: string
 }
 export interface PrototypeInstructionAttachment { kind: 'file' | 'image'; name: string; mediaType: string; data: string }
 /** Unsent project instruction, stored independently of any collaboration task. */

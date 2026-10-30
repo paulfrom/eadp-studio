@@ -2,7 +2,7 @@ import path from 'node:path'
 import { canonical } from '@eadp/asset-domain'
 import type { AbortPrototypeIntegrationRequest, CancelPrototypeTaskRequest, ProjectState, PrototypeIntegrationRequest, PrototypeTaskView } from '@eadp/contracts'
 import type { TaskView } from '../../shared/studio.ts'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { ProjectRecord } from '../adapters/project-record.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
 import type { HostPorts } from './ports.ts'
 import type { StudioStore } from './state.ts'
@@ -48,7 +48,7 @@ interface Dependencies {
 /** Publication retains the author's exact request and never replaces an unknown operation. */
 export class PrototypeIntegrations {
   private record: RecordFile | undefined
-  private storage?: AtomicState<RecordFile>
+  private storage?: ProjectRecord<RecordFile>
   private account?: number
   private loading: { accountId: number; promise: Promise<RecordFile> } | undefined
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly deps: Dependencies) {}
@@ -61,7 +61,7 @@ export class PrototypeIntegrations {
     if (this.account !== account || !this.storage) {
       this.account = account
       this.record = undefined
-      this.storage = new AtomicState(path.join(this.store.directory, 'prototype-integrations.json'))
+      this.storage = new ProjectRecord<RecordFile>(this.store, 'prototype-integrations.json', () => ({ operations: [], taskEnds: [] }), (value, id) => ({ operations: value.operations.filter(x => x.projectId === id), taskEnds: value.taskEnds.filter(x => x.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations), taskEnds: values.flatMap(x => x.taskEnds) }))
     }
     const storage = this.storage!
     const promise = (async () => {

@@ -56,7 +56,7 @@ async function fixture() {
   await git.createWorktree(repo, worktree, 'studio/scenario/1', base)
   const storeRoot = path.join(root, 'state'), store = new StudioStore(storeRoot); store.useUser(1)
   const local = await store.read()
-  const project: LocalProject = { id: 'project', name: '测试项目', directory: repo, repositoryUrl: origin }
+  const project: LocalProject = { id: 'project', name: '测试项目', directory: repo, workspaceDirectory: root, repositoryUrl: origin }
   local.projects.push(project); local.selectedProjectId = 'project'
   const task: TaskView = { projectId: 'project', entityId: 'scenario', sessionId: 'session-1', purpose: 'material', inputHash: '', worktree }
   local.tasks.push(task)
@@ -85,12 +85,12 @@ test('acceptance settles the machine: main checkout fast-forwards, worktree byte
 
     assert.equal((await f.git.state(f.repo)).head, candidate, '主目录必须包含本次接受提交')
     assert.equal(await exists(f.worktree), false, '任务目录必须被清理')
-    const manifest = JSON.parse(await readFile(path.join(f.store.directory, 'archive/project/t1/manifest.json'), 'utf8')) as { entries: Array<{ path: string; kind: string; sha256?: string }> }
+    const manifest = JSON.parse(await readFile(path.join(await f.store.projectDirectory('project'), 'archive/t1/manifest.json'), 'utf8')) as { entries: Array<{ path: string; kind: string; sha256?: string }> }
     const note = manifest.entries.find(entry => entry.path === '场景/调研.md')
     const ignored = manifest.entries.find(entry => entry.path === 'debug.log')
     assert.equal(note?.sha256, digest('# 调研\n'), '未跟踪材料必须按字节归档')
     assert.equal(ignored?.sha256, digest('ignored bytes'), '被忽略材料同样不得静默丢弃')
-    assert.equal(await readFile(path.join(f.store.directory, 'archive/project/t1/场景/调研.md'), 'utf8'), '# 调研\n')
+    assert.equal(await readFile(path.join(await f.store.projectDirectory('project'), 'archive/t1/场景/调研.md'), 'utf8'), '# 调研\n')
     assert.equal(f.released.includes(f.worktree), true, '任务资源按任务释放')
     assert.equal(f.local.tasks.length, 1, '历史会话记录必须保留')
     assert.equal(f.local.tasks[0]!.cleanup?.status, 'done', '任务状态必须标明本机收整完成')

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -29,7 +29,10 @@ const reply = (sources: Array<{ entityId: string; excerpts: Array<{ startLine: n
 const protocol = (value: unknown) => `拆分结论。\n\n\`\`\`eadp-candidates\n${JSON.stringify(value)}\n\`\`\``
 
 async function fixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'eadp-requirement-candidates-')), store = new StudioStore(root); store.useUser(1)
+  const root = await mkdtemp(path.join(tmpdir(), 'eadp-requirement-candidates-')), store = new StudioStore(path.join(root, 'program')); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'), directory = path.join(workspaceDirectory, 'repo')
+  await mkdir(directory, { recursive: true })
+  await store.registerProject({ id: 'project-1', name: '项目', workspaceDirectory, directory, repositoryUrl: 'https://git.example/project.git' })
   const first = scenario('scenario-1', '# 提交订单\n\n客户提交订单。\n'), second = scenario('scenario-2', '# 支付订单\n\n付款成功后订单进入已支付状态。\n')
   const bytes = new Map([first, second].map(value => [value.source.fixed.sha256, value.bytes]))
   let currentTemplate = template(), createFailure = false, writeFailure = false, promptFailure = false
@@ -47,7 +50,7 @@ async function fixture() {
     },
     write: async (candidate, id) => { if (writeFailure) { writeFailure = false; throw new Error('正文写入失败') }; writes.push({ candidate: structuredClone(candidate), id }) },
   })
-  const start = () => service.start({ projectId: 'project-1', worktree: path.join(root, 'project'), sources: [first.source, second.source], existingRequirements: [{ id: 'existing-1', title: '原有能力', summary: '只作补拆参考' }] })
+  const start = () => service.start({ projectId: 'project-1', worktree: directory, sources: [first.source, second.source], existingRequirements: [{ id: 'existing-1', title: '原有能力', summary: '只作补拆参考' }] })
   return { root, store, service, prompts, creates, writes, identities, first, second, bytes, start,
     useTemplate: (value: CandidateTemplate) => { currentTemplate = value }, failCreate: () => { createFailure = true }, failWrite: () => { writeFailure = true }, failPrompt: () => { promptFailure = true },
     dispose: () => rm(root, { recursive: true, force: true }),

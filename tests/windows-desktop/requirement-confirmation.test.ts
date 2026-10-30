@@ -25,7 +25,7 @@ async function fixture(t: test.TestContext) {
   const stateRoot = path.join(parent, 'state'), store = new StudioStore(stateRoot); store.useUser(1)
   const local = await store.read()
   local.selectedProjectId = 'project'
-  local.projects.push({ id: 'project', name: '项目', directory: root, repositoryUrl: 'https://git.test/project.git' })
+  local.projects.push({ id: 'project', name: '项目', directory: root, workspaceDirectory: path.dirname(root), repositoryUrl: 'https://git.test/project.git' })
   const entity: EntityView = { id: 'requirement', kind: 'requirement', generation: 1, revision: 1, title: '审批需求', scenarioIds: ['scene'], scenarioSources: [{ projectId: 'project', entityId: 'scene', version: 1 }], prerequisites: [], templateId: 'default', templateRef, materialVersion: 0,
     authorId: 1, confirmationStatus: 'draft', taskStatus: 'active',
     occupation: { occupationId: 'occupation', generation: 1, entityId: 'requirement', taskId: 'task', clientId: local.clientId, expectedRevision: 1, ownerId: 1, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' } }
@@ -163,7 +163,7 @@ async function fixture(t: test.TestContext) {
   const app = create(store)
   assert.equal((await app.command({ action: 'openRequirement', entityId: entity.id })).ok, true)
   return { root, stateRoot, store, entity, draft, api, create, app, confirmed, writes, apiWrites, commits, command,
-    async selectOtherProject() { await mkdir(otherRoot); local.projects.push({ id: otherProject.id, name: otherProject.name, directory: otherRoot, repositoryUrl: otherProject.repositoryUrl }); local.selectedProjectId = otherProject.id; await store.save() },
+    async selectOtherProject() { await mkdir(otherRoot); local.projects.push({ id: otherProject.id, name: otherProject.name, directory: otherRoot, workspaceDirectory: otherRoot, repositoryUrl: otherProject.repositoryUrl }); local.selectedProjectId = otherProject.id; await store.save() },
     directoryFailure(value: boolean) { failDirectory = value }, directoryWait(value: () => Promise<void>) { directoryGate = value }, loseCompletion() { loseCompletionReply = true }, get claims() { return claims } }
 }
 

@@ -8,7 +8,7 @@ import type { ProjectProgressReply, StudioCommand, StudioReply } from '../shared
 export type { Config }
 /** Plugin id; matches the `studio-plugin` row in `cordis.patch.yml`. */
 export const name = 'studio-plugin'
-export const inject = ['tools', 'agents', 'llm', 'systemPrompt', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections', 'agentDefaultModel']
+export const inject = ['tools', 'agents', 'llm', 'systemPrompt', 'subprocess', 'sessionController', 'agentPresets', 'sessionProjections', 'agentDefaultModel', 'attachments', 'sessions']
 /**
  * Longest a command waits for composition. Composition runs once per Host
  * process and loads the platform runtime, so it is allowed the same order of

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { MaterialConfirmations, mergeNoticeFor, type MaterialConfirmationOperation } from '../../packages/studio-plugin/src/host/application/material-confirmations.ts'
@@ -30,7 +30,9 @@ test('merge notes tell the user exactly which files were merged automatically an
 test('rebuilding a rejected candidate clears its stale merge note', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'confirm-rejected-merge-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  const store = new StudioStore(root); store.useUser(1)
+  const store = new StudioStore(path.join(root, 'program')); store.useUser(1)
+  const workspaceDirectory = path.join(root, 'project'); await mkdir(workspaceDirectory)
+  await store.registerProject({ id: 'p', name: '项目', workspaceDirectory, directory: path.join(workspaceDirectory, 'repo'), repositoryUrl: 'https://git.example/p' })
   const confirmations = new MaterialConfirmations(store, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
   const operation = { operationId: 'c1', accountId: 1, projectId: 'p', entityId: 'e', phase: 'integrating', integrationId: 'old',
     mergeNote: { remoteFiles: ['场景/rejected.md'], aiFiles: ['场景/rejected.md'] } } as MaterialConfirmationOperation

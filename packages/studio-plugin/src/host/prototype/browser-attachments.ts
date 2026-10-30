@@ -12,7 +12,7 @@ const limits: Record<PrototypeBrowserAttachmentKind, number> = { screenshot: 16 
 
 /** Host-owned durable bytes and metadata; callers never supply a filesystem path. */
 export class PrototypeBrowserAttachmentStore {
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: (scope: PrototypeBrowserScope) => Promise<string>) {}
 
   async attach(scope: PrototypeBrowserScope, kind: 'screenshot', bytes: Buffer): Promise<PrototypeBrowserAttachment> {
     return this.persist(scope, kind, bytes)
@@ -20,9 +20,10 @@ export class PrototypeBrowserAttachmentStore {
 
   async captureTrace(scope: PrototypeBrowserScope, write: (filename: string) => Promise<void>): Promise<PrototypeBrowserAttachment & { bytes: Buffer }> {
     prototypeBrowserRoute(scope, '/')
-    const staging = path.join(this.root, 'staging')
+    const root = await this.root(scope)
+    const staging = path.join(root, 'staging')
     await mkdir(staging, { recursive: true, mode: 0o700 })
-    if ((await lstat(this.root)).isSymbolicLink() || (await lstat(staging)).isSymbolicLink()) throw new Error('浏览器 trace 临时目录不能是符号链接')
+    if ((await lstat(root)).isSymbolicLink() || (await lstat(staging)).isSymbolicLink()) throw new Error('浏览器 trace 临时目录不能是符号链接')
     const temporary = path.join(staging, `${randomUUID()}.zip`)
     try {
       await write(temporary)
@@ -37,9 +38,10 @@ export class PrototypeBrowserAttachmentStore {
   private async persist(scope: PrototypeBrowserScope, kind: PrototypeBrowserAttachmentKind, bytes: Buffer): Promise<PrototypeBrowserAttachment> {
     prototypeBrowserRoute(scope, '/')
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > limits[kind]) throw new Error('浏览器附件大小无效')
-    await mkdir(this.root, { recursive: true, mode: 0o700 })
-    if ((await lstat(this.root)).isSymbolicLink()) throw new Error('浏览器附件目录不能是符号链接')
-    const directory = path.join(this.root, digest(Buffer.from(canonical(scope))))
+    const root = await this.root(scope)
+    await mkdir(root, { recursive: true, mode: 0o700 })
+    if ((await lstat(root)).isSymbolicLink()) throw new Error('浏览器附件目录不能是符号链接')
+    const directory = path.join(root, digest(Buffer.from(canonical(scope))))
     await mkdir(directory, { recursive: true, mode: 0o700 })
     if ((await lstat(directory)).isSymbolicLink()) throw new Error('浏览器附件范围目录不能是符号链接')
     const id = randomUUID(), extension = kind === 'trace' ? 'zip' : 'png'

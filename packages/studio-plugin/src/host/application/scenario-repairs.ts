@@ -183,7 +183,7 @@ export class ScenarioRepairs {
       if (!isMaterialMetadata(candidate)) throw new Error('修复候选的业务质量项或待澄清项无效')
       const metadata = await syncProjectContext(task.worktree, candidate)
       const before = await this.workspaces.confirmationChecks.inspectTask(task, draft)
-      const next = await w.documents.save({ root: task.worktree, metadata, body: result.body, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
+      const next = await (await w.documents(task.projectId)).save({ root: task.worktree, metadata, body: result.body, operationId: `${repair.view.id}-round-${repair.view.roundsUsed + 1}` })
       const after = await this.workspaces.confirmationChecks.inspectTask(task, next)
       const priorIssues = before.groups.filter(g => g.status === 'blocked').flatMap(g => g.messages), remainingIssues = after.groups.filter(g => g.status === 'blocked').flatMap(g => g.messages)
       const improved = after.passed || remainingIssues.length < priorIssues.length || priorIssues.some(issue => !remainingIssues.includes(issue))
