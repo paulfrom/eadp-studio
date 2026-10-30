@@ -185,7 +185,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
     ? sameDraftInput(snapshot, workspace.requirementSave.input)
     : !!workspace.confirmationRecovery && !snapshot.dirty || !!workspace.requirementSave?.documentSaved && !snapshot.dirty)
   return <div className={layout.frame}><div ref={documentFocus.panes} className={`${css.scenarioWorkspace} ${layout.panes} ${collapsed ? css.scenarioCollapsed : ''}`}>
-    <section className={css.chatPanel} aria-label="需求对话">
+    <section className={`${css.chatPanel} ${layout.materialPanel}`} aria-label="需求对话">
       <MaterialWorkspaceHeader entity={entity} sessions={sessions} activeSessionId={task?.sessionId} locked={locked} readOnly={workspace.readOnly} reviewCount={workspace.writeProposal?.status === 'pending' ? workspace.writeProposal.changes.length : 0} onReview={() => setReviewRequested(value => value + 1)} onConfirm={() => setConfirmationOpen(true)} onRefresh={actions.refresh} onNewSession={actions.newSession} onSelectSession={actions.selectSession} onTemplates={actions.openTemplates} onOpenPrototype={() => onOpenPrototype(entity.id)} />
       {workspace.readOnly && <div className={css.panelNotice}>
         <span>确认人 #{workspace.confirmedBy ?? entity.current?.confirmedBy} · {workspace.confirmedAt ?? entity.current?.confirmedAt}</span>

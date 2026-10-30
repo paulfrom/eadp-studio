@@ -2,6 +2,7 @@ import { useDeferredValue, useMemo, useState } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EntityView, MaterialDraft } from '../../shared/studio.ts'
 import { exportMarkdown, listItemCount, markdownLabels, sectionSummary, splitSections } from '../scenarios/document.ts'
+import { MaterialActionMenu } from './MaterialActionMenu.tsx'
 import css from '../studio.module.css'
 import doc from './document.module.css'
 
@@ -15,15 +16,12 @@ export function DocumentToolbar({ draft, title, body, preview, syncState, state,
   return <header className={doc.toolbar}>
     <span className={css.assetIcon}>MD</span>
     <span className={doc.filename} title={draft.path}>{filename}</span>
-    <span className={`${css.syncState} ${doc.sync}`} data-state={state} title={syncState}><i />{syncState}</span>
+    <span className={`${css.syncState} ${doc.sync}`} data-state={state} title={syncState} role="status" aria-live="polite"><i aria-hidden="true" />{syncState}</span>
     <div className={`${css.segmented} ${doc.views}`} role="group" aria-label="文档视图">
       <button aria-pressed={preview} onClick={() => onPreview(true)}>预览</button>
       <button aria-pressed={!preview} onClick={() => onPreview(false)}>源码</button>
     </div>
-    <details className={doc.tools}>
-      <summary aria-label="文档操作" title="文档操作">···</summary>
-      <div><button onClick={() => exportMarkdown(title, body)} title="导出 Markdown 文件">导出</button></div>
-    </details>
+    <MaterialActionMenu label="文档操作" actions={[{ id: 'export', label: '导出 Markdown', run: () => exportMarkdown(title, body) }]} />
     {!readOnly && <button className={doc.save} disabled={saveDisabled} onClick={onSave}>{retry ? '重试保存' : '保存'}</button>}
     <button className={doc.collapse} onClick={onCollapse} aria-label="收起文档预览" title="收起文档预览">›</button>
   </header>
@@ -52,8 +50,8 @@ function DocumentSection({ title, body, ordinal, initialOpen }: { title: string;
   return <details className={doc.section} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>
       <span className={doc.number}>{String(ordinal).padStart(2, '0')}</span>
-      <span className={doc.title}>{title}</span>
-      <span className={doc.summary}>{sectionSummary(body)}</span>
+      <span className={doc.title} title={title}>{title}</span>
+      <span className={doc.summary} title={sectionSummary(body)}>{sectionSummary(body)}</span>
       {entries > 0 && <span className={doc.count}>{entries} 条</span>}
       <span className={doc.chevron} aria-hidden="true">⌄</span>
     </summary>

@@ -4,6 +4,7 @@ import type { PrototypeCandidateFile, PrototypeConversationMessage, PrototypeIns
 import { PrototypeFiles } from './PrototypeFiles.tsx'
 import { PrototypePreview } from './PrototypePreview.tsx'
 import { PrototypeIcon as Icon } from './PrototypeIcon.tsx'
+import { WorkbenchMenu } from './WorkbenchMenu.tsx'
 import { WorkbenchDrawer } from './WorkbenchDrawer.tsx'
 import { PrototypeComparison } from './PrototypeEditor.tsx'
 import { DevelopmentQueue, type DevelopmentQueueItem } from './DevelopmentQueue.tsx'
@@ -279,7 +280,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
       <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button aria-label="收起 AI 协作" onClick={() => setAiCollapsed(true)}><Icon name="panel-left" /></button></header>
       <div className={css.sessionLine}><i />{selected ? '原生会话' : '项目原型'}<span>{selected?.title}</span></div>
       <div className={css.content}>
-        {selected && <><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.filter(message => message.kind !== 'tool').map(message => <article key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
+        {selected && <><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.filter(message => message.kind !== 'tool').map(message => <article data-role={message.role} key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.role !== 'user' && <Icon name="spark" />}{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
 
       </div>
         <form className={css.instruction} onSubmit={event => { event.preventDefault(); void send() }}>
@@ -300,12 +301,21 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
     <section className={css.result} aria-label="原型成果">
       <div className={css.toolbar}>
         {aiCollapsed && <button aria-label="展开 AI 协作" onClick={() => setAiCollapsed(false)}><Icon name="panel-left" /></button>}
-        <div className={css.modeSwitch} role="tablist" aria-label="工作区模式"><button id="prototype-preview-tab" role="tab" aria-controls="prototype-preview" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}><Icon name="eye" />预览</button><button id="prototype-code-tab" role="tab" aria-controls="prototype-code" aria-selected={tab === 'code'} onClick={() => setTab('code')}><Icon name="code" />代码</button></div>
+        <div className={css.modeSwitch} role="tablist" aria-label="工作区模式" onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const next = event.key === 'Home' ? 'preview' : event.key === 'End' ? 'code' : tab === 'preview' ? 'code' : 'preview'
+          setTab(next); document.getElementById(`prototype-${next}-tab`)?.focus()
+        }}><button id="prototype-preview-tab" role="tab" aria-controls="prototype-preview" aria-selected={tab === 'preview'} tabIndex={tab === 'preview' ? 0 : -1} onClick={() => setTab('preview')}><Icon name="eye" />预览</button><button id="prototype-code-tab" role="tab" aria-controls="prototype-code" aria-selected={tab === 'code'} tabIndex={tab === 'code' ? 0 : -1} onClick={() => setTab('code')}><Icon name="code" />代码</button></div>
         <span className={css.spacer} />
         <button disabled={busy || !fileSource || !!starting} onClick={() => void toggleRun()}><Icon name={preview ? "square" : "play"} />{startingCurrent ? "启动中" : preview ? "停止" : "运行"}</button>
         <button disabled={busy || !fileSource || !!starting} onClick={() => { setOutput('checks'); void (baseline ? runBaseline('checkPrototypeBaseline') : run('checkProjectPrototype')) }}><Icon name="check-circle" />工程检查</button>
         <button className={css.primaryButton} disabled={!selected || !!baseline} onClick={() => setDrawer('confirm')}>确认原型<Icon name="arrow-right" /></button>
-        <details className={css.moreMenu} data-prototype-menu><summary aria-label="更多操作"><Icon name="more" /></summary><div role="menu"><button role="menuitem" disabled={busy || !fileSource || !!starting} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); void restartPreview() }}>重新运行预览</button><button role="menuitem" disabled={!fileSource || !!baseline} onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setTab('code'); setRequestDiff(value => value + 1) }}>变更对比</button><button role="menuitem" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setDrawer('diagnostics') }}>诊断信息</button></div></details>
+        <WorkbenchMenu actions={[
+          { id: 'restart', label: '重新运行预览', disabled: busy || !fileSource || !!starting, run: () => { void restartPreview() } },
+          { id: 'diff', label: '变更对比', disabled: !fileSource || !!baseline, run: () => { setTab('code'); setRequestDiff(value => value + 1) } },
+          { id: 'diagnostics', label: '诊断信息', run: () => setDrawer('diagnostics') },
+        ]} />
       </div>
       {runError && <p className={css.fileError} role="alert">运行尚未成功，请查看 AI 反馈或诊断信息</p>}
       {!baseline && selected?.nextAction && <p aria-live="polite">{selected.nextAction}{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停 AI 处理</button>}</p>}
@@ -317,8 +327,8 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
       </div>
 
       <section className={css.outputPanel} aria-label="运行与检查输出">
-        <div className={css.outputTabs}>{(['runtime', 'checks', 'problems'] as const).map(value => <button key={value} aria-expanded={output === value} onClick={() => setOutput(output === value ? undefined : value)}>{value === 'runtime' ? '运行输出' : value === 'checks' ? '工程检查' : '问题'}{value === 'checks' && checkReport ? ` · ${checkReport.status === 'passed' ? '通过' : checkReport.status === 'running' ? '运行中' : '待处理'}` : ''}</button>)}<span className={css.spacer} /><button aria-label={output ? '折叠输出' : '展开输出'} onClick={() => setOutput(output ? undefined : 'runtime')}>{output ? '⌄' : '⌃'}</button></div>
-        {output && <div className={css.outputContent}>{output === 'problems' ? <p>{runError || checkReport?.message || '暂无已记录问题。'}</p> : checkReport ? <details open={output === 'runtime' || checkReport.status === 'running'}>
+        <div className={css.outputTabs}>{(['runtime', 'checks', 'problems'] as const).map(value => <button key={value} aria-expanded={output === value} aria-controls="prototype-output" onClick={() => setOutput(output === value ? undefined : value)}><Icon name={value === 'runtime' ? 'terminal' : value === 'checks' ? 'check-circle' : 'alert'} />{value === 'runtime' ? '运行输出' : value === 'checks' ? '工程检查' : '问题'}{value === 'checks' && checkReport ? ` · ${checkReport.status === 'passed' ? '通过' : checkReport.status === 'running' ? '运行中' : '待处理'}` : ''}</button>)}<span className={css.spacer} />{checkReport && <span className={css.outputSummary} data-passed={checkReport.status === 'passed'}><Icon name={checkReport.status === 'passed' ? 'check-circle' : 'clock'} />{checkReport.status === 'passed' ? (checkReport.kind === 'preview' ? '预览构建完成' : '工程检查完成') : checkReport.status === 'running' ? '检查中' : '检查待处理'}</span>}<button aria-label={output ? '折叠输出' : '展开输出'} onClick={() => setOutput(output ? undefined : 'runtime')}><Icon name={output ? 'chevron-down' : 'chevron-up'} /></button></div>
+        {output && <div id="prototype-output" className={css.outputContent}>{output === 'problems' ? <p>{runError || checkReport?.message || '暂无已记录问题。'}</p> : checkReport ? <details open={output === 'runtime' || checkReport.status === 'running'}>
           <summary>最近{checkReport.kind === 'preview' ? '预览构建' : '工程检查'} · {checkReport.status === 'passed' ? '完成' : checkReport.status === 'failed' ? '失败' : checkReport.status === 'interrupted' ? '中断，待核对' : '运行中'}</summary>
           <p>结果对应本次运行记录。</p>
           <p>开始于 {checkReport.startedAt}{checkReport.completedAt ? `，结束于 ${checkReport.completedAt}` : ''}</p>

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { menuFixture } from './menu-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -35,6 +36,7 @@ function loadClient(relative) {
     if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return {
       MarkdownText: ({ text }) => React.createElement('div', {}, text),
       DiffBlock: () => null,
+      Menu: menuFixture(React),
     }
     if (specifier.startsWith('.')) return loadClient(path.relative(client, path.resolve(path.dirname(filename), specifier)))
     return reactRequire(specifier)
@@ -207,7 +209,9 @@ test('spec panel offers preview/source, export and hides saving for the confirme
   const view = render(h(RequirementSpecPanel, props))
   assert.equal(view.getByRole('button', { name: '预览' }).getAttribute('aria-pressed'), 'true')
   assert.equal(view.getByRole('button', { name: '源码' }).getAttribute('aria-pressed'), 'false')
-  assert.ok(view.getByRole('button', { name: '导出' }))
+  fireEvent.click(view.getByLabelText('文档操作'))
+  assert.ok(view.getByRole('menuitem', { name: '导出 Markdown' }))
+  fireEvent.click(view.getByLabelText('文档操作'))
   assert.ok(view.getByRole('button', { name: '保存' }))
   assert.match(view.container.textContent, /业务目标/)
   fireEvent.click(view.getByRole('button', { name: '源码' }))

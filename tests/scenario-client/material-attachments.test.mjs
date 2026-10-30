@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { menuFixture } from './menu-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -63,6 +64,7 @@ function loadClient(relative) {
     if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return {
       MarkdownText: ({ text }) => React.createElement('div', {}, text),
       DiffBlock: () => null,
+      Menu: menuFixture(React),
     }
     if (specifier.startsWith('.')) return loadClient(path.relative(client, path.resolve(path.dirname(filename), specifier)))
     return reactRequire(specifier)
@@ -406,7 +408,7 @@ test('requirement write proposals require an explicit gesture and keep their ori
   const fixture = requirementPanel(), view = fixture.render()
   await selectRequirement(view)
   assert.ok(fixture.commands.some(command => command.action === 'listConsistencySummaries'), '目录读取每项材料的最近一次结论')
-  assert.ok(fixture.commands.some(command => command.action === 'listConsistencyComparisons' && command.entityId === 'requirement'), '详情面板查询实体级历史')
+  await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'listConsistencyComparisons' && command.entityId === 'requirement'), '详情面板查询实体级历史'))
   assert.equal(fixture.commands.filter(command => command.action === 'openRequirement').length, 1)
   assert.equal(fixture.commands.some(command => command.action === 'resolveRequirementWriteProposal'), false)
   assert.match(view.getByRole('region', { name: '写入提议' }).textContent, /需求正文/)
@@ -524,7 +526,7 @@ test('declining a proposal and starting a new requirement session use requiremen
   const decline = fixture.commands.find(command => command.action === 'resolveRequirementWriteProposal')
   assert.deepEqual(decline, { action: 'resolveRequirementWriteProposal', entityId: 'requirement', proposalId: 'proposal-original', decision: 'reject', expectedHash: 'hash-initial' })
   fireEvent.click(view.getByLabelText('会话与模板操作'))
-  fireEvent.click(view.getByRole('button', { name: '新会话' }))
+  fireEvent.click(view.getByRole('menuitem', { name: '新会话' }))
   await waitFor(() => assert.ok(fixture.commands.some(command => command.action === 'newRequirementSession')))
   assert.equal(fixture.commands.some(command => command.action === 'startSession' || command.action === 'saveMaterial'), false)
 })

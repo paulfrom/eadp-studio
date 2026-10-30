@@ -268,7 +268,7 @@ test('builtin scenarios never enter scene cards, counts, search results or pagin
   const { entities } = fixtures()
   const ordinary = Array.from({ length: 12 }, (_, index) => scenario({ id: `scene-${index + 10}`, code: `SC-${index + 10}`, title: `普通场景${index}` }))
   const view = render(catalog({ kind: 'scenario', entities: [...entities.filter(entity => entity.builtinKey), ...ordinary] }))
-  assert.ok(view.getByRole('heading', { name: '业务场景管理矩阵 12 项' }))
+  assert.ok(view.getByRole('heading', { name: '业务场景管理矩阵 (Active Scenes Matrix) 12 SCENES' }))
   assert.ok(view.getByText('已确认 12 · 草稿 0 · 正在修订 0'))
   assert.ok(view.getByText('共 12 项 · 第 1 / 1 页'))
   assert.equal(view.queryByText('通用场景'), null)
@@ -283,7 +283,7 @@ test('only the new requirement source picker offers builtin attribution and subm
   const view = render(catalog({ entities, call: async command => { commands.push(command); return { ok: false, code: 'STOP', message: '保留输入' } } }))
   revealFilters(view)
   assert.equal(within(view.getByRole('combobox', { name: '来源场景' })).queryByRole('option', { name: /通用场景/ }), null)
-  fireEvent.click(view.getByRole('button', { name: '＋ 新建需求' }))
+  fireEvent.click(view.getByRole('button', { name: '新建需求' }))
   const sources = view.getByRole('listbox', { name: '固定场景来源' })
   const builtin = within(sources).getByRole('option', { name: 'SC-0000 · 通用场景 · 系统内置' })
   builtin.selected = true
@@ -299,7 +299,7 @@ test('only the new requirement source picker offers builtin attribution and subm
 test('the scene matrix creates a named scene and keeps its input when creation fails', async () => {
   const calls = []
   const view = render(catalog({ kind: 'scenario', entities: [], call: async command => { calls.push(command); return { ok: false, message: '创建失败' } } }))
-  fireEvent.click(view.getByRole('button', { name: '＋ 新建业务场景' }))
+  fireEvent.click(view.getByRole('button', { name: '新建业务场景' }))
   fireEvent.change(view.getByRole('textbox', { name: '场景标题' }), { target: { value: '采购审批流程' } })
   await act(async () => { fireEvent.click(view.getByRole('button', { name: '创建场景' })) })
   assert.ok(view.getByText('创建失败'))
@@ -324,4 +324,16 @@ test('advanced filters remain visible as a summary after the disclosure closes a
   fireEvent.click(view.getByRole('button', { name: '清空筛选' }))
   assert.equal(view.queryByRole('status'), null)
   assert.ok(view.getByText('共 2 项 · 第 1 / 1 页'))
+})
+
+
+test('Escape closes advanced filters and returns keyboard focus to the disclosure', () => {
+  const view = render(catalog(fixtures()))
+  revealFilters(view)
+  const select = view.getByRole('combobox', { name: '修订状态' })
+  select.focus()
+  fireEvent.keyDown(select, { key: 'Escape' })
+  const summary = view.getByText('更多筛选')
+  assert.equal(summary.parentElement.open, false)
+  assert.equal(document.activeElement, summary)
 })

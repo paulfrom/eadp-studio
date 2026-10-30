@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { menuFixture } from './menu-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -35,6 +36,7 @@ function loadClient(relative) {
   const module = { exports: {} }
   modules.set(filename, module)
   new Function('require', 'module', 'exports', compiled)(specifier => {
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Menu: menuFixture(React) }
     if (specifier.endsWith('.css')) return new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) })
     if (specifier.endsWith('/PrototypeFiles.tsx')) return { PrototypeFiles: FilesStub }
     if (specifier.endsWith('/PrototypePreview.tsx')) return { PrototypePreview: ({ starting }) => h('div', { role: starting ? 'status' : undefined }, starting ? '正在安装依赖、构建并启动预览…' : 'Preview') }
@@ -136,4 +138,31 @@ test('composer sends Enter once, preserves Shift Enter and blocks blank or busy 
   fireEvent.keyDown(textbox, { key: 'Enter' })
   assert.equal(commands.filter(c => c.action === 'startPrototypeCollaboration').length, 1)
   assert.equal(textbox.value, '忙碌期间保留')
+})
+
+test('workspace modes follow arrow keys without discarding mounted file buffers', async () => {
+  const { view } = setup()
+  await waitFor(() => assert.ok(view.getByText('暂无会话消息。')))
+  const preview = view.getByRole('tab', { name: /预览/ })
+  const code = view.getByRole('tab', { name: /代码/ })
+  preview.focus()
+  fireEvent.keyDown(preview, { key: 'ArrowRight' })
+  assert.equal(document.activeElement, code)
+  assert.equal(code.getAttribute('aria-selected'), 'true')
+  assert.equal(preview.tabIndex, -1)
+  fireEvent.keyDown(code, { key: 'Home' })
+  assert.equal(document.activeElement, preview)
+  assert.equal(preview.getAttribute('aria-selected'), 'true')
+})
+
+test('prototype menu exposes open state for native preview coordination', async () => {
+  const { view } = setup()
+  await waitFor(() => assert.ok(view.getByText('暂无会话消息。')))
+  const trigger = view.getByLabelText('更多操作')
+  const marker = view.container.querySelector('[data-prototype-menu]')
+  fireEvent.click(trigger)
+  assert.equal(marker.getAttribute('aria-expanded'), 'true')
+  fireEvent.click(view.getByRole('menuitem', { name: '变更对比' }))
+  assert.equal(marker.getAttribute('aria-expanded'), 'false')
+  assert.equal(view.getByRole('tab', { name: /代码/ }).getAttribute('aria-selected'), 'true')
 })

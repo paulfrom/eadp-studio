@@ -62,9 +62,9 @@ export function RequirementSpecPanel({ entity, draft, buffer, snapshot, workspac
     : snapshot.saving ? '正在保存本地草稿…'
     : snapshot.error ? snapshot.error
     : snapshot.dirty ? '有未保存输入' : '本地草稿已保存'
-  return <section className={css.specPanel} aria-label="需求说明">
+  return <section className={`${css.specPanel} ${doc.panel}`} aria-label="需求说明">
     <DocumentToolbar draft={draft} title={snapshot.metadata.title} body={snapshot.body} preview={preview} syncState={syncState} state={snapshot.error || workspace.requirementSave || workspace.confirmationRecovery ? 'error' : snapshot.dirty || snapshot.saving ? 'pending' : 'synced'} readOnly={workspace.readOnly} saveDisabled={busy || confirming || snapshot.saving || !snapshot.dirty} retry={!!snapshot.error} onPreview={setPreview} onSave={() => void onFlush()} onCollapse={onCollapse} />
-    <div className={css.specBody}>
+    <div className={`${css.specBody} ${doc.body}`}>
       {workspace.readOnly && !recoveryLabel && <div className={doc.confirmed}><span aria-hidden="true">✓</span>已确认为固定版本 v{entity.materialVersion}</div>}
       <DocumentMeta entity={entity} body={snapshot.body} readOnly={workspace.readOnly && !recoveryLabel} confirmedAt={workspace.confirmedAt} recoveryLabel={recoveryLabel} />
       <ExternalFileNotice buffer={buffer} snapshot={snapshot} readOnly={workspace.readOnly} />

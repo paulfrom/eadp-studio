@@ -1,3 +1,7 @@
+section.panel { border-radius: 12px; }
+.panel > .body { padding: 14px 16px 28px; }
+.body > * { flex-shrink: 0; }
+.body textarea { font-family: var(--mono); tab-size: 2; }
 .toolbar { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-width: 0; min-height: 46px; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--border); }
 .filename { flex: 1; min-width: 0; overflow: hidden; color: var(--text-2); font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .sync { flex: 0 1 auto; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5,12 +9,7 @@
 .toolbar button { min-height: 25px; padding: 2px 7px; white-space: nowrap; }
 .toolbar .collapse { padding: 0; width: 24px; font-size: 22px; line-height: 1; color: var(--text-3); }
 .save { color: var(--text-2); font-size: 10.5px; }
-.tools { position: relative; flex: 0 0 auto; }
-.tools > summary { padding: 0 6px; cursor: pointer; font-weight: 600; color: var(--text-3); list-style: none; }
-.tools > summary::-webkit-details-marker { display: none; }
-.tools > div { position: absolute; top: 28px; right: 0; z-index: 5; padding: 5px; min-width: 110px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); box-shadow: var(--shadow-sm); }
-.tools > div button { width: 100%; text-align: left; }
-.toolbar button:focus-visible, .tools > summary:focus-visible, .section > summary:focus-visible, .fields > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toolbar button:focus-visible, .section > summary:focus-visible, .fields > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .metadata { display: flex; flex-wrap: wrap; gap: 4px 0; padding-bottom: 11px; border-bottom: 1px solid var(--border); color: var(--text-3); font: 10.5px/1.6 var(--mono); }
 .metadata > * + *::before { content: '·'; padding: 0 8px; color: var(--border-strong); }
 .sections { display: grid; gap: 7px; }
@@ -19,8 +18,8 @@
 .section > summary { display: flex; align-items: center; gap: 9px; padding: 10px 11px; cursor: pointer; list-style: none; }
 .section > summary::-webkit-details-marker { display: none; }
 .section > summary:hover { background: var(--surface-3); }
-.number { flex: 0 0 auto; padding: 2px 5px; border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--accent); font: 600 9.5px var(--mono); }
-.title { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 500; }
+.number { flex: 0 0 auto; padding: 2px 5px; border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--accent); font: 500 9.5px var(--mono); }
+.title { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: 12.5px; font-weight: 500; }
 .summary { flex: 1; min-width: 0; overflow: hidden; color: var(--text-3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .count { flex: 0 0 auto; color: var(--text-3); font: 10px var(--mono); }
 .chevron { flex: 0 0 auto; color: var(--text-3); transition: transform .16s; }
@@ -42,3 +41,16 @@
 .confirmed { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--ok) 6%, transparent); color: var(--ok); font-size: 11px; }
 @media (max-width: 1260px) { .sync { max-width: 70px; } .toolbar { gap: 5px; } .toolbar button { padding-inline: 5px; } }
 @media (max-width: 600px) { .sync { display: none; } .summary { display: none; } .title { flex: 1; } }
+
+.sectionBody :is(p, ul, ol) { margin-block: 10px; line-height: 1.8; }
+.sectionBody ol { padding: 0; list-style: none; counter-reset: flow; }
+.sectionBody ol > li { position: relative; padding: 7px 0 7px 30px; border-top: 1px dashed var(--border); counter-increment: flow; }
+.sectionBody ol > li:first-child { border-top: 0; }
+.sectionBody ol > li::before { content: counter(flow, decimal-leading-zero); position: absolute; left: 0; top: 8px; width: 20px; padding: 1px 0; border: 1px solid var(--border); border-radius: 4px; color: var(--text-3); text-align: center; font: 9.5px var(--mono); }
+.sectionBody :is(ul, ol) :is(ul, ol) { margin-block: 4px; }
+.sectionBody ul { padding-left: 18px; }
+.sectionBody li > p { margin: 0; }
+.sectionBody table { display: block; max-width: 100%; overflow-x: auto; font-size: 11.5px; }
+.sectionBody :is(th, td) { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.sectionBody pre { max-width: 100%; overflow-x: auto; }
+@media (prefers-reduced-motion: reduce) { .chevron { transition: none; } }

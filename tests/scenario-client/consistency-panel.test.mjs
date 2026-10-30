@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { menuFixture } from './menu-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -32,6 +33,7 @@ function loadClient(relative) {
   const module = { exports: {} }
   modules.set(filename, module)
   new Function('require', 'module', 'exports', compiled)(specifier => {
+    if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return { Menu: menuFixture(React) }
     if (specifier.endsWith('.css')) return new Proxy({}, { get: (_, key) => key === '__esModule' ? false : String(key) })
     if (specifier.startsWith('.')) return loadClient(path.relative(client, path.resolve(path.dirname(filename), specifier)))
     return reactRequire(specifier)

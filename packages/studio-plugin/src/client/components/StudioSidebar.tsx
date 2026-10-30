@@ -25,6 +25,6 @@ export function StudioSidebar({ narrow, collapsed, onClose, children }: {
     if (narrow && !collapsed && element && !element.open) element.showModal()
     else if (element?.open) element.close()
   }, [narrow, collapsed])
-  const content = <aside className={`${css.rail} ${!narrow && collapsed ? css.collapsed : ''}`} aria-label="工作台导航">{narrow && <button className={css.closeNavigation} onClick={onClose} aria-label="关闭工作台导航">×</button>}{children}</aside>
+  const content = <aside className={`${css.rail} ${!narrow && collapsed ? css.collapsed : ''}`} aria-label="工作台导航" ref={element => { if (element) element.inert = !narrow && collapsed }}>{narrow && <button className={css.closeNavigation} onClick={onClose} aria-label="关闭工作台导航">×</button>}{children}</aside>
   return narrow ? <dialog ref={dialog} className={css.sidebarDialog} aria-label="工作台导航" onCancel={event => { event.preventDefault(); onClose() }} onClick={event => { if (event.target === event.currentTarget) onClose() }}>{content}</dialog> : content
 }
