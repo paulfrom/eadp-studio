@@ -50,6 +50,7 @@ async function fixture(pending = false) {
       init: async (directory: string) => { await mkdir(path.join(directory, '.git'), { recursive: true }) },
       clone: async (_url: string, directory: string, _signal?: AbortSignal, onProgress?: (progress: GitProgress) => void) => {
         ++clones
+        if (pending) { await mkdir(path.join(directory, '.git'), { recursive: true }); return }
         onProgress?.({ stage: 'receiving', percent: 50 }); seen.push(...tracker.views().map(view => ({ phase: view.phase, percent: view.percent }))); labels.push(...tracker.views().map(view => view.label))
         entered(); await gate
         await checkout(directory, project)
@@ -161,16 +162,18 @@ test('initializing a pending project reports the push instead of only the phase'
 test('a stopped operation keeps its bar with the reason so the record can be retried', async () => {
   const f = await fixture()
   try {
-    // A directory with foreign bytes is preserved, never adopted by the clone.
+    // Another account's project remains protected.
     const directory = path.join(f.root, 'workspace', 'selected-project')
     await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'private.txt'), 'preserve me')
+    await mkdir(path.join(directory, '.eadp'))
+    await writeFile(path.join(directory, '.eadp/owner.json'), JSON.stringify({ projectId: 'project-1', accountId: 2 }))
     await f.service.open('project-1', directory); await f.lane.settle().catch(() => undefined)
     const [bar] = f.tracker.views()
     assert.equal(bar?.phase, 'failed')
-    assert.match(bar?.label ?? '', /请选择空的项目文件夹/)
+    assert.match(bar?.label ?? '', /其他项目或账号/)
     const local = await f.store.read()
     assert.equal(local.projectInitializations[0]!.phase, 'unknown')
-    assert.match(local.projectInitializations[0]!.message ?? '', /请选择空的项目文件夹/)
+    assert.match(local.projectInitializations[0]!.message ?? '', /其他项目或账号/)
     assert.deepEqual(local.projects, [])
   } finally { await f.dispose() }
 })

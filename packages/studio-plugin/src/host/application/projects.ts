@@ -119,9 +119,7 @@ export class ProjectWorkspaces {
       const hasGit = await exists(path.join(directory, '.git'))
       if (remoteHead) {
         if (!hasGit) {
-          if ((await readdir(directory)).length) throw new Error('远端已有提交，本地保留了未完成文件；请核对原现场后恢复。')
-          report('cloning', 10, '从 GitLab 获取项目仓库')
-          await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), '从 GitLab 获取项目仓库'))
+          await this.cloneRepository(project, directory, report)
         } else {
           await this.ports.git.fetchCommit(directory, remoteHead)
           const localHead = await this.ports.git.head(directory)
@@ -132,7 +130,10 @@ export class ProjectWorkspaces {
         await this.verifyFixedManifest(directory, project, remoteHead)
         operation.commitSha = remoteHead
       } else {
-        if (!hasGit) await this.ports.git.init(directory, project.repositoryUrl, project.stableBranch)
+        if (!hasGit) {
+          await this.cloneRepository(project, directory, report)
+          await this.ports.gitLocal(['symbolic-ref', 'HEAD', `refs/heads/${project.stableBranch}`], directory)
+        }
         const stateHead = await this.ports.git.head(directory)
         if (operation.commitSha && stateHead !== operation.commitSha) throw new Error('初始化提交已变化，请核对保留的本地现场。')
         if (!operation.commitSha && stateHead) {
@@ -255,9 +256,12 @@ export class ProjectWorkspaces {
     const metadata = await lstat(path.dirname(marker)).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
     if (metadata && (!metadata.isDirectory() || metadata.isSymbolicLink())) throw new Error('项目过程数据目录不能是符号链接或文件。')
     const owner = await readFile(marker, 'utf8').then(value => JSON.parse(value) as { projectId: string; accountId: number }).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
-    if (owner && (owner.projectId !== project.id || owner.accountId !== account.id)) throw new Error('项目文件夹已属于其他项目或账号，请选择空文件夹。')
+    if (owner && (owner.projectId !== project.id || owner.accountId !== account.id)) throw new Error('项目文件夹已属于其他项目或账号，请选择其他文件夹。')
     if (!owner) {
-      if (await exists(workspace) && (await readdir(workspace)).length) throw new Error('请选择空的项目文件夹，已有文件不会被覆盖。')
+      // Unregistered checkout bytes must never become part of the new project.
+      const previous = await lstat(directory).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
+      if (previous?.isSymbolicLink()) throw new Error('项目目录不能是符号链接，请保留并核对原现场。')
+      if (previous && (!previous.isDirectory() || (await readdir(directory)).length)) await this.preserveLeftover(directory)
       await mkdir(path.dirname(marker), { recursive: true })
       await writeFile(marker, JSON.stringify({ projectId: project.id, accountId: account.id }), { flag: 'wx', mode: 0o600 })
     }
@@ -332,15 +336,26 @@ export class ProjectWorkspaces {
     return owner?.projectId === project.id && owner.accountId === this.store.accountId
   }
   /**
-   * Move files left in a directory whose checkout is gone, so the clone does not
+   * Move existing checkout bytes aside, so the clone does not
    * overwrite them and the user can still recover them beside the new checkout.
    */
   private async preserveLeftover(directory: string): Promise<string> {
-    const backup = `${directory}.backup-${Date.now()}`
+    const backup = `${directory}.backup-${Date.now()}-${randomUUID()}`
     try { await rename(directory, backup) }
     catch (error) { throw new Error(`本地目录无法移动，请关闭占用该目录的程序后重试：${error instanceof Error ? error.message : '未知原因'}`) }
     await mkdir(directory, { recursive: true })
     return backup
+  }
+  /** Acquire a clean checkout while keeping any unique local bytes beside it. */
+  private async cloneRepository(project: ProjectView, directory: string, report: (phase: ProjectProgressPhase, percent: number, label: string) => void, recovering = false): Promise<void> {
+    const backup = (await readdir(directory)).length ? await this.preserveLeftover(directory) : undefined
+    const label = backup ? `原文件已移至 ${backup}，正在从 GitLab 恢复` : recovering ? '本地项目目录已丢失，正在从 GitLab 恢复' : '从 GitLab 获取项目仓库'
+    report('cloning', 10, label)
+    try { await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), label)) }
+    catch (error) {
+      if (backup) throw new Error(`从 GitLab 获取失败，原文件保留在 ${backup}：${error instanceof Error ? error.message : '未知原因'}`)
+      throw error
+    }
   }
   /** Open a project the backend already accepted: reuse the local checkout or clone it, reporting progress. */
   private async openReady(project: ProjectView, operation: ProjectInitialization, report: (phase: ProjectProgressPhase, percent: number, label: string) => void): Promise<void> {
@@ -351,21 +366,7 @@ export class ProjectWorkspaces {
     }
     report('matching', 2, '正在核对本地项目与后台登记')
     const directory = await this.ownedDirectory(project, operation)
-    if (!await exists(path.join(directory, '.git'))) {
-      if ((await readdir(directory)).length) {
-        // The user may have deleted the checkout and kept files; the clone never
-        // overwrites them, so they move beside the directory and stay attributable.
-        const backup = await this.preserveLeftover(directory)
-        const label = `本地目录缺少 Git 仓库，原文件已移至 ${path.basename(backup)}，正在从 GitLab 恢复`
-        report('cloning', 10, label)
-        try { await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), label)) }
-        catch (error) { throw new Error(`从 GitLab 恢复失败，原文件保留在 ${backup}：${error instanceof Error ? error.message : '未知原因'}`) }
-      } else {
-        const label = existing ? '本地项目目录已丢失，正在从 GitLab 恢复' : '从 GitLab 获取项目仓库'
-        report('cloning', 10, label)
-        await this.ports.git.clone(project.repositoryUrl, directory, undefined, progress => report('cloning', clonePercent(progress), label))
-      }
-    }
+    if (!await exists(path.join(directory, '.git'))) await this.cloneRepository(project, directory, report, !!existing)
     report('verifying', 85, '校验项目清单')
     await this.verify(directory, project); await this.bind(project, operation)
   }

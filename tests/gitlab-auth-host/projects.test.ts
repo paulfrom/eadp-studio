@@ -140,7 +140,7 @@ test('project creation persists its key before POST and initializes the backend-
   try {
     const operation = await queued(f)
     assert.equal(operation.phase, 'ready')
-    assert.deepEqual(f.counts(), { creates: 1, uniqueCreations: 1, commits: 1, pushes: 1, initializes: 1, clones: 0 })
+    assert.deepEqual(f.counts(), { creates: 1, uniqueCreations: 1, commits: 1, pushes: 1, initializes: 1, clones: 1 })
     const saved = await f.store.read(); assert.equal(saved.projects[0]!.id, 'project-1'); assert.equal(saved.projectInitializations[0]!.phase, 'ready')
     assert.equal(JSON.stringify(saved).includes('studio_'), false)
   } finally { await f.dispose() }
@@ -244,10 +244,13 @@ test('an unknown existing directory is preserved and never adopted by an initial
   const f = await fixture()
   try {
     const directory = path.join(f.workspaceRoot, 'project/repo'); await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, 'private.txt'), 'preserve me')
-    const failed = await queued(f)
-    assert.match(failed.message ?? '', /请选择空的项目文件夹/)
-    assert.equal(await readFile(path.join(directory, 'private.txt'), 'utf8'), 'preserve me')
-    assert.equal(f.counts().commits, 0); assert.equal(f.counts().pushes, 0)
+    const operation = await queued(f)
+    assert.equal(operation.phase, 'ready')
+    const backup = (await readdir(path.dirname(directory))).find(name => name.startsWith('repo.backup-'))!
+    assert.ok(backup)
+    assert.equal(await readFile(path.join(path.dirname(directory), backup, 'private.txt'), 'utf8'), 'preserve me')
+    await assert.rejects(readFile(path.join(directory, 'private.txt')), { code: 'ENOENT' })
+    assert.equal(f.counts().clones, 1); assert.equal(f.counts().commits, 1); assert.equal(f.counts().pushes, 1)
   } finally { await f.dispose() }
 })
 
@@ -270,7 +273,7 @@ test('a rebuilt local record adopts the directory its marker names instead of in
       assert.equal(local.selectedProjectId, 'project-1')
       assert.equal(local.projectInitializations[0]!.phase, 'ready')
       assert.equal(f.counts().initializes, 1, 'an already accepted initialization is not sent again')
-      assert.equal(f.counts().clones, 0, 'the existing clone is reused')
+      assert.equal(f.counts().clones, 1, 'the existing clone is reused')
     } finally { await next.lane.settle(); await next.service.dispose() }
   } finally { await f.dispose() }
 })
@@ -341,7 +344,7 @@ test('a repository whose manifest names another project is reported instead of a
       const saved = await next.store.read()
       assert.deepEqual(saved.projects, [])
       assert.match(saved.projectInitializations[0]!.message ?? '', /属于另一个项目（project-other）/)
-      assert.equal(f.counts().clones, 0, 'no second checkout is created for the same repository')
+      assert.equal(f.counts().clones, 1, 'no second checkout is created for the same repository')
     } finally { await next.lane.settle(); await next.service.dispose() }
   } finally { await f.dispose() }
 })
