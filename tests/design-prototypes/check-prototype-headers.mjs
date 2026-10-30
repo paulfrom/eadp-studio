@@ -70,6 +70,21 @@ async function requirementHeader() {
     q('#cancelConfirm').click();
     check(q('#confirmSheet').open === false, '需求 · 清单可关闭');
     check(q('#reviseBtn') !== null, '需求 · 文档修订入口存在');
+    q('.decision[data-key="refund"] .choice').click();
+    q('.decision[data-key="goods"] .choice').click();
+    check(q('#decisionAnswerDock').hidden === false, '需求 · 选择后出现插入条');
+    q('#insertDecisionAnswers').click();
+    q('#sendBtn').click();
+    await wait(50);
+    check(dom.window.document.querySelectorAll('#clarifyList li.is-done').length === 2, '需求 · 答复后阻断澄清项标记已答');
+    check(q('#gateStatusText').textContent.includes('1'), `需求 · 答复后只剩依据阻断（实际：${q('#gateStatusText').textContent.trim()}）`);
+    q('#gateStatusBtn').click();
+    q('#gateEvidenceAction').click();
+    check(q('#gateStatusText').textContent.includes('通过'), '需求 · 依据归档后门禁通过');
+    check(q('#confirmBtn').disabled === false, '需求 · 门禁通过后可确认');
+    q('#confirmBtn').click();
+    await wait(2700);
+    check(q('#confirmedBar').hidden === false, '需求 · 确认横幅');
     check(errors.length === 0, `需求 · 无报错（${errors.join(' ; ')}）`);
   } finally { dom.window.close(); }
 }

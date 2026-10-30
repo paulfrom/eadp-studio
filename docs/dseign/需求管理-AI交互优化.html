@@ -915,15 +915,30 @@
   let submitting = false;
   let consistency = 'none';
   const declared = { core: true, acceptance: true };
+  const decisions = new Set();
+  const pendingAnswers = new Map();
   let evidenceFixed = false;
   let structure = false;
   let toastTimer = 0;
   let compareTimer = 0;
 
-  function blockingOpen() { return 2; }
+  function blockingOpen() { return Math.max(0, 2 - decisions.size); }
   function businessBlocked() { return blockingOpen() > 0 || !declared.core || !declared.acceptance; }
   function evidenceBlocked() { return !evidenceFixed; }
   function blockedGates() { return (businessBlocked() ? 1 : 0) + (evidenceBlocked() ? 1 : 0); }
+
+  function markClarified(key) {
+    const li = $('#clarifyList li[data-key="' + key + '"]');
+    if (!li || li.classList.contains('is-done')) return false;
+    li.classList.add('is-done');
+    const sev = $('.sev', li);
+    if (sev) { sev.textContent = '已答'; sev.className = 'sev norm'; }
+    const link = $('.link', li);
+    if (link) link.remove();
+    answered = Math.min(8, answered + 1);
+    renderClarify();
+    return true;
+  }
 
   function renderClarify() {
     statusClarify.textContent = answered + '/8';
@@ -1190,12 +1205,14 @@
   });
 
   $$('.decision').forEach(decision => {
+    const key = decision.dataset.key;
     $$('.choice', decision).forEach(choice => {
       choice.addEventListener('click', () => {
         $$('.choice', decision).forEach(other => {
           other.setAttribute('aria-pressed', String(other === choice));
           other.classList.toggle('is-selected', other === choice);
         });
+        pendingAnswers.set(key, choice.textContent.trim());
         decisionAnswerInserted = false;
         const selected = $$('.decision').filter(item => $('.choice[aria-pressed="true"]', item)).length;
         $('#decideCount').textContent = selected ? `已选 ${selected}/2 项` : '2 项待答';
@@ -1329,7 +1346,10 @@
     msgField.value = '';
     if (decisionAnswerInserted && text.includes('我对本轮问题的回答是：')) {
       decisionAnswerInserted = false;
+      pendingAnswers.forEach((answer, key) => { decisions.add(key); markClarified(key); });
+      pendingAnswers.clear();
       $('#decideCount').textContent = '已发送，等待 AI 下一轮';
+      refreshFlow();
     }
     turn.scrollIntoView({ behavior: 'smooth', block: 'end' });
   });

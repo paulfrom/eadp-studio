@@ -28,40 +28,108 @@
       <div class="collaboration-strip" aria-label="当前协作现场"><button id="task-picker" class="subtle-button" data-action="drawer" data-value="tasks"><span data-icon="layers"></span><span id="task-label">我的事项与队列</span><span data-icon="chevron-down"></span></button><span id="task-context" aria-live="polite"></span><button class="text-button" data-action="drawer" data-value="diagnostics">现场详情</button></div>
       <div class="workspace-body" id="workspace-body">
         <aside class="ai-panel" id="ai-panel" aria-label="AI 协作">
-          <div class="panel-heading"><div><span data-icon="spark"></span><strong>原型 AI 协作</strong></div><button class="icon-button" data-action="toggle-ai" aria-label="收起 AI 协作" title="收起 AI 协作"><span data-icon="panel-left"></span></button></div>
-          <div class="session-line"><span class="status-dot"></span>原生会话设计占位<span>项目原型</span></div>
-          <div class="chat-scroll" id="chat-scroll" aria-live="polite">
-            <div class="chat-date">今天 · 10:24</div>
-            <article class="message user-message"><div class="message-author">你</div><p>把采购订单、审批记录和供应商目录连成一个可操作原型。订单能新建和编辑，审批可追溯，供应商信息能查阅。</p></article>
-            <article class="message assistant-message"><div class="message-author"><span class="ai-emblem" aria-hidden="true">E</span>EADP 助手 <span class="message-time">10:25</span></div><p>已将 3 项需求整理到同一个采购协同原型。你可以在右侧切换业务页面，连起来核对流程和规则。</p><ul class="chat-list"><li>订单列表与状态筛选</li><li>新建、编辑与金额校验</li><li>审批记录与供应商目录</li></ul><div class="change-card"><div class="change-heading"><span data-icon="files"></span>本轮变更 <span>3 个文件</span></div><button data-action="open-file" data-value="page"><span class="file-kind">TSX</span><span>PurchaseOrders/index.tsx</span><small>+86 −12</small></button><button data-action="open-file" data-value="approvals"><span class="file-kind">TSX</span><span>ApprovalRecords/index.tsx</span><small>+42</small></button><button data-action="open-file" data-value="suppliers"><span class="file-kind">TSX</span><span>Suppliers/index.tsx</span><small>+38</small></button><button class="change-footer" data-action="drawer" data-value="diff">查看本轮变更对比 <span aria-hidden="true">→</span></button></div><p class="chat-caption">右侧预览已就绪。工程检查通过后，由你确认业务是否符合预期。</p></article>
+          <div class="panel-heading">
+            <div><span class="code-chip">原型</span><strong>采购协同原型</strong></div>
+            <span class="toolbar-spacer"></span>
+            <span class="session-chip" id="session-chip">会话 · 项目原型</span>
+            <button class="icon-button" data-action="toggle-ai" aria-label="收起 AI 协作" title="收起 AI 协作"><span data-icon="panel-left"></span></button>
+          </div>
+          <div class="chat-scroll transcript" id="chat-scroll" aria-live="polite">
+            <button class="past-turn" type="button" data-action="drawer" data-value="collection">第 6 轮 · 已把订单、审批与供应商合到同一个原型<span class="past-time">10:24</span></button>
+            <article class="turn">
+              <div class="turn-meta"><span class="ai-mark">E</span>原型协作助手<time>10:25</time><span class="model">会话设计占位</span></div>
+              <p class="lead">已将 <strong>3 项需求</strong>整理到同一个采购协同原型。<span class="quiet">切页面、切文件都不重建会话，原型范围也不变。</span></p>
+              <section class="decide" aria-label="需要你决定">
+                <div class="decide-head"><b>需要你决定</b><span>影响 3 个业务页面</span><span class="pill" id="decide-count">3 项</span></div>
+                <div class="decision" data-key="orders">
+                  <p class="decision-q">订单新建与草稿编辑的金额口径是否一致？</p>
+                  <p class="decision-meta">来自第 6 轮讨论 · 影响采购订单与审批记录</p>
+                  <div class="choices">
+                    <button class="choice" type="button" data-decision="orders" aria-pressed="false">按当前样例</button>
+                    <button class="choice" type="button" data-decision="orders" aria-pressed="false">需要调整</button>
+                  </div>
+                </div>
+                <div class="decision" data-key="approvals">
+                  <p class="decision-q">审批过程是否要展示处理意见？</p>
+                  <p class="decision-meta">来自第 6 轮讨论 · 影响审批记录</p>
+                  <div class="choices">
+                    <button class="choice" type="button" data-decision="approvals" aria-pressed="false">展示意见</button>
+                    <button class="choice" type="button" data-decision="approvals" aria-pressed="false">只展示结果</button>
+                  </div>
+                </div>
+                <div class="decision" data-key="suppliers">
+                  <p class="decision-q">供应商目录是否允许从订单反向查看？</p>
+                  <p class="decision-meta">来自第 6 轮讨论 · 影响供应商目录</p>
+                  <div class="choices">
+                    <button class="choice" type="button" data-decision="suppliers" aria-pressed="false">允许反查</button>
+                    <button class="choice" type="button" data-decision="suppliers" aria-pressed="false">只读目录</button>
+                  </div>
+                </div>
+              </section>
+              <details class="evidence">
+                <summary><span data-icon="chevron-down"></span>依据 3 项需求</summary>
+                <ul>
+                  <li>REQ-0012 采购订单管理</li>
+                  <li>REQ-0013 审批记录</li>
+                  <li>REQ-0014 供应商目录</li>
+                </ul>
+              </details>
+              <section class="proposal" aria-label="本轮变更">
+                <div class="proposal-top"><span data-icon="spark"></span><span class="proposal-title">本轮变更<small>3 个文件</small></span></div>
+                <div class="proposal-stats"><span><b>3</b> 个文件</span><span class="add">+166</span><span class="del">−12</span><span class="proposal-path">原型代码</span></div>
+                <div class="proposal-files">
+                  <button type="button" data-action="open-file" data-value="page"><span class="file-kind">TSX</span><span>PurchaseOrders/index.tsx</span><small>+86 −12</small></button>
+                  <button type="button" data-action="open-file" data-value="approvals"><span class="file-kind">TSX</span><span>ApprovalRecords/index.tsx</span><small>+42</small></button>
+                  <button type="button" data-action="open-file" data-value="suppliers"><span class="file-kind">TSX</span><span>Suppliers/index.tsx</span><small>+38</small></button>
+                </div>
+                <div class="proposal-foot"><span class="hint">写入前可逐项核对</span><button class="text-button" data-action="drawer" data-value="diff">查看变更对比</button></div>
+              </section>
+              <p class="lead quiet">右侧预览已就绪。业务是否符合预期，由你在三个页面里实际核对。</p>
+            </article>
             <div class="conversation-end"><span data-icon="check"></span>示例实现已就绪</div>
           </div>
-          <div class="composer-area"><button class="context-chip" data-action="drawer" data-value="collection"><span data-icon="files"></span>需求集合 · 3 项<span data-icon="chevron-right"></span></button><form id="chat-form"><label class="sr-only" for="chat-input">描述需要调整的内容</label><textarea id="chat-input" rows="3" placeholder="继续完善订单、审批与供应商之间的业务体验…"></textarea><div class="composer-bottom"><span>交互稿模拟 · 不调用 AI</span><button class="send-button" type="submit" aria-label="发送模拟消息"><span data-icon="arrow-up"></span></button></div></form><p class="composer-hint">Enter 发送 · Shift + Enter 换行</p></div>
+          <div class="decision-answer-dock" id="decision-dock" hidden>
+            <span id="decision-status">选择后插入输入草稿，发送才会记录你的回答。</span>
+            <button type="button" id="insert-decisions">插入所选回答</button>
+          </div>
+          <form class="composer" id="chat-form">
+            <div class="composer-box">
+              <label class="sr-only" for="chat-input">描述需要调整的内容</label>
+              <textarea id="chat-input" rows="2" placeholder="继续完善订单、审批与供应商之间的业务体验…"></textarea>
+              <div class="composer-tools">
+                <button class="tool context-chip" type="button" data-action="drawer" data-value="collection"><span data-icon="files"></span>需求集合 · 3 项</button>
+                <button class="tool" type="button" data-action="drawer" data-value="diff"><span data-icon="diff"></span>本轮变更</button>
+                <span class="model">会话设计占位</span>
+                <button class="send" type="submit" aria-label="发送模拟消息"><span data-icon="arrow-up"></span></button>
+              </div>
+            </div>
+            <p class="composer-hint">Enter 发送 · Shift + Enter 换行 · 交互稿模拟，不调用 AI</p>
+          </form>
         </aside>
         <section class="implementation-panel" aria-label="实现工作区">
           <div class="implementation-toolbar">
             <button id="show-ai" class="icon-button" data-action="toggle-ai" aria-label="展开 AI 协作" title="展开 AI 协作" hidden><span data-icon="panel-left"></span></button>
             <div class="mode-switch" role="tablist" aria-label="工作区模式"><button role="tab" aria-selected="true" id="preview-tab" aria-controls="preview-pane" data-action="mode" data-value="preview"><span data-icon="eye"></span>预览</button><button role="tab" aria-selected="false" id="code-tab" aria-controls="code-pane" data-action="mode" data-value="code"><span data-icon="code"></span>代码</button></div>
-            <div class="toolbar-spacer"></div><button id="run-button" class="subtle-button" data-action="run"><span data-icon="square"></span>停止</button><button id="check-button" class="subtle-button" data-action="check"><span data-icon="check-circle"></span><span>工程检查</span><i class="tiny-dot good"></i></button><button class="primary-button complete-button" data-action="drawer" data-value="confirm">确认原型<span data-icon="arrow-right"></span></button><div class="menu-anchor"><button class="icon-button" id="more-button" data-action="more" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false"><span data-icon="more"></span></button><div class="dropdown-menu" id="more-menu" role="menu" hidden><button role="menuitem" data-action="restart"><span data-icon="refresh"></span>重新运行预览</button><button role="menuitem" data-action="drawer" data-value="diff"><span data-icon="diff"></span>变更对比</button><button role="menuitem" data-action="drawer" data-value="diagnostics"><span data-icon="settings"></span>诊断信息</button><div class="menu-divider"></div><button role="menuitem" data-action="drawer" data-value="demo"><span data-icon="sliders"></span>演示状态</button></div></div>
+            <div class="toolbar-spacer"></div><button id="run-button" class="subtle-button" data-action="run"><span data-icon="square"></span>停止</button><button class="primary-button complete-button" data-action="drawer" data-value="confirm">确认原型<span data-icon="arrow-right"></span></button><div class="menu-anchor"><button class="icon-button" id="more-button" data-action="more" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false"><span data-icon="more"></span></button><div class="dropdown-menu" id="more-menu" role="menu" hidden><button role="menuitem" data-action="restart"><span data-icon="refresh"></span>重新运行预览</button><button role="menuitem" data-action="drawer" data-value="diff"><span data-icon="diff"></span>变更对比</button><button role="menuitem" data-action="drawer" data-value="diagnostics"><span data-icon="settings"></span>诊断信息</button><div class="menu-divider"></div><button role="menuitem" data-action="drawer" data-value="demo"><span data-icon="sliders"></span>演示状态</button></div></div>
           </div>
           <div id="preview-pane" class="mode-pane preview-pane" role="tabpanel" aria-labelledby="preview-tab">
-            <div class="preview-toolbar"><span class="runtime-pill" id="runtime-pill"><i></i>预览运行中</span><span class="toolbar-divider"></span><label class="route-selector"><span data-icon="globe"></span><span class="sr-only">预览页面</span><select id="route-select"><option value="orders">/purchase-orders</option><option value="approvals">/approval-records</option><option value="suppliers">/suppliers</option></select></label><button class="icon-button" data-action="refresh-preview" aria-label="刷新预览页面" title="刷新预览页面"><span data-icon="refresh"></span></button><div class="toolbar-spacer"></div><div class="device-switch" aria-label="预览宽度"><button class="selected icon-button" data-action="device" data-value="desktop" aria-pressed="true" aria-label="桌面宽度" title="桌面"><span data-icon="monitor"></span></button><button class="icon-button" data-action="device" data-value="tablet" aria-pressed="false" aria-label="平板宽度 768 像素" title="平板 768px"><span data-icon="tablet"></span></button><button class="icon-button" data-action="device" data-value="mobile" aria-pressed="false" aria-label="手机宽度 390 像素" title="手机 390px"><span data-icon="phone"></span></button></div><span class="toolbar-divider"></span><button class="icon-button" data-action="fullscreen" aria-label="切换预览全屏" title="全屏预览"><span data-icon="maximize"></span></button><button class="icon-button" data-action="external" aria-label="在新窗口打开模拟预览" title="在新窗口打开"><span data-icon="external"></span></button></div>
+            <div class="preview-toolbar"><span class="runtime-pill" id="runtime-pill"><i></i>预览运行中</span><span class="toolbar-divider"></span><label class="route-selector"><span data-icon="globe"></span><span class="sr-only">预览页面</span><select id="route-select"><option value="orders">/purchase-orders</option><option value="approvals">/approval-records</option><option value="suppliers">/suppliers</option></select></label><button class="icon-button" data-action="refresh-preview" aria-label="刷新预览页面" title="刷新预览页面"><span data-icon="refresh"></span></button><div class="toolbar-spacer"></div><span class="toolbar-divider"></span><button class="icon-button" data-action="fullscreen" aria-label="切换预览全屏" title="全屏预览"><span data-icon="maximize"></span></button><button class="icon-button" data-action="external" aria-label="在新窗口打开模拟预览" title="在新窗口打开"><span data-icon="external"></span></button></div>
             <div id="stale-preview" class="notice warning stale-notice" hidden><span data-icon="clock"></span><span>源码已变更，当前显示上一次运行的预览。</span><button class="text-button" data-action="restart">重新运行</button></div>
-            <div class="preview-canvas" id="preview-canvas"><div class="preview-frame-wrap" id="preview-frame-wrap"><iframe id="business-preview" title="采购协同平台模拟业务预览" sandbox="allow-scripts"></iframe></div><div class="runtime-placeholder" id="runtime-placeholder" hidden></div></div>
-            <div class="preview-footnote"><span><span data-icon="shield"></span>合成业务数据 · 仅用于需求核对</span><span id="preview-size">自适应桌面</span></div>
+            <div class="preview-canvas" id="preview-canvas"><div class="preview-frame-wrap" id="preview-frame-wrap"><iframe id="business-preview" title="采购协同平台模拟业务预览" sandbox="allow-scripts allow-forms"></iframe></div><div class="runtime-placeholder" id="runtime-placeholder" hidden></div></div>
+            <div class="preview-footnote"><span class="footnote-mode"><span data-icon="monitor"></span>自适应桌面</span><span id="preview-size">宽度跟随画布</span></div>
           </div>
           <div id="code-pane" class="mode-pane code-pane" role="tabpanel" aria-labelledby="code-tab" hidden>
             <aside class="file-tree" id="file-tree" aria-label="工程文件"><div class="tree-header"><strong>文件</strong><button class="icon-button" data-action="toggle-tree" aria-label="收起文件树"><span data-icon="panel-left"></span></button></div><details open><summary><span data-icon="folder"></span>原型代码</summary><div class="tree-folder">src / pages / PurchaseOrders</div><button data-action="open-file" data-value="page" class="tree-file active"><span class="file-kind">TSX</span>index.tsx<span class="modified-mark">M</span></button><button data-action="open-file" data-value="style" class="tree-file"><span class="file-kind less">LESS</span>index.less<span class="modified-mark">M</span></button><button data-action="open-file" data-value="service" class="tree-file"><span class="file-kind">TS</span>service.ts</button><div class="tree-folder">src / pages / ApprovalRecords</div><button data-action="open-file" data-value="approvals" class="tree-file"><span class="file-kind">TSX</span>index.tsx<span class="modified-mark">M</span></button><div class="tree-folder">src / pages / Suppliers</div><button data-action="open-file" data-value="suppliers" class="tree-file"><span class="file-kind">TSX</span>index.tsx<span class="modified-mark">M</span></button><div class="tree-folder">src / mock</div><button data-action="open-file" data-value="fixtures" class="tree-file"><span class="file-kind">TS</span>fixtures.ts<span class="modified-mark">M</span></button><button data-action="open-file" data-value="handlers" class="tree-file"><span class="file-kind">TS</span>handlers.ts</button><div class="tree-folder">config</div><button data-action="open-file" data-value="routes" class="tree-file"><span class="file-kind json">{ }</span>routes.json<span data-icon="lock"></span></button></details><div class="tree-note"><span data-icon="shield"></span>仅授权样例文件可编辑</div></aside>
             <div class="editor-area"><div class="file-tabs" id="file-tabs" role="tablist" aria-label="已打开的文件"></div><div class="editor-toolbar"><button class="icon-button" id="show-tree" data-action="toggle-tree" aria-label="展开文件树" hidden><span data-icon="panel-left"></span></button><span class="breadcrumb" id="file-breadcrumb"></span><span class="readonly-label" id="readonly-label">只读预览</span><div class="toolbar-spacer"></div><button class="subtle-button" data-action="drawer" data-value="diff"><span data-icon="diff"></span>变更对比</button><button class="subtle-button" id="edit-file" data-action="edit-file"><span data-icon="edit"></span>编辑</button><button class="subtle-button" id="cancel-edit" data-action="cancel-edit" hidden>取消</button><button class="primary-button" id="save-file" data-action="save-file" hidden>保存</button></div><div class="code-search"><span data-icon="search"></span><label class="sr-only" for="code-search">搜索当前文件</label><input id="code-search" placeholder="在当前文件中搜索…"><span id="search-result"></span><button class="icon-button" data-action="search-next" aria-label="下一个搜索结果"><span data-icon="chevron-down"></span></button></div><div class="source-container" id="source-container"><pre class="highlighted-code" id="highlighted-code" tabindex="0" aria-label="源码只读内容"></pre><label class="sr-only" for="source-editor">编辑当前样例文件源码</label><textarea id="source-editor" class="source-editor" spellcheck="false" hidden></textarea></div><div class="editor-status"><span id="file-status">TypeScript React</span><span id="cursor-status">UTF-8 · LF</span><span>样例源码 · 保存仅影响本页</span></div></div>
           </div>
-          <section class="output-panel" id="output-panel" aria-label="运行与检查输出"><div class="output-tabs"><button class="output-tab" data-action="output" data-value="runtime" aria-expanded="false"><span data-icon="terminal"></span>运行输出</button><button class="output-tab" data-action="output" data-value="checks" aria-expanded="false"><span data-icon="check-circle"></span>工程检查<span class="count-label" id="checks-count">5/5</span></button><button class="output-tab" data-action="output" data-value="problems" aria-expanded="false"><span data-icon="alert"></span>问题<span class="count-label" id="problem-count">0</span></button><div class="toolbar-spacer"></div><span class="output-summary" id="output-summary"><i class="tiny-dot good"></i>工程检查通过</span><button class="icon-button" data-action="collapse-output" aria-label="展开或折叠输出" id="output-toggle"><span data-icon="chevron-up"></span></button></div><div class="output-content" id="output-content" hidden></div></section>
+          <section class="output-panel" id="output-panel" aria-label="运行输出"><div class="output-tabs"><button class="output-tab" data-action="output" data-value="runtime" aria-expanded="false"><span data-icon="terminal"></span>运行输出</button><button class="output-tab" data-action="output" data-value="problems" aria-expanded="false"><span data-icon="alert"></span>问题<span class="count-label" id="problem-count">0</span></button><div class="toolbar-spacer"></div><span class="output-summary" id="output-summary"><i class="tiny-dot good"></i>预览运行中</span><button class="icon-button" data-action="collapse-output" aria-label="展开或折叠输出" id="output-toggle"><span data-icon="chevron-up"></span></button></div><div class="output-content" id="output-content" hidden></div></section>
         </section>
       </div>
       <footer class="workbench-footer"><span><span class="status-dot"></span><span id="workspace-status">当前源码已保存</span></span><span><button class="text-button" data-action="drawer" data-value="collection">需求集合 · 3 项</button> <span class="footer-dot">·</span> 页面与 Mock · 未连接真实服务 <span class="footer-dot">·</span> <button class="text-button" data-action="drawer" data-value="diagnostics">诊断</button></span></footer>
     </main>
   </div>
   <div class="drawer-backdrop" id="drawer-backdrop" hidden></div><aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden><header class="drawer-header"><div><span class="eyebrow" id="drawer-eyebrow">工作台</span><h2 id="drawer-title"></h2></div><button class="icon-button" data-action="close-drawer" aria-label="关闭面板"><span data-icon="close"></span></button></header><div class="drawer-body" id="drawer-body"></div><footer class="drawer-footer" id="drawer-footer"></footer></aside>
-  <dialog id="unsaved-dialog"><div class="dialog-icon" data-icon="edit"></div><h2>当前文件有未保存的修改</h2><p>保存后将需要重新运行工程检查和预览。你也可以放弃此次编辑。</p><div class="dialog-actions"><button class="subtle-button" data-action="unsaved-cancel">继续编辑</button><button class="subtle-button danger-text" data-action="unsaved-discard">放弃修改</button><button class="primary-button" data-action="unsaved-save">保存并继续</button></div></dialog>
+  <dialog id="unsaved-dialog"><div class="dialog-icon" data-icon="edit"></div><h2>当前文件有未保存的修改</h2><p>保存后需要重新运行预览，页面才会对应新的源码。你也可以放弃此次编辑。</p><div class="dialog-actions"><button class="subtle-button" data-action="unsaved-cancel">继续编辑</button><button class="subtle-button danger-text" data-action="unsaved-discard">放弃修改</button><button class="primary-button" data-action="unsaved-save">保存并继续</button></div></dialog>
   <div class="toast" id="toast" role="status" hidden></div>
 </body>
 </html>

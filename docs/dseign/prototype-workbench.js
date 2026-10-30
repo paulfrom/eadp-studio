@@ -227,16 +227,14 @@ export default function Suppliers() {
   Object.values(files).forEach((file) => { file.original = file.text; file.tabLabel = file.name === 'index.tsx' ? file.path.split('/').slice(-2).join('/') : file.name; });
   const state = {
     mode: 'preview', runtime: 'running', revision: 1, previewRevision: 1,
-    checkRevision: 1, checks: 'passed', checkItems: ['passed', 'passed', 'passed', 'passed', 'passed'],
-    route: 'orders', device: 'desktop', aiCollapsed: window.innerWidth <= 1100, treeCollapsed: window.innerWidth <= 800,
+    route: 'orders', aiCollapsed: window.innerWidth <= 1100, treeCollapsed: window.innerWidth <= 800,
     openFiles: ['page', 'style'], activeFile: 'page', editing: false, draft: '',
     drawer: null, output: null, pendingAction: null,
-    failNextRun: false, failChecks: false, failSave: false, emptyPreview: false,
+    failNextRun: false, failSave: false, emptyPreview: false,
     submitted: false, submitting: false, review: ['unreviewed', 'unreviewed', 'unreviewed', 'unreviewed'],
     issues: ['', '', '', ''], searchMatches: [], searchIndex: 0, logs: [
       ['10:25:02', 'ready', '模拟项目原型已载入：订单、审批与供应商'],
       ['10:25:03', 'ready', 'Mock 合成数据就绪，业务预览已运行'],
-      ['10:25:05', 'ready', '工程检查通过：typecheck / lint / build / mock / browser'],
     ],
   };
   // Each simulated item owns a separate in-memory scene; page reload deliberately resets it.
@@ -258,14 +256,15 @@ export default function Suppliers() {
   function switchItem(id) {
     const item = items.find((entry) => entry.id === id); if (!item || item === selectedItem) return;
     guardUnsaved(() => {
-      saveScene(); ++runtimeToken; ++checkToken;
+      saveScene(); ++runtimeToken;
       selectedItem = item;
       const scene = item.scene;
       Object.keys(state).forEach((key) => { delete state[key]; });
-      Object.assign(state, structuredClone(scene?.state || { ...initialScene, runtime: 'stopped', checks: 'stale', checkRevision: 0, previewRevision: 0 }));
+      Object.assign(state, structuredClone(scene?.state || { ...initialScene, runtime: 'stopped', previewRevision: 0 }));
       Object.entries(scene?.files || initialFiles).forEach(([key, text]) => { files[key].text = text; });
       $('chat-scroll').innerHTML = scene?.chat || '<div class="conversation-end">此事项尚未发送首次实现指令 · 模拟现场</div>';
       $('chat-input').value = scene?.input || '';
+      renderDecisions();
       taskNotice = ''; expansionFailed = false;
       closeDrawer(); renderChrome(); renderEditor(); mountPreview();
       toast('已切换独立模拟现场；未启动模型或发送指令。');
@@ -274,7 +273,7 @@ export default function Suppliers() {
   function renderItemContext() {
     $('task-label').textContent = `${selectedItem.title} · ${selectedItem.phase}`;
     $('task-context').textContent = `模拟现场 · 开发 ${selectedItem.claims.join('、')} · 源码 r${state.revision} / 预览 r${state.previewRevision}`;
-    document.querySelector('.session-line').innerHTML = `<span class="status-dot"></span>模拟会话 · ${selectedItem.id}<span>${selectedItem.phase}</span>`;
+    document.querySelector('#session-chip').textContent = `会话 · ${selectedItem.id}`;
   }
   function renderItems() {
     const running = items.find((item) => item.phase === '正在执行');
@@ -288,8 +287,8 @@ export default function Suppliers() {
     const running = items.find((item) => item.phase === '正在执行' && item !== selectedItem);
     if (running) { taskNotice = `请先暂停「${running.title}」再继续；已排队指令仍保留，未发送。`; renderItems(); return; }
     if (!selectedItem.sent) {
-      const message = document.createElement('article'); message.className = 'message user-message';
-      message.innerHTML = `<div class="message-author">你 · 排队实现指令（模拟发送）</div><p>${escapeHTML(selectedItem.firstInstruction)}</p>`;
+      const message = document.createElement('article'); message.className = 'turn user-message';
+      message.innerHTML = `<div class="turn-meta"><span class="avatar-mark">林</span>我<time>现在</time></div><p class="lead">${escapeHTML(selectedItem.firstInstruction)}</p>`;
       $('chat-scroll').append(message); selectedItem.sent = true;
     }
     selectedItem.phase = '正在执行'; taskNotice = '正在执行仅为交互状态，无模型请求或代码写入；可暂停，其他事项不会自动开始。';
@@ -316,13 +315,11 @@ export default function Suppliers() {
       }
     });
   }
-  const checkNames = ['typecheck', 'lint', 'build', 'mock', 'browser'];
-  const checkDetails = ['类型检查', '代码规范', '原型构建', 'Mock 数据与请求', '页面启动与路由'];
   const reviewTexts = ['采购订单：搜索、状态筛选与空态符合使用习惯，金额计算与草稿编辑规则清晰。', '审批记录：订单编号、处理节点、人员与意见能够相互追溯。', '供应商目录：名称、采购类别、联系人与可用状态便于查阅。', '跨需求体验：订单、审批与供应商页面导航一致，异常反馈和恢复操作连贯。'];
-  let toastTimer, runtimeToken = 0, checkToken = 0, lastFocus = null;
+  let toastTimer, runtimeToken = 0, lastFocus = null;
   function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3200); }
   function addLog(message, kind = 'ready') { state.logs.push([new Date().toLocaleTimeString('zh-CN', { hour12: false }), kind, message]); if (state.output === 'runtime') renderOutput(); }
-  function canConfirm() { return !state.editing && state.checks === 'passed' && state.checkRevision === state.revision; }
+  function canConfirm() { return !state.editing; }
   function renderChrome() {
     renderItemContext();
     $('preview-pane').hidden = state.mode !== 'preview'; $('code-pane').hidden = state.mode !== 'code';
@@ -331,25 +328,17 @@ export default function Suppliers() {
     $('file-tree').hidden = state.treeCollapsed; $('show-tree').hidden = !state.treeCollapsed;
     $('workspace-body').classList.toggle('ai-expanded', window.innerWidth <= 1100 && !state.aiCollapsed);
     $('code-pane').classList.toggle('tree-expanded', window.innerWidth <= 800 && !state.treeCollapsed);
-    document.querySelector('.context-chip').innerHTML = `${icon('files')}需求集合 · 3 项${icon('chevron-right')}`;
+    document.querySelector('.context-chip').innerHTML = `${icon('files')}需求集合 · 3 项`;
     $('stale-preview').hidden = state.previewRevision === state.revision || state.runtime !== 'running';
     $('run-button').innerHTML = icon(state.runtime === 'running' ? 'square' : 'play') + (state.runtime === 'running' ? '停止' : state.runtime === 'starting' ? '启动中' : '运行预览');
     $('run-button').disabled = state.runtime === 'starting';
-    const checkLabel = state.checks === 'running' ? '检查中' : '工程检查';
-    $('check-button').innerHTML = icon('check-circle') + `<span>${checkLabel}</span><i class="tiny-dot ${state.checks === 'passed' && state.checkRevision === state.revision ? 'good' : state.checks === 'failed' ? 'bad' : 'warn'}"></i>`;
-    $('check-button').disabled = state.checks === 'running';
-    const checkSummary = state.checks === 'running' ? '正在检查…' : state.checks === 'failed' ? '工程检查失败' : state.checkRevision !== state.revision ? '源码已更改 · 待检查' : '工程检查通过';
-    $('output-summary').innerHTML = `<i class="tiny-dot ${state.checks === 'passed' && state.checkRevision === state.revision ? 'good' : state.checks === 'failed' ? 'bad' : 'warn'}"></i>${checkSummary}`;
-    $('checks-count').textContent = state.checks === 'running' ? '…' : state.checkRevision !== state.revision ? '待检查' : `${state.checkItems.filter((item) => item === 'passed').length}/5`;
-    $('problem-count').textContent = String((state.checks === 'failed' ? 1 : 0) + (state.runtime === 'failed' ? 1 : 0));
-    $('workspace-status').textContent = state.editing ? '正在编辑样例源码 · 尚未保存' : state.submitted ? '模拟基线已形成' : '当前源码已保存';
     const runtimeNames = { running: '预览运行中', stopped: '预览已停止', starting: '正在启动', failed: '预览启动失败' };
+    $('output-summary').innerHTML = `<i class="tiny-dot ${state.runtime === 'failed' ? 'bad' : state.runtime === 'running' ? 'good' : 'warn'}"></i>${runtimeNames[state.runtime]}`;
+    $('problem-count').textContent = String(state.runtime === 'failed' ? 1 : 0);
+    $('workspace-status').textContent = state.editing ? '正在编辑样例源码 · 尚未保存' : state.submitted ? '模拟基线已形成' : '当前源码已保存';
     $('runtime-pill').className = 'runtime-pill ' + state.runtime;
     $('runtime-pill').innerHTML = '<i></i>' + runtimeNames[state.runtime];
     $('route-select').value = state.route;
-    $('preview-frame-wrap').dataset.device = state.device;
-    $('preview-size').textContent = { desktop: '自适应桌面', tablet: '平板 · 768 px', mobile: '手机 · 390 px' }[state.device];
-    document.querySelectorAll('[data-action="device"]').forEach((node) => { const selected = node.dataset.value === state.device; node.classList.toggle('selected', selected); node.setAttribute('aria-pressed', String(selected)); });
     renderRuntime(); hydrateIcons();
   }
   function renderRuntime() {
@@ -390,7 +379,7 @@ export default function Suppliers() {
     const file = files[state.activeFile]; if (!state.editing || !file?.editable) return;
     const changed = file.text !== $('source-editor').value;
     file.text = $('source-editor').value; state.editing = false; state.draft = '';
-    if (changed) { state.revision++; state.submitted = false; state.checks = 'stale'; addLog(`样例源码已保存：${file.path}。检查与预览待更新。`); toast('样例已保存。请重新检查并运行预览；业务预览使用独立演示数据。'); }
+    if (changed) { state.revision++; state.submitted = false; addLog(`样例源码已保存：${file.path}。预览待更新。`); toast('样例已保存。请重新运行预览；业务预览使用独立演示数据。'); }
     renderEditor(); renderChrome(); if (state.output) renderOutput();
   }
   function searchCode(advance) {
@@ -415,31 +404,16 @@ export default function Suppliers() {
     }, 850);
   }
   function toggleRun() { if (state.runtime === 'running') { ++runtimeToken; state.runtime = 'stopped'; renderChrome(); addLog('预览已停止。'); } else runPreview(); }
-  function runChecks() {
-    if (state.editing) { toast('请先保存或取消源码编辑。'); return; }
-    if (state.checks === 'running') return;
-    const token = ++checkToken, checkedRevision = state.revision;
-    state.checks = 'running'; state.checkItems = Array(5).fill('pending'); state.submitted = false; state.output = 'checks'; renderChrome(); renderOutput();
-    addLog('开始模拟工程检查；不会在本机执行命令。');
-    checkNames.forEach((name, index) => setTimeout(() => {
-      if (token !== checkToken) return;
-      state.checkItems[index] = state.failChecks && index === 2 ? 'failed' : 'passed';
-      if (index === 4) { state.checkRevision = checkedRevision; state.checks = state.checkItems.includes('failed') ? 'failed' : checkedRevision === state.revision ? 'passed' : 'stale'; addLog(state.checks === 'passed' ? '模拟工程检查 5/5 通过。' : state.checks === 'failed' ? '模拟 build 检查失败，请修正后重试。' : '检查期间源码变更，结果已过期。', state.checks === 'failed' ? 'error' : 'ready'); }
-      renderChrome(); renderOutput(); if (state.drawer === 'confirm') renderConfirm();
-    }, 240 * (index + 1)));
-  }
   function renderOutput() {
     $('output-content').hidden = !state.output;
     document.querySelectorAll('.output-tab').forEach((button) => { const active = state.output === button.dataset.value; button.classList.toggle('active', active); button.setAttribute('aria-expanded', String(active)); });
     $('output-toggle').innerHTML = icon(state.output ? 'chevron-down' : 'chevron-up');
     if (!state.output) return;
     if (state.output === 'runtime') $('output-content').innerHTML = '<div class="output-hint">以下为只读模拟日志，无开放终端或命令输入。</div>' + state.logs.map(([time, kind, text]) => `<div class="log-line"><span class="log-time">${time}</span><span class="${kind === 'error' ? 'log-error' : 'log-ok'}">${escapeHTML(text)}</span></div>`).join('');
-    else if (state.output === 'checks') $('output-content').innerHTML = '<div class="output-hint">工程检查不代替业务核对 · 本页仅模拟检查结果，不执行真实工具。</div>' + checkNames.map((name, index) => `<div class="check-row"><span class="${state.checkItems[index] === 'failed' ? 'log-error' : state.checkItems[index] === 'passed' ? 'log-ok' : ''}">${icon(state.checkItems[index] === 'passed' ? 'check' : state.checkItems[index] === 'failed' ? 'alert' : 'clock')}</span><span>${name}</span><span>${checkDetails[index]}</span><small>${state.checkRevision !== state.revision && state.checks !== 'running' ? '待重新检查' : { passed: '通过', failed: '失败', pending: '等待中' }[state.checkItems[index]]}</small></div>`).join('');
     else {
       const problems = [];
-      if (state.checks === 'failed') problems.push('<div class="check-row log-error">' + icon('alert') + '<span>build</span><span>模拟构建失败：订单页面类型不匹配。</span><button class="text-button" data-action="open-file" data-value="page">查看文件</button></div>');
-      if (state.runtime === 'failed') problems.push('<div class="check-row log-error">' + icon('alert') + '<span>启动失败</span><button class="text-button" data-action="restart">重试</button></div>');
-      $('output-content').innerHTML = problems.join('') || `<div class="empty-output">${icon('check-circle')}当前没有工程问题。业务是否正确，仍需对照需求核对。</div>`;
+      if (state.runtime === 'failed') problems.push('<div class="problem-row log-error">' + icon('alert') + '<span>预览启动失败</span><button class="text-button" data-action="restart">重试启动</button></div>');
+      $('output-content').innerHTML = problems.join('') || `<div class="empty-output">${icon('check-circle')}当前没有待处理问题。业务是否正确，仍需对照需求核对。</div>`;
     }
   }
   function openDrawer(kind) {
@@ -455,7 +429,7 @@ export default function Suppliers() {
     else if (kind === 'diff') renderDiff();
     else if (kind === 'demo') renderDemo();
     else if (kind === 'diagnostics') renderDiagnostics();
-    else if (kind === 'guide') $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">本页是可点击设计稿。AI、工程命令、构建与原型确认流程均为模拟，不构成产品验收。</div><h3 style="margin-top:24px">建议按这个顺序体验</h3><ol><li>通过需求集合定位订单、审批和供应商，或在预览内连续切换页面。</li><li>操作订单的新建、校验、保存与错误恢复，查看审批过程与供应商目录。</li><li>点击会话变更文件切到代码，编辑样例并保存，观察工程检查和预览过期。</li><li>运行工程检查，再打开「确认原型」，跨需求核对整体体验。</li><li>发现问题时放入 AI 草稿，继续同一个项目原型的协作。</li></ol></section><section class="drawer-section"><h3>操作边界</h3><p>需求集合仅提供业务上下文与定位，不要求先选定或确认集合。源码是缩略示例，编辑后不会实际执行构建或改变内嵌页面。</p><p>业务核对只记录判断，不新增逐项勾选门禁。未保存修改或工程检查无效会阻止模拟确认。预览停止或过期仅提示作者继续核对。</p><p>所有数据只保留在当前页内存。确认流程展示设计目标，不代表现有协同服务已实现需求集合受理。</p></section>`;
+    else if (kind === 'guide') $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">本页是可点击设计稿。AI、构建与原型确认流程均为模拟，不构成产品验收。</div><h3 style="margin-top:24px">建议按这个顺序体验</h3><ol><li>通过需求集合定位订单、审批和供应商，或在预览内连续切换页面。</li><li>操作订单的新建、校验、保存与错误恢复，查看审批过程与供应商目录。</li><li>点击会话变更文件切到代码，编辑样例并保存，观察预览过期。</li><li>运行预览，再打开「确认原型」，跨需求核对整体体验。</li><li>发现问题时放入 AI 草稿，继续同一个项目原型的协作。</li></ol></section><section class="drawer-section"><h3>操作边界</h3><p>需求集合仅提供业务上下文与定位，不要求先选定或确认集合。源码是缩略示例，编辑后不会实际执行构建或改变内嵌页面。</p><p>业务核对只记录判断，不新增逐项勾选门禁。未保存的源码修改会阻止模拟确认；预览停止或过期只提示作者继续核对。</p><p>所有数据只保留在当前页内存。确认流程展示设计目标，不代表现有协同服务已实现需求集合受理。</p></section>`;
     hydrateIcons($('drawer')); $('drawer').querySelector('button')?.focus();
   }
   function closeDrawer() {
@@ -471,7 +445,7 @@ export default function Suppliers() {
     $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">同一个项目原型覆盖这 3 项需求。这里帮助你定位相关页面和代码，不切换独立原型，也不重建当前会话。</div></section><div class="requirement-collection">${requirements.map((item) => `<article class="collection-item"><div><span class="code-chip">${item.id}</span><h3>${item.name}</h3></div><p>${item.description}</p><div class="collection-actions"><button class="subtle-button" data-action="collection-preview" data-value="${item.route}">${icon('eye')}查看页面</button><button class="subtle-button" data-action="collection-code" data-value="${item.file}">${icon('code')}定位代码</button></div></article>`).join('')}</div><section class="drawer-section" style="margin-top:22px"><p>需求集合提供业务上下文。可以跨需求查看与持续调整整个项目原型，无需先选定需求范围。</p></section>`;
   }
   function renderDiagnostics() {
-    $('drawer-body').innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>工程检查</dt><dd>修订 ${state.checkRevision} / ${state.checks}</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>事项／现场</dt><dd>${selectedItem.id} · scene-${selectedItem.id}（模拟）</dd><dt>会话／分支</dt><dd>session-${selectedItem.id} / demo/${selectedItem.id}（模拟）</dd><dt>开发占用</dt><dd>${selectedItem.claims.join("、")} · 林晓 · 模拟占用</dd><dt>认可来源</dt><dd>recognized-demo-a1；仅示意，非真实 Git SHA</dd><dt>预览实例</dt><dd>preview-${selectedItem.id}-r${state.previewRevision}（模拟）</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
+    $('drawer-body').innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>事项／现场</dt><dd>${selectedItem.id} · scene-${selectedItem.id}（模拟）</dd><dt>会话／分支</dt><dd>session-${selectedItem.id} / demo/${selectedItem.id}（模拟）</dd><dt>开发占用</dt><dd>${selectedItem.claims.join("、")} · 林晓 · 模拟占用</dd><dt>认可来源</dt><dd>recognized-demo-a1；仅示意，非真实 Git SHA</dd><dt>预览实例</dt><dd>preview-${selectedItem.id}-r${state.previewRevision}（模拟）</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
   }
   function renderDiff(id = state.activeFile || 'page') {
     const file = files[id];
@@ -480,25 +454,22 @@ export default function Suppliers() {
     $('diff-select').addEventListener('change', (event) => renderDiff(event.target.value));
   }
   function renderDemo() {
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">这些操作只切换交互稿中的模拟状态。业务故障入口收纳在此，不出现在采购业务主界面。</div></section><div class="demo-options"><button data-action="demo" data-value="run-failure"><span><strong>预览启动失败</strong><small>显示失败与重试；第一次重试可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="check-failure"><span><strong>工程检查失败</strong><small>模拟 build 失败，观察确认按钮的阻止原因</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="save-failure"><span><strong>订单保存失败${state.failSave ? ' · 已开启' : ''}</strong><small>下次保存失败并保留输入；再次保存可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="empty"><span><strong>订单空态</strong><small>清空模拟订单，可从空态新建；整页刷新恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="recover"><span><strong>恢复正常状态</strong><small>保留源码编辑，清除演示故障并重新检查、运行</small></span>${icon('refresh')}</button></div>`;
+    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">这些操作只切换交互稿中的模拟状态。业务故障入口收纳在此，不出现在采购业务主界面。</div></section><div class="demo-options"><button data-action="demo" data-value="run-failure"><span><strong>预览启动失败</strong><small>显示失败与重试；第一次重试可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="save-failure"><span><strong>订单保存失败${state.failSave ? ' · 已开启' : ''}</strong><small>下次保存失败并保留输入；再次保存可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="empty"><span><strong>订单空态</strong><small>清空模拟订单，可从空态新建；整页刷新恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="recover"><span><strong>恢复正常状态</strong><small>保留源码编辑，清除演示故障并重新运行预览</small></span>${icon('refresh')}</button></div>`;
   }
   function confirmBlockReasons() {
     const reasons = [];
     if (state.editing) reasons.push('当前文件尚在编辑，请先保存或取消。');
-    if (state.checks === 'failed') reasons.push('工程检查失败，请修正后重新检查。');
-    else if (state.checks === 'running') reasons.push('工程检查正在进行。');
-    else if (state.checkRevision !== state.revision || state.checks !== 'passed') reasons.push('当前源码还没有有效的工程检查。');
     return reasons;
   }
   function renderConfirm() {
     if (state.submitted) { renderSuccess(); return; }
     if (state.submitting) return;
     const reasons = confirmBlockReasons();
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">确认表示你认可当前项目原型的整体业务体验。工程检查不代替业务核对。</div><div class="info-card"><div class="row"><span>原型需求集合</span><button class="text-button" data-action="drawer" data-value="collection">订单、审批、供应商 · 3 项 ${icon('chevron-right')}</button></div><div class="row"><span>当前源码</span><strong>样例修订 ${state.revision}${state.editing ? ' · 有未保存编辑' : ' · 已保存'}</strong></div><div class="row"><span>工程检查</span><span class="tag ${state.checks === 'passed' && state.checkRevision === state.revision ? 'good' : state.checks === 'failed' ? 'bad' : 'warn'}">${state.checks === 'passed' && state.checkRevision === state.revision ? '5/5 通过' : state.checks === 'failed' ? '检查失败' : state.checks === 'running' ? '检查中' : '待检查'}</span></div><div class="row"><span>预览</span><span class="tag ${state.runtime === 'running' && state.previewRevision === state.revision ? 'good' : 'warn'}">${state.runtime !== 'running' ? '未运行' : state.previewRevision === state.revision ? '对应当前源码' : '旧预览 · 待重建'}</span></div></div>${reasons.length ? `<div class="drawer-notice warning">${reasons.map(escapeHTML).join('<br>')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="subtle-button" data-action="check" ${state.checks === 'running' ? 'disabled' : ''}>运行工程检查</button><button class="subtle-button" data-action="restart">重新运行预览</button></div>` : ''}</section><section class="drawer-section"><h3>业务核对参考 <span class="eyebrow">用于记录，不是新增勾选门禁</span></h3>${reviewTexts.map((text, index) => `<div class="review-item"><p>${index + 1}. ${text}</p><div class="review-actions">${[['ok', '符合'], ['issue', '有问题'], ['unreviewed', '未核对']].map(([value, label]) => `<button data-action="review" data-index="${index}" data-value="${value}" aria-pressed="${state.review[index] === value}" class="${state.review[index] === value ? 'selected' : ''}">${label}</button>`).join('')}</div>${state.review[index] === 'issue' ? `<div class="issue-draft"><label class="sr-only" for="issue-${index}">核对项 ${index + 1} 的问题说明</label><textarea id="issue-${index}" data-issue="${index}" placeholder="描述具体问题，稍后发给 AI 继续调整…">${escapeHTML(state.issues[index])}</textarea><button class="text-button" data-action="issue-to-ai" data-index="${index}">放入 AI 草稿，继续调整 ${icon('arrow-right')}</button></div>` : ''}</div>`).join('')}</section><section class="drawer-section"><h3>确认说明</h3><p>请结合相关需求核对订单、审批与供应商之间的流程、规则和异常。未核对或问题记录由你判断是否影响本次完成，不自动代替业务判断。</p><p>本交互稿模拟完整原型确认及基线衔接的设计目标，不代表现有协同服务已支持需求集合受理；不执行真实 Git、协同受理或发布。</p><button class="text-button" data-action="optional-review">${icon('spark')}AI 辅助评审（可选）</button></section>`;
+    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">确认表示你认可当前项目原型的整体业务体验。预览未运行或已过期只作提示，不阻断确认。</div><div class="info-card"><div class="row"><span>原型需求集合</span><button class="text-button" data-action="drawer" data-value="collection">订单、审批、供应商 · 3 项 ${icon('chevron-right')}</button></div><div class="row"><span>当前源码</span><strong>样例修订 ${state.revision}${state.editing ? ' · 有未保存编辑' : ' · 已保存'}</strong></div><div class="row"><span>预览</span><span class="tag ${state.runtime === 'running' && state.previewRevision === state.revision ? 'good' : 'warn'}">${state.runtime !== 'running' ? '未运行' : state.previewRevision === state.revision ? '对应当前源码' : '旧预览 · 待重建'}</span></div></div>${reasons.length ? `<div class="drawer-notice warning">${reasons.map(escapeHTML).join('<br>')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="subtle-button" data-action="restart">重新运行预览</button></div>` : ''}</section><section class="drawer-section"><h3>业务核对参考 <span class="eyebrow">用于记录，不是新增勾选门禁</span></h3>${reviewTexts.map((text, index) => `<div class="review-item"><p>${index + 1}. ${text}</p><div class="review-actions">${[['ok', '符合'], ['issue', '有问题'], ['unreviewed', '未核对']].map(([value, label]) => `<button data-action="review" data-index="${index}" data-value="${value}" aria-pressed="${state.review[index] === value}" class="${state.review[index] === value ? 'selected' : ''}">${label}</button>`).join('')}</div>${state.review[index] === 'issue' ? `<div class="issue-draft"><label class="sr-only" for="issue-${index}">核对项 ${index + 1} 的问题说明</label><textarea id="issue-${index}" data-issue="${index}" placeholder="描述具体问题，稍后发给 AI 继续调整…">${escapeHTML(state.issues[index])}</textarea><button class="text-button" data-action="issue-to-ai" data-index="${index}">放入 AI 草稿，继续调整 ${icon('arrow-right')}</button></div>` : ''}</div>`).join('')}</section><section class="drawer-section"><h3>确认说明</h3><p>请结合相关需求核对订单、审批与供应商之间的流程、规则和异常。未核对或问题记录由你判断是否影响本次完成，不自动代替业务判断。</p><p>本交互稿模拟完整原型确认及基线衔接的设计目标，不代表现有协同服务已支持需求集合受理；不执行真实 Git、协同受理或发布。</p><button class="text-button" data-action="optional-review">${icon('spark')}AI 辅助评审（可选）</button></section>`;
     $('drawer-footer').innerHTML = `<button class="subtle-button" data-action="close-drawer">继续核对</button><button class="primary-button" data-action="confirm-submit" ${!canConfirm() ? 'disabled' : ''}>确认当前原型 · 模拟 ${icon('arrow-right')}</button>`;
   }
   function submitConfirm() {
-    if (!canConfirm() || state.submitting) { toast('请先处理当前源码、工程检查。'); return; }
+    if (!canConfirm() || state.submitting) { toast('请先保存或取消当前的源码编辑。'); return; }
     state.submitting = true; const revision = state.revision;
     $('drawer-body').innerHTML = `<div class="baseline-success"><div class="success-mark spinning">${icon('refresh')}</div><h3>正在提交当前原型</h3><p>正在模拟固定源码与后台受理…</p></div><div class="submission-progress"><span>${icon('check')}记录当前原型与源码</span><span>${icon('clock')}等待后台受理</span><span>${icon('clock')}形成可追溯基线</span></div>`;
     $('drawer-footer').innerHTML = '<button class="primary-button" disabled>提交中…</button>';
@@ -520,6 +491,8 @@ export default function Suppliers() {
   @media(max-width:850px){.sidebar{width:120px;padding:21px 7px}.content{padding:22px 20px}.top{padding:0 16px}.card-toolbar{padding:12px}.table-scroll th,.table-scroll td{padding-left:10px;padding-right:10px}.stat{padding:11px 12px}.product{max-width:110px}}
   @media(max-width:680px){.sidebar{display:none}.content{padding:20px 17px}.top small,.top-divider{display:none}.top-right{gap:7px}.page-heading h1{font-size:21px}.stat strong{font-size:21px}.card-total{display:none}.table-scroll table{min-width:600px}.stats{gap:8px}.stat{padding:10px}.nav-mobile{display:flex!important;gap:3px;background:white;padding:7px 16px;border-bottom:1px solid var(--line)}.nav-mobile button{font-size:11px;padding:5px 10px;color:#5f6d85}.nav-mobile .active{background:#edf2fc;color:#2852b2}.body-layout{min-height:calc(100vh - 97px)}}
   @media(max-width:430px){.content{padding:18px 13px}.top{padding:0 13px}.top-right>span:first-child{display:none}.stats{grid-template-columns:repeat(3,minmax(0,1fr))}.stat small{display:none}.stat .stat-icon{display:none}.stat strong{font-size:20px}.stat .stat-top{font-size:11px}.page-heading p{max-width:185px;font-size:11px}.page-heading .primary{padding:0 9px;font-size:11px}.card-toolbar{gap:7px;padding:10px}.status-select{min-width:95px}.search-field{padding:0 7px}.table-footer{padding:10px}.order-drawer{max-width:100vw;width:100vw}.page-note{font-size:11px}}
+  .filter-chip{height:31px;border:1px solid #dbe4f4;border-radius:5px;background:#f5f8fe;color:#4166b4;font-size:11px;padding:0 9px;cursor:pointer}
+  .filter-chip:hover{background:#eaf0fa}
   @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important}}
   `;
   // Executed inside the sandboxed preview; all business data is synthetic and local.
@@ -530,6 +503,11 @@ export default function Suppliers() {
     const svg = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name] || icons.document}"/></svg>`;
     const money = (value) => Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const labels = { pending: '审批中', approved: '已通过', draft: '草稿', rejected: '已驳回' };
+    const statusLabels = { all: '全部状态', draft: '草稿', pending: '审批中', approved: '已通过' };
+    const approvalRecords = [
+      { id: 'pending', orderNumber: 'PO-20261026-001', summary: '人体工学办公椅', amount: '¥13,600.00', applicant: '林晓', node: '部门审批', operator: '陈明', result: '处理中' },
+      { id: 'approved', orderNumber: 'PO-20261025-008', summary: '27 英寸显示器', amount: '¥22,788.00', applicant: '林晓', node: '审批完成', operator: '周宁', result: '已通过' },
+    ];
     const initial = [
       { id: '1', number: 'PO-20261026-001', supplier: '华东办公用品', product: '人体工学办公椅', quantity: 20, unitPrice: 680, status: 'pending', date: '2026-10-26', delivery: '2026-11-05', notes: '研发办公区设备补充' },
       { id: '2', number: 'PO-20261025-008', supplier: '启明电子科技', product: '27 英寸显示器', quantity: 12, unitPrice: 1899, status: 'approved', date: '2026-10-25', delivery: '2026-11-01', notes: '' },
@@ -556,7 +534,7 @@ export default function Suppliers() {
     }
     function renderOrders() {
       const total = orders.reduce((sum, order) => sum + order.quantity * order.unitPrice, 0);
-      return `<div class="page-heading"><div><h1>采购订单</h1><p>从订单创建到审批，清晰掌握每一笔采购。</p></div><button class="primary" data-business="new">${svg('plus')}新建订单</button></div><section class="stats" aria-label="订单概况"><div class="stat"><div class="stat-top"><span>全部订单</span><span class="stat-icon">${svg('package')}</span></div><strong>${orders.length.toString().padStart(2, '0')}</strong><small>当前演示数据</small></div><div class="stat"><div class="stat-top"><span>待审批</span><span class="stat-icon">${svg('clock')}</span></div><strong>${orders.filter((order) => order.status === 'pending').length.toString().padStart(2, '0')}</strong><small>等待业务处理</small></div><div class="stat"><div class="stat-top"><span>订单总额</span><span class="stat-icon">${svg('layers')}</span></div><strong><span style="font-size:13px;margin-right:3px">¥</span>${money(total).split('.')[0]}</strong><small>人民币 · 含全部状态</small></div></section><section class="table-card"><div class="card-toolbar"><label class="search-field">${svg('search')}<span class="sr-only" style="position:absolute;clip:rect(0,0,0,0)">搜索订单编号或供应商</span><input id="order-search" placeholder="搜索订单编号 / 供应商" aria-label="搜索订单编号或供应商"></label><select class="status-select" id="status-filter" aria-label="按订单状态筛选"><option value="all">全部状态</option><option value="draft">草稿</option><option value="pending">审批中</option><option value="approved">已通过</option></select><span class="card-total">合成业务样本</span></div><div id="order-table"></div><div class="table-footer"><span id="results-label"></span><div class="pagination"><button disabled aria-label="上一页">‹</button><button class="selected" aria-current="page" data-business="page-info">1</button><button disabled aria-label="下一页">›</button></div></div></section><p class="page-note">${svg('shield')}原型数据仅用于业务核对，不会触达真实业务服务</p>`;
+      return `<div class="page-heading"><div><h1>采购订单</h1><p>从订单创建到审批，清晰掌握每一笔采购。</p></div><button class="primary" data-business="new">${svg('plus')}新建订单</button></div><section class="stats" aria-label="订单概况"><div class="stat"><div class="stat-top"><span>全部订单</span><span class="stat-icon">${svg('package')}</span></div><strong>${orders.length.toString().padStart(2, '0')}</strong><small>当前演示数据</small></div><div class="stat"><div class="stat-top"><span>待审批</span><span class="stat-icon">${svg('clock')}</span></div><strong>${orders.filter((order) => order.status === 'pending').length.toString().padStart(2, '0')}</strong><small>等待业务处理</small></div><div class="stat"><div class="stat-top"><span>订单总额</span><span class="stat-icon">${svg('layers')}</span></div><strong><span style="font-size:13px;margin-right:3px">¥</span>${money(total).split('.')[0]}</strong><small>人民币 · 含全部状态</small></div></section><section class="table-card"><div class="card-toolbar"><label class="search-field">${svg('search')}<span class="sr-only" style="position:absolute;clip:rect(0,0,0,0)">搜索订单编号或供应商</span><input id="order-search" placeholder="搜索订单编号 / 供应商" aria-label="搜索订单编号或供应商"></label><select class="status-select" id="status-filter" aria-label="按订单状态筛选"><option value="all">全部状态</option><option value="draft">草稿</option><option value="pending">审批中</option><option value="approved">已通过</option></select>${keyword || status !== 'all' ? `<button class="filter-chip" data-business="clear-filter">筛选：${esc(keyword || statusLabels[status])} · 清除</button>` : ''}<span class="card-total">合成业务样本</span></div><div id="order-table"></div><div class="table-footer"><span id="results-label"></span><div class="pagination"><button disabled aria-label="上一页">‹</button><button class="selected" aria-current="page" data-business="page-info">1</button><button disabled aria-label="下一页">›</button></div></div></section><p class="page-note">${svg('shield')}原型数据仅用于业务核对，不会触达真实业务服务</p>`;
     }
     function renderRows() {
       const visible = orders.filter((order) => (!keyword || order.number.toLowerCase().includes(keyword.toLowerCase()) || order.supplier.includes(keyword)) && (status === 'all' || order.status === status));
@@ -564,7 +542,7 @@ export default function Suppliers() {
       document.getElementById('order-table').innerHTML = !visible.length ? `<div class="empty">${svg('package')}<h3>${orders.length ? '没有找到匹配订单' : '还没有采购订单'}</h3><p>${orders.length ? '试试其他关键词，或清除筛选条件。' : '创建第一笔订单，开始整理采购工作。'}</p><button class="secondary" data-business="${orders.length ? 'clear-filter' : 'new'}">${orders.length ? '清除筛选' : '新建订单'}</button></div>` : `<div class="table-scroll"><table><thead><tr><th>订单编号 / 供应商</th><th>采购内容</th><th class="right">订单金额</th><th>状态</th><th>创建日期</th><th class="right">操作</th></tr></thead><tbody>${visible.map((order) => `<tr><td><span class="order-number">${order.number}</span><span class="supplier">${esc(order.supplier)}</span></td><td><span class="product">${esc(order.product)}</span><span class="sub">${order.quantity} 件 × ¥${money(order.unitPrice)}</span></td><td class="right amount">¥${money(order.quantity * order.unitPrice)}</td><td><span class="status ${order.status}">${labels[order.status]}</span></td><td style="color:#5f6d85;font-size:9px">${order.date}</td><td class="right"><button class="text-button" data-business="open" data-id="${order.id}">${order.status === 'draft' ? '编辑' : '查看'}</button></td></tr>`).join('')}</tbody></table></div>`;
     }
     function renderApprovals() {
-      return `<div class="page-heading"><div><h1>审批记录</h1><p>按订单追溯处理节点，保留每一次业务决定。</p></div><button class="secondary" data-business="route" data-value="orders">返回订单</button></div><section class="table-card"><div class="card-toolbar"><strong style="font-size:12px;font-weight:500">最近审批</strong><span class="card-total">2 条合成记录</span></div><div class="table-scroll"><table><thead><tr><th>采购订单</th><th>申请人</th><th>当前节点</th><th>处理人</th><th>结果</th><th class="right">操作</th></tr></thead><tbody><tr><td><span class="order-number">PO-20261026-001</span><span class="supplier">人体工学办公椅 · ¥13,600.00</span></td><td>林晓</td><td>部门审批</td><td>陈明</td><td><span class="status pending">处理中</span></td><td class="right"><button class="text-button" data-business="approval" data-id="pending">查看过程</button></td></tr><tr><td><span class="order-number">PO-20261025-008</span><span class="supplier">27 英寸显示器 · ¥22,788.00</span></td><td>林晓</td><td>审批完成</td><td>周宁</td><td><span class="status approved">已通过</span></td><td class="right"><button class="text-button" data-business="approval" data-id="approved">查看过程</button></td></tr></tbody></table></div><div class="table-footer"><span>合成审批记录 · 不执行真实审批</span><span>最近更新 10:25</span></div></section><p class="page-note">${svg('clock')}审批节点、处理意见与时间均为交互演示样例</p>`;
+      return `<div class="page-heading"><div><h1>审批记录</h1><p>按订单追溯处理节点，保留每一次业务决定。</p></div><button class="secondary" data-business="route" data-value="orders">返回订单</button></div><section class="table-card"><div class="card-toolbar"><strong style="font-size:12px;font-weight:500">最近审批</strong><span class="card-total">${approvalRecords.length} 条记录</span></div><div class="table-scroll"><table><thead><tr><th>采购订单</th><th>申请人</th><th>当前节点</th><th>处理人</th><th>结果</th><th class="right">操作</th></tr></thead><tbody>${approvalRecords.map((record) => `<tr><td><span class="order-number">${record.orderNumber}</span><span class="supplier">${record.summary} · ${record.amount}</span></td><td>${record.applicant}</td><td>${record.node}</td><td>${record.operator}</td><td><span class="status ${record.result === '已通过' ? 'approved' : 'pending'}">${record.result}</span></td><td class="right"><button class="text-button" data-business="approval" data-id="${record.id}">查看过程</button></td></tr>`).join('')}</tbody></table></div><div class="table-footer"><span>合成审批记录 · 不执行真实审批</span><span>最近更新 10:25</span></div></section><p class="page-note">${svg('clock')}审批节点、处理意见与时间均为交互演示样例</p>`;
     }
     function renderSuppliers() {
       return `<div class="page-heading"><div><h1>供应商目录</h1><p>查阅采购伙伴、品类与联系信息。</p></div><span class="sample-tag">4 家合成供应商</span></div><section class="table-card"><div class="card-toolbar"><label class="search-field">${svg('search')}<input id="supplier-search" placeholder="搜索名称 / 采购类别" aria-label="搜索供应商名称或采购类别"></label><span class="card-total">采购订单的供应商参考</span></div><div id="supplier-table"></div><div class="table-footer"><span id="supplier-results"></span><span>目录只读 · 合成数据</span></div></section><p class="page-note">${svg('shield')}联系方式为虚构样例，可从供应商查看相关采购订单</p>`;
@@ -584,15 +562,16 @@ export default function Suppliers() {
       lastFocus = document.activeElement; formOrder = order; const readonly = order && order.status !== 'draft';
       const values = order || { supplier: '', product: '', quantity: 1, unitPrice: '', delivery: '', notes: '' };
       const field = (name, label, type, value, extra = '') => `<div class="form-field"><label for="field-${name}">${label}${['supplier', 'product', 'quantity', 'unitPrice'].includes(name) ? '<span class="required">*</span>' : ''}</label><input id="field-${name}" name="${name}" type="${type}" value="${esc(value)}" ${readonly ? 'disabled' : ''} ${extra}><span class="field-error" id="error-${name}"></span></div>`;
-      document.getElementById('order-drawer').innerHTML = `<header class="drawer-head"><div><h2 id="order-title">${order ? readonly ? '订单详情' : '编辑订单' : '新建采购订单'}</h2><p>${order ? order.number : '保存后生成订单编号，状态为草稿'}</p></div><button class="icon" data-business="close" aria-label="关闭订单面板">${svg('close')}</button></header><form id="order-form" novalidate style="display:contents"><div class="form-body">${readonly ? `<div class="readonly-note">${labels[order.status]}订单只读。仅草稿订单允许修改。</div>` : ''}<div id="form-error" class="form-error" role="alert" tabindex="-1" hidden></div>${field('supplier', '供应商', 'text', values.supplier, 'maxlength="60" placeholder="请输入供应商名称"')}${field('product', '采购内容', 'text', values.product, 'maxlength="80" placeholder="例如：人体工学办公椅"')}<div class="field-row">${field('quantity', '数量（件）', 'number', values.quantity, 'min="1" max="999999" step="1" inputmode="numeric"')}${field('unitPrice', '单价（元）', 'number', values.unitPrice, 'min="0.01" max="99999999" step="0.01" inputmode="decimal"')}</div><div class="amount-box"><span>订单金额 · 自动计算</span><strong id="calculated-amount">¥${money(Number(values.quantity) * Number(values.unitPrice))}</strong></div>${field('delivery', '期望交付日期', 'date', values.delivery)}<div class="form-field"><label for="field-notes">备注</label><textarea id="field-notes" rows="3" maxlength="300" ${readonly ? 'disabled' : ''} placeholder="补充采购用途或交付说明">${esc(values.notes)}</textarea></div><div class="field-help">合成数据演示，保存不会发送到真实采购系统。</div></div><footer class="form-footer"><button type="button" class="secondary" data-business="close">${readonly ? '关闭' : '取消'}</button>${!readonly ? '<button type="submit" class="primary" id="order-save">保存订单</button>' : ''}</footer></form>`;
+      document.getElementById('order-drawer').innerHTML = `<header class="drawer-head"><div><h2 id="order-title">${order ? readonly ? '订单详情' : '编辑订单' : '新建采购订单'}</h2><p>${order ? order.number : '保存后生成订单编号，状态为草稿'}</p></div><button class="icon" data-business="close" aria-label="关闭订单面板">${svg('close')}</button></header><form id="order-form" novalidate style="display:contents"><div class="form-body">${readonly ? `<div class="readonly-note">${labels[order.status]}订单只读。仅草稿订单允许修改。</div>${approvalRecords.some((record) => record.orderNumber === order.number) ? `<button class="secondary" style="margin-top:12px" data-business="order-approval" data-number="${order.number}">查看审批记录</button>` : ''}` : ''}<div id="form-error" class="form-error" role="alert" tabindex="-1" hidden></div>${field('supplier', '供应商', 'text', values.supplier, 'maxlength="60" placeholder="请输入供应商名称"')}${field('product', '采购内容', 'text', values.product, 'maxlength="80" placeholder="例如：人体工学办公椅"')}<div class="field-row">${field('quantity', '数量（件）', 'number', values.quantity, 'min="1" max="999999" step="1" inputmode="numeric"')}${field('unitPrice', '单价（元）', 'number', values.unitPrice, 'min="0.01" max="99999999" step="0.01" inputmode="decimal"')}</div><div class="amount-box"><span>订单金额 · 自动计算</span><strong id="calculated-amount">¥${money(Number(values.quantity) * Number(values.unitPrice))}</strong></div>${field('delivery', '期望交付日期', 'date', values.delivery)}<div class="form-field"><label for="field-notes">备注</label><textarea id="field-notes" rows="3" maxlength="300" ${readonly ? 'disabled' : ''} placeholder="补充采购用途或交付说明">${esc(values.notes)}</textarea></div><div class="field-help">合成数据演示，保存不会发送到真实采购系统。</div></div><footer class="form-footer"><button type="button" class="secondary" data-business="close">${readonly ? '关闭' : '取消'}</button>${!readonly ? '<button type="submit" class="primary" id="order-save">保存订单</button>' : ''}</footer></form>`;
       document.getElementById('order-backdrop').hidden = false; document.getElementById('order-drawer').hidden = false;
       document.getElementById(readonly ? 'order-drawer' : 'field-supplier').focus();
       if (!readonly) document.getElementById('order-form').addEventListener('submit', saveOrder);
     }
     function closeOrder() { if (saving) return; document.getElementById('order-drawer').hidden = true; document.getElementById('order-backdrop').hidden = true; formOrder = null; lastFocus?.focus(); }
     function showApproval(id) {
-      lastFocus = document.activeElement; const passed = id === 'approved';
-      document.getElementById('order-drawer').innerHTML = `<header class="drawer-head"><div><h2 id="order-title">审批过程</h2><p>PO-202610${passed ? '25-008' : '26-001'}</p></div><button class="icon" data-business="close" aria-label="关闭审批面板">${svg('close')}</button></header><div class="form-body"><span class="status ${passed ? 'approved' : 'pending'}">${passed ? '已通过' : '审批中'}</span><ol class="timeline" style="margin-top:28px"><li><strong>提交采购申请</strong><p>林晓 · 申请人</p><small>2026-10-${passed ? '25' : '26'} 09:12</small></li><li><strong>部门审批${passed ? ' · 通过' : ' · 等待处理'}</strong><p>陈明 · 部门负责人</p><small>${passed ? '2026-10-25 10:36 · 同意采购，按计划交付' : '2026-10-26 09:13 · 已送达'}</small></li>${passed ? '<li><strong>采购复核 · 通过</strong><p>周宁 · 采购负责人</p><small>2026-10-25 14:20 · 供应商与金额核对无误</small></li>' : ''}</ol><p class="timeline-note">此处仅展示审批记录。审批操作不在本需求原型范围。</p></div><footer class="form-footer"><button class="secondary" data-business="close">关闭</button></footer>`;
+      const record = approvalRecords.find((item) => item.id === id) || approvalRecords[0];
+      lastFocus = document.activeElement; const passed = record.result === '已通过';
+      document.getElementById('order-drawer').innerHTML = `<header class="drawer-head"><div><h2 id="order-title">审批过程</h2><p>${record.orderNumber}</p></div><button class="icon" data-business="close" aria-label="关闭审批面板">${svg('close')}</button></header><div class="form-body"><span class="status ${passed ? 'approved' : 'pending'}">${record.result}</span><ol class="timeline" style="margin-top:28px"><li><strong>提交采购申请</strong><p>${record.applicant} · 申请人</p><small>2026-10-${passed ? '25' : '26'} 09:12</small></li><li><strong>${record.node}${passed ? ' · 通过' : ' · 等待处理'}</strong><p>${record.operator} · 部门负责人</p><small>${passed ? '2026-10-25 10:36 · 同意采购，按计划交付' : '2026-10-26 09:13 · 已送达'}</small></li>${passed ? '<li><strong>采购复核 · 通过</strong><p>周宁 · 采购负责人</p><small>2026-10-25 14:20 · 供应商与金额核对无误</small></li>' : ''}</ol><p class="timeline-note">此处仅展示审批记录。审批操作不在本需求原型范围。</p></div><footer class="form-footer"><button class="secondary" data-business="approval-order" data-number="${record.orderNumber}">查看订单</button><button class="secondary" data-business="close">关闭</button></footer>`;
       document.getElementById('order-drawer').hidden = false; document.getElementById('order-backdrop').hidden = false; document.querySelector('#order-drawer button').focus();
     }
     async function saveOrder(event) {
@@ -618,6 +597,8 @@ export default function Suppliers() {
       else if (action === 'open') showOrder(orders.find((order) => order.id === control.dataset.id));
       else if (action === 'close') closeOrder();
       else if (action === 'approval') showApproval(control.dataset.id);
+      else if (action === 'approval-order') { keyword = control.dataset.number; status = 'all'; route = 'orders'; render(); post('route', { route }); }
+      else if (action === 'order-approval') { const record = approvalRecords.find((item) => item.orderNumber === control.dataset.number); if (!record) return; route = 'approvals'; render(); post('route', { route }); showApproval(record.id); }
       else if (action === 'clear-filter') { keyword = ''; status = 'all'; render(); }
       else if (action === 'page-info') notify('当前合成数据仅一页');
       else if (action === 'supplier') showSupplier(control.dataset.id);
@@ -657,10 +638,9 @@ export default function Suppliers() {
   function demoState(kind) {
     closeDrawer(); state.submitted = false;
     if (kind === 'run-failure') { ++runtimeToken; state.runtime = 'failed'; state.failNextRun = false; addLog('已切换到模拟启动失败；可重试。', 'error'); }
-    else if (kind === 'check-failure') { state.failChecks = true; runChecks(); toast('已开启 build 失败演示。通过「恢复正常状态」清除故障。'); }
     else if (kind === 'save-failure') { state.failSave = true; state.mode = 'preview'; if (state.runtime !== 'running') state.runtime = 'running'; mountPreview(); toast('下次订单保存将失败，输入保留，再次保存可恢复。'); }
     else if (kind === 'empty') { state.emptyPreview = true; state.businessOrders = []; state.mode = 'preview'; state.runtime = 'running'; mountPreview(); toast('已切换为无订单空态，可新建订单。'); }
-    else if (kind === 'recover') { state.failChecks = false; state.failNextRun = false; state.failSave = false; state.emptyPreview = false; state.businessOrders = undefined; runChecks(); runPreview(); toast('已清除演示故障，保留当前样例源码。'); }
+    else if (kind === 'recover') { state.failNextRun = false; state.failSave = false; state.emptyPreview = false; state.businessOrders = undefined; runPreview(); toast('已清除演示故障，保留当前样例源码。'); }
     renderChrome(); if (state.output) renderOutput();
   }
   function stageInfo(stage) {
@@ -668,6 +648,33 @@ export default function Suppliers() {
     const descriptions = { 场景: '从采购业务流程中识别需求，帮助理解订单、审批与供应商之间的关系。', 需求: '项目内的多项需求共同构成原型上下文。你可以通过需求集合定位相关页面和代码。', 原型: '同一个项目原型持续整合多项需求，查看实现、操作预览并核对整体业务体验。', 基线: state.submitted ? 'BL-0001 · 采购协同原型。当前页仅模拟整个原型确认后形成源码基线的设计目标。' : '确认当前原型后，基线用于追溯代码成果。本稿尚未演示形成基线。', 交接: '以原型代码基线及相关需求准备业务说明、交互限制和待澄清项，交给研发继续实现业务系统。' };
     $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">其他阶段仅展示衔接说明；本交互稿聚焦项目原型工作台。</div><h3 style="margin-top:24px">${stage}阶段</h3><p>${descriptions[stage] || ''}</p>${stage === '基线' && state.submitted ? '<div class="info-card"><strong>BL-0001 · 采购协同原型</strong><p>交互稿模拟结果 · 集合受理为设计目标，无真实 Git 或协同受理</p></div>' : ''}</section>`;
     $('drawer-footer').innerHTML = '<button class="primary-button" data-action="close-drawer">返回原型工作台</button>';
+  }
+  function renderDecisions() {
+    const decisions = [...document.querySelectorAll('.decision')];
+    const selected = decisions.filter((decision) => decision.querySelector('.choice[aria-pressed="true"]'));
+    const count = $('decide-count');
+    if (count) count.textContent = selected.length ? `已选 ${selected.length}/${decisions.length} 项` : decisions.length ? `${decisions.length} 项待答` : '暂无待决项';
+    $('decision-dock').hidden = selected.length === 0;
+    $('decision-status').textContent = `已选 ${selected.length} 项 · 插入输入草稿，发送才会记录你的回答。`;
+  }
+  function selectDecision(choice) {
+    const decision = choice.closest('.decision');
+    decision.querySelectorAll('.choice').forEach((other) => {
+      other.setAttribute('aria-pressed', String(other === choice));
+      other.classList.toggle('is-selected', other === choice);
+    });
+    renderDecisions();
+  }
+  function insertDecisions() {
+    const lines = [...document.querySelectorAll('.decision')].flatMap((decision) => {
+      const selected = decision.querySelector('.choice[aria-pressed="true"]');
+      return selected ? [`${decision.querySelector('.decision-q').textContent.trim()}\n   我的选择：${selected.textContent.trim()}`] : [];
+    });
+    if (!lines.length) return;
+    const field = $('chat-input');
+    field.value += `${field.value.trim() ? '\n\n' : ''}我对本轮问题的回答是：\n${lines.join('\n')}\n`;
+    field.focus();
+    toast('已插入输入草稿；发送后才会记录你的回答。');
   }
   function issueToAI(index) {
     state.issues[index] = $('issue-' + index)?.value || state.issues[index];
@@ -688,12 +695,11 @@ export default function Suppliers() {
     'edit-file': beginEdit, 'cancel-edit': cancelEdit, 'save-file': saveEdit,
     'toggle-ai': () => { const narrow = window.innerWidth <= 1100; if (narrow && !$('workspace-body').classList.contains('ai-expanded')) state.aiCollapsed = false; else state.aiCollapsed = !state.aiCollapsed; $('workspace-body').classList.toggle('ai-expanded', !state.aiCollapsed); renderChrome(); },
     'toggle-tree': () => { const narrow = window.innerWidth <= 800; if (narrow && !$('code-pane').classList.contains('tree-expanded')) state.treeCollapsed = false; else state.treeCollapsed = !state.treeCollapsed; $('code-pane').classList.toggle('tree-expanded', !state.treeCollapsed); renderChrome(); },
-    run: toggleRun, restart: runPreview, check: runChecks,
+    run: toggleRun, restart: runPreview,
     more: () => { $('more-menu').hidden = !$('more-menu').hidden; $('more-button').setAttribute('aria-expanded', String(!$('more-menu').hidden)); if (!$('more-menu').hidden) $('more-menu').querySelector('button')?.focus(); },
     output: (control) => { state.output = state.output === control.dataset.value ? null : control.dataset.value; renderOutput(); },
     'collapse-output': () => { state.output = state.output ? null : 'runtime'; renderOutput(); },
     'refresh-preview': () => { if (state.runtime !== 'running') { toast('请先运行预览。'); return; } mountPreview(); toast('已刷新固定业务演示，当前筛选与未保存的订单输入将重置。'); },
-    device: (control) => { state.device = control.dataset.value; renderChrome(); },
     fullscreen: () => { const expanded = $('preview-pane').classList.toggle('preview-expanded'); document.querySelector('[data-action="fullscreen"]').setAttribute('aria-pressed', String(expanded)); toast(expanded ? '已展开预览。Escape 可退出。' : '已退出全屏预览。'); },
     external: () => { if (state.runtime !== 'running') { toast('请先运行预览。'); return; } const preview = window.open('', '_blank'); if (!preview) { toast('新窗口被浏览器拦截，请允许弹出窗口后重试。'); return; } preview.opener = null; preview.document.open(); preview.document.write(previewDocument()); preview.document.close(); toast('已在新窗口打开独立演示；新窗口数据不回写工作台。'); },
     'search-next': () => searchCode(true),
@@ -713,8 +719,11 @@ export default function Suppliers() {
   document.addEventListener('click', (event) => {
     const control = event.target.closest('[data-action]');
     if (control && !control.disabled) actions[control.dataset.action]?.(control);
+    const choice = event.target.closest('.choice');
+    if (choice) selectDecision(choice);
     if (!event.target.closest('.menu-anchor')) { $('more-menu').hidden = true; $('more-button').setAttribute('aria-expanded', 'false'); }
   });
+  $('insert-decisions').addEventListener('click', insertDecisions);
   $('drawer-backdrop').addEventListener('click', closeDrawer);
   $('code-search').addEventListener('input', () => searchCode(false));
   $('code-search').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); searchCode(true); } });
@@ -723,8 +732,10 @@ export default function Suppliers() {
   $('route-select').addEventListener('change', (event) => { state.route = event.target.value; if (state.runtime === 'running') mountPreview(); });
   $('chat-form').addEventListener('submit', (event) => {
     event.preventDefault(); const text = $('chat-input').value.trim(); if (!text) { $('chat-input').focus(); return; }
-    const user = document.createElement('article'); user.className = 'message user-message'; user.innerHTML = '<div class="message-author">你 · 模拟输入</div><p>' + escapeHTML(text).replace(/\n/g, '<br>') + '</p>';
-    const response = document.createElement('article'); response.className = 'message assistant-message'; response.innerHTML = '<div class="message-author"><span class="ai-emblem">E</span>EADP 助手 · 设计占位</div><p>已展示这条模拟消息。实际产品将在原生会话中继续处理；本页没有调用模型，也不会自动修改源码。</p>';
+    const user = document.createElement('article'); user.className = 'turn user-message';
+    user.innerHTML = `<div class="turn-meta"><span class="avatar-mark">林</span>我<time>现在</time></div><p class="lead">${escapeHTML(text).replace(/\n/g, '<br>')}</p>`;
+    const response = document.createElement('article'); response.className = 'turn';
+    response.innerHTML = '<div class="turn-meta"><span class="ai-mark">E</span>原型协作助手<time>现在</time><span class="model">会话设计占位</span></div><p class="lead">已展示这条模拟消息。实际产品将在原生会话中继续处理；本页没有调用模型，也不会自动修改源码。</p>';
     $('chat-scroll').append(user, response); $('chat-input').value = ''; $('chat-scroll').scrollTop = $('chat-scroll').scrollHeight;
   });
   $('chat-input').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); $('chat-form').requestSubmit(); } });
@@ -756,5 +767,5 @@ export default function Suppliers() {
   window.addEventListener('beforeunload', (event) => { if (state.editing && $('source-editor').value !== files[state.activeFile]?.text) { event.preventDefault(); event.returnValue = ''; } });
   let lastWidth = window.innerWidth;
   window.addEventListener('resize', () => { if ((lastWidth > 1100) !== (window.innerWidth > 1100)) state.aiCollapsed = window.innerWidth <= 1100; if ((lastWidth > 800) !== (window.innerWidth > 800)) state.treeCollapsed = window.innerWidth <= 800; lastWidth = window.innerWidth; renderChrome(); });
-  renderChrome(); renderEditor(); mountPreview();
+  renderChrome(); renderEditor(); mountPreview(); renderDecisions();
 })();
