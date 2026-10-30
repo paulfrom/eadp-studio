@@ -44,7 +44,7 @@ test('shared toolbar keeps the live project, preview target and refresh action',
   const React = { createElement: render, Fragment: 'fragment' }
   const styleProxy = new Proxy({}, { get: (_, key) => key })
   const { topbarItems } = new Function('React', `${compile(itemsSource)}; return { topbarItems }`)(React)
-  const Component = new Function('React', 'css', 'topbarItems', 'useState', 'useEffect', 'useRef', 'useSyncExternalStore', `${compile(source)}; return StudioTopbar`)(
+  const Component = new Function('React', 'css', 'topbarItems', 'useState', 'useEffect', 'useRef', 'useSyncExternalStore', 'HostMenu', `${compile(source)}; return StudioTopbar`)(
     React,
     styleProxy,
     topbarItems,
@@ -52,6 +52,7 @@ test('shared toolbar keeps the live project, preview target and refresh action',
     () => {},
     current => ({ current }),
     (_subscribe, getSnapshot) => getSnapshot(),
+    props => props.anchor,
   )
   const findAll = (tree, type) => [
     ...(tree.type === type ? [tree] : []),
@@ -73,7 +74,9 @@ test('shared toolbar keeps the live project, preview target and refresh action',
   let refreshed = 0
   const state = { connected: true, project: { name: '采购项目', stableBranch: 'main' }, prototypeQueue: { selectedTaskId: 'task', items: [{ prototypeTaskId: 'task' }] }, prototypePreviews: [{ prototypeTaskId: 'task', url: 'http://127.0.0.1:4321' }], onRefresh: () => { refreshed++ } }
   // Web (non-captioned) renders the single in-flow toolbar row.
-  const header = find(Component({ faces: faces(state), sidebarCollapsed: false, onToggleSidebar() {} }), 'header')
+  const tree = Component({ faces: faces(state), sidebarCollapsed: false, onToggleSidebar() {} })
+  const header = find(tree, 'header')
+  assert.equal(findAll(tree, 'button').filter(button => button.props['aria-label'] === '折叠侧边栏').length, 1, 'web renders one toolbar identity and toggle')
   assert.ok(header, 'the web fallback renders the in-flow toolbar')
   assert.match(texts(header), /EADP Studio.*采购项目.*main（已同步）.*本地原型.*刷新/)
   assert.equal(find(header, 'a').props.href, state.prototypePreviews[0].url)

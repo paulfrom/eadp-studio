@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useState, useSyncExternalStore } from 'react'
+import { Menu as HostMenu, type MenuEntry as HostMenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { topbarItems, type MenuEntry, type TopbarContext, type TopbarFaces, type TopbarItem } from '../topbar/items.tsx'
 import css from '../studio.module.css'
 
@@ -30,10 +31,10 @@ export function StudioTopbar({ faces, sidebarCollapsed, onToggleSidebar }: {
   </>
   const actions = <ItemList items={items} />
   return <>
-    <div className={css.captionIdentity}>
+    {captioned && <div className={css.captionIdentity}>
       {identity}
-      {captioned && <div className={css.captionActions}>{actions}</div>}
-    </div>
+      <div className={css.captionActions}>{actions}</div>
+    </div>}
     {!captioned && <header className={css.topbar} aria-label="项目工作台工具栏">
       <div className={css.topbarIdentity}>{identity}</div>
       <div className={css.topbarActions}>{actions}</div>
@@ -51,34 +52,19 @@ function TopbarEntry({ item }: { item: TopbarItem }) {
   return <button type="button" className={item.primary ? css.primaryAction : undefined} disabled={item.disabled} title={item.title} onClick={item.run}>{item.label}</button>
 }
 
+/** Toolbar actions use the host menu for keyboard navigation and viewport placement. */
 function Menu({ item }: { item: TopbarItem }) {
   const [open, setOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false) }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', escape)
-    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', escape) }
-  }, [open])
-  return <div className={css.viewMenuWrap} ref={menuRef}>
-    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(expanded => !expanded)}>{item.label}</button>
-    {open && <div className={css.viewMenu} role="menu" aria-label={item.label}>
-      <MenuList items={item.items} onPick={() => setOpen(false)} />
-    </div>}
-  </div>
-}
-
-function MenuList({ items, onPick }: { items: ReadonlyArray<MenuEntry> | undefined; onPick(): void }): ReactNode {
-  return <>{items?.map(entry => {
-    if ('kind' in entry) {
-      if (entry.kind === 'sep') return <div key={entry.id} className={css.viewMenuSep} />
-      return <div key={entry.id} className={css.viewMenuLabel}>{entry.label}</div>
-    }
-    if (entry.visible === false) return null
-    return <button key={entry.id} role="menuitem" className={css.viewMenuItem} disabled={entry.disabled} onClick={() => { entry.run?.(); onPick() }}>
-      <span className={css.check}>{entry.checked ? '✓' : ''}</span><span className={css.label}>{entry.label}</span>
-    </button>
-  })}</>
+  const entries: HostMenuEntry[] = (item.items ?? []).filter(entry => 'kind' in entry || entry.visible !== false).map(entry => {
+    if ('kind' in entry) return entry.kind === 'sep' ? { type: 'separator', id: entry.id } : { type: 'label', id: entry.id, text: entry.label }
+    return { id: entry.id, label: entry.label, ...(entry.disabled === undefined ? {} : { disabled: entry.disabled }) }
+  })
+  return <HostMenu open={open} onClose={() => setOpen(false)} portal autoFocus dense align="end"
+    anchor={<button type="button" aria-label={item.label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>{item.label}</button>}
+    items={entries} selectedIds={(item.items ?? []).filter((entry): entry is Exclude<MenuEntry, { kind: string }> => !('kind' in entry) && entry.checked === true).map(entry => entry.id)}
+    onSelect={id => {
+      setOpen(false)
+      const entry = item.items?.find(entry => entry.id === id)
+      if (entry && !('kind' in entry)) entry.run?.()
+    }} />
 }

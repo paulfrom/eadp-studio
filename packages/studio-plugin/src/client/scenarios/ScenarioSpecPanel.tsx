@@ -25,9 +25,9 @@ export function ScenarioSpecPanel({ entity, draft, buffer, snapshot, workspace, 
     : snapshot.saving ? '正在保存本地草稿…'
     : snapshot.error ? snapshot.error
     : snapshot.dirty ? '有未保存输入' : '本地草稿已保存'
-  return <section className={css.specPanel} aria-label="场景契约">
+  return <section className={`${css.specPanel} ${doc.panel}`} aria-label="场景契约">
     <DocumentToolbar draft={draft} title={snapshot.metadata.title} body={snapshot.body} preview={preview} syncState={syncState} state={snapshot.error ? 'error' : snapshot.dirty || snapshot.saving ? 'pending' : 'synced'} readOnly={workspace.readOnly} saveDisabled={busy || !editable || snapshot.saving || !snapshot.dirty} retry={!!snapshot.error} onPreview={setPreview} onSave={() => void buffer.flush()} onCollapse={onCollapse} />
-    <div className={css.specBody}>
+    <div className={`${css.specBody} ${doc.body}`}>
       {workspace.readOnly && <div className={doc.confirmed}><span aria-hidden="true">✓</span>已确认为固定版本 v{entity.materialVersion}</div>}
       <DocumentMeta entity={entity} body={snapshot.body} readOnly={workspace.readOnly} confirmedAt={workspace.confirmedAt} />
       <ExternalFileNotice buffer={buffer} snapshot={snapshot} readOnly={workspace.readOnly} />

@@ -19,7 +19,7 @@ export function PrototypeCanvas({ identity, visible, registerNavigation }: { ide
       const rect = canvas.getBoundingClientRect()
       const bounds = { x: Math.max(0, rect.left), y: Math.max(0, rect.top), width: Math.max(0, rect.width), height: Math.max(0, rect.height) }
       const onscreen = rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight && rect.width > 0 && rect.height > 0
-      const modalOpen = [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"], details[open][data-prototype-menu]')].some(element => {
+      const modalOpen = [...document.querySelectorAll('dialog[open], [role="dialog"][aria-modal="true"], [role="menu"]')].some(element => {
         const style = getComputedStyle(element), bounds = element.getBoundingClientRect()
         return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0
       })

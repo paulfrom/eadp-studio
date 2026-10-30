@@ -39,7 +39,7 @@ export function ScenarioChatPanel({ entity, entities, workspace, busy, locked, s
   questions: Workspace['draft']['metadata']['openQuestions']; reviewRequested: number; onReview(): void; onConfirm(): void; children: ReactNode;
 }) {
   const task = sessions.find(session => session.sessionId === activeSessionId)
-  return <section className={css.chatPanel} aria-label="场景对话">
+  return <section className={`${css.chatPanel} ${layout.materialPanel}`} aria-label="场景对话">
     <MaterialWorkspaceHeader entity={entity} sessions={sessions} activeSessionId={activeSessionId} locked={locked} readOnly={workspace.readOnly} reviewCount={workspace.writeProposal?.status === 'pending' ? workspace.writeProposal.changes.length : 0} onReview={onReview} onConfirm={onConfirm} onRefresh={actions.refresh} onNewSession={actions.newSession} onSelectSession={actions.selectSession} onTemplates={actions.openTemplates} />
     {workspace.readOnly && !revision.shown && <div className={css.panelNotice}>
       <span>确认人 #{workspace.confirmedBy ?? entity.current?.confirmedBy} · {workspace.confirmedAt ?? entity.current?.confirmedAt}</span>

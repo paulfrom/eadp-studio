@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react'
 import type { EntityView, TaskView } from '../../shared/studio.ts'
 import type { ScenarioWorkspace } from '../../shared/scenarios.ts'
 import type { DraftSnapshot } from '../scenarios/DraftBuffer.ts'
+import { MaterialActionMenu } from './MaterialActionMenu.tsx'
 import css from '../studio.module.css'
 import layout from './materialWorkspace.module.css'
 
@@ -33,15 +34,12 @@ export function MaterialWorkspaceHeader({ entity, sessions, activeSessionId, loc
         <option value="" disabled>选择会话</option>
         {sessions.map((session, index) => <option key={session.sessionId} value={session.sessionId}>会话 {index + 1}</option>)}
       </select>
-      <details className={layout.tools}>
-        <summary aria-label="会话与模板操作" title="会话与模板操作">···</summary>
-        <div className={layout.toolMenu} onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.parentElement?.removeAttribute('open') }}>
-          <button disabled={locked} onClick={onNewSession}>新会话</button>
-          <button disabled={locked} onClick={onRefresh}>重新读取草稿</button>
-          {onOpenPrototype && <button onClick={onOpenPrototype}>进入项目原型</button>}
-          <button onClick={onTemplates}>{entity.kind === 'scenario' ? '场景' : '需求'}模板</button>
-        </div>
-      </details>
+      <MaterialActionMenu label="会话与模板操作" actions={[
+        { id: 'new', label: '新会话', disabled: locked, run: onNewSession },
+        { id: 'refresh', label: '重新读取草稿', disabled: locked, run: onRefresh },
+        ...(onOpenPrototype ? [{ id: 'prototype', label: '进入项目原型', run: onOpenPrototype }] : []),
+        { id: 'templates', label: `${entity.kind === 'scenario' ? '场景' : '需求'}模板`, run: onTemplates },
+      ]} />
       {!readOnly && <button className={css.primary} disabled={locked} onClick={reviewCount > 0 ? onReview : onConfirm}>{reviewCount > 0 ? `审阅 ${reviewCount} 处变更` : `确认${entity.kind === 'scenario' ? '场景' : '需求'}`}<span aria-hidden="true"> ›</span></button>}
     </div>
   </header>
@@ -54,13 +52,14 @@ export function MaterialWorkspaceSheet({ open, title, subtitle, drawer = false, 
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  const subtitleId = useId()
   useEffect(() => {
     const element = dialog.current
     if (open && !element?.open) element?.showModal()
     if (!open && element?.open) element.close()
   }, [open])
-  return <dialog ref={dialog} className={`${layout.sheet} ${drawer ? layout.drawer : ''} ${size === 'wide' ? layout.wide : ''}`} aria-labelledby={titleId} onClose={onClose} onCancel={event => { event.preventDefault(); onClose() }} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
-    <header className={layout.sheetHeading}><div><strong id={titleId}>{title}</strong>{subtitle && <p>{subtitle}</p>}</div><button onClick={onClose} aria-label={`关闭${title}`} title="关闭">×</button></header>
+  return <dialog ref={dialog} className={`${layout.sheet} ${drawer ? layout.drawer : ''} ${size === 'wide' ? layout.wide : ''}`} aria-labelledby={titleId} aria-describedby={subtitle ? subtitleId : undefined} onClose={onClose} onCancel={event => { event.preventDefault(); onClose() }} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
+    <header className={layout.sheetHeading}><div><strong id={titleId}>{title}</strong>{subtitle && <p id={subtitleId}>{subtitle}</p>}</div><button onClick={onClose} aria-label={`关闭${title}`} title="关闭">×</button></header>
     <div className={layout.sheetBody}>{children}</div>
   </dialog>
 }
