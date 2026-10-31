@@ -26,6 +26,14 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
   const [tab, setTab] = useState<'preview' | 'code'>('preview')
   const [drawer, setDrawer] = useState<'collection' | 'tasks' | 'diagnostics' | 'confirm'>()
   const [aiCollapsed, setAiCollapsed] = useState(false)
+  const showAi = useRef<HTMLButtonElement>(null)
+  const hideAi = useRef<HTMLButtonElement>(null)
+  const previousAiCollapsed = useRef(aiCollapsed)
+  useEffect(() => {
+    if (previousAiCollapsed.current === aiCollapsed) return
+    previousAiCollapsed.current = aiCollapsed
+    ;(aiCollapsed ? showAi : hideAi).current?.focus()
+  }, [aiCollapsed])
   const [requestDiff, setRequestDiff] = useState(0)
   const [output, setOutput] = useState<'runtime' | 'checks' | 'problems'>()
   const [baselineId, setBaselineId] = useState<string>()
@@ -273,19 +281,20 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
     await startPreview()
   }
   return <div className={css.workbench}>
-    <header className={css.projectHeader}><div><span>交互原型 / </span><strong>{state.project?.name}</strong></div><button onClick={() => setDrawer('collection')}><Icon name="files" />需求集合 <small>{requirements.length}</small></button></header>
+    <header className={css.projectHeader}><div className={css.projectName}><span>交互原型</span><span aria-hidden="true">/</span><h1>{state.project?.name}</h1></div><button onClick={() => setDrawer('collection')}><Icon name="files" />需求集合 <small>{requirements.length}</small></button></header>
     <div className={css.collaborationStrip}><button onClick={() => setDrawer('tasks')}><Icon name="layers" />我的事项与队列<Icon name="chevron-down" /></button><span>{selected?.title ?? '选择事项或已接受基线查看原型'}</span><button onClick={() => setDrawer('diagnostics')}>现场详情</button></div>
     <div className={`${css.workspaceBody} ${aiCollapsed ? css.aiCollapsed : ''}`}>
     <section className={css.conversation} aria-label="原型协作" hidden={aiCollapsed}>
-      <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button aria-label="收起 AI 协作" onClick={() => setAiCollapsed(true)}><Icon name="panel-left" /></button></header>
+      <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button ref={hideAi} title="收起 AI 协作" aria-label="收起 AI 协作" onClick={() => setAiCollapsed(true)}><Icon name="panel-left" /></button></header>
       <div className={css.sessionLine}><i />{selected ? '原生会话' : '项目原型'}<span>{selected?.title}</span></div>
       <div className={css.content}>
+        {!selected && <div className={css.conversationEmpty}><Icon name="spark" /><strong>一起完善项目原型</strong><p>描述你希望实现的页面与业务流程，或从「我的事项与队列」继续已有工作。</p></div>}
         {selected && <><div className={css.messages} aria-label="对话记录">{conversation?.taskId === selected.prototypeTaskId ? <>{conversation.messages.filter(message => message.kind !== 'tool').map(message => <article data-role={message.role} key={`${message.kind ?? 'message'}:${message.sequence}`}><small>{message.role !== 'user' && <Icon name="spark" />}{message.kind === 'tool' ? `工具 · ${message.tool?.name ?? '未命名'} · ${message.tool?.status === 'running' ? '执行中' : message.tool?.status === 'failed' ? '失败' : '完成'}` : message.role === 'user' ? '你' : 'AI'}{message.interrupted ? ' · 已中断' : ''}</small>{message.text && <p>{message.text}{message.truncated ? '…' : ''}</p>}{message.attachments?.map(attachment => <span key={attachment.id}>{attachment.kind === 'image' ? '图片' : '附件'} {attachment.name ?? attachment.id} · {attachment.bytes} 字节{attachment.width && attachment.height ? ` · ${attachment.width}×${attachment.height}` : ''}</span>)}</article>)}{conversation.error && <p role="alert">{conversation.error}</p>}{!conversation.error && !conversation.messages.length && <p className={css.muted}>暂无会话消息。</p>}</> : <p className={css.muted}>正在读取会话记录…</p>}</div></>}
 
       </div>
         <form className={css.instruction} onSubmit={event => { event.preventDefault(); void send() }}>
           <button type="button" className={css.contextChip} onClick={() => setDrawer('collection')}><Icon name="files" />需求集合 · {requirements.length} 项<Icon name="chevron-right" /></button>
-          <label className={css.srOnly} htmlFor="prototype-instruction">描述需要调整的内容</label>
+          <div className={css.composerBox}><label className={css.srOnly} htmlFor="prototype-instruction">描述需要调整的内容</label>
           <textarea id="prototype-instruction" value={instruction} onChange={event => updateDraft({ ...draft, instruction: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && instruction.trim()) void send() } }} rows={3} placeholder="继续完善原型中的页面和业务体验…" />
           <details className={css.instructionOptions}><summary>协作范围与事项名称</summary>
             <label>事项名称（可选）<input value={title} onChange={event => updateDraft({ ...draft, title: event.target.value })} maxLength={150} /></label>
@@ -294,13 +303,13 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
           {attachments.length > 0 && <ul>{attachments.map((attachment, index) => <li key={`${attachment.name}:${index}`}>{attachment.kind === 'image' ? '图片' : '文件'} · {attachment.name}<button type="button" onClick={() => updateDraft({ ...draft, attachments: attachments.filter((_item, current) => current !== index) })}>移除</button></li>)}</ul>}
           {draftError && <p role="alert" className={css.fileError}>{draftError}</p>}
           {sendError && <p role="alert" className={css.fileError}>{sendError}</p>}
-          <div className={css.composerBottom}><label className={css.attachmentButton} title="附加文件（最多 8 个，共 16 MiB）"><Icon name="plus" /><span className={css.srOnly}>附加文件</span><input className={css.srOnly} type="file" multiple accept="image/*,.md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={event => { const files = event.target.files; event.target.value = ''; void attachFiles(files) }} /></label><span>Enter 发送 · Shift + Enter 换行</span><button className={css.sendButton} aria-label="发送实现指令" disabled={busy || !instruction.trim()}><Icon name="arrow-up" /></button></div>
+          <div className={css.composerBottom}><label className={css.attachmentButton} title="附加文件（最多 8 个，共 16 MiB）"><Icon name="plus" /><span className={css.srOnly}>附加文件</span><input className={css.srOnly} type="file" multiple accept="image/*,.md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={event => { const files = event.target.files; event.target.value = ''; void attachFiles(files) }} /></label><span>Enter 发送 · Shift + Enter 换行</span><button className={css.sendButton} aria-label="发送实现指令" disabled={busy || !instruction.trim()}><Icon name="arrow-up" /></button></div></div>
         </form>
 
     </section>
     <section className={css.result} aria-label="原型成果">
       <div className={css.toolbar}>
-        {aiCollapsed && <button aria-label="展开 AI 协作" onClick={() => setAiCollapsed(false)}><Icon name="panel-left" /></button>}
+        {aiCollapsed && <button ref={showAi} title="展开 AI 协作" aria-label="展开 AI 协作" onClick={() => setAiCollapsed(false)}><Icon name="panel-left" /></button>}
         <div className={css.modeSwitch} role="tablist" aria-label="工作区模式" onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
           event.preventDefault()
@@ -318,7 +327,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
         ]} />
       </div>
       {runError && <p className={css.fileError} role="alert">运行尚未成功，请查看 AI 反馈或诊断信息</p>}
-      {!baseline && selected?.nextAction && <p aria-live="polite">{selected.nextAction}{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停 AI 处理</button>}</p>}
+      {!baseline && selected?.nextAction && <p className={css.nextAction} aria-live="polite">{selected.nextAction}{selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停 AI 处理</button>}</p>}
       <div className={css.previewPane} role="tabpanel" id="prototype-preview" aria-labelledby="prototype-preview-tab" hidden={tab !== 'preview'}>
         <PrototypePreview key={preview?.identity.previewId ?? 'empty'} identity={preview?.identity} externalUrl={preview?.url} starting={startingCurrent} visible={tab === 'preview' && !drawer} />
       </div>

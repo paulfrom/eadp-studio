@@ -88,7 +88,9 @@ export class FixedCandidates {
     let candidateSha: string, paths = content.paths, allowedPaths = content.allowedPaths, checks: CheckEvidence
     await this.deps.pruneEvidence(task)
     const allowed = new Set(allowedPaths)
-    candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), allowedPaths, '固定材料 ' + entity.id)).sha
+    const kindLabel = { scenario: '场景', requirement: '需求', baseline: '基线', handoff: '交接' }[draft.metadata.kind]
+    const message = `确认${kindLabel}${entity.code ? ' ' + entity.code : ''}：${draft.metadata.title.replace(/\s+/g, ' ').trim()}`
+    candidateSha = (await this.candidateSha(task, content.input.expectedHead, file => allowed.has(file), allowedPaths, message)).sha
     for (const relative of paths) await this.ports.git.verifyFile(task.worktree, candidateSha, relative)
     checks = { candidateSha, passed: true, checks: content.drafts.flatMap(value => this.materialChecks(candidateSha, value.draft).checks) }
     for (const value of content.confirmations) value.fixed.commitSha = candidateSha

@@ -48,7 +48,7 @@
 .requirementChoices { display: grid; gap: 7px; padding: 10px 0; }
 .requirementChoices label { display: flex; gap: 7px; align-items: center; }
 .files { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); }
-.fileSidebar { min-width: 0; overflow: auto; border-right: 1px solid var(--border); }
+.fileSidebar { min-width: 0; overflow: auto; border-right: 1px solid var(--border); background:var(--surface-2); }
 .fileSearch { display: flex; gap: 4px; padding: 10px; }
 .fileSearch input { min-width: 0; width: 100%; }
 .directoryHead span { flex: 1; overflow-wrap: anywhere; }
@@ -57,7 +57,9 @@
 .fileList small { color: var(--text-3); }
 .fileList p { color: var(--text-3); font-size: 11px; padding: 8px; }
 .fileContent { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
-.fileHeader { flex-wrap: wrap; font-size: 11px; }
+.fileHeader { flex-wrap:wrap; min-height:40px; padding:6px 12px; gap:6px; font-size:11px; }
+.fileHeader strong { font:11px var(--mono); white-space:nowrap; }
+.fileHeader button { padding:3px 8px; font-size:11px; }
 .fileError { padding: 10px; color: var(--warn); background: var(--warn-soft); }
 .codeEditor { flex: 1; min-height: 0; overflow: hidden; }
 .comparison { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -74,27 +76,35 @@
 
 .projectHeader { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:44px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--surface); }
 .projectHeader span { color:var(--text-3); font-size:12px; }
-.projectHeader strong { font-size:13px; font-weight:500; }
+.projectName { display:flex; align-items:center; gap:10px; }
+.projectName h1 { margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:13px; font-weight:600; }
 .projectHeader button { font-size:12px; }
-.projectHeader small { margin-left:8px; color:var(--text-3); }
+.projectHeader small { display:inline-grid; place-items:center; min-width:19px; height:19px; margin-left:2px; padding:0 5px; border:1px solid var(--border); border-radius:4px; color:var(--text-3); font:10px var(--mono); }
+.projectHeader > button { border:0; background:transparent; color:var(--text-2); }
 .projectHeader button, .collaborationStrip button, .heading strong, .toolbar button, .modeSwitch button { display:inline-flex; align-items:center; justify-content:center; gap:6px; }
 .collaborationStrip { display:flex; align-items:center; gap:12px; padding:6px 16px; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0; }
 .collaborationStrip > span { flex:1; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
-.collaborationStrip button { font-size:11px; }
+.collaborationStrip button { min-height:28px; padding:3px 9px; font-size:11px; }
+.collaborationStrip > button:last-child { border:0; padding:3px 0; color:var(--text-3); background:transparent; }
 .workspaceBody { display:grid; grid-template-columns:330px minmax(0,1fr); flex:1; min-height:0; gap:12px; padding:12px; }
 .workspaceBody.aiCollapsed { grid-template-columns:minmax(0,1fr); }
 .conversation[hidden], .previewPane[hidden] { display:none; }
 .heading { min-height:46px; padding:8px 14px; font-size:12px; }
-.heading button { border:0; }
+.heading button { display:grid; place-items:center; width:28px; height:28px; padding:0; border:0; background:transparent; color:var(--text-3); }
+.heading strong { font-weight:600; }
 .sessionLine { display:flex; align-items:center; gap:6px; padding:8px 15px; border-bottom:1px solid var(--border); background:var(--surface-2); color:var(--text-3); font-size:11px; }
 .sessionLine i { width:5px; height:5px; border-radius:50%; background:var(--accent-text); }
 .sessionLine span { margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px; }
 .instruction { flex-shrink:0; max-height:46%; overflow:auto; border-bottom:0; border-top:1px solid var(--border); padding:12px; }
 .instruction textarea { min-height:72px; }
+.composerBox { display:grid; gap:8px; min-width:0; padding:9px 9px 7px; border:1px solid var(--border-strong); border-radius:11px; background:var(--surface-2); transition:border-color 160ms ease,box-shadow 160ms ease; }
+.composerBox:focus-within { border-color:var(--accent-text); box-shadow:0 0 0 3px var(--accent-soft); }
+.composerBox > textarea { width:100%; min-height:57px; max-height:160px; padding:0!important; resize:none; border:0; border-radius:0; background:transparent; font-size:12px; line-height:1.7; }
+.composerBox > textarea:focus-visible { outline:0; }
 .instruction label { font-size:11px; }
 .srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .instruction > .contextChip { justify-self:start; display:flex; gap:6px; align-items:center; font-size:11px; border:0; color:var(--text-3); }
-.instruction > textarea { min-height:76px; font-size:12px; line-height:1.7; }
+
 .instructionOptions { color:var(--text-3); font-size:10px; }
 .instructionOptions > label { margin-top:8px; }
 .composerBottom { display:flex; align-items:center; gap:8px; }
@@ -111,10 +121,10 @@
 .previewPane { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
 .modeSwitch { display:flex; align-self:stretch; align-items:stretch; gap:3px; }
 .modeSwitch button { position:relative; border:0; border-radius:0; font-size:12px; padding:0 11px; background:transparent; color:var(--text-2); }
-.modeSwitch button[aria-selected=true] { color:var(--accent-text); background:transparent; }
+.modeSwitch button[aria-selected=true] { color:var(--accent-text); background:transparent; font-weight:600; }
 .modeSwitch button[aria-selected=true]::after { content:""; position:absolute; height:2px; bottom:-6px; left:11px; right:11px; background:var(--accent-text); border-radius:3px; }
 .spacer { flex:1; }
-.toolbar > button { white-space:nowrap; font-size:11px; }
+.toolbar > button { white-space:nowrap; font-size:11px; min-height:28px; }
 .primaryButton { background:var(--accent-text)!important; color:var(--accent-fg)!important; border-color:var(--accent-text)!important; }
 .moreMenu { display:inline-flex; flex-shrink:0; }
 .moreMenu > span > button { display:inline-flex; align-items:center; justify-content:center; width:32px; min-height:30px; padding:4px; border:1px solid var(--border); border-radius:6px; background:var(--surface-2); color:var(--text-2); }
@@ -135,7 +145,7 @@
 .drawer::backdrop { background:#07080b88; }
 .drawerInner { display:flex; flex-direction:column; height:100%; }
 .drawerInner > header { display:flex; align-items:center; justify-content:space-between; min-height:86px; padding:18px 25px; border-bottom:1px solid var(--border); }
-.drawerInner h2 { font-size:18px; margin:0; font-weight:500; }
+.drawerInner h2 { font-size:18px; margin:0; font-weight:600; }
 .drawerInner > header button { font-size:22px; border:0; }
 .drawerBody { flex:1; min-height:0; overflow:auto; padding:22px 25px; font-size:12px; line-height:1.8; }
 .drawerBody > label { display:grid; gap:8px; }
@@ -157,3 +167,12 @@
 .heading strong { justify-content:flex-start; }
 
 .composerBottom .sendButton:not(:disabled):hover { background:var(--accent-hover); color:var(--accent-fg); }
+
+.conversationEmpty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:24px; color:var(--text-3); text-align:center; }
+.conversationEmpty > svg { width:25px; height:25px; color:var(--accent-text); }
+.conversationEmpty strong { font-size:13px; font-weight:600; color:var(--text-2); }
+.conversationEmpty p { margin:0; font-size:12px; line-height:1.8; }
+.nextAction { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:0; padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text-2); background:var(--surface-2); font-size:11px; }
+.nextAction button { padding:3px 8px; font-size:11px; }
+@media(max-width:1100px) { .workspaceBody { grid-template-columns:260px minmax(0,1fr); } .toolbar { row-gap:8px; } }
+@media(max-width:800px) { .workspaceBody { grid-template-columns:minmax(0,1fr); } .projectName { gap:6px; } .projectName > span:first-child { display:none; } .projectHeader small { margin-left:0; } }

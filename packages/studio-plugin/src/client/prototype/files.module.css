@@ -1,7 +1,7 @@
-.tabs { display: flex; flex-shrink: 0; overflow-x: auto; border-bottom: 1px solid var(--border); min-height: 36px; background: var(--surface); }
+.tabs { display: flex; flex-shrink: 0; overflow-x: auto; border-bottom: 1px solid var(--border); min-height:38px; background:var(--surface-2); }
 .tab { display: flex; align-items: center; border-right: 1px solid var(--border); white-space: nowrap; }
-.tab button { border: 0; border-radius: 0; background: transparent; padding: 8px; font-size: 12px; }
-.tab button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 2px var(--accent, #7c8cff); background: var(--surface-2); }
+.tab button { border: 0; border-radius: 0; background: transparent; padding:8px 10px; font:11px var(--mono); }
+.tab button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 2px var(--accent, #7c8cff); background:var(--surface); }
 .breadcrumb { padding: 7px 12px; font: 11px var(--mono); color: var(--text-3); display: flex; gap: 12px; border-bottom: 1px solid var(--border); }
 .breadcrumb small { margin-left: auto; }
 .treeHeader { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); }
@@ -19,3 +19,11 @@
 .treeRow svg { flex-shrink:0; width:12px; height:12px; color:var(--text-3); }
 .files .treeRow[aria-current=true] { background:var(--accent-soft); color:var(--accent-text); }
 .treeHeader button { font-size:10px; padding:3px 5px; }
+
+.tab > button:last-child { padding:3px 5px; margin-right:5px; border-radius:3px; color:var(--text-3); font-size:15px; }
+.tab > button:last-child:hover { background:var(--surface-3); color:var(--text); }
+.treeHeader { min-height:38px; gap:6px; }
+.treeHeader strong { margin-right:auto; font-size:11px; font-weight:500; }
+.breadcrumb { min-height:30px; align-items:center; overflow-wrap:anywhere; }
+@media(max-width:1280px) { .files { grid-template-columns:176px minmax(0,1fr); } }
+@media(max-width:600px) { .files { grid-template-columns:140px minmax(0,1fr); } .treeHeader { flex-wrap:wrap; } .breadcrumb small { display:none; } }

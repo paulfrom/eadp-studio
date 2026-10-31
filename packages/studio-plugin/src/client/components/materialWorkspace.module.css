@@ -1,6 +1,6 @@
 .frame { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .frame .panes { padding: 12px; }
-.panes > .materialPanel { border-radius: 12px; }
+.panes > .materialPanel { border-radius: 12px; box-shadow: none; }
 .toolbar { flex-wrap: nowrap; min-height: 46px; padding: 7px 10px 7px 13px; gap: 9px; background: var(--surface); }
 .toolbar > :first-child { flex: 1; }
 .toolbarActions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
@@ -10,35 +10,42 @@
 .menuTrigger:hover { background: var(--surface-3); color: var(--text); }
 .menuTrigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .status { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 5px 16px; border-top: 1px solid var(--border); background: var(--surface); color: var(--text-3); font-size: 11px; }
-.statusItems { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.statusItems { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; }
 .statusItems button { border: 0; background: transparent; padding: 2px 0; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.statusItems button + button { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border-strong); }
 .statusItems b { color: var(--text-2); font-weight: 500; }
 .statusItems button[data-state='blocked'], .statusItems button[data-state='blocked'] b { color: var(--danger); }
 .statusItems button[data-state='pending'], .statusItems button[data-state='pending'] b { color: var(--warn); }
 .status button:hover { color: var(--accent-text); }
 .runDetails { position: relative; flex-shrink: 0; }
-.runDetails > summary { cursor: pointer; padding: 2px 5px; }
+.runDetails > summary { cursor: pointer; padding: 4px 8px; border-radius: 5px; list-style: none; }
+.runDetails > summary::-webkit-details-marker { display: none; }
+.runDetails > summary::after { content: "⌄"; display: inline-block; margin-left: 6px; }
+.runDetails[open] > summary::after { transform: rotate(180deg); }
+.runDetails > summary:hover { background: var(--surface-3); color: var(--text-2); }
 .runDetails dl { position: absolute; right: 0; bottom: calc(100% + 12px); width: 320px; max-width: calc(100vw - 32px); margin: 0; padding: 12px; display: grid; gap: 8px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow-lg); z-index: 3; }
 .runDetails dl > div { display: flex; justify-content: space-between; gap: 16px; }
 .runDetails dt { color: var(--text-3); flex: 0 0 auto; }
 .runDetails dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; text-align: right; }
 .sheet { padding: 0; width: min(680px, calc(100vw - 40px)); max-height: calc(100dvh - 56px); border: 1px solid var(--border-strong); border-radius: 12px; color: var(--text); background: var(--surface); box-shadow: var(--shadow-lg); overflow: hidden; }
 .wide { width: min(880px, calc(100vw - 40px)); }
-.sheet[open] { display: flex; flex-direction: column; }
+.sheet[open] { display: flex; flex-direction: column; animation: sheetIn 180ms ease-out; }
+@keyframes sheetIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .sheet::backdrop { background: rgb(6 7 9 / 64%); }
 .sheetHeading { display: flex; flex: 0 0 auto; justify-content: space-between; align-items: start; gap: 16px; padding: 15px 18px; border-bottom: 1px solid var(--border); }
-.sheetHeading strong { font-size: 15px; font-weight: 500; }
+.sheetHeading strong { font-size: 14.5px; font-weight: 600; }
 .sheetHeading p { margin: 3px 0 0; font-size: 11px; color: var(--text-3); }
 .sheetHeading button { display: grid; place-items: center; width: 27px; height: 27px; padding: 0; border: 0; background: transparent; border-radius: 5px; font-size: 22px; line-height: 1; }
 .sheetHeading button:hover { background: var(--surface-3); }
-.sheetBody { min-height: 0; overflow-y: auto; padding: 14px 18px 18px; }
+.sheetBody { min-height: 0; overflow-y: auto; padding: 14px 18px 18px; overscroll-behavior: contain; }
 .sheetBody > section, .sheetBody > footer { margin: 0; max-height: none; }
 .drawer { position:fixed; inset:56px 16px 48px auto; margin:0; width:min(470px,calc(100vw - 32px)); height:calc(100dvh - 104px); max-height:calc(100dvh - 104px); border-radius:12px; }
 .restore { flex: 0 0 36px; display: flex; align-items: start; justify-content: center; padding-top: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .restore button { padding: 4px; border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; gap: 9px; color: var(--text-3); font-size: 11px; writing-mode: vertical-rl; }
+.secondaryDetails > summary:hover { color: var(--text-2); }
 .secondaryDetails > summary { color: var(--text-3); cursor: pointer; font-size: 11px; padding: 3px 0; }
 .secondaryDetails > :not(summary) { margin-top: 8px; }
-.composerHint { flex: 0 0 auto; margin: 0; padding: 5px 14px 9px; color: var(--text-3); font-size: 10px; border-top: 1px solid var(--border); }
+.composerHint { flex: 0 0 auto; font-family: var(--mono); margin: 0; padding: 5px 14px 9px; color: var(--text-3); font-size: 10px; border-top: 1px solid var(--border); }
 .reviewBlock { margin-top: 14px; }
 @media (max-width: 760px) { .toolbar { flex-wrap: wrap; } .toolbar > :first-child { flex-basis: 100%; } .status { align-items: start; } .statusItems { gap: 6px 12px; } .frame .panes { padding: 8px; } }
 
@@ -56,3 +63,11 @@
 .evidence small { display: block; color: var(--text-3); font: 10px/1.6 var(--mono); overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: reduce) { .frame *, .sheet * { transition: none; animation: none; scroll-behavior: auto; } }
+
+@media (min-width: 901px) and (max-width: 1400px) {
+  .toolbar { flex-wrap: wrap; }
+  .toolbar > :first-child { flex-basis: 100%; }
+  .toolbarActions { flex: 1; }
+  .toolbarActions > :last-child { margin-left: auto; }
+}
+@media (pointer: coarse) { .toolbarActions > button, .menuTrigger, .sheetHeading button, .statusItems button, .runDetails > summary { min-height: 44px; } }

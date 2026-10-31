@@ -13,7 +13,7 @@ import { StudioStore } from '../../packages/studio-plugin/src/host/application/s
 const head = 'a'.repeat(40), candidateSha = 'b'.repeat(40)
 const evidencePath = '.eadp/evidence/approved.md', evidence = '业务访谈：只有作者确认后，业务材料才成为固定版本。\n'
 
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, kind: 'scenario' | 'requirement' = 'scenario') {
   const root = await mkdtemp(path.join(tmpdir(), 'eadp-fixed-candidates-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = new StudioStore(path.join(root, 'local')); store.useUser(1)
@@ -22,27 +22,27 @@ async function fixture(t: test.TestContext) {
   await mkdir(path.dirname(path.join(worktree, evidencePath)), { recursive: true })
   await writeFile(path.join(worktree, evidencePath), evidence)
   const templateRef = { commitSha: head, path: '.template/scenario.md', sha256: digest('template') }
-  const entity: EntityView = { id: 'scenario', kind: 'scenario', title: '审批业务', templateId: 'default', templateRef,
+  const entity: EntityView = { id: 'scenario', kind, title: '审批业务', templateId: 'default', templateRef,
     revision: 1, generation: 1, materialVersion: 0, confirmationStatus: 'draft', taskStatus: 'active', scenarioIds: [], prerequisites: [], authorId: 1,
     occupation: { occupationId: 'occupation', generation: 1, taskId: path.basename(worktree), clientId: local.clientId, expectedRevision: 1, entityId: 'scenario', ownerId: 1, purpose: 'design', inputVersion: 0, prerequisiteBindings: [], createdAt: '' } }
-  const metadata: MaterialMetadata = { entityId: entity.id, kind: 'scenario', title: entity.title, templateId: 'default', templateRef,
+  const metadata: MaterialMetadata = { entityId: entity.id, title: entity.title, templateId: 'default', templateRef,
     scenarioIds: [], prerequisites: [], sources: [], businessEvidence: [{ label: '业务访谈', reference: 'synthetic:approved', files: [{ path: evidencePath, sha256: digest(evidence) }], ranges: [{ path: evidencePath, startLine: 1, endLine: 1 }] }],
-    openQuestions: [], flowComplete: true, referencedAssets: [] }
+    openQuestions: [], referencedAssets: [], ...(kind === 'scenario' ? { kind, flowComplete: true } : { kind, coreRulesPresent: true, acceptanceCriteriaPresent: true }) }
   const draft = await saveMaterial(worktree, metadata, '## 核心业务规则\n\n只有作者可确认业务材料。\n\n## 验收条件\n\n作者确认后形成可追溯的固定版本。\n')
   const task: TaskView = { projectId: 'project', entityId: entity.id, purpose: 'material', worktree, sessionId: 'original-session', inputHash: '' }
   // A historical task precedes the original task, and the selected project has changed.
   local.tasks.push({ ...task, worktree: path.join(root, 'historical-task'), sessionId: 'historical-session' }, task)
   local.selectedProjectId = 'other-project'; await store.save()
   const remote = { project: { id: 'project', recognizedHead: head }, entities: [entity] } as unknown as ProjectState
-  const calls = { taskFactories: 0, commits: [] as Array<{ root: string; files: readonly string[] }>, identities: [] as string[], reads: [] as string[], pruned: [] as TaskView[] }
+  const calls = { taskFactories: 0, commits: [] as Array<{ root: string; files: readonly string[]; message: string }>, identities: [] as string[], reads: [] as string[], pruned: [] as TaskView[] }
   const git = { head, parents: '', status: ` M ${draft.path}\0`, changed: [draft.path], blobs: new Map<string, Buffer>(), committed: new Map<string, Buffer>(), loseCommitReply: false }
   const ports = {
     gitLocal: async (args: readonly string[], directory: string) => { assert.equal(directory, worktree); return args[0] === 'rev-list' ? git.parents : git.status },
     git: {
       state: async (directory: string) => { assert.equal(directory, worktree); return { head: git.head, dirty: !!git.status } },
       changedFiles: async () => git.changed,
-      commitFiles: async (directory: string, files: readonly string[]) => {
-        calls.commits.push({ root: directory, files })
+      commitFiles: async (directory: string, files: readonly string[], message: string) => {
+        calls.commits.push({ root: directory, files, message })
         for (const relative of files) {
           const bytes = await readFile(path.join(directory, relative)).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error })
           if (bytes) git.committed.set(relative, bytes); else git.committed.delete(relative)
@@ -83,7 +83,32 @@ test('a recorded confirmation uses its original task, project and operation iden
   assert.equal(f.calls.taskFactories, 0)
   assert.deepEqual(f.calls.identities, ['project'])
   assert.equal(f.calls.commits[0]!.root, f.worktree)
+  assert.equal(f.calls.commits[0]!.message, '确认场景：审批业务')
   assert.deepEqual(new Set(f.calls.commits[0]!.files), new Set([f.draft.path, evidencePath]))
+})
+
+test('confirmation commits identify the material by business kind, code and title', async t => {
+  for (const [kind, code, expected] of [
+    ['scenario', 'SC-0002', '确认场景 SC-0002：审批业务'],
+    ['requirement', 'REQ-0003', '确认需求 REQ-0003：审批业务'],
+  ] as const) await t.test(kind, async child => {
+    const f = await fixture(child, kind)
+    f.entity.code = code
+    await f.candidates.prepare(f.request)
+    assert.equal(f.calls.commits[0]!.message, expected)
+  })
+})
+
+test('a renamed confirmation commit describes the current draft rather than the previous entity title', async t => {
+  const f = await fixture(t), oldBytes = await readFile(path.join(f.worktree, f.draft.path))
+  f.entity.code = 'SC-0002'
+  const renamed = await saveMaterial(f.worktree, { ...f.metadata, title: '采购审批规则' }, f.draft.body)
+  f.git.blobs.set(f.draft.path, oldBytes)
+  f.git.status = ` D ${f.draft.path}\0?? ${renamed.path}\0`
+  f.git.changed = [f.draft.path, renamed.path]
+  await f.candidates.prepare({ ...f.request, expectedHash: renamed.sha256 })
+  assert.equal(f.entity.title, '审批业务')
+  assert.equal(f.calls.commits[0]!.message, '确认场景 SC-0002：采购审批规则')
 })
 
 test('a changed occupation or removed original session never selects or acquires a replacement task', async t => {

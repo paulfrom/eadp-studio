@@ -143,7 +143,7 @@
 
 .stageNav { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 12px; scrollbar-color: var(--rail-border-strong) transparent; }
 .stageNav::-webkit-scrollbar-thumb { background: var(--rail-border-strong); border: 3px solid transparent; background-clip: padding-box; }
-.navCaption { padding: 8px 8px 6px; font-size: 12px; line-height: 17px; font-weight: 500; letter-spacing: 0; color: var(--rail-faint); }
+.navCaption { padding: 8px 8px 6px; font-size: 10.5px; line-height: 17px; font-weight: 500; letter-spacing: .08em; color: var(--rail-faint); }
 .stage {
   position: relative; display: flex; align-items: center; gap: 8px;
   width: 100%; min-height: 33px; padding: 6px 8px;
@@ -170,10 +170,12 @@
 .sidebarDialog .rail { width:100%; height:100%; position:relative; padding-top:40px; }
 .closeNavigation { position:absolute; right:12px; top:8px; min-width:28px; min-height:28px; font-size:22px!important; }
 .materialPageHeader { display:flex; align-items:center; flex-shrink:0; gap:12px; min-height:44px; padding:6px 16px; border-bottom:1px solid var(--border); background:var(--surface); font-size:11.5px; }
-.materialPageHeader .materialBack { display:flex; align-items:center; gap:6px; border:0; padding:3px 0; font-size:11.5px; color:var(--text-2); }
+.materialPageHeader .materialBack { display:flex; align-items:center; gap:6px; border:0; min-height:28px; padding:3px 0; font-size:11.5px; color:var(--text-2); }
 .materialProject { display:flex; align-items:center; gap:7px; min-width:0; color:var(--text-3); }
 .materialProject strong { min-width:0; max-width:200px; font:10.5px var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-2); }
 .materialPresence { margin-left:auto; display:flex; align-items:center; gap:5px; white-space:nowrap; color:var(--text-3); font-size:10.5px; }
+.materialPresence[data-state='disconnected'] i { background: var(--warn); }
+.materialPresence[data-state='busy'] i { background: var(--accent); }
 .materialPresence i { width:5px; height:5px; border-radius:50%; background:var(--ok); }
 .materialPageHeader .materialReload { display:grid; place-items:center; width:28px; height:28px; padding:4px; border:0; }
 
@@ -545,7 +547,7 @@
 .sourceCard { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 11px; overflow-wrap: anywhere; }
 .sourceCard > strong { font-size: 11.5px; }
 .sourceCard > small { color: var(--text-3); font: 10px var(--mono); }
-@media (max-width: 1280px) { .scenarioWorkspace { flex-direction: column; overflow: auto; padding: 0 12px 12px; } .chatPanel, .specPanel { flex: 0 0 auto; min-height: 420px; } .chatDock { max-height: none; } }
+@media (max-width: 900px) { .scenarioWorkspace { flex-direction: column; overflow: auto; padding: 0 12px 12px; } .chatPanel, .specPanel { flex: 0 0 auto; min-height: 420px; } .chatDock { max-height: none; } }
 
 
 @media (max-width: 600px) {

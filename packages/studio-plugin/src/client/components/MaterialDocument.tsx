@@ -2,7 +2,7 @@ import { useDeferredValue, useMemo, useState } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EntityView, MaterialDraft } from '../../shared/studio.ts'
 import { exportMarkdown, listItemCount, markdownLabels, sectionSummary, splitSections } from '../scenarios/document.ts'
-import { MaterialActionMenu } from './MaterialActionMenu.tsx'
+import { PrototypeIcon } from '../prototype/PrototypeIcon.tsx'
 import css from '../studio.module.css'
 import doc from './document.module.css'
 
@@ -21,9 +21,9 @@ export function DocumentToolbar({ draft, title, body, preview, syncState, state,
       <button aria-pressed={preview} onClick={() => onPreview(true)}>预览</button>
       <button aria-pressed={!preview} onClick={() => onPreview(false)}>源码</button>
     </div>
-    <MaterialActionMenu label="文档操作" actions={[{ id: 'export', label: '导出 Markdown', run: () => exportMarkdown(title, body) }]} />
+    <button className={doc.export} aria-label="导出 Markdown" title="导出 Markdown" onClick={() => exportMarkdown(title, body)}><PrototypeIcon name="external" /></button>
     {!readOnly && <button className={doc.save} disabled={saveDisabled} onClick={onSave}>{retry ? '重试保存' : '保存'}</button>}
-    <button className={doc.collapse} onClick={onCollapse} aria-label="收起文档预览" title="收起文档预览">›</button>
+    <button className={doc.collapse} onClick={onCollapse} aria-label="收起文档预览" title="收起文档预览"><PrototypeIcon name="chevron-right" /></button>
   </header>
 }
 
@@ -53,7 +53,7 @@ function DocumentSection({ title, body, ordinal, initialOpen }: { title: string;
       <span className={doc.title} title={title}>{title}</span>
       <span className={doc.summary} title={sectionSummary(body)}>{sectionSummary(body)}</span>
       {entries > 0 && <span className={doc.count}>{entries} 条</span>}
-      <span className={doc.chevron} aria-hidden="true">⌄</span>
+      <span className={doc.chevron} aria-hidden="true"><PrototypeIcon name="chevron-down" /></span>
     </summary>
     <div className={doc.sectionBody}><MarkdownText text={body} labels={markdownLabels} /></div>
   </details>
