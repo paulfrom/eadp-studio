@@ -1,18 +1,19 @@
 import { memo, useState } from 'react'
 import { MaterialConfirmationChecks, type MaterialConfirmationChecksProps } from '../components/MaterialConfirmationChecks.tsx'
+import { MaterialAiComposer } from '../components/MaterialAiComposer.tsx'
 import css from '../studio.module.css'
 import checks from '../components/material-confirmation.module.css'
 
-/** Scenario confirmation includes bounded repair and local settlement diagnostics. */
-export const ScenarioGates = memo(function ScenarioGates({ onConfirm, onRepair, onResume, onCancel, ...props }: MaterialConfirmationChecksProps & {
-  onConfirm(): void; onRepair(): void; onResume(answer: string): void; onCancel(): void;
+/** Scenario actions combine free-form AI help with an optional direct confirmation. */
+export const ScenarioGates = memo(function ScenarioGates({ onConfirm, onRepair, onResume, onCancel, onAssist, ...props }: MaterialConfirmationChecksProps & {
+  onConfirm(): void; onRepair(): void; onResume(answer: string): void; onCancel(): void; onAssist(prompt: string): Promise<boolean>;
 }) {
   const [answer, setAnswer] = useState('')
   const { workspace, disabled } = props
   const repair = workspace.repair
   const paused = repair?.status === 'active' || repair?.status === 'paused'
-  return <footer className={checks.footer} aria-label="场景确认门禁">
-    <MaterialConfirmationChecks {...props} disabled={disabled || paused} />
+  return <><MaterialAiComposer kind="scenario" busy={disabled} onSubmit={onAssist} /><footer className={checks.footer} aria-label="场景操作">
+    <MaterialConfirmationChecks {...props} />
     <div className={checks.diagnostics}>
       {workspace.git && <details><summary>Git 诊断</summary><small>Working Tree：{workspace.git.dirty ? '包含本地变更' : '干净'} · {workspace.git.branch} · {workspace.git.head.slice(0, 12)}</small></details>}
       {workspace.settlement && <span className={checks.settlement} data-state={workspace.settlement.status}>{({ draft: '草稿', 'sync-pending': '已确认待同步', 'cleanup-pending': '已确认待清理', settled: '本机收整完成' } as const)[workspace.settlement.status]}</span>}
@@ -28,8 +29,8 @@ export const ScenarioGates = memo(function ScenarioGates({ onConfirm, onRepair, 
       {(repair.status === 'active' || repair.status === 'paused') && <button type="button" disabled={disabled} onClick={onCancel}>取消本次修复任务</button>}
     </details>}
     {!workspace.readOnly && <div className={checks.actions}>
-      <button type="button" disabled={disabled || paused} onClick={onRepair} title="由 AI 修复门禁阻断的问题后再确认">AI 修复并确认</button>
-      <button type="button" className={css.primary} disabled={disabled || paused} onClick={onConfirm}>确认当前场景</button>
+      <button type="button" disabled={disabled} onClick={onRepair} title="让 AI 处理检查建议后再确认">AI 处理并确认</button>
+      <button type="button" className={css.primary} disabled={disabled} onClick={onConfirm}>确认当前场景</button>
     </div>}
-  </footer>
+  </footer></>
 })

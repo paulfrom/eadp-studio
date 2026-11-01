@@ -11,7 +11,7 @@ import { MaterialCatalog } from '../components/MaterialCatalog.tsx'
 import { MaterialEditor } from '../components/MaterialEditor.tsx'
 import { ReviewPanel } from '../components/ReviewPanel.tsx'
 import { ProjectDialog } from '../components/ProjectDialog.tsx'
-import { ProjectProgressNotice } from '../components/ProjectProgressNotice.tsx'
+import { StudioStatusDialog } from '../components/StudioStatusDialog.tsx'
 import { StudioTopbar } from '../components/StudioTopbar.tsx'
 import { MaterialNavigation } from '../components/MaterialNavigation.tsx'
 import { MaterialPageHeader } from '../components/MaterialPageHeader.tsx'
@@ -58,6 +58,7 @@ export function StudioPanel(props: StudioProps) {
   const [error, setError] = useState('')
   const [comparisonError, setComparisonError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
+  const [statusOpen, setStatusOpen] = useState(false)
   const sidebar = useStudioSidebar()
   const [filter, setFilter] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
@@ -91,6 +92,8 @@ export function StudioPanel(props: StudioProps) {
     finally { if (!background) { actions.current -= 1; setBusy(actions.current > 0) } }
   }, [run, props.openSettings])
   const localCall = useCallback((command: StudioCommand) => call(command, true), [call])
+  const statusSignature = [error, state.recovery?.preservedPath, ...state.projectInitializations.map(item => item.id), ...state.pending.filter(item => item.phase !== 'accepted').map(item => `${item.id}:${item.message ?? item.phase}`)].filter(Boolean).join('|')
+  useEffect(() => { if (statusSignature) setStatusOpen(true) }, [statusSignature])
   useEffect(() => {
     // The session joins a poll and a section's read into one Host round trip, and
     // a user action always writes the newer projection, so polling cannot undo it.
@@ -135,6 +138,13 @@ export function StudioPanel(props: StudioProps) {
   }, [stage, consistencyProjectId, sharedComparisons, refreshComparisons])
   const loadError = storeError || (state.connected ? '' : '请登录后读取项目目录')
   const entities: EntityView[] = (state.collaboration?.entities ?? []).filter((entity): entity is EntityView => 'title' in entity)
+  const statusEntity = entities.find(entity => entity.id === (selectedId ?? state.scenario?.entityId ?? state.requirement?.entityId) && (entity.kind === 'scenario' || entity.kind === 'requirement'))
+  const assistStatus = (prompt: string, entityId?: string) => {
+    const target = entities.find(entity => entity.id === (entityId ?? statusEntity?.id) && (entity.kind === 'scenario' || entity.kind === 'requirement'))
+    if (!target) { setError('请先在场景或需求中打开 AI 操作，再描述要处理的事项。'); return }
+    setStatusOpen(false)
+    void call({ action: 'assistMaterial', entityId: target.id, prompt, operationId: crypto.randomUUID() })
+  }
   const openProjectDialog = async () => { if (!await flushBeforeLeave()) return; setProjectDialog(true); await call({ action: 'namespaces' }) }
   const selected = entities.find(e => e.id === selectedId && !e.builtinKey)
   const draft = state.drafts.find(d => d.entityId === selectedId)
@@ -252,12 +262,8 @@ export function StudioPanel(props: StudioProps) {
       </StudioSidebar>
       <main className={css.main}>
         {prototypeReturnProject === state.project?.id && stage === 'requirements' && <button onClick={() => { void flushBeforeLeave().then(saved => { if (saved) { setSelectedId(undefined); setStage('prototype'); setPrototypeReturnProject(undefined) } }) }}>返回原型协作</button>}
-        {materialStage && selected ? <MaterialPageHeader name={currentStage.name} projectName={state.project?.name} connected={state.connected} busy={busy} onBack={() => void backToList()} onReload={() => void reloadMaterial()} /> : !materialStage && stage !== 'prototype' && <header className={css.pageHeader}><div><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{currentStage.name}</h1><p>{currentStage.description}</p></div><span className={css.statusPill}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</span></header>}
+        {materialStage && selected ? <MaterialPageHeader name={currentStage.name} projectName={state.project?.name} connected={state.connected} busy={busy} onBack={() => void backToList()} onReload={() => void reloadMaterial()} /> : !materialStage && stage !== 'prototype' && <header className={css.pageHeader}><div><p className={css.eyebrow}>PROJECT / {currentStage.mark}</p><h1>{currentStage.name}</h1><p>{currentStage.description}</p></div><button className={css.statusPill} onClick={() => setStatusOpen(true)}><i />{busy ? '正在处理' : state.connected ? '协同工作台已登录' : '等待连接'}</button></header>}
 
-        {error && <div className={css.error} role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误">×</button></div>}
-        {state.recovery && <div className={css.notice}>此前的本地恢复记录格式无效，已保留原文件：<code>{state.recovery.preservedPath}</code>，并已重建当前版本的本地状态。请重新打开项目。</div>}
-        {state.projectInitializations.map(operation => <ProjectProgressNotice key={operation.id} operation={operation} progress={progress.find(item => item.operationId === operation.id)} busy={busy} onRetry={() => void call({ action: 'retryProjectInitialization', operationId: operation.id })} />)}
-        {state.pending.filter(p => p.phase !== 'accepted').map(p => <div className={css.notice} key={p.id}>待核对：{p.message ?? p.phase}<button disabled={busy} onClick={() => void call({ action: 'retryOperation', operationId: p.id })}>查询并恢复</button></div>)}
         {!state.project ? <div className={css.welcome}><span className={css.welcomeMark}>e</span><p className={css.eyebrow}>IDEAS INTO ASSETS</p><h2>从一个项目开始</h2><p>登录协同工作台，创建或打开项目。<br />场景、需求与原型将在这里持续沉淀。</p><button className={css.primary} onClick={() => state.connected ? void openProjectDialog() : props.openSettings('studio-collab')}>{state.connected ? "＋ 创建 / 打开项目" : "登录协同工作台"}</button><small>一个项目，对应一个 Git 仓库</small></div> : stage === 'baselines' ? <div className={css.resultList}>
           <div className={css.sectionHeading}><h2>已确认基线</h2><span>查看后台已接受的原型成果</span></div>
           {!state.prototypeBaselines ? <Empty text="原型基线尚未读取。" /> : state.prototypeBaselines.length === 0 ? <Empty text="项目原型成果被后台接受后，基线会出现在这里。" /> : state.prototypeBaselines.map(b => <article className={css.baseline} key={b.id}><span className={css.assetIcon}>✓</span><div><h3>项目原型 · 基线 {b.sequence}</h3><p>{b.id} · {b.acceptedAt}</p><code>{b.commitSha}</code><p>关联需求：{b.relatedRequirementIds.map(id => entities.find(entity => entity.id === id)?.title ?? id).join('、') || '未记录'}</p></div><span className={css.success}>后端已接受</span><button disabled={busy} onClick={() => void call({ action: 'generateHandoff', baselineId: b.id })}>生成交接清单</button></article>)}
@@ -279,6 +285,7 @@ export function StudioPanel(props: StudioProps) {
         </div>}
       </main>
     </div>{projectDialog && <ProjectDialog {...(state.workspace ? { defaultDirectory: state.workspace.defaultDirectory } : {})} localProjects={state.projects} pickDirectory={props.pickDirectory} busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (!await flushBeforeLeave()) return; const result = await call(command); if (result?.ok) { setSelectedId(undefined); setProjectDialog(false) } }} />}
+    <StudioStatusDialog open={statusOpen} error={error} recovery={state.recovery} pending={state.pending} operations={state.projectInitializations} progress={progress} busy={busy} canAssist={!!statusEntity} onClose={() => setStatusOpen(false)} onRetryOperation={operationId => void call({ action: 'retryOperation', operationId })} onRetryProject={operationId => void call({ action: 'retryProjectInitialization', operationId })} onAssist={assistStatus} />
   </div>
 }
 function Empty({ text }: { text: string }) { return <div className={css.empty}>{text}</div> }

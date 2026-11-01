@@ -27,6 +27,8 @@ type SynchronizeRequest = SynchronizePrototypeDevelopmentRequest
 type Phase = 'superseded' | 'not-delivered' | 'prepared' | 'creating' | 'claimed' | 'workspace' | 'sending' | 'sent' | 'unknown' | 'fixing' | 'commit-known' | 'pushing' | 'pushed' | 'synchronizing' | 'awaiting-review' | 'confirming' | 'reviewed'
 interface Operation {
   runtimeRequest?: true
+  runtimePreviousReviewStatus?: PrototypeRequirementReviewStatus
+  releaseUnchangedClaim?: true
   parentRunId?: string
   nativePrompt?: SessionPromptRequest
   automaticRepair?: true; id: string; request: Start | Correct | Confirm; phase: Phase; resolvedRequirementIds?: string[]; create?: CreateRequest
@@ -641,7 +643,7 @@ export class PrototypeCollaboration {
     if (item.state === 'queued') throw new Error('当前事项已有排队指令，请等待执行或先继续该指令')
     if ((data.buffers ?? []).some(value => value.prototypeTaskId === taskId && value.content !== value.baseContent)) throw new Error('请先保存当前编辑内容')
     await this.current(item); await this.existingWorkspace(item)
-    data.operations.push({ id: operationId, request: command, taskId, phase: 'prepared', runtimeRequest: true })
+    data.operations.push({ id: operationId, request: command, taskId, phase: 'prepared', runtimeRequest: true, ...(item.development ? { runtimePreviousReviewStatus: item.development.reviewStatus } : {}) })
     item.runtimeRun = { operationId, kind, status: 'pending' }
     item.nextAction = '运行指令已保存，正在交给 AI'; await this.save()
     if (item.development) await this.correct(command)
@@ -763,17 +765,27 @@ export class PrototypeCollaboration {
   }
   private async finishDevelopment(item: LocalTask, operation: Operation, release: boolean, final = false): Promise<void> {
     const development = item.development!
+    if (operation.releaseUnchangedClaim) {
+      release = true
+      final = operation.runtimePreviousReviewStatus === 'reviewed'
+    }
     await this.existingWorkspace(item)
     if (operation.phase === 'sent') {
       const observed = await this.ports.git.state(item.worktree)
       if (!operation.turnStartHead || !operation.turnStartFingerprint) throw new Error('开发轮次的工作现场起点未记录，不能自动固定成果')
       const unchanged = observed.head === operation.turnStartHead && await this.ports.git.workingFingerprint(item.worktree) === operation.turnStartFingerprint
-      if (operation.runtimeRequest && unchanged) {
+      if (operation.runtimeRequest && operation.claimRequest && unchanged) {
+        operation.releaseUnchangedClaim = true
+        release = true
+        final = operation.runtimePreviousReviewStatus === 'reviewed'
+        operation.commitId = observed.head
+        development.commitId = observed.head
+        operation.checksPassed = true
+      } else if (operation.runtimeRequest && unchanged) {
         operation.phase = 'awaiting-review'; item.state = 'awaiting-user'
         development.stage = 'awaiting-review'; development.reviewStatus = 'awaiting-review'
         await this.runtimeOutcome(item, operation); await this.save(); await this.advanceQueue(); return
-      }
-      if ((operation.request.action === 'startPrototypeCollaboration' || operation.request.action === 'correctPrototypeRequirement') && unchanged) {
+      } else if ((operation.request.action === 'startPrototypeCollaboration' || operation.request.action === 'correctPrototypeRequirement') && unchanged) {
         item.state = 'awaiting-user'; item.nextAction = '本轮未形成代码改动，请核对答复后决定是否纠偏'; development.stage = operation.request.action === 'correctPrototypeRequirement' ? 'awaiting-review' : 'developing'; if (operation.request.action === 'correctPrototypeRequirement') development.reviewStatus = 'awaiting-review'; development.message = item.nextAction
         await this.save(); return
       }
@@ -820,7 +832,8 @@ export class PrototypeCollaboration {
       } else {
         operation.phase = 'awaiting-review'; development.stage = 'awaiting-review'; development.reviewStatus = 'awaiting-review'; item.nextAction = release ? '需求成果待核对，已自动推进下一项' : '纠偏成果待核对，开发占用保留至最终确认'
       }
-      item.state = 'awaiting-user'; delete development.message; await this.save()
+      item.state = 'awaiting-user'; delete development.message
+      await this.runtimeOutcome(item, operation); await this.save()
       if (!final) await this.advanceQueue()
     }
   }

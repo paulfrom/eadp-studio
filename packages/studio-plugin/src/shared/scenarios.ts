@@ -78,6 +78,7 @@ export type ScenarioCommand =
   | { action: 'resolveScenarioWriteProposal'; entityId: string; proposalId: string; decision: 'write' | 'reject'; expectedHash: string; selectedChangeIds?: string[] }
   | { action: 'undoScenarioWrite'; entityId: string; operationId: string; expectedHash: string }
   | { action: 'newScenarioSession'; entityId: string }
+  | { action: 'assistMaterial'; entityId: string; prompt: string; operationId: string }
   | { action: 'selectScenarioSession'; entityId: string; sessionId: string }
   | { action: 'splitScenario'; entityId: string }
   | { action: 'setScenarioStructureCheck'; enabled: boolean }

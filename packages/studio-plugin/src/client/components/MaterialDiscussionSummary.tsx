@@ -11,7 +11,7 @@ export function MaterialDiscussionSummary({ questions, sources, onQuestions }: {
   return <>
     {questions.length > 0 && <section className={layout.decisions} aria-label="需要你决定">
       <header><strong>需要你决定</strong><span>{questions.length} 项待澄清</span></header>
-      {visibleQuestions.map((question, index) => <div key={index}><p>{question.limitation || '请补充业务问题'}</p><span>{question.blocking ? '阻断版本确认' : '不阻断版本确认'}{question.excludedScope ? ` · 不适用范围：${question.excludedScope}` : ''}</span></div>)}
+      {visibleQuestions.map((question, index) => <div key={index}><p>{question.limitation || '请补充业务问题'}</p><span>{question.blocking ? '重点关注' : '一般提醒'}{question.excludedScope ? ` · 不适用范围：${question.excludedScope}` : ''}</span></div>)}
       <button onClick={onQuestions}>核对待澄清项{questions.length > 2 ? ` · 共 ${questions.length} 项` : ''} ›</button>
     </section>}
     {evidence.length > 0 && <details className={layout.evidence}>

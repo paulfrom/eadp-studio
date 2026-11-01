@@ -1,4 +1,9 @@
 .checks { display: grid; gap: 14px; min-width: 0; }
+.aiComposer { display: grid; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.aiComposer form { display: grid; gap: 10px; }
+.aiComposer textarea { min-height: 96px; resize: vertical; line-height: 1.7; }
+.aiActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.aiPrimary { background: var(--accent) !important; border-color: var(--accent) !important; color: var(--accent-fg) !important; }
 .heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; }
 .heading > span { color: var(--text-3); font-size: 11px; }
 .gateList { border-top: 1px solid var(--border); }

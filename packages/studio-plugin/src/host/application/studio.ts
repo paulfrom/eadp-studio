@@ -512,6 +512,7 @@ export class StudioApplication {
       case 'resolveScenarioWriteProposal': await this.scenarios.resolveWriteProposal(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'undoScenarioWrite': await this.scenarios.undoWrite(command); await this.repairs.checkConcurrent(command.entityId); break
       case 'newScenarioSession': return this.scenarios.newSession(command.entityId)
+      case 'assistMaterial': return this.scenarios.assist(command.entityId, command.prompt, command.operationId)
       case 'selectScenarioSession': return this.scenarios.selectSession(command.entityId, command.sessionId)
       case 'setScenarioStructureCheck': { const local = await this.store.read(); local.scenarioStructureCheck = command.enabled; await this.store.save(); break }
       case 'importScenarioSource': await this.scenarios.sources.importSource(command); break

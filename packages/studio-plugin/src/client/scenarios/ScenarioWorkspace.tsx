@@ -53,6 +53,7 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
     retrySource: (sourceId: string) => { void execute({ action: 'retryScenarioSource', entityId: entity.id, sourceId }) },
     selectSource: (source: ScenarioSource, selected: boolean, formal: boolean) => { void execute({ action: 'selectScenarioSource', entityId: entity.id, sourceId: source.id, selected, formal }) },
     confirm: () => { void execute(hash => ({ action: 'confirmMaterial', entityId: entity.id, expectedHash: hash, method: 'direct' })) },
+    assist: async (prompt: string) => { const result = await execute({ action: 'assistMaterial', entityId: entity.id, prompt, operationId: crypto.randomUUID() }); if (result?.ok) setConfirmationOpen(false); return result?.ok === true },
     repair: () => { void execute(hash => ({ action: 'startScenarioRepair', entityId: entity.id, expectedHash: hash, userActionId: crypto.randomUUID() })) },
     resume: (answer: string) => { void execute(hash => ({ action: 'resumeScenarioRepair', entityId: entity.id, answer, expectedHash: hash, userActionId: crypto.randomUUID() })) },
     cancel: () => { void execute({ action: 'cancelScenarioRepair', entityId: entity.id }, false) },
@@ -112,8 +113,8 @@ export function ScenarioWorkspace({ workspace, entity, state, faces, busy, call,
   <MaterialWorkspaceSheet open={consistencyOpen} title="一致性对比" subtitle="查看对比结论、覆盖范围与历史记录" drawer onClose={() => setConsistencyOpen(false)}>
       <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} onStatusChange={setConsistencyStatus} />
   </MaterialWorkspaceSheet>
-  <MaterialWorkspaceSheet open={confirmationOpen} title="确认场景" subtitle="保存当前输入后重新检查，接受后形成固定版本" onClose={() => setConfirmationOpen(false)}>
-      <ScenarioGates workspace={workspace} disabled={busy} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
+  <MaterialWorkspaceSheet open={confirmationOpen} title="场景 AI 操作" subtitle="描述目标并交给 AI，或查看建议后直接确认" onClose={() => setConfirmationOpen(false)}>
+      <ScenarioGates workspace={workspace} disabled={busy} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={actions.confirm} onAssist={actions.assist} onRepair={actions.repair} onResume={actions.resume} onCancel={actions.cancel} onStructureCheck={actions.structureCheck} />
   </MaterialWorkspaceSheet>
   </div>
 }

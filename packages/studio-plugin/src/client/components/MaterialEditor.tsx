@@ -110,6 +110,6 @@ export function MaterialEditor({ draft, entities, projectId, templates, busy, on
         <label className={css.checkbox}><input type="checkbox" checked={metadata.coreRulesPresent} onChange={e => buffer.edit({ body: snapshot.body, metadata: { ...metadata, coreRulesPresent: e.target.checked } })} />核心业务规则已由业务依据明确</label>
         <label className={css.checkbox}><input type="checkbox" checked={metadata.acceptanceCriteriaPresent} onChange={e => buffer.edit({ body: snapshot.body, metadata: { ...metadata, acceptanceCriteriaPresent: e.target.checked } })} />验收条件可以客观判断</label>
       </>}
-    </details><button className={css.primary} disabled={busy} onClick={() => void flush()}>保存当前材料</button><small className={css.muted}>保存后再确认。{metadata.kind === 'scenario' ? '仅使业务流程无法确定的问题阻断场景确认，资料与引用只作提醒。' : '未解决的核心问题会阻止确认。'}{(error || snapshot.error) && <span role="alert">{error || snapshot.error}</span>}</small>
+    </details><button className={css.primary} disabled={busy} onClick={() => void flush()}>保存当前材料</button><small className={css.muted}>保存后可继续交给 AI 处理。{metadata.kind === 'scenario' ? '业务流程无法确定的问题需要重点关注，资料与引用只作提醒。' : '未解决的核心问题需要重点核对。'}{(error || snapshot.error) && <span role="alert">{error || snapshot.error}</span>}</small>
   </div>
 }

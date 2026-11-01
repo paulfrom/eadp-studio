@@ -59,7 +59,7 @@ function QuestionCard({ turn, sources, disabled, choices, select }: {
     <header className={css.cardHead}><strong>AI 本轮问题 · {turn.questions.length} 项</strong><small>{turn.stale ? '历史轮次' : '选择后插入回答'}</small></header>
     {turn.stale
       ? <p className={css.muted}>材料正文、模板、项目上下文或依据已变化；本轮问题仅供回看。</p>
-      : <p className={css.muted}>选择一项或多项，在对话输入区插入回答后由你发送。选项本身不会修改正文或通过确认门禁。</p>}
+      : <p className={css.muted}>选择一项或多项，在对话输入区插入回答后由你发送。选项本身不会修改正文或确认材料。</p>}
     <ol className={questionCss.list}>
       {turn.questions.map(question => <li key={question.id} className={questionCss.question}>
         <h4>{question.title}</h4>

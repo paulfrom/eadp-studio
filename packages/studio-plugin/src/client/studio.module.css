@@ -356,6 +356,13 @@
 .versionPanel code { color: var(--text-2); }
 .release { margin: 10px; font-size: 10px !important; color: var(--warn) !important; }
 .empty { padding: 28px 15px; color: var(--text-3); font-size: 11px; line-height: 1.9; text-align: center; }
+.statusDialog { display: grid; gap: 12px; padding: 16px; }
+.statusMessage { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+.statusMessage[data-kind='error'] { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: var(--danger-soft); }
+.statusMessage p { color: var(--text-2); overflow-wrap: anywhere; }
+.statusMessage button { justify-self: start; }
+.statusActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.statusDialog > .notice { margin: 0; }
 .error, .notice { margin: 0 20px 10px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; border-radius: 6px; font-size: 11px; flex-shrink: 0; }
 .error { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border)); }
 .notice { background: var(--warn-soft); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border)); }

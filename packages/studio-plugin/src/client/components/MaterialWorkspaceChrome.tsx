@@ -40,7 +40,7 @@ export function MaterialWorkspaceHeader({ entity, sessions, activeSessionId, loc
         ...(onOpenPrototype ? [{ id: 'prototype', label: '进入项目原型', run: onOpenPrototype }] : []),
         { id: 'templates', label: `${entity.kind === 'scenario' ? '场景' : '需求'}模板`, run: onTemplates },
       ]} />
-      {!readOnly && <button className={css.primary} disabled={locked} onClick={reviewCount > 0 ? onReview : onConfirm}>{reviewCount > 0 ? `审阅 ${reviewCount} 处变更` : `确认${entity.kind === 'scenario' ? '场景' : '需求'}`}<span aria-hidden="true"> ›</span></button>}
+      <button className={css.primary} disabled={locked} onClick={reviewCount > 0 && !readOnly ? onReview : onConfirm}>{reviewCount > 0 && !readOnly ? `审阅 ${reviewCount} 处变更` : 'AI 操作'}<span aria-hidden="true"> ›</span></button>
     </div>
   </header>
 }
@@ -69,13 +69,12 @@ export function MaterialWorkspaceStatus({ entity, workspace, snapshot, task, con
   entity: EntityView; workspace: ScenarioWorkspace; snapshot: DraftSnapshot; task?: TaskView | undefined;
   consistency: string; onConfirmation(): void; onConsistency(): void;
 }) {
-  const blocked = workspace.gates.filter(gate => gate.status === 'blocked').length
   const questions = snapshot.metadata.openQuestions
   const blockingQuestions = questions.filter(question => question.blocking).length
   return <footer className={layout.status} aria-label="材料状态">
     <div className={layout.statusItems}>
-      <button data-state={snapshot.dirty ? 'pending' : blocked ? 'blocked' : 'passed'} onClick={onConfirmation}>门禁 <b>{snapshot.dirty ? '待检查' : blocked ? `${blocked} 项阻断` : '通过'}</b></button>
-      <button onClick={onConfirmation}>待澄清 <b>{questions.length} 项{blockingQuestions > 0 ? ` · ${blockingQuestions} 项阻断` : ''}</b></button>
+      <button onClick={onConfirmation}>AI 操作 <b>描述任何目标</b></button>
+      <button onClick={onConfirmation}>待澄清 <b>{questions.length} 项{blockingQuestions > 0 ? ` · ${blockingQuestions} 项重点关注` : ''}</b></button>
       <button onClick={onConsistency}>一致性 <b>{consistency}</b></button>
     </div>
     <details className={layout.runDetails}>

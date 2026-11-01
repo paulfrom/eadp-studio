@@ -170,6 +170,7 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
       if (receipt) void execute(hash => ({ action: 'undoRequirementWrite', entityId: entity.id, operationId: receipt.operationId, expectedHash: hash }))
     },
     requestReview: () => { void execute({ action: 'requestReview', entityId: entity.id, purpose: 'material' }) },
+    assist: async (prompt: string) => { const result = await execute({ action: 'assistMaterial', entityId: entity.id, prompt, operationId: crypto.randomUUID() }); if (result?.ok) setConfirmationOpen(false); return result?.ok === true },
     confirm: (choice: ConfirmationChoice) => { void confirm(choice) },
     structureCheck: (enabled: boolean) => { void execute({ action: 'setScenarioStructureCheck', enabled }) },
   }), [execute, entity.id, entity.revision, faces, call, confirm, reclaim, workspace.writeProposal, workspace.writeReceipt, workspace.requirementSave, workspace.confirmationRecovery])
@@ -227,8 +228,8 @@ export function RequirementWorkspace({ workspace, entity, state, faces, busy, ca
   <MaterialWorkspaceSheet open={consistencyOpen} title="一致性对比" subtitle="查看对比结论、覆盖范围与历史记录" drawer onClose={() => setConsistencyOpen(false)}>
       <ConsistencyPanel entityId={entity.id} entities={entities} tasks={state.consistencyTasks ?? []} busy={busy} call={call} onOpenMaterial={onOpenMaterial} onStatusChange={setConsistencyStatus} />
   </MaterialWorkspaceSheet>
-  <MaterialWorkspaceSheet open={confirmationOpen} title="确认需求" subtitle="保存当前输入后重新检查，接受后形成固定版本" onClose={() => setConfirmationOpen(false)}>
-      <RequirementGates workspace={workspace} disabled={busy || confirming} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={() => actions.confirm({ method: 'direct' })} onStructureCheck={actions.structureCheck} />
+  <MaterialWorkspaceSheet open={confirmationOpen} title="需求 AI 操作" subtitle="描述目标并交给 AI，或查看建议后直接确认" onClose={() => setConfirmationOpen(false)}>
+      <RequirementGates workspace={workspace} disabled={busy || confirming} dirty={snapshot.dirty} buffer={buffer} snapshot={snapshot} onConfirm={() => actions.confirm({ method: 'direct' })} onAssist={actions.assist} onStructureCheck={actions.structureCheck} />
       <div className={layout.reviewBlock}><ReviewPanel review={review} purpose="material" busy={busy || confirming} onRequest={actions.requestReview} onConfirm={actions.confirm} /></div>
   </MaterialWorkspaceSheet>
   </div>

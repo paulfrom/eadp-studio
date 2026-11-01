@@ -36,6 +36,7 @@ type ResolveWriteCommand = Extract<DesignCommand, { action: 'resolveScenarioWrit
 type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | 'undoRequirementWrite' }>
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
+const sessionRules = (entity: EntityView): string => `你是${entity.kind === 'scenario' ? '场景' : '需求'}设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；回答先用可读中文归纳明确结论、已读资料与仍缺的业务答案。场景仅检查业务流程完整性，具体阈值、字段与计算口径留待需求确认；资料与引用仅提醒，不阻断场景确认。遇到影响业务范围、流程或验收的未定选择时，给出互斥且具体的选项，并按本轮结构化问题协议输出；选项只有在用户发送回答后才算收到，不能据此宣称业务已澄清或通过检查。用户可以把任何操作交给你：优先直接解决，无法直接完成时给出可执行方案，不以界面状态代替业务判断。满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件或确认。`
 export interface ScenarioRecord {
   projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent & { body: string; contextBody: string }>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
   /** Explains why the latest model proposal could not become an actionable write. */
@@ -409,14 +410,30 @@ export class ScenarioWorkspaces {
   async newSession(entityId: string): Promise<string> {
     const { task, entity } = await this.editable(entityId), local = await this.store.read(), record = await this.record(entityId)
     const next = { ...task, sessionId: `studio-${randomUUID()}` }; local.tasks.push(next); record.activeSessionId = next.sessionId; await this.store.save()
-    return this.ports.session(next, `你是${entity.kind === 'scenario' ? '场景' : '需求'}设计助手。使用 grilling 逐问推进设计，用 domain-modeling 沉淀术语与决策；回答先用可读中文归纳明确结论、已读资料与仍缺的业务答案。场景仅检查业务流程完整性，具体阈值、字段与计算口径留待需求确认；资料与引用仅提醒，不阻断场景确认。遇到影响业务范围、流程或验收的未定选择时，给出互斥且具体的选项，并按本轮结构化问题协议输出；选项只有在用户发送回答后才算收到，不能据此宣称业务已澄清或通过确认门禁。满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件或确认。`)
+    return this.ports.session(next, sessionRules(entity))
+  }
+  /** Sends an action request into the material's native AI session, creating it when needed. */
+  async assist(entityId: string, prompt: string, operationId: string): Promise<string> {
+    const text = prompt.trim()
+    if (!text) throw new Error('请描述希望 AI 处理的事项')
+    const { remote, entity } = await this.deps.entity(entityId), local = await this.store.read(), record = await this.record(entityId)
+    const active = local.tasks.find(value => value.sessionId === record.activeSessionId && value.entityId === entityId && value.purpose === 'material')
+    let sessionId: string
+    if (active) sessionId = await this.ports.session(active, sessionRules(entity), true)
+    else {
+      const task = await this.deps.task(remote, entity), next = { ...task, sessionId: `studio-${randomUUID()}` }
+      local.tasks.push(next); sessionId = await this.ports.session(next, sessionRules(entity))
+    }
+    record.activeSessionId = sessionId; this.activeEntityId = entityId; await this.store.save()
+    await this.ports.prompt(sessionId, `请处理当前${entity.kind === 'scenario' ? '场景' : '需求'}中的以下事项。能直接解决就给出处理结果，否则给出可执行方案：\n\n${text}`, operationId)
+    return sessionId
   }
   async selectSession(entityId: string, sessionId: string): Promise<string> {
-    const { task } = await this.editable(entityId), local = await this.store.read()
+    const { task, entity } = await this.editable(entityId), local = await this.store.read()
     const found = local.tasks.find(t => t.projectId === task.projectId && t.entityId === entityId && t.sessionId === sessionId && t.purpose === 'material')
     if (!found) throw new Error('此会话不属于当前材料')
     const record = await this.record(entityId); record.activeSessionId = sessionId; await this.store.save()
-    return this.ports.session(found, '材料设计会话：先用可读中文归纳明确结论、已读资料与仍缺的业务答案。场景仅检查业务流程完整性，具体阈值、字段与计算口径留待需求确认；资料与引用仅提醒，不阻断场景确认。遇到影响业务范围、流程或验收的未定选择时，给出互斥且具体的选项，并按本轮结构化问题协议输出；选项只有在用户发送回答后才算收到，不能据此宣称业务已澄清或通过确认门禁。满足条件时提出针对目标文件的整篇写入提议，不满足时继续讨论，不直接写入文件。')
+    return this.ports.session(found, sessionRules(entity))
   }
   /** Resolves the currently occupied worktree even when a historical conversation is resumed. */
   private async currentInput(task: TaskView) {

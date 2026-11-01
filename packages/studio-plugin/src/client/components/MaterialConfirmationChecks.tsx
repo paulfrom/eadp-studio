@@ -10,7 +10,7 @@ export interface MaterialConfirmationChecksProps {
   onStructureCheck(enabled: boolean): void;
 }
 
-const gateStates = { passed: '通过', blocked: '阻断', warning: '提醒，不阻断', disabled: '关闭' }
+const gateStates = { passed: '已检查', blocked: '建议处理', warning: '提醒', disabled: '未启用' }
 
 /** Displays current material checks and edits the author's business declarations. */
 export function MaterialConfirmationChecks({ workspace, disabled, dirty, buffer, snapshot, onStructureCheck }: MaterialConfirmationChecksProps) {
@@ -25,8 +25,8 @@ export function MaterialConfirmationChecks({ workspace, disabled, dirty, buffer,
     questions.current.querySelector<HTMLInputElement>('input:not([disabled])')?.focus()
   }
   return <div className={css.checks}>
-    <div className={css.heading}><strong>确认检查</strong><span>{blocked.length ? `${blocked.length} 项门禁阻断` : '当前门禁已通过'}</span></div>
-    {dirty && <p role="status" className={css.pending}>内容有变化，确认时将保存当前输入并重新执行检查。</p>}
+    <div className={css.heading}><strong>检查建议</strong><span>{blocked.length ? `${blocked.length} 项可交给 AI 处理` : '暂无额外建议'}</span></div>
+    {dirty && <p role="status" className={css.pending}>内容有变化，执行操作时将先保存当前输入。</p>}
     <div className={css.gateList}>
       {workspace.gates.map(gate => <section key={gate.id} className={css.gateRow} data-state={gate.status} aria-label={`${gate.label} · ${gateStates[gate.status]}`}>
         <span className={css.gateIcon} aria-hidden="true">{gate.status === 'passed' ? '✓' : gate.status === 'blocked' ? '!' : '—'}</span>
@@ -49,11 +49,11 @@ export function MaterialConfirmationChecks({ workspace, disabled, dirty, buffer,
       </>}
     </div>
     <details ref={questions} className={css.questions}>
-      <summary>待澄清项 <span>{metadata.openQuestions.length} 条 · {metadata.openQuestions.filter(question => question.blocking).length} 条阻断确认</span></summary>
+      <summary>待澄清项 <span>{metadata.openQuestions.length} 条 · {metadata.openQuestions.filter(question => question.blocking).length} 条重点关注</span></summary>
       {metadata.openQuestions.length === 0 && <p>没有待澄清项。</p>}
       {metadata.openQuestions.map((question, index) => <fieldset key={index}>
         <legend>待澄清项 {index + 1}</legend>
-        <label className={css.questionBlocking}><input type="checkbox" disabled={!editable} checked={question.blocking} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, blocking: event.target.checked } : item) })} />{metadata.kind === 'scenario' ? '流程无法确定，阻断确认' : '阻断确认'}</label>
+        <label className={css.questionBlocking}><input type="checkbox" disabled={!editable} checked={question.blocking} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, blocking: event.target.checked } : item) })} />{metadata.kind === 'scenario' ? '流程无法确定，需要重点关注' : '需要重点关注'}</label>
         <label>问题或限制<input aria-label={`待澄清项 ${index + 1} 问题或限制`} readOnly={!editable} value={question.limitation} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, limitation: event.target.value } : item) })} /></label>
         <label>不适用范围<input aria-label={`待澄清项 ${index + 1} 不适用范围`} readOnly={!editable} value={question.excludedScope} onChange={event => edit({ openQuestions: metadata.openQuestions.map((item, i) => i === index ? { ...item, excludedScope: event.target.value } : item) })} /></label>
         {editable && <button type="button" onClick={() => edit({ openQuestions: metadata.openQuestions.filter((_, i) => i !== index) })}>删除此项</button>}
