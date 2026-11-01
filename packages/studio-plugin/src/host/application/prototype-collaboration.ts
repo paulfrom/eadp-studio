@@ -42,7 +42,7 @@ interface RuntimeRun { operationId: string; kind: 'preview' | 'checks'; status: 
 interface LocalTask { runtimeRun?: RuntimeRun; projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string; sessionOpened?: boolean; state: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required'; nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; development?: RequirementDevelopment }
 interface FileSaveOperation { id: string; prototypeTaskId: string; path: string; expectedHash: string; contentHash: string; result?: Extract<PrototypeFileResult, { kind: 'saved' }> }
 interface LocalTask { nativeRunId?: string; focusedRequirementId?: string }
-interface QueueRecord { revision: number; queueOrder?: string[]; selectedTaskId?: string; tasks: LocalTask[]; operations: Operation[]; queueReorders?: Array<{ id: string; fingerprint: string }>; pauses?: Array<{ id: string; taskId: string; status: 'waiting' | 'settled' }>; drafts?: PrototypeInstructionDraft[]; draftWrites?: Array<{ id: string; fingerprint: string }>; buffers?: PrototypeEditBuffer[]; bufferWrites?: Array<{ id: string; fingerprint: string }>; fileSaves?: FileSaveOperation[] }
+interface QueueRecord { revision: number; queueOrder?: string[]; selectedTaskId?: string; tasks: LocalTask[]; operations: Operation[]; queueReorders?: Array<{ id: string; fingerprint: string }>; pauses?: Array<{ id: string; taskId: string; status: 'waiting' | 'settled' }>; drafts?: PrototypeInstructionDraft[]; buffers?: PrototypeEditBuffer[]; bufferWrites?: Array<{ id: string; fingerprint: string }>; fileSaves?: FileSaveOperation[] }
 
 /** Local operations retain their exact user instruction and idempotency keys across restart. */
 export class PrototypeCollaboration {
@@ -73,8 +73,8 @@ export class PrototypeCollaboration {
           pauses: (value.pauses ?? []).filter(x => taskIds.has(x.taskId)), fileSaves: (value.fileSaves ?? []).filter(x => taskIds.has(x.prototypeTaskId)) }
       }, values => ({ revision: Math.max(0, ...values.map(x => x.revision)), tasks: values.flatMap(x => x.tasks), operations: values.flatMap(x => x.operations),
         drafts: values.flatMap(x => x.drafts ?? []), buffers: values.flatMap(x => x.buffers ?? []), pauses: values.flatMap(x => x.pauses ?? []), fileSaves: values.flatMap(x => x.fileSaves ?? []) }), {
-        select: value => ({ revision: value.revision, tasks: [], operations: [], queueOrder: value.queueOrder ?? [], ...(value.selectedTaskId ? { selectedTaskId: value.selectedTaskId } : {}), queueReorders: value.queueReorders ?? [], draftWrites: value.draftWrites ?? [], bufferWrites: value.bufferWrites ?? [] }),
-        merge: (value, metadata) => ({ ...value, revision: Math.max(value.revision, metadata.revision), queueOrder: metadata.queueOrder ?? [], ...(metadata.selectedTaskId ? { selectedTaskId: metadata.selectedTaskId } : {}), queueReorders: metadata.queueReorders ?? [], draftWrites: metadata.draftWrites ?? [], bufferWrites: metadata.bufferWrites ?? [] }),
+        select: value => ({ revision: value.revision, tasks: [], operations: [], queueOrder: value.queueOrder ?? [], ...(value.selectedTaskId ? { selectedTaskId: value.selectedTaskId } : {}), queueReorders: value.queueReorders ?? [], bufferWrites: value.bufferWrites ?? [] }),
+        merge: (value, metadata) => ({ ...value, revision: Math.max(value.revision, metadata.revision), queueOrder: metadata.queueOrder ?? [], ...(metadata.selectedTaskId ? { selectedTaskId: metadata.selectedTaskId } : {}), queueReorders: metadata.queueReorders ?? [], bufferWrites: metadata.bufferWrites ?? [] }),
       })
       const storage = this.storage
       const loading = (async () => {
@@ -99,7 +99,8 @@ export class PrototypeCollaboration {
     const data = await this.data()
     const pending = data.operations.filter(value => !value.taskId && value.phase !== 'superseded' && value.request.action === 'startPrototypeCollaboration').map(value => {
       const request = value.request as Start
-      return { projectId: request.projectId, prototypeTaskId: `queued:${value.id}`, title: request.title, taskStatus: 'active' as const, localDispatchState: value.message ? 'recovery-required' as const : 'queued' as const, developmentRequirementIds: request.developmentRequirementIds, ...(request.developmentRequirementIds.length === 1 ? { requirementId: request.developmentRequirementIds[0], developmentStage: value.message ? 'blocked' as const : 'queued' as const, reviewStatus: 'pending' as const } : {}), pendingCreation: true, nextAction: value.message ?? '已保存，等待前一项完成' }
+      const requirementIds = value.resolvedRequirementIds ?? request.developmentRequirementIds
+      return { projectId: request.projectId, prototypeTaskId: `queued:${value.id}`, title: request.title, taskStatus: 'active' as const, localDispatchState: value.message ? 'recovery-required' as const : 'queued' as const, developmentRequirementIds: requirementIds, ...(requirementIds.length === 1 ? { requirementId: requirementIds[0], developmentStage: value.message ? 'blocked' as const : 'queued' as const, reviewStatus: 'pending' as const } : {}), pendingCreation: true, nextAction: value.message ?? '已保存，等待前一项完成' }
     })
     const projectId = (await this.store.read()).selectedProjectId
     const items = data.tasks.map<PrototypeQueueView['items'][number]>(item => {
@@ -135,19 +136,6 @@ export class PrototypeCollaboration {
     return { projectId: item.projectId, task: structuredClone(item.task), sessionId: item.sessionId, worktree: item.worktree }
   }
   async drafts(): Promise<PrototypeInstructionDraft[]> { return structuredClone((await this.data()).drafts ?? []) }
-  async saveDraft(operationId: string, draft: PrototypeInstructionDraft): Promise<void> {
-    const data = await this.data(), fingerprint = digest(canonical(draft)), prior = (data.draftWrites ?? []).find(value => value.id === operationId)
-    if (prior) { if (prior.fingerprint !== fingerprint) throw new Error('草稿保存操作不能用于其他内容'); return }
-    const drafts = data.drafts ??= [], index = drafts.findIndex(value => value.projectId === draft.projectId && value.prototypeTaskId === draft.prototypeTaskId)
-    const previous = drafts[index]
-    if (previous?.pendingStartOperationId && canonical(previous) !== canonical(draft)) {
-      const pending = data.operations.find(value => value.id === previous.pendingStartOperationId)
-      if (pending && (pending.phase !== 'prepared' || pending.create || pending.taskId)) throw new Error('原发送结果尚未核清，请先核对原发送操作，草稿已保留')
-    }
-    if (index >= 0) drafts[index] = structuredClone(draft); else drafts.push(structuredClone(draft))
-    ;(data.draftWrites ??= []).push({ id: operationId, fingerprint })
-    await this.save()
-  }
   async readBuffer(taskId: string, filePath: string): Promise<PrototypeEditBuffer | null> {
     const data = await this.data()
     if (!data.tasks.some(value => value.task.id === taskId)) throw new Error('本机未登记该事项')

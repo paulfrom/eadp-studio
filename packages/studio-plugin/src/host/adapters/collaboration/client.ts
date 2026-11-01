@@ -16,7 +16,15 @@ const gitlabFailures: Readonly<Record<string, string>> = {
   GITLAB_EMPTY_RESPONSE: 'GitLab 返回空响应，请联系管理员。',
 }
 /** Upstream bodies are untrusted: only known codes choose a local message. */
-export function collaborationFailureMessage(code: string, fallback: string): string {
+export function collaborationFailureMessage(code: string, fallback: string, details?: unknown): string {
+  if (code === 'REQUIREMENT_ALREADY_CLAIMED') {
+    const ownership = details && typeof details === 'object' ? (details as { ownership?: unknown }).ownership : undefined
+    if (ownership === 'this-device') return '此需求已在本机的另一会话中开发。请从需求菜单进入原会话继续；本次输入已保留。'
+    if (ownership === 'other-device') return '此需求由你的另一设备占用。请在原设备继续，或请管理员核对后释放占用，再重试保留的输入。'
+    if (ownership === 'other-account') return '此需求由其他成员开发。请等待对方释放，或请管理员核对处理；本次输入已保留。'
+    if (ownership === 'administrator') return '此需求已由管理员置为占用。请管理员核对后释放，再重试保留的输入。'
+    return '此需求已有开发占用。请先从需求菜单进入原会话；如仍无法继续，请管理员核对占用后处理。本次输入已保留。'
+  }
   return Object.hasOwn(gitlabFailures, code) ? gitlabFailures[code]! : fallback
 }
 export async function collaborationJson(response: Response): Promise<unknown> {
@@ -48,10 +56,10 @@ export class CollaborationClient {
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
     if (response.status === 401) { await response.body?.cancel(); await this.unauthorized?.(token); throw new CollaborationError('LOGIN_REQUIRED', '协同登录已过期，请重新登录。', 401) }
-    const value = await collaborationJson(response) as { error?: { code: string; message: string } }
+    const value = await collaborationJson(response) as { error?: { code: string; message: string; details?: unknown } }
     if (!response.ok) {
       const code = value.error?.code ?? 'UNAVAILABLE'
-      throw new CollaborationError(code, collaborationFailureMessage(code, value.error?.message ?? '协同服务暂不可用'), response.status)
+      throw new CollaborationError(code, collaborationFailureMessage(code, value.error?.message ?? '协同服务暂不可用', value.error?.details), response.status)
     }
     return value as T
   }

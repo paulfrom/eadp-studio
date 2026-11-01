@@ -144,8 +144,12 @@ export async function claimDevelopment(c: Transaction, projectId: string, actor:
   await assertNoPreparedIntegration(c, projectId, taskId);
   await assertClaimableRequirement(c, projectId, taskId, input.requirementId, actor);
   assertManagedRef(task, input.remoteRef);
-  const occupied = await c.query('SELECT id FROM studio_prototype_development_claims WHERE project_id=$1 AND requirement_id=$2 AND active FOR UPDATE', [projectId, input.requirementId]);
-  requireCondition(!occupied.rowCount, 'REQUIREMENT_ALREADY_CLAIMED', 'The requirement is already being developed', 409, { requirementId: input.requirementId });
+  const occupied = await c.query<{ id: string; task_id: string | null; owner_id: string | number | null; client_id: string | null }>(`SELECT c.id,c.task_id,t.owner_id,t.client_id FROM studio_prototype_development_claims c
+    LEFT JOIN studio_prototype_tasks t ON t.project_id=c.project_id AND t.id=c.task_id
+    WHERE c.project_id=$1 AND c.requirement_id=$2 AND c.active FOR UPDATE OF c`, [projectId, input.requirementId]);
+  const holder = occupied.rows[0];
+  const ownership = !holder?.task_id ? 'administrator' : Number(holder.owner_id) !== actor.id ? 'other-account' : holder.client_id !== input.token.clientId ? 'other-device' : 'this-device';
+  requireCondition(!holder, 'REQUIREMENT_ALREADY_CLAIMED', 'The requirement is already being developed', 409, { requirementId: input.requirementId, ownership, ...(holder && Number(holder.owner_id) === actor.id ? { taskId: holder.task_id } : {}) });
   const generation = await c.query<{ next: number }>('SELECT COALESCE(MAX(generation),0)+1 AS next FROM studio_prototype_development_claims WHERE project_id=$1 AND requirement_id=$2', [projectId, input.requirementId]);
   const inserted = await c.query<ClaimRow>(`INSERT INTO studio_prototype_development_claims(id,project_id,task_id,requirement_id,generation,commit_id,remote_ref)
     VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [randomUUID(), projectId, taskId, input.requirementId, generation.rows[0]!.next, input.commitId, input.remoteRef]);

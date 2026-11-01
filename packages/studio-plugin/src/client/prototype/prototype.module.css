@@ -17,13 +17,8 @@
 .content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .content[hidden] { display: none; }
 .empty { margin: auto; padding: 28px; color: var(--text-3); line-height: 1.8; text-align: center; }
-.taskInfo, .instruction { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--border); }
-.taskInfo p, .instruction p { margin: 0; color: var(--text-3); line-height: 1.6; }
-.instruction label { display: grid; gap: 5px; color: var(--text-2); }
-.instruction textarea { resize: vertical; min-height: 100px; }
-.instruction > button { justify-self: end; }
-.requirementChoices { display: grid; gap: 7px; padding: 10px 0; }
-.requirementChoices label { display: flex; gap: 7px; align-items: center; }
+.taskInfo { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--border); }
+.taskInfo p { margin: 0; color: var(--text-3); line-height: 1.6; }
 .files { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); }
 .fileSidebar { min-width: 0; overflow: auto; border-right: 1px solid var(--border); background:var(--surface-2); }
 .fileSearch { display: flex; gap: 4px; padding: 10px; }
@@ -72,23 +67,8 @@
 .sessionLine { display:flex; align-items:center; gap:6px; padding:8px 15px; border-bottom:1px solid var(--border); background:var(--surface-2); color:var(--text-3); font-size:11px; }
 .sessionLine i { width:5px; height:5px; border-radius:50%; background:var(--accent-text); }
 .sessionLine span { margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px; }
-.instruction { flex-shrink:0; max-height:46%; overflow:auto; border-bottom:0; border-top:1px solid var(--border); padding:12px; }
-.instruction textarea { min-height:72px; }
-.composerBox { display:grid; gap:8px; min-width:0; padding:9px 9px 7px; border:1px solid var(--border-strong); border-radius:11px; background:var(--surface-2); transition:border-color 160ms ease,box-shadow 160ms ease; }
-.composerBox:focus-within { border-color:var(--accent-text); box-shadow:0 0 0 3px var(--accent-soft); }
-.composerBox > textarea { width:100%; min-height:57px; max-height:160px; padding:0!important; resize:none; border:0; border-radius:0; background:transparent; font-size:12px; line-height:1.7; }
-.composerBox > textarea:focus-visible { outline:0; }
-.instruction label { font-size:11px; }
 .srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-.instruction > .contextChip { justify-self:start; display:flex; gap:6px; align-items:center; font-size:11px; border:0; color:var(--text-3); }
 
-.instructionOptions { color:var(--text-3); font-size:10px; }
-.instructionOptions > label { margin-top:8px; }
-.composerBottom { display:flex; align-items:center; gap:8px; }
-.composerBottom > span { flex:1; color:var(--text-3); font-size:10px; }
-.attachmentButton { cursor:pointer; display:flex; align-items:center; justify-content:center; padding:5px; border:1px solid var(--border); border-radius:6px; }
-.attachmentButton:focus-within { outline:2px solid var(--accent-text); }
-.composerBottom .sendButton { display:flex; align-items:center; justify-content:center; background:var(--accent-text); color:var(--accent-fg); border:0; border-radius:7px; padding:7px; }
 .previewPane { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
 .modeSwitch { display:flex; align-self:stretch; align-items:stretch; gap:3px; }
 .modeSwitch button { position:relative; border:0; border-radius:0; font-size:12px; padding:0 11px; background:transparent; color:var(--text-2); }
@@ -137,7 +117,6 @@
 
 .heading strong { justify-content:flex-start; }
 
-.composerBottom .sendButton:not(:disabled):hover { background:var(--accent-hover); color:var(--accent-fg); }
 
 .nextAction { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:0; padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text-2); background:var(--surface-2); font-size:11px; }
 .nextAction button { padding:3px 8px; font-size:11px; }
@@ -148,7 +127,6 @@
 .confirmationPanel { flex:0 1 45%; min-height:120px; padding:12px 14px; overflow:auto; border-top:1px solid var(--border); }
 .confirmationPanel .comparison { height:220px; }
 
-.creationFields { border:0; padding:0; margin:0; min-width:0; }
 .nativeSession { font-size:var(--font-size-base, 14px); }
 
 .projectRequirementCount { color:var(--text-3); font-size:11px; }

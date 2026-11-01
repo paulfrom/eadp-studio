@@ -87,7 +87,6 @@ export type PrototypeCollaborationCommand =
   | { action: 'correctPrototypeRequirement'; prototypeTaskId: string; operationId: string; instruction: string }
   | { action: 'confirmPrototypeRequirement'; prototypeTaskId: string; operationId: string }
   | { action: 'readPrototypeQueue' }
-  | { action: 'savePrototypeInstructionDraft'; operationId: string; draft: PrototypeInstructionDraft }
   | { action: 'selectPrototypeQueueItem'; prototypeTaskId: string; operationId: string }
   | { action: 'reorderPrototypeQueue'; operationId: string; expectedRevision: number; prototypeTaskIds: string[] }
   | { action: 'pausePrototypeQueueItem'; prototypeTaskId: string; operationId: string }

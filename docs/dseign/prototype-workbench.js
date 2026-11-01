@@ -261,7 +261,7 @@ export default function Suppliers() {
       Object.keys(state).forEach((key) => { delete state[key]; });
       Object.assign(state, structuredClone(scene?.state || { ...initialScene, runtime: 'stopped', previewRevision: 0 }));
       Object.entries(scene?.files || initialFiles).forEach(([key, text]) => { files[key].text = text; });
-      $('chat-scroll').innerHTML = scene?.chat || '<div class="conversation-end">此事项尚未发送首次实现指令 · 模拟现场</div>';
+      $('chat-scroll').innerHTML = scene?.chat || '<div class="conversation-end">选择需求后直接描述需要修改的内容，后续调整继续使用当前会话 · 模拟现场</div>';
       $('chat-input').value = scene?.input || '';
       renderDecisions();
       taskNotice = '';

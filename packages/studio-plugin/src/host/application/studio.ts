@@ -280,7 +280,6 @@ export class StudioApplication {
     if (command.action === 'queryPrototypeMessage') { await this.prototypeCollaboration.queryMessage(command.prototypeTaskId); return { ok: true, state: await this.state() } }
     if (command.action === 'retryPrototypeNativePrompt') { await this.prototypeCollaboration.retryNativePrompt(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
     if (command.action === 'readPrototypeQueue') return { ok: true, state: await this.state() }
-    if (command.action === 'savePrototypeInstructionDraft') { await this.prototypeCollaboration.saveDraft(command.operationId, command.draft); return { ok: true, state: await this.state() } }
     if (command.action === 'preparePrototypeConfirmation') { await this.prototypeCandidates.prepare(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
     if (command.action === 'readPrototypeCandidateFile') return { ok: true, state: await this.state(), prototypeCandidateFile: await this.prototypeCandidates.readFile(command.operationId, command.path) }
     if (command.action === 'checkPrototypeCandidate') { await this.prototypeCandidates.check(command.operationId, command.checkOperationId); return { ok: true, state: await this.state() } }
