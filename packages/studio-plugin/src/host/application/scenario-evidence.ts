@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { link, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import type { MaterialMetadata } from '@eadp/contracts'
 import type { ScenarioSource } from '../../shared/scenarios.ts'
 import { atomicWriteFile, containedFile, digest } from '../adapters/assets/materials.ts'
@@ -6,15 +7,23 @@ import { atomicWriteFile, containedFile, digest } from '../adapters/assets/mater
 export interface ScenarioEvidenceRecord { source: ScenarioSource; original: Uint8Array }
 const extensions: Readonly<Record<string, string>> = { text: 'txt', txt: 'txt', markdown: 'md', md: 'md', pdf: 'pdf', doc: 'doc', docx: 'docx', xls: 'xls', xlsx: 'xlsx', csv: 'csv', tsv: 'tsv', ppt: 'ppt', pptx: 'pptx', png: 'png', jpeg: 'jpg', jpg: 'jpg', webp: 'webp', gif: 'gif' }
 
-async function archiveBytes(root: string, relative: string, bytes: Uint8Array): Promise<{ path: string; sha256: string }> {
+export async function archiveEvidenceBytes(root: string, relative: string, bytes: Uint8Array): Promise<{ path: string; sha256: string }> {
   const target = await containedFile(root, relative, true), hash = digest(bytes)
-  const existing = await readFile(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error })
+  let existing = await readFile(target).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error })
+  if (!existing) {
+    const temporary = `${target}.${randomUUID()}.tmp`
+    try {
+      await writeFile(temporary, bytes, { flag: 'wx' })
+      try { await link(temporary, target) }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+    } finally { await rm(temporary, { force: true }) }
+    existing = await readFile(target)
+  }
   if (existing && digest(existing) !== hash) {
-    const checkoutConverted = process.platform === 'win32' && !bytes.includes(13) && existing.equals(Buffer.from(Buffer.from(bytes).toString('utf8').replace(/\n/g, '\r\n')))
+    const checkoutConverted = !bytes.includes(13) && existing.equals(Buffer.from(Buffer.from(bytes).toString('utf8').replace(/\n/g, '\r\n')))
     if (!checkoutConverted) throw new Error('已归档依据内容与其固定路径不一致')
     await atomicWriteFile(target, bytes)
   }
-  if (!existing) await atomicWriteFile(target, bytes)
   return { path: relative, sha256: hash }
 }
 
@@ -32,12 +41,13 @@ export async function archiveSelectedEvidence(root: string, records: readonly Sc
   for (const { source, original } of selected) {
     const prefix = `.eadp/evidence/${source.sha256}`
     const text = source.text.replace(/\r\n?/g, '\n'), extracted = new TextEncoder().encode(text)
-    const originalFile = await archiveBytes(root, `${prefix}/original.${extensions[source.format.toLowerCase()]}`, original)
-    const textFile = await archiveBytes(root, `${prefix}/extracted-${digest(extracted)}.txt`, extracted)
+    const attributesFile = await archiveEvidenceBytes(root, `${prefix}/.gitattributes`, new TextEncoder().encode('* -text\n'))
+    const originalFile = await archiveEvidenceBytes(root, `${prefix}/original.${extensions[source.format.toLowerCase()]}`, original)
+    const textFile = await archiveEvidenceBytes(root, `${prefix}/extracted-${digest(extracted)}.txt`, extracted)
     const scope = new TextEncoder().encode(JSON.stringify({ sourceId: source.id, name: source.name, format: source.format, originalHash: source.sha256, status: source.status, ranges: source.ranges, error: source.error }, null, 2))
-    const scopeFile = await archiveBytes(root, `${prefix}/reading-${digest(scope)}.json`, scope)
+    const scopeFile = await archiveEvidenceBytes(root, `${prefix}/reading-${digest(scope)}.json`, scope)
     // A terminal separator ends the last line; the archived bytes themselves stay intact.
-    result.push({ label: source.name, reference: `source:${source.id}`, files: [originalFile, textFile, scopeFile], ranges: [{ path: textFile.path, startLine: 1, endLine: text.replace(/\n$/, '').split('\n').length }] })
+    result.push({ label: source.name, reference: `source:${source.id}`, files: [originalFile, textFile, scopeFile, attributesFile], ranges: [{ path: textFile.path, startLine: 1, endLine: text.replace(/\n$/, '').split('\n').length }] })
   }
   return result
 }

@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import { deliverHostNativePrompt } from './adapters/dsh/native-prompt-admission.ts'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import type { CheckEvidence, ProjectPrototypeView, ProjectState, PrototypeEngineeringEvidence, PrototypeTaskView } from '@eadp/contracts'
@@ -86,7 +87,7 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
         previewGeneration: entry.identity.generation, buildHash: entry.identity.buildHash, origin: entry.preview.url }
     },
   })
-  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'), task => app.prototypeWriteAuthorization(task), () => app.prototypeMaterials, browserTools)
+  const sessions = new DshTaskSessions(ctx, manifestPath, (id, content) => app.acceptSessionOutput(id, content), (task, signal) => app.scenarioSessionContext(task, signal), path.join(assets, 'skills'), task => app.prototypeWriteAuthorization(task), () => app.prototypeMaterials, browserTools, (task, action, signal) => app.executePrototypeRuntimeTool(task, action, signal))
   let previewGeneration = 0
   const availablePort = async (): Promise<number> => new Promise((resolve, reject) => {
     const server = createServer()
@@ -179,7 +180,10 @@ export async function composeStudio(ctx: Context, config: Config): Promise<Studi
     account: async () => (await auth.current())?.user,
     installTemplate: async destinationRoot => { await copyTemplate({ templateRoot: path.join(assets, 'prototype-template'), manifestPath, destinationRoot }) },
     session: async (task, rules, requireExisting) => sessions.open(task, rules, task.purpose === 'prototype' ? await prototypeInput(task) : undefined, requireExisting),
-    prompt: (id, text, operationId, attachments) => sessions.prompt(id, text, operationId, attachments), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), readPrototypeConversation: id => sessions.readPrototypeConversation(id), lastPrototypeTurn: id => sessions.lastPrototypeTurn(id), identifyPrototypeRequirements: (input, signal) => identifyPrototypeRequirements(ctx, input, signal), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), settlePrototypeSession: (id, cancel) => sessions.settlePrototype(id, cancel), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks, candidateChecks: runCandidateChecks, prototypeCheckReports: tasks => checkJournal.latest(tasks),
+    findPrototypeSessions: worktree => sessions.findPrototypeSessions(worktree),
+    nativePrototypePrompt: (request, signal) => deliverHostNativePrompt(ctx, request, signal),
+    hasPendingPrototypeMessages: id => sessions.hasPendingMessages(id),
+    prompt: (id, text, operationId, attachments) => sessions.prompt(id, text, operationId, attachments), inspectPrompt: (id, operationId) => sessions.inspectPrompt(id, operationId), lastPrototypeTurn: id => sessions.lastPrototypeTurn(id), identifyPrototypeRequirements: (input, signal) => identifyPrototypeRequirements(ctx, input, signal), compareConsistency: (input, signal) => compareLocalMaterials(ctx, input, signal), summarize: (input, signal) => summarizeText(ctx, input, signal), mergeConflict: (input, signal) => mergeRemoteConflict(ctx, input, signal), cancelSession: id => sessions.cancel(id), settlePrototypeSession: (id, cancel) => sessions.settlePrototype(id, cancel), releaseTask: worktree => sessions.releaseWorktree(worktree), readScenarioSource: source => readScenarioSource(ctx, source), checks: runChecks, candidateChecks: runCandidateChecks, prototypeCheckReports: tasks => checkJournal.latest(tasks),
     preview: async (task, operationId) => {
         const source = await prototypeInput(task, task.prototypeBaseline?.commitSha)
         const journal = await checkJournal.begin(task, source.sourceSha, operationId, 'preview')

@@ -33,6 +33,11 @@ export interface PrototypeQueueItem {
   localDispatchState: 'queued' | 'running' | 'awaiting-user' | 'paused' | 'recovery-required';
   nextAction?: string; pauseOperationId?: string; endOperationId?: string; gitRecovery?: 'clear' | 'unknown' | 'reconcile-required'; developmentRequirementIds: string[];
   requirementId?: string; developmentStage?: PrototypeRequirementDevelopmentStage; reviewStatus?: PrototypeRequirementReviewStatus; commitId?: string;
+  /** Requirement currently selected within a possibly multi-requirement conversation. */
+  focusedRequirementId?: string;
+  /** The original final-confirmation operation to reconcile after an interrupted reply. */
+  pendingConfirmationOperationId?: string;
+  pendingNativePromptOperationId?: string; nativePromptDelivery?: 'unknown' | 'not-delivered';
 }
 export interface PrototypeQueueView { revision: number; selectedTaskId?: string; items: PrototypeQueueItem[] }
 export type PrototypePreviewSource = { kind: 'task'; prototypeTaskId: string } | { kind: 'baseline'; baselineId: string; commitSha: string }
@@ -46,13 +51,10 @@ export interface PrototypeCheckReport {
 }
 export interface PrototypeInstructionAttachment { kind: 'file' | 'image'; name: string; mediaType: string; data: string }
 /** Unsent project instruction, stored independently of any collaboration task. */
-export interface PrototypeInstructionDraft { projectId: string; prototypeTaskId?: string; title: string; instruction: string; developmentRequirementIds: string[]; attachments?: PrototypeInstructionAttachment[] }
-export interface PrototypeConversationAttachment { id: string; kind: 'file' | 'image'; name?: string; bytes: number; width?: number; height?: number }
-/** Native log entries retain message sources, attachments and tool outcomes without exposing attachment bytes. */
-export interface PrototypeConversationMessage {
-  sequence: number; role: 'user' | 'assistant'; text: string; kind?: 'message' | 'tool'; source?: string; operationId?: string; interrupted?: boolean; truncated?: boolean
-  attachments?: PrototypeConversationAttachment[]
-  tool?: { callId: string; name: string; status: 'running' | 'completed' | 'failed'; arguments?: string; result?: string }
+export interface PrototypeInstructionDraft {
+  projectId: string; prototypeTaskId?: string; title: string; instruction: string; developmentRequirementIds: string[]; attachments?: PrototypeInstructionAttachment[]
+  /** Persisted before starting so an unknown reply never creates a second collaboration task. */
+  pendingStartOperationId?: string
 }
 /** A successful material tool read records only its source identity and returned line range. */
 export interface PrototypeMaterialRead {
@@ -80,6 +82,7 @@ export interface PrototypeCandidateFile {
 
 /** Starting is an explicit user instruction; reading and selection do not dispatch it. */
 export type PrototypeCollaborationCommand =
+  | { action: 'enterPrototypeRequirement'; projectId: string; requirementId: string; operationId: string }
   | { action: 'startPrototypeCollaboration'; projectId: string; operationId: string; title: string; instruction: string; developmentRequirementIds: string[]; referenceRequirementIds: string[]; writeScope: string[]; attachments?: PrototypeInstructionAttachment[] }
   | { action: 'correctPrototypeRequirement'; prototypeTaskId: string; operationId: string; instruction: string }
   | { action: 'confirmPrototypeRequirement'; prototypeTaskId: string; operationId: string }
@@ -91,7 +94,7 @@ export type PrototypeCollaborationCommand =
   | { action: 'resumePrototypeQueueItem'; prototypeTaskId: string; operationId: string }
   | { action: 'endPrototypeTask'; prototypeTaskId: string; operationId: string }
   | { action: 'queryPrototypeMessage'; prototypeTaskId: string }
-  | { action: 'readPrototypeConversation'; prototypeTaskId: string }
+  | { action: 'retryPrototypeNativePrompt'; prototypeTaskId: string; operationId: string }
   | { action: 'checkProjectPrototype'; prototypeTaskId: string; operationId: string }
   | { action: 'startProjectPrototypePreview'; prototypeTaskId: string; operationId: string }
   | { action: 'stopProjectPrototypePreview'; prototypeTaskId: string }

@@ -20,7 +20,6 @@ export function PrototypePreview({ identity, visible, route = '/', onNavigate, o
   const navigate = async (request: { path?: string; reload?: boolean }) => { if (!navigation.current) throw new Error('预览尚未就绪'); await navigation.current(request) }
   onNavigate ??= identity ? path => navigate({ path }) : undefined
   onRefresh ??= identity ? () => navigate({ reload: true }) : undefined
-  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop')
   const [expanded, setExpanded] = useState(false)
   const [path, setPath] = useState(route)
   const [error, setError] = useState('')
@@ -47,14 +46,13 @@ export function PrototypePreview({ identity, visible, route = '/', onNavigate, o
       </form>
       <button aria-label="刷新预览页面" title={onRefresh ? '刷新预览页面' : '当前桌面暂未提供刷新接口'} disabled={!identity || !onRefresh || pending} onClick={() => void invoke(onRefresh)}><Icon name="refresh" /></button>
       <div className={css.spacer} />
-      <div className={css.devices} aria-label="预览宽度">{(['desktop', 'tablet', 'mobile'] as const).map(value => <button key={value} aria-label={value === 'desktop' ? '桌面宽度' : value === 'tablet' ? '平板宽度 768 像素' : '手机宽度 390 像素'} aria-pressed={device === value} onClick={() => setDevice(value)}><Icon name={value === 'desktop' ? 'monitor' : value === 'tablet' ? 'tablet' : 'phone'} /></button>)}</div>
       <button ref={fullscreen} aria-label="切换预览全屏" aria-pressed={expanded} onClick={() => setExpanded(value => !value)}><Icon name="maximize" /></button>
       {identity && externalUrl && <a aria-label="在新窗口打开预览" title="在新窗口打开" href={externalUrl} target="_blank" rel="noreferrer"><Icon name="external" /></a>}
     </div>
     {error && <p className={css.error} role="alert">{error}</p>}
-    <div className={css.canvas}><div className={css.frame} data-device={device} style={{ width: device === 'desktop' ? '100%' : device === 'tablet' ? 768 : 390 }}>
+    <div className={css.canvas}><div className={css.frame} style={{ width: '100%' }}>
       {identity ? <PrototypeCanvas identity={identity} visible={visible} registerNavigation={registerNavigation} /> : <div className={css.empty} role={starting ? 'status' : undefined}>{starting && <span className={css.spinner} aria-hidden="true" />}{starting ? '正在安装依赖、构建并启动预览…' : '运行项目后，在这里核对页面和业务流程。'}</div>}
     </div></div>
-    <footer className={css.footnote}><span><Icon name="shield" />合成业务数据 · 仅用于需求核对</span><span>{device === 'desktop' ? '自适应桌面' : device === 'tablet' ? '768 px' : '390 px'}</span></footer>
+    <footer className={css.footnote}><span>自适应桌面</span></footer>
   </section>
 }

@@ -54,7 +54,6 @@
 | `packages/contracts/` | 跨端共享类型和 TypeBox 请求校验 Schema。 |
 | `apps/desktop-distribution/build/` | 受维护的桌面发行装配脚本与 DSH 产品改动源码。 |
 | `scripts/` | 开发环境、依赖获取、构建装配和仓库检查脚本。 |
-| `tests/` | 集成与桌面行为验证；`apps/collaboration-api/src/` 另含该后端共置测试。 |
 | `docs/` | `design/` 保存设计文档，`dseign/`（历史拼写）保存界面设计稿，`adr/` 保存架构决策记录。 |
 
 ## 仓库边界
@@ -87,7 +86,7 @@
 - 本项目是官方桌面插件的增强层。必须通过官方暴露的 slot、service、patch 或 seam 机制扩展。
 - 严禁覆盖、篡改或假设官方插件的内部实现。如果官方接口不足以实现需求，停下来标记为 blocked-upstream 并说明缺什么，不得自行 hack。
 - Client 半边运行在零本地文件系统权限的沙箱中，不得直接调用 Node API 或读取本地文件。
-- `apps/desktop-distribution/build/` 中按精确锚点施加的上游源码编辑，是本项目**唯一授权**的上游修改通道；不得在缓存（`.local/upstream`）或装配树中手工修改。新增或调整锚定编辑必须：锚点缺失即报错（fail-closed）、在 `build/README.md` 记录用途、由 `tests/scripts` 下对应测试覆盖。
+- `apps/desktop-distribution/build/` 中按精确锚点施加的上游源码编辑，是本项目**唯一授权**的上游修改通道；不得在缓存（`.local/upstream`）或装配树中手工修改。新增或调整锚定编辑必须：锚点缺失即报错（fail-closed）、在 `build/README.md` 记录用途，并完成受影响构建及真实桌面验证。
 - 产品身份（独立可执行文件/进程名、显示名、协议与数据目录）属发行需求，由品牌编辑实现并保留在案；这部分不属于「篡改官方插件内部实现」。
 - 上游未提供官方接口的集成点，统一登记在 `docs/blocked-upstream.md`，写明缺少的接口与当前绕过方式；不得再新增未登记的绕过。
 
@@ -97,5 +96,5 @@
 - 对象 schema 必须显式声明 additionalProperties。
 
 ## 代码提交门禁
-- 提交前必须通过 `pnpm check` 与受影响测试组（`pnpm test`，必要时 `pnpm test:all`）。
+- 仓库不保留测试代码及测试执行命令。提交前必须通过 `pnpm check`，并完成受影响的构建检查；真实桌面闭环验收要求保持不变。
 - 涉及 cordis.patch.yml 的修改，必须显式声明依赖的 service 与 slot，不允许隐式依赖。

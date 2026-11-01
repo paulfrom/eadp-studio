@@ -11,7 +11,7 @@ import type { HostPorts } from './ports.ts'
 import type { ProjectWorkspaces } from './projects.ts'
 import { describeMerge, RemoteMerges, RemoteSyncPending, type RemoteMergeReport } from './remote-merges.ts'
 import type { AuthorReviews } from './reviews.ts'
-import { syncProjectContext } from './scenario-package.ts'
+import { refreshMaterialDraft } from './material-file-references.ts'
 import type { ScenarioRecord, ScenarioWorkspaces } from './scenario-workspaces.ts'
 import type { PendingOperation, StudioStore } from './state.ts'
 
@@ -38,13 +38,14 @@ export interface MaterialConfirmationOperation {
 export interface MaterialInspectionRequest {
   project: ProjectView; entity: EntityView; task?: TaskView; draft?: MaterialDraft;
 }
-export interface MaterialInspection extends ReturnType<typeof checkScenarioDocument> { draft: MaterialDraft; templateBody: string; readOnly: boolean }
+export interface MaterialInspection extends ReturnType<typeof checkScenarioDocument> { draft: MaterialDraft; templateBody: string | undefined; readOnly: boolean }
 interface Dependencies {
   entity(entityId: string, projectId?: string): Promise<{ remote: ProjectState; entity: EntityView }>
   designTask(remote: ProjectState, entity: EntityView): Promise<TaskView>
   owned(entity: EntityView): Promise<OccupationToken>
   deliver(work: () => Promise<void>): void
   identity(projectId: string): Promise<{ name: string; email: string }>
+  adoptRepairInput(entityId: string, repairId: string, hash: string, projectId: string): Promise<void>
 }
 const identity = ({ occupationId, generation, taskId, clientId }: OccupationToken): MaterialConfirmationOperation['occupation'] => ({ occupationId, generation, taskId, clientId })
 const current = (owner: ScenarioRecord): MaterialConfirmationOperation | undefined => owner.materialConfirmations?.at(-1)
@@ -96,13 +97,13 @@ export class MaterialConfirmationChecks {
     if (draft.entityId !== entity.id || draft.metadata.kind !== entity.kind) throw new Error('当前材料身份或类型已变化')
     const ref = draft.metadata.templateRef
     if (!ref) throw new Error('材料缺少固定模板')
-    const template = await this.projects.localFixed(project, ref.commitSha, ref.path, ref.sha256)
-    if (!template) return undefined
-    const templateBody = Buffer.from(template).toString('utf8')
+    // Template availability affects the optional guidance, never the current material's confirmation.
+    const template = await this.projects.localFixed(project, ref.commitSha, ref.path, ref.sha256).catch(() => undefined)
+    const templateBody = template ? Buffer.from(template).toString('utf8') : undefined
     const inspectFiles = task && (!readOnly || recovering(owner))
     const checked = checkScenarioDocument({ draft,
       hasPermission: !!account, hasOccupation: !!occupied,
-      structureCheck: local.scenarioStructureCheck, templateBody,
+      structureCheck: local.scenarioStructureCheck, ...(templateBody === undefined ? {} : { templateBody }),
       fileErrors: inspectFiles ? await scenarioFileErrors(task.worktree, draft) : [],
       invalidEvidenceIndexes: inspectFiles ? await invalidScenarioEvidenceIndexes(task.worktree, draft) : [] })
     if (owner.observationError) {
@@ -324,22 +325,11 @@ export class MaterialConfirmations {
 
   /** Rebind Host-owned declarations to the associated and evidence bytes produced by the merge. */
   private async refreshDeclarations(operation: MaterialConfirmationOperation, task: TaskView, draft: MaterialDraft): Promise<MaterialDraft> {
-    const withContext = await syncProjectContext(task.worktree, draft.metadata)
-    const read = async (relative: string) => {
-      const bytes = await readFile(await containedFile(task.worktree, relative)).catch(() => undefined)
-      if (!bytes) throw new Error(`远端合并后无法读取关联文件或正式依据：${relative}`)
-      return bytes
-    }
-    const files = withContext.files && await Promise.all(withContext.files.map(async file => ({ ...file, sha256: digest(await read(file.path)) })))
-    const businessEvidence = await Promise.all(withContext.businessEvidence.map(async evidence => ({
-      ...evidence, files: await Promise.all(evidence.files.map(async file => ({ ...file, sha256: digest(await read(file.path)) }))),
-    })))
-    const metadata = { ...withContext, ...(files ? { files } : {}), businessEvidence }
-    if (canonical(metadata) === canonical(draft.metadata)) return draft
-    const saved = await (await this.workspaces.documents(task.projectId)).save({ root: task.worktree, metadata, body: draft.body,
-      operationId: `${operation.operationId}-remote-merge` })
-    operation.recovered = '已纳入远端更新的关联文件与正式依据'
-    return saved
+    const refreshed = await refreshMaterialDraft(task.worktree, draft, await this.workspaces.documents(task.projectId),
+      relative => this.ports.git.readWorkingFile(task.worktree, relative))
+    if (refreshed.notices.length) operation.recovered = refreshed.notices.join('；')
+    if (refreshed.draft.sha256 !== draft.sha256) operation.recovered ??= '已按当前文件更新关联文件与正式依据'
+    return refreshed.draft
   }
 
   private readonly running = new Map<string, Promise<void>>()
@@ -383,7 +373,8 @@ export class MaterialConfirmations {
       const aligned = await this.alignRemote(operation, task, remote, draft)
       if (!aligned) return
       if (aligned.merged) { delete operation.input; delete operation.candidate }
-      draft = aligned.draft
+      draft = await this.refreshDeclarations(operation, task, aligned.draft)
+      if (request.repairId) await this.deps.adoptRepairInput(entity.id, request.repairId, draft.sha256, task.projectId)
       // The confirmation always fixes the bytes it just read: workbench saves,
       // external edits and the remote alignment all move the hash legitimately,
       // so the later checks run against these bytes instead of a stale hash.
@@ -394,6 +385,15 @@ export class MaterialConfirmations {
       if (!inspection.passed) throw new Error(inspection.groups.filter(gate => gate.status === 'blocked').flatMap(gate => gate.messages).join('；'))
       const candidateRequest = { projectId: operation.projectId, entityId: operation.entityId,
         purpose: 'material' as const, task, expectedHash: draft.sha256, operationId: operation.operationId }
+      if (operation.input && !operation.candidate && !operation.integrationId) {
+        const latest = await this.candidates.content(candidateRequest)
+        // An unchanged HEAD proves no candidate commit escaped before its receipt.
+        // Only the still-uncommitted input may follow the author's newer edits.
+        if (latest.snapshot.head === operation.input.snapshot.head &&
+          (canonical(latest.snapshot.files) !== canonical(operation.input.snapshot.files) || latest.inputHash !== operation.input.inputHash)) {
+          delete operation.input
+        }
+      }
       if (!operation.input) {
         const content = await this.candidates.content(candidateRequest)
         operation.input = structuredClone({ snapshot: content.snapshot, paths: content.paths, allowedPaths: content.allowedPaths, input: content.input, inputHash: content.inputHash })

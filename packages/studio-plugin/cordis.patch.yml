@@ -76,3 +76,4 @@
           - *eadp-compaction
     - id: studio-plugin
       name: '@eadp-studio/studio-plugin'
+      inject: [sessionQuery]

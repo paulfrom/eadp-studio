@@ -247,7 +247,6 @@ export default function Suppliers() {
   let selectedItem = items[0], nextItem = 3;
   let externalApprovalOccupied = true;
   let taskNotice = '';
-  let expansionFailed = false;
   function saveScene() {
     selectedItem.scene = { state: structuredClone({ ...state, drawer: null, pendingAction: null }),
       files: Object.fromEntries(Object.entries(files).map(([id, file]) => [id, file.text])),
@@ -265,7 +264,7 @@ export default function Suppliers() {
       $('chat-scroll').innerHTML = scene?.chat || '<div class="conversation-end">此事项尚未发送首次实现指令 · 模拟现场</div>';
       $('chat-input').value = scene?.input || '';
       renderDecisions();
-      taskNotice = ''; expansionFailed = false;
+      taskNotice = '';
       closeDrawer(); renderChrome(); renderEditor(); mountPreview();
       toast('已切换独立模拟现场；未启动模型或发送指令。');
     });
@@ -274,46 +273,7 @@ export default function Suppliers() {
     $('task-label').textContent = `${selectedItem.title} · ${selectedItem.phase}`;
     $('task-context').textContent = `模拟现场 · 开发 ${selectedItem.claims.join('、')} · 源码 r${state.revision} / 预览 r${state.previewRevision}`;
     document.querySelector('#session-chip').textContent = `会话 · ${selectedItem.id}`;
-  }
-  function renderItems() {
-    const running = items.find((item) => item.phase === '正在执行');
-    $('drawer-body').innerHTML = `<div class="drawer-notice">事项、领取与队列均为本页内存模拟；刷新整页重置。切换只查看现场，继续才模拟执行；暂停不释放开发占用。</div>
-      <section class="drawer-section"><h3 style="margin-top:20px">我的事项与队列</h3><div class="item-list">${items.map((item, index) => `<article class="item-row ${item === selectedItem ? 'selected' : ''}"><div><strong>${index + 1}. ${escapeHTML(item.title)}</strong><span class="tag">${item.phase}</span></div><p>${item.claims.join('、')} · ${item.sent ? '首次指令已发送（模拟）' : '首次指令已排队，尚未发送'}</p>${!item.sent ? `<p>已保存指令：${escapeHTML(item.firstInstruction)}</p>` : ''}<button class="subtle-button" data-action="item-switch" data-value="${item.id}" ${item === selectedItem ? 'disabled' : ''}>${item === selectedItem ? '当前现场' : '查看现场'}</button></article>`).join('')}</div></section>
-      <section class="drawer-section"><h3>当前事项</h3><p>${escapeHTML(selectedItem.title)} · ${selectedItem.phase}</p><div class="collection-actions"><button class="primary-button" data-action="item-continue" ${selectedItem.phase === '正在执行' ? 'disabled' : ''}>${selectedItem.sent ? '继续当前事项' : '发送已排队实现指令'}</button><button class="subtle-button" data-action="item-pause" ${selectedItem.phase !== '正在执行' ? 'disabled' : ''}>暂停</button></div><p>${running ? `当前执行：${escapeHTML(running.title)}。切换现场不会自动切换执行项。` : '当前没有执行中的事项，队列不会自动开始。'}</p></section>
-      <section class="drawer-section"><h3>准备另一个事项</h3><label for="queue-instruction">首次实现指令</label><textarea id="queue-instruction" class="item-instruction" rows="3" placeholder="明确说明希望实现的内容"></textarea><label for="queue-requirement">实际开发需求（模拟样本）</label><select id="queue-requirement" class="diff-file-select"><option value="REQ-0013">REQ-0013 审批记录 · 陈明开发中</option><option value="REQ-0014">REQ-0014 供应商目录 · 本人事项已占用</option></select><button class="subtle-button" data-action="item-enqueue">发送实现指令并尝试入队（模拟）</button><button class="text-button" data-action="item-enqueue-retry">演示陈明释放后重试入队</button><p>有执行事项时入队等待，否则首次发送直接模拟执行。失败保留指令，不创建可写事项；查看需求和普通讨论不领取开发权。</p></section>
-      <section class="drawer-section"><h3>扩展当前开发范围</h3><p>尝试扩领审批记录：先模拟占用冲突，再可切换到对方已释放的恢复样本。原占用和现场始终保留，不发送实现消息。</p><button class="subtle-button" data-action="item-expand">尝试扩领 REQ-0013（模拟）</button>${expansionFailed ? '<button class="text-button" data-action="item-expand-retry">演示对方释放后重试</button>' : ''}</section><div id="item-notice" class="drawer-notice warning" role="status" ${taskNotice ? '' : 'hidden'}>${escapeHTML(taskNotice)}</div>`;
-  }
-  function continueItem() {
-    const running = items.find((item) => item.phase === '正在执行' && item !== selectedItem);
-    if (running) { taskNotice = `请先暂停「${running.title}」再继续；已排队指令仍保留，未发送。`; renderItems(); return; }
-    if (!selectedItem.sent) {
-      const message = document.createElement('article'); message.className = 'turn user-message';
-      message.innerHTML = `<div class="turn-meta"><span class="avatar-mark">林</span>我<time>现在</time></div><p class="lead">${escapeHTML(selectedItem.firstInstruction)}</p>`;
-      $('chat-scroll').append(message); selectedItem.sent = true;
-    }
-    selectedItem.phase = '正在执行'; taskNotice = '正在执行仅为交互状态，无模型请求或代码写入；可暂停，其他事项不会自动开始。';
-    renderChrome(); renderItems();
-  }
-  function enqueueItem() {
-    const input = $('queue-instruction'); const instruction = input.value.trim();
-    if (!instruction) { input.focus(); taskNotice = '请先填写明确的首次实现指令。'; $('item-notice').hidden = false; $('item-notice').textContent = taskNotice; return; }
-    const requirement = $('queue-requirement').value;
-    const existing = items.find((item) => item.claims.includes(requirement));
-    if (existing || (requirement === 'REQ-0013' && externalApprovalOccupied)) {
-      const owner = existing ? `林晓 · ${existing.title}` : '陈明 · 审批流程优化';
-      taskNotice = `${requirement} 已由 ${owner} 开发（模拟）。未创建事项，未发送指令；输入已保留，可继续查看参考材料。`;
-      $('item-notice').hidden = false; $('item-notice').textContent = taskNotice; return;
-    }
-    guardUnsaved(() => {
-      const item = { id: `DEMO-${String(nextItem++).padStart(2, '0')}`, title: '审批体验调整', phase: '待开始', claims: [requirement], firstInstruction: instruction, sent: false, scene: null };
-      items.push(item);
-      if (items.some((entry) => entry.phase === '正在执行')) {
-        taskNotice = '已领取并入队（模拟），首次指令保留、尚未发送；当前事项继续执行。'; renderChrome(); renderItems();
-      } else {
-        switchItem(item.id); continueItem(); openDrawer('tasks');
-        taskNotice = '首次发送已直接开始模拟执行；没有额外的继续步骤，没有真实模型请求。'; renderItems();
-      }
-    });
+    renderRequirementSessions();
   }
   const reviewTexts = ['采购订单：搜索、状态筛选与空态符合使用习惯，金额计算与草稿编辑规则清晰。', '审批记录：订单编号、处理节点、人员与意见能够相互追溯。', '供应商目录：名称、采购类别、联系人与可用状态便于查阅。', '跨需求体验：订单、审批与供应商页面导航一致，异常反馈和恢复操作连贯。'];
   let toastTimer, runtimeToken = 0, lastFocus = null;
@@ -417,44 +377,80 @@ export default function Suppliers() {
     }
   }
   function openDrawer(kind) {
+    if (kind === 'collection' || kind === 'tasks') { focusRequirementSession(); return; }
+    if (kind === 'confirm') {
+      closeDrawer(); state.drawer = 'confirm'; $('confirmation-panel').hidden = false; renderConfirm(); return;
+    }
     if (state.submitting) { toast('模拟提交进行中，请稍候。'); return; }
     lastFocus = document.activeElement; state.drawer = kind; $('more-menu').hidden = true; $('more-button').setAttribute('aria-expanded', 'false');
     $('drawer').hidden = false; $('drawer-backdrop').hidden = false;
     const titles = { confirm: '确认当前原型', collection: '需求集合', diagnostics: '诊断信息', diff: '本轮变更对比', demo: '演示状态', guide: '从实现到业务核对', stage: '项目阶段', tasks: '我的事项与队列' };
     $('drawer-title').textContent = titles[kind] || '工作台'; $('drawer-eyebrow').textContent = kind === 'confirm' ? '采购协同原型 · 3 项需求' : '采购协同平台 / 交互原型';
-    $('drawer-footer').innerHTML = '';
-    if (kind === 'tasks') renderItems();
-    else if (kind === 'confirm') renderConfirm();
-    else if (kind === 'collection') renderCollection();
-    else if (kind === 'diff') renderDiff();
+    drawerFooter().innerHTML = '';
+    if (kind === 'diff') renderDiff();
     else if (kind === 'demo') renderDemo();
     else if (kind === 'diagnostics') renderDiagnostics();
-    else if (kind === 'guide') $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">本页是可点击设计稿。AI、构建与原型确认流程均为模拟，不构成产品验收。</div><h3 style="margin-top:24px">建议按这个顺序体验</h3><ol><li>通过需求集合定位订单、审批和供应商，或在预览内连续切换页面。</li><li>操作订单的新建、校验、保存与错误恢复，查看审批过程与供应商目录。</li><li>点击会话变更文件切到代码，编辑样例并保存，观察预览过期。</li><li>运行预览，再打开「确认原型」，跨需求核对整体体验。</li><li>发现问题时放入 AI 草稿，继续同一个项目原型的协作。</li></ol></section><section class="drawer-section"><h3>操作边界</h3><p>需求集合仅提供业务上下文与定位，不要求先选定或确认集合。源码是缩略示例，编辑后不会实际执行构建或改变内嵌页面。</p><p>业务核对只记录判断，不新增逐项勾选门禁。未保存的源码修改会阻止模拟确认；预览停止或过期只提示作者继续核对。</p><p>所有数据只保留在当前页内存。确认流程展示设计目标，不代表现有协同服务已实现需求集合受理。</p></section>`;
+    else if (kind === 'guide') drawerBody().innerHTML = `<section class="drawer-section"><div class="drawer-notice">本页是可点击设计稿。AI、构建与原型确认流程均为模拟，不构成产品验收。</div><h3 style="margin-top:24px">建议按这个顺序体验</h3><ol><li>通过需求集合定位订单、审批和供应商，或在预览内连续切换页面。</li><li>操作订单的新建、校验、保存与错误恢复，查看审批过程与供应商目录。</li><li>点击会话变更文件切到代码，编辑样例并保存，观察预览过期。</li><li>运行预览，再打开「确认原型」，跨需求核对整体体验。</li><li>发现问题时放入 AI 草稿，继续同一个项目原型的协作。</li></ol></section><section class="drawer-section"><h3>操作边界</h3><p>需求集合仅提供业务上下文与定位，不要求先选定或确认集合。源码是缩略示例，编辑后不会实际执行构建或改变内嵌页面。</p><p>业务核对只记录判断，不新增逐项勾选门禁。未保存的源码修改会阻止模拟确认；预览停止或过期只提示作者继续核对。</p><p>所有数据只保留在当前页内存。确认流程展示设计目标，不代表现有协同服务已实现需求集合受理。</p></section>`;
     hydrateIcons($('drawer')); $('drawer').querySelector('button')?.focus();
   }
+  function drawerBody() { return $(state.drawer === 'confirm' ? 'confirmation-body' : 'drawer-body'); }
+  function drawerFooter() { return $(state.drawer === 'confirm' ? 'confirmation-footer' : 'drawer-footer'); }
   function closeDrawer() {
     if (state.submitting) { toast('模拟提交进行中，请稍候。'); return; }
-    state.drawer = null; $('drawer').hidden = true; $('drawer-backdrop').hidden = true; lastFocus?.focus();
+    state.drawer = null; $('confirmation-panel').hidden = true; $('drawer').hidden = true; $('drawer-backdrop').hidden = true; lastFocus?.focus();
   }
   const requirements = [
     { id: 'REQ-0012', name: '采购订单管理', route: 'orders', file: 'page', description: '订单录入、筛选、金额计算与草稿编辑。' },
     { id: 'REQ-0013', name: '审批记录', route: 'approvals', file: 'approvals', description: '查看订单审批节点、处理人、意见与结果。' },
     { id: 'REQ-0014', name: '供应商目录', route: 'suppliers', file: 'suppliers', description: '浏览和搜索供应商，核对采购对象信息。' },
   ];
-  function renderCollection() {
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">同一个项目原型覆盖这 3 项需求。这里帮助你定位相关页面和代码，不切换独立原型，也不重建当前会话。</div></section><div class="requirement-collection">${requirements.map((item) => `<article class="collection-item"><div><span class="code-chip">${item.id}</span><h3>${item.name}</h3></div><p>${item.description}</p><div class="collection-actions"><button class="subtle-button" data-action="collection-preview" data-value="${item.route}">${icon('eye')}查看页面</button><button class="subtle-button" data-action="collection-code" data-value="${item.file}">${icon('code')}定位代码</button></div></article>`).join('')}</div><section class="drawer-section" style="margin-top:22px"><p>需求集合提供业务上下文。可以跨需求查看与持续调整整个项目原型，无需先选定需求范围。</p></section>`;
+  let requestedRequirement = null;
+  function renderRequirementSessions() {
+    const selected = requestedRequirement || selectedItem.claims[0];
+    $('requirement-session').innerHTML = requirements.map(requirement => {
+      const item = items.find(item => item.claims.includes(requirement.id));
+      const status = requirement.id === 'REQ-0013' && externalApprovalOccupied ? '他人开发中' : item?.phase || '待开发';
+      return `<option value="${requirement.id}" ${selected === requirement.id ? 'selected' : ''}>${requirement.id} · ${escapeHTML(requirement.name)} · ${escapeHTML(status)}</option>`;
+    }).join('');
+    const blocked = selected === 'REQ-0013' && externalApprovalOccupied;
+    $('session-entry-notice').hidden = !blocked;
+    $('session-entry-notice').textContent = blocked ? '审批记录由陈明开发中（模拟）。未进入可写会话，原会话和输入已保留。选择其他需求可继续。' : '';
+    $('chat-scroll').hidden = blocked;
+    $('chat-input').disabled = blocked;
+    document.querySelector('#chat-form .send').disabled = blocked;
+  }
+  function focusRequirementSession() {
+    state.aiCollapsed = false;
+    $('workspace-body').classList.add('ai-expanded');
+    closeDrawer(); renderChrome(); $('requirement-session').focus();
+  }
+  function enterRequirementSession(id) {
+    const requirement = requirements.find(requirement => requirement.id === id);
+    if (!requirement) return;
+    guardUnsaved(() => {
+    requestedRequirement = id;
+    if (id === 'REQ-0013' && externalApprovalOccupied) { renderRequirementSessions(); return; }
+    let item = items.find(item => item.claims.includes(id));
+    if (!item) {
+      item = { id: `DEMO-${String(nextItem++).padStart(2, '0')}`, title: requirement.name, phase: '待开始', claims: [id], firstInstruction: `请结合需求 ${id}「${requirement.name}」实现项目原型。`, sent: false, scene: null };
+      items.push(item);
+    }
+    switchItem(item.id);
+    focusRequirementSession();
+    toast(`已进入「${requirement.name}」对应的模拟会话，不调用真实模型。`);
+    });
   }
   function renderDiagnostics() {
-    $('drawer-body').innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>事项／现场</dt><dd>${selectedItem.id} · scene-${selectedItem.id}（模拟）</dd><dt>会话／分支</dt><dd>session-${selectedItem.id} / demo/${selectedItem.id}（模拟）</dd><dt>开发占用</dt><dd>${selectedItem.claims.join("、")} · 林晓 · 模拟占用</dd><dt>认可来源</dt><dd>recognized-demo-a1；仅示意，非真实 Git SHA</dd><dt>预览实例</dt><dd>preview-${selectedItem.id}-r${state.previewRevision}（模拟）</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
+    drawerBody().innerHTML = `<div class="drawer-notice">以下定位信息为设计示例，未读取真实工程、Git 或服务。</div><section class="drawer-section" style="margin-top:24px"><h3>原型与工作区</h3><dl class="diagnostic-grid"><dt>当前原型</dt><dd>采购协同原型</dd><dt>需求集合</dt><dd>订单、审批、供应商 · 3 项</dd><dt>当前源码</dt><dd>本页修订 ${state.revision}（样例内存）</dd><dt>预览源码</dt><dd>修订 ${state.previewRevision}</dd><dt>工作目录</dt><dd><code>D:/EADP/采购协同平台/原型代码</code></dd><dt>事项／现场</dt><dd>${selectedItem.id} · scene-${selectedItem.id}（模拟）</dd><dt>会话／分支</dt><dd>session-${selectedItem.id} / demo/${selectedItem.id}（模拟）</dd><dt>开发占用</dt><dd>${selectedItem.claims.join("、")} · 林晓 · 模拟占用</dd><dt>认可来源</dt><dd>recognized-demo-a1；仅示意，非真实 Git SHA</dd><dt>预览实例</dt><dd>preview-${selectedItem.id}-r${state.previewRevision}（模拟）</dd><dt>服务版本</dt><dd>未连接；未知</dd><dt>网络行为</dt><dd>无外部请求。页面与合成业务数据均在浏览器内存演示。</dd></dl></section>`;
   }
   function renderDiff(id = state.activeFile || 'page') {
     const file = files[id];
     const before = file.original === file.text ? id === 'page' ? 'export default function PurchaseOrders() {\n  return <div>采购订单</div>;\n}' : '// 本轮变更前的示例内容\n' + file.text.split('\n').slice(0, 5).join('\n') : file.original;
-    $('drawer-body').innerHTML = `<div class="drawer-notice">对比用于评审本轮文件变化；这里只展示样例内容，不读取 Git。</div><section class="drawer-section" style="margin-top:19px"><label class="eyebrow" for="diff-select">对比文件</label><select id="diff-select" class="diff-file-select">${Object.entries(files).filter(([, item]) => item.editable).map(([key, item]) => `<option value="${key}" ${id === key ? 'selected' : ''}>${item.path}</option>`).join('')}</select><div class="diff-block"><h4>变更前 · 示例</h4><pre class="diff-before">${escapeHTML(before)}</pre></div><div class="diff-block"><h4>当前源码 · 修订 ${state.revision}</h4><pre class="diff-after">${escapeHTML(file.text)}</pre></div><button class="subtle-button" data-action="diff-file" data-value="${id}">${icon('code')}在代码区打开</button></section>`;
+    drawerBody().innerHTML = `<div class="drawer-notice">对比用于评审本轮文件变化；这里只展示样例内容，不读取 Git。</div><section class="drawer-section" style="margin-top:19px"><label class="eyebrow" for="diff-select">对比文件</label><select id="diff-select" class="diff-file-select">${Object.entries(files).filter(([, item]) => item.editable).map(([key, item]) => `<option value="${key}" ${id === key ? 'selected' : ''}>${item.path}</option>`).join('')}</select><div class="diff-block"><h4>变更前 · 示例</h4><pre class="diff-before">${escapeHTML(before)}</pre></div><div class="diff-block"><h4>当前源码 · 修订 ${state.revision}</h4><pre class="diff-after">${escapeHTML(file.text)}</pre></div><button class="subtle-button" data-action="diff-file" data-value="${id}">${icon('code')}在代码区打开</button></section>`;
     $('diff-select').addEventListener('change', (event) => renderDiff(event.target.value));
   }
   function renderDemo() {
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">这些操作只切换交互稿中的模拟状态。业务故障入口收纳在此，不出现在采购业务主界面。</div></section><div class="demo-options"><button data-action="demo" data-value="run-failure"><span><strong>预览启动失败</strong><small>显示失败与重试；第一次重试可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="save-failure"><span><strong>订单保存失败${state.failSave ? ' · 已开启' : ''}</strong><small>下次保存失败并保留输入；再次保存可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="empty"><span><strong>订单空态</strong><small>清空模拟订单，可从空态新建；整页刷新恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="recover"><span><strong>恢复正常状态</strong><small>保留源码编辑，清除演示故障并重新运行预览</small></span>${icon('refresh')}</button></div>`;
+    drawerBody().innerHTML = `<section class="drawer-section"><div class="drawer-notice">这些操作只切换交互稿中的模拟状态。业务故障入口收纳在此，不出现在采购业务主界面。</div></section><div class="demo-options"><button data-action="demo" data-value="run-failure"><span><strong>预览启动失败</strong><small>显示失败与重试；第一次重试可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="save-failure"><span><strong>订单保存失败${state.failSave ? ' · 已开启' : ''}</strong><small>下次保存失败并保留输入；再次保存可恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="empty"><span><strong>订单空态</strong><small>清空模拟订单，可从空态新建；整页刷新恢复</small></span>${icon('chevron-right')}</button><button data-action="demo" data-value="recover"><span><strong>恢复正常状态</strong><small>保留源码编辑，清除演示故障并重新运行预览</small></span>${icon('refresh')}</button></div>`;
   }
   function confirmBlockReasons() {
     const reasons = [];
@@ -465,14 +461,14 @@ export default function Suppliers() {
     if (state.submitted) { renderSuccess(); return; }
     if (state.submitting) return;
     const reasons = confirmBlockReasons();
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">确认表示你认可当前项目原型的整体业务体验。预览未运行或已过期只作提示，不阻断确认。</div><div class="info-card"><div class="row"><span>原型需求集合</span><button class="text-button" data-action="drawer" data-value="collection">订单、审批、供应商 · 3 项 ${icon('chevron-right')}</button></div><div class="row"><span>当前源码</span><strong>样例修订 ${state.revision}${state.editing ? ' · 有未保存编辑' : ' · 已保存'}</strong></div><div class="row"><span>预览</span><span class="tag ${state.runtime === 'running' && state.previewRevision === state.revision ? 'good' : 'warn'}">${state.runtime !== 'running' ? '未运行' : state.previewRevision === state.revision ? '对应当前源码' : '旧预览 · 待重建'}</span></div></div>${reasons.length ? `<div class="drawer-notice warning">${reasons.map(escapeHTML).join('<br>')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="subtle-button" data-action="restart">重新运行预览</button></div>` : ''}</section><section class="drawer-section"><h3>业务核对参考 <span class="eyebrow">用于记录，不是新增勾选门禁</span></h3>${reviewTexts.map((text, index) => `<div class="review-item"><p>${index + 1}. ${text}</p><div class="review-actions">${[['ok', '符合'], ['issue', '有问题'], ['unreviewed', '未核对']].map(([value, label]) => `<button data-action="review" data-index="${index}" data-value="${value}" aria-pressed="${state.review[index] === value}" class="${state.review[index] === value ? 'selected' : ''}">${label}</button>`).join('')}</div>${state.review[index] === 'issue' ? `<div class="issue-draft"><label class="sr-only" for="issue-${index}">核对项 ${index + 1} 的问题说明</label><textarea id="issue-${index}" data-issue="${index}" placeholder="描述具体问题，稍后发给 AI 继续调整…">${escapeHTML(state.issues[index])}</textarea><button class="text-button" data-action="issue-to-ai" data-index="${index}">放入 AI 草稿，继续调整 ${icon('arrow-right')}</button></div>` : ''}</div>`).join('')}</section><section class="drawer-section"><h3>确认说明</h3><p>请结合相关需求核对订单、审批与供应商之间的流程、规则和异常。未核对或问题记录由你判断是否影响本次完成，不自动代替业务判断。</p><p>本交互稿模拟完整原型确认及基线衔接的设计目标，不代表现有协同服务已支持需求集合受理；不执行真实 Git、协同受理或发布。</p><button class="text-button" data-action="optional-review">${icon('spark')}AI 辅助评审（可选）</button></section>`;
-    $('drawer-footer').innerHTML = `<button class="subtle-button" data-action="close-drawer">继续核对</button><button class="primary-button" data-action="confirm-submit" ${!canConfirm() ? 'disabled' : ''}>确认当前原型 · 模拟 ${icon('arrow-right')}</button>`;
+    drawerBody().innerHTML = `<section class="drawer-section"><div class="drawer-notice">确认表示你认可当前项目原型的整体业务体验。预览未运行或已过期只作提示，不阻断确认。</div><div class="info-card"><div class="row"><span>原型需求集合</span><button class="text-button" data-action="drawer" data-value="collection">订单、审批、供应商 · 3 项 ${icon('chevron-right')}</button></div><div class="row"><span>当前源码</span><strong>样例修订 ${state.revision}${state.editing ? ' · 有未保存编辑' : ' · 已保存'}</strong></div><div class="row"><span>预览</span><span class="tag ${state.runtime === 'running' && state.previewRevision === state.revision ? 'good' : 'warn'}">${state.runtime !== 'running' ? '未运行' : state.previewRevision === state.revision ? '对应当前源码' : '旧预览 · 待重建'}</span></div></div>${reasons.length ? `<div class="drawer-notice warning">${reasons.map(escapeHTML).join('<br>')}</div><div style="display:flex;gap:8px;margin-top:10px"><button class="subtle-button" data-action="restart">重新运行预览</button></div>` : ''}</section><section class="drawer-section"><h3>业务核对参考 <span class="eyebrow">用于记录，不是新增勾选门禁</span></h3>${reviewTexts.map((text, index) => `<div class="review-item"><p>${index + 1}. ${text}</p><div class="review-actions">${[['ok', '符合'], ['issue', '有问题'], ['unreviewed', '未核对']].map(([value, label]) => `<button data-action="review" data-index="${index}" data-value="${value}" aria-pressed="${state.review[index] === value}" class="${state.review[index] === value ? 'selected' : ''}">${label}</button>`).join('')}</div>${state.review[index] === 'issue' ? `<div class="issue-draft"><label class="sr-only" for="issue-${index}">核对项 ${index + 1} 的问题说明</label><textarea id="issue-${index}" data-issue="${index}" placeholder="描述具体问题，稍后发给 AI 继续调整…">${escapeHTML(state.issues[index])}</textarea><button class="text-button" data-action="issue-to-ai" data-index="${index}">放入 AI 草稿，继续调整 ${icon('arrow-right')}</button></div>` : ''}</div>`).join('')}</section><section class="drawer-section"><h3>确认说明</h3><p>请结合相关需求核对订单、审批与供应商之间的流程、规则和异常。未核对或问题记录由你判断是否影响本次完成，不自动代替业务判断。</p><p>本交互稿模拟完整原型确认及基线衔接的设计目标，不代表现有协同服务已支持需求集合受理；不执行真实 Git、协同受理或发布。</p><button class="text-button" data-action="optional-review">${icon('spark')}AI 辅助评审（可选）</button></section>`;
+    drawerFooter().innerHTML = `<button class="subtle-button" data-action="close-drawer">继续核对</button><button class="primary-button" data-action="confirm-submit" ${!canConfirm() ? 'disabled' : ''}>确认当前原型 · 模拟 ${icon('arrow-right')}</button>`;
   }
   function submitConfirm() {
     if (!canConfirm() || state.submitting) { toast('请先保存或取消当前的源码编辑。'); return; }
     state.submitting = true; const revision = state.revision;
-    $('drawer-body').innerHTML = `<div class="baseline-success"><div class="success-mark spinning">${icon('refresh')}</div><h3>正在提交当前原型</h3><p>正在模拟固定源码与后台受理…</p></div><div class="submission-progress"><span>${icon('check')}记录当前原型与源码</span><span>${icon('clock')}等待后台受理</span><span>${icon('clock')}形成可追溯基线</span></div>`;
-    $('drawer-footer').innerHTML = '<button class="primary-button" disabled>提交中…</button>';
+    drawerBody().innerHTML = `<div class="baseline-success"><div class="success-mark spinning">${icon('refresh')}</div><h3>正在提交当前原型</h3><p>正在模拟固定源码与后台受理…</p></div><div class="submission-progress"><span>${icon('check')}记录当前原型与源码</span><span>${icon('clock')}等待后台受理</span><span>${icon('clock')}形成可追溯基线</span></div>`;
+    drawerFooter().innerHTML = '<button class="primary-button" disabled>提交中…</button>';
     setTimeout(() => {
       state.submitting = false;
       if (revision !== state.revision || !canConfirm()) { toast('提交期间状态已变化，请重新核对。'); renderConfirm(); return; }
@@ -480,8 +476,8 @@ export default function Suppliers() {
     }, 1250);
   }
   function renderSuccess() {
-    $('drawer-body').innerHTML = `<div class="baseline-success"><div class="success-mark">${icon('check')}</div><h3>后台已接受，已形成基线</h3><p>采购协同原型 · BL-0001<br>订单、审批、供应商 / 样例源码修订 ${state.revision}</p><span class="tag good">交互稿模拟结果</span></div><div class="drawer-notice">此状态仅演示完整原型确认后的设计衔接，不表示现有协同服务已支持需求集合确认，也不证明真实后台受理、Git 固定或桌面闭环验收。</div><section class="drawer-section" style="margin-top:23px"><h3>下一步</h3><p>在「基线」查看固定成果，在「交接」准备交付材料。原型仅含页面和 Mock，业务系统实现仍属于后续研发范围。</p></section>`;
-    $('drawer-footer').innerHTML = '<button class="subtle-button" data-action="close-drawer">留在原型</button><button class="primary-button" data-action="stage" data-value="基线">查看模拟基线</button>';
+    drawerBody().innerHTML = `<div class="baseline-success"><div class="success-mark">${icon('check')}</div><h3>后台已接受，已形成基线</h3><p>采购协同原型 · BL-0001<br>订单、审批、供应商 / 样例源码修订 ${state.revision}</p><span class="tag good">交互稿模拟结果</span></div><div class="drawer-notice">此状态仅演示完整原型确认后的设计衔接，不表示现有协同服务已支持需求集合确认，也不证明真实后台受理、Git 固定或桌面闭环验收。</div><section class="drawer-section" style="margin-top:23px"><h3>下一步</h3><p>在「基线」查看固定成果，在「交接」准备交付材料。原型仅含页面和 Mock，业务系统实现仍属于后续研发范围。</p></section>`;
+    drawerFooter().innerHTML = '<button class="subtle-button" data-action="close-drawer">留在原型</button><button class="primary-button" data-action="stage" data-value="基线">查看模拟基线</button>';
   }
 
   const businessCSS = `
@@ -646,8 +642,8 @@ export default function Suppliers() {
   function stageInfo(stage) {
     openDrawer('stage'); $('drawer-title').textContent = stage;
     const descriptions = { 场景: '从采购业务流程中识别需求，帮助理解订单、审批与供应商之间的关系。', 需求: '项目内的多项需求共同构成原型上下文。你可以通过需求集合定位相关页面和代码。', 原型: '同一个项目原型持续整合多项需求，查看实现、操作预览并核对整体业务体验。', 基线: state.submitted ? 'BL-0001 · 采购协同原型。当前页仅模拟整个原型确认后形成源码基线的设计目标。' : '确认当前原型后，基线用于追溯代码成果。本稿尚未演示形成基线。', 交接: '以原型代码基线及相关需求准备业务说明、交互限制和待澄清项，交给研发继续实现业务系统。' };
-    $('drawer-body').innerHTML = `<section class="drawer-section"><div class="drawer-notice">其他阶段仅展示衔接说明；本交互稿聚焦项目原型工作台。</div><h3 style="margin-top:24px">${stage}阶段</h3><p>${descriptions[stage] || ''}</p>${stage === '基线' && state.submitted ? '<div class="info-card"><strong>BL-0001 · 采购协同原型</strong><p>交互稿模拟结果 · 集合受理为设计目标，无真实 Git 或协同受理</p></div>' : ''}</section>`;
-    $('drawer-footer').innerHTML = '<button class="primary-button" data-action="close-drawer">返回原型工作台</button>';
+    drawerBody().innerHTML = `<section class="drawer-section"><div class="drawer-notice">其他阶段仅展示衔接说明；本交互稿聚焦项目原型工作台。</div><h3 style="margin-top:24px">${stage}阶段</h3><p>${descriptions[stage] || ''}</p>${stage === '基线' && state.submitted ? '<div class="info-card"><strong>BL-0001 · 采购协同原型</strong><p>交互稿模拟结果 · 集合受理为设计目标，无真实 Git 或协同受理</p></div>' : ''}</section>`;
+    drawerFooter().innerHTML = '<button class="primary-button" data-action="close-drawer">返回原型工作台</button>';
   }
   function renderDecisions() {
     const decisions = [...document.querySelectorAll('.decision')];
@@ -682,13 +678,13 @@ export default function Suppliers() {
     closeDrawer(); state.aiCollapsed = false; $('workspace-body').classList.add('ai-expanded'); renderChrome(); $('chat-input').focus(); toast('问题已放入 AI 输入草稿，尚未发送。');
   }
   const actions = {
-    'item-switch': (control) => switchItem(control.dataset.value),
-    'item-continue': continueItem,
-    'item-enqueue': enqueueItem,
-    'item-enqueue-retry': () => { externalApprovalOccupied = false; enqueueItem(); },
-    'item-pause': () => { selectedItem.phase = '已暂停'; taskNotice = '已暂停模拟执行；原开发占用保留，没有自动开始下一项。'; renderChrome(); renderItems(); },
-    'item-expand': () => { if (selectedItem.claims.includes('REQ-0013')) { taskNotice = '当前事项已持有 REQ-0013，无需重复扩领。'; renderItems(); return; } expansionFailed = true; taskNotice = '扩领失败：REQ-0013 由陈明开发中（模拟）。原开发范围、源码和会话保留，审批材料仍可只读参考。'; renderItems(); },
-    'item-expand-retry': () => { const existing = items.find((item) => item !== selectedItem && item.claims.includes('REQ-0013')); if (existing) { taskNotice = `扩领失败：REQ-0013 仍由本人事项「${existing.title}」开发。原范围保留。`; renderItems(); return; } externalApprovalOccupied = false; if (!selectedItem.claims.includes('REQ-0013')) selectedItem.claims.push('REQ-0013'); expansionFailed = false; taskNotice = '恢复样本：对方已释放，扩领成功（模拟）。仅更新开发范围，未自动发消息或修改代码。'; renderChrome(); renderItems(); },
+    'view-requirement': () => {
+      const requirement = requirements.find(requirement => requirement.id === (requestedRequirement || selectedItem.claims[0]));
+      if (!requirement) return;
+      openDrawer('stage'); $('drawer-title').textContent = `${requirement.id} · ${requirement.name}`;
+      drawerBody().innerHTML = `<section class="drawer-section"><h3>需求材料 · 模拟</h3><p>${escapeHTML(requirement.description)}</p><p>查看材料不改变当前需求会话。</p></section>`;
+      drawerFooter().innerHTML = '<button class="primary-button" data-action="close-drawer">返回原型会话</button>';
+    },
     drawer: (control) => openDrawer(control.dataset.value), 'close-drawer': closeDrawer,
     mode: (control) => guardUnsaved(() => setMode(control.dataset.value)),
     'open-file': (control) => openFile(control.dataset.value), 'close-file': (control) => closeFile(control.dataset.value),
@@ -703,14 +699,14 @@ export default function Suppliers() {
     fullscreen: () => { const expanded = $('preview-pane').classList.toggle('preview-expanded'); document.querySelector('[data-action="fullscreen"]').setAttribute('aria-pressed', String(expanded)); toast(expanded ? '已展开预览。Escape 可退出。' : '已退出全屏预览。'); },
     external: () => { if (state.runtime !== 'running') { toast('请先运行预览。'); return; } const preview = window.open('', '_blank'); if (!preview) { toast('新窗口被浏览器拦截，请允许弹出窗口后重试。'); return; } preview.opener = null; preview.document.open(); preview.document.write(previewDocument()); preview.document.close(); toast('已在新窗口打开独立演示；新窗口数据不回写工作台。'); },
     'search-next': () => searchCode(true),
-    'unsaved-cancel': () => { state.pendingAction = null; $('unsaved-dialog').close(); },
+    'unsaved-cancel': () => { state.pendingAction = null; $('unsaved-dialog').close(); renderRequirementSessions(); },
     'unsaved-discard': () => { const callback = state.pendingAction; state.pendingAction = null; $('unsaved-dialog').close(); cancelEdit(); callback?.(); },
     'unsaved-save': () => { const callback = state.pendingAction; state.pendingAction = null; $('unsaved-dialog').close(); saveEdit(); callback?.(); },
     'collection-preview': (control) => { const route = control.dataset.value; closeDrawer(); guardUnsaved(() => { state.route = route; state.mode = 'preview'; renderChrome(); if (state.runtime === 'running') mountPreview(); else toast('页面已定位，运行预览后即可查看。'); }); },
     'collection-code': (control) => { const id = control.dataset.value; closeDrawer(); openFile(id); },
     'diff-file': (control) => { closeDrawer(); openFile(control.dataset.value); },
     demo: (control) => demoState(control.dataset.value),
-    review: (control) => { const { index, value } = control.dataset; state.review[Number(index)] = value; renderConfirm(); $('drawer-body').querySelector(`[data-action="review"][data-index="${index}"][data-value="${value}"]`)?.focus(); },
+    review: (control) => { const { index, value } = control.dataset; state.review[Number(index)] = value; renderConfirm(); drawerBody().querySelector(`[data-action="review"][data-index="${index}"][data-value="${value}"]`)?.focus(); },
     'issue-to-ai': (control) => issueToAI(Number(control.dataset.index)),
     'optional-review': () => { $('chat-input').value = '请辅助评审采购协同原型与需求集合的差异，列出可定位的问题和依据。'; closeDrawer(); state.aiCollapsed = false; $('workspace-body').classList.add('ai-expanded'); renderChrome(); $('chat-input').focus(); toast('可选评审已放入 AI 草稿，尚未发送。'); },
     'confirm-submit': submitConfirm,
@@ -728,8 +724,9 @@ export default function Suppliers() {
   $('code-search').addEventListener('input', () => searchCode(false));
   $('code-search').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); searchCode(true); } });
   $('source-editor').addEventListener('input', (event) => { state.draft = event.target.value; $('cursor-status').textContent = `${state.draft.split('\n').length} 行 · 尚未保存`; });
-  $('drawer-body').addEventListener('input', (event) => { if (event.target.dataset.issue !== undefined) state.issues[Number(event.target.dataset.issue)] = event.target.value; });
+  drawerBody().addEventListener('input', (event) => { if (event.target.dataset.issue !== undefined) state.issues[Number(event.target.dataset.issue)] = event.target.value; });
   $('route-select').addEventListener('change', (event) => { state.route = event.target.value; if (state.runtime === 'running') mountPreview(); });
+  $('requirement-session').addEventListener('change', event => enterRequirementSession(event.target.value));
   $('chat-form').addEventListener('submit', (event) => {
     event.preventDefault(); const text = $('chat-input').value.trim(); if (!text) { $('chat-input').focus(); return; }
     const user = document.createElement('article'); user.className = 'turn user-message';
@@ -755,7 +752,7 @@ export default function Suppliers() {
       else if ($('preview-pane').classList.contains('preview-expanded')) $('preview-pane').classList.remove('preview-expanded');
       else { if (!$('more-menu').hidden) $('more-button').focus(); $('more-menu').hidden = true; $('more-button').setAttribute('aria-expanded', 'false'); }
     }
-    if (event.key === 'Tab' && state.drawer) {
+    if (event.key === 'Tab' && state.drawer && state.drawer !== 'confirm') {
       const focusable = [...$('drawer').querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]')].filter((node) => !node.hidden);
       if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1)?.focus(); }
       else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0]?.focus(); }

@@ -64,7 +64,9 @@ export async function event(c: Transaction, projectId: string, value: EntityView
   requireCondition(['active', 'paused'].includes(current.status), 'REPAIR_FINISHED', 'Completed or terminated repair authorization cannot be resumed');
   requireCondition(input.expectedHash === current.currentHash, 'REPAIR_HASH_CHANGED', 'Repair action does not bind the current recorded file hash');
   let status = current.status, rounds = current.roundsUsed, reason: string | null = null;
-  if (input.type === 'round') {
+  if (input.type === 'adopt-input') {
+    await append(c, id, actor, 'adopt-input', input.hashAfter, {});
+  } else if (input.type === 'round') {
     requireCondition(status === 'active' && rounds < 3, 'REPAIR_ROUND_LIMIT', 'Repair must be active and has at most three rounds');
     rounds++;
     if (!input.improved || input.hashAfter === current.currentHash) { status = 'terminated'; reason = 'no-improvement'; }
@@ -117,10 +119,4 @@ async function terminate(c: Transaction, rows: Array<{ id: string }>, actor: Act
 export async function finishOccupationRepairs(c: Transaction, projectId: string, occupationId: string, actor: Actor, reason: 'occupation-ended' | 'completed') {
   const rows = (await c.query<{ id: string }>("SELECT id FROM studio_repair_tasks WHERE project_id=$1 AND occupation_id=$2 AND status IN ('active','paused')", [projectId, occupationId])).rows;
   await terminate(c, rows, actor, reason);
-}
-
-/** A user edit invalidates the previous autonomous repair authorization. */
-export async function invalidateEntityRepairs(c: Transaction, projectId: string, entityId: string, actor: Actor) {
-  const rows = (await c.query<{ id: string }>("SELECT id FROM studio_repair_tasks WHERE project_id=$1 AND entity_id=$2 AND status IN ('active','paused')", [projectId, entityId])).rows;
-  await terminate(c, rows, actor, 'concurrent-edit');
 }

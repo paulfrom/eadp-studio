@@ -1,11 +1,11 @@
-.workbench { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; font-size: 12px; line-height: 1.6; }
-.workbench :where(button, input, select, textarea) { font-size: inherit; }
-.workbench :where(button, input, select, textarea) { font-family:inherit; color:var(--text); border:1px solid var(--border); border-radius:6px; background:var(--surface); }
-.workbench :where(button) { padding:5px 10px; cursor:pointer; }
-.workbench :where(input:not([type=checkbox]):not([type=file]), select, textarea) { padding:7px 9px; }
-.workbench textarea { background:var(--surface-2); }
-.workbench button:not(:disabled):hover { background:var(--surface-2); }
-.workbench button:disabled { color:var(--text-3); opacity:.5; }
+.workbench { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; font-size: 13px; line-height: 1.6; }
+.workbench :where(button, input, select, textarea):not(.nativeSession *) { font-size: inherit; }
+.workbench :where(button, input, select, textarea):not(.nativeSession *) { font-family:inherit; color:var(--text); border:1px solid var(--border); border-radius:6px; background:var(--surface); }
+.workbench :where(button):not(.nativeSession *) { padding:5px 10px; cursor:pointer; }
+.workbench :where(input:not([type=checkbox]):not([type=file]), select, textarea):not(.nativeSession *) { padding:7px 9px; }
+.workbench textarea:not(.nativeSession *) { background:var(--surface-2); }
+.workbench button:not(.nativeSession *):not(:disabled):hover { background:var(--surface-2); }
+.workbench button:not(.nativeSession *):disabled { color:var(--text-3); opacity:.5; }
 
 
 .conversation, .result { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
@@ -17,31 +17,8 @@
 .content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .content[hidden] { display: none; }
 .empty { margin: auto; padding: 28px; color: var(--text-3); line-height: 1.8; text-align: center; }
-.requirements, .tasks { padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.requirements summary, .tasks summary { cursor: pointer; color: var(--text-2); }
-.requirements ul, .tasks ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 7px; }
-.requirements li, .tasks li { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
-.requirements li span, .tasks li span { color: var(--text-3); font-size: 11px; }
-.queueIntro { margin: 10px 0 0; color: var(--text-3); font-size: 12px; line-height: 1.6; }
-.tasks .developmentQueue { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
-.tasks .developmentItem { display: block; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
-.developmentHeading { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
-.developmentHeading > button:first-child { flex: 1; min-width: 160px; padding: 0; border: 0; text-align: left; }
-.developmentHeading > button:first-child[aria-current='true'] { color: var(--accent-text); }
-.developmentStatus { margin: 8px 0 0; color: var(--text-2); line-height: 1.6; }
-.requirementReview { display: grid; gap: 8px; margin-top: 10px; }
-.requirementReview form { display: grid; gap: 8px; }
-.requirementReview label { display: grid; gap: 5px; color: var(--text-2); }
-.requirementReview textarea { resize: vertical; min-height: 68px; }
-.requirementReview > button { justify-self: start; }
-.developmentDiagnostics { margin-top: 8px; color: var(--text-3); font-size: 11px; }
-.developmentDiagnostics p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .taskInfo, .instruction { display: grid; gap: 8px; padding: 14px; border-bottom: 1px solid var(--border); }
 .taskInfo p, .instruction p { margin: 0; color: var(--text-3); line-height: 1.6; }
-.messages { display: grid; gap: 12px; padding: 14px; }
-.messages article { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
-.messages small { color: var(--text-3); }
-.messages p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .instruction label { display: grid; gap: 5px; color: var(--text-2); }
 .instruction textarea { resize: vertical; min-height: 100px; }
 .instruction > button { justify-self: end; }
@@ -112,12 +89,6 @@
 .attachmentButton { cursor:pointer; display:flex; align-items:center; justify-content:center; padding:5px; border:1px solid var(--border); border-radius:6px; }
 .attachmentButton:focus-within { outline:2px solid var(--accent-text); }
 .composerBottom .sendButton { display:flex; align-items:center; justify-content:center; background:var(--accent-text); color:var(--accent-fg); border:0; border-radius:7px; padding:7px; }
-.messages { align-content:start; gap:22px; padding:18px 16px; }
-.messages article { padding:0; border:0; border-radius:0; background:transparent; font-size:13px; }
-.messages article[data-role=user] { padding:11px 13px; border:1px solid var(--border); border-radius:9px; background:var(--surface-2); }
-.messages article p { margin-top:8px; line-height:1.75; }
-.messages article small { display:flex; align-items:center; gap:7px; font-size:11px; }
-.messages article small svg { color:var(--accent-text); }
 .previewPane { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
 .modeSwitch { display:flex; align-self:stretch; align-items:stretch; gap:3px; }
 .modeSwitch button { position:relative; border:0; border-radius:0; font-size:12px; padding:0 11px; background:transparent; color:var(--text-2); }
@@ -158,7 +129,7 @@
 
 .workbench :where(button, a, summary, input, textarea, select):focus-visible { outline:2px solid var(--accent-text); outline-offset:2px; }
 .workbench :where(button, a, summary) { transition:background-color 160ms ease, color 160ms ease, border-color 160ms ease; }
-.workbench button:disabled { cursor:not-allowed; }
+.workbench button:not(.nativeSession *):disabled { cursor:not-allowed; }
 .projectHeader > div { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .projectHeader > button { flex-shrink:0; }
 .sessionLine, .projectHeader, .workbenchFooter, .heading { flex-shrink:0; }
@@ -168,11 +139,20 @@
 
 .composerBottom .sendButton:not(:disabled):hover { background:var(--accent-hover); color:var(--accent-fg); }
 
-.conversationEmpty { display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:24px; color:var(--text-3); text-align:center; }
-.conversationEmpty > svg { width:25px; height:25px; color:var(--accent-text); }
-.conversationEmpty strong { font-size:13px; font-weight:600; color:var(--text-2); }
-.conversationEmpty p { margin:0; font-size:12px; line-height:1.8; }
 .nextAction { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:0; padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text-2); background:var(--surface-2); font-size:11px; }
 .nextAction button { padding:3px 8px; font-size:11px; }
-@media(max-width:1100px) { .workspaceBody { grid-template-columns:260px minmax(0,1fr); } .toolbar { row-gap:8px; } }
 @media(max-width:800px) { .workspaceBody { grid-template-columns:minmax(0,1fr); } .projectName { gap:6px; } .projectName > span:first-child { display:none; } .projectHeader small { margin-left:0; } }
+
+.nativeSession { display:flex; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.nativeSession > div { flex:1; min-height:0; min-width:0; }
+.confirmationPanel { flex:0 1 45%; min-height:120px; padding:12px 14px; overflow:auto; border-top:1px solid var(--border); }
+.confirmationPanel .comparison { height:220px; }
+
+.creationFields { border:0; padding:0; margin:0; min-width:0; }
+.nativeSession { font-size:var(--font-size-base, 14px); }
+
+.projectRequirementCount { color:var(--text-3); font-size:11px; }
+
+.requirementReviewAction { display:flex;flex-shrink:0;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-2); }
+.requirementReviewAction button { margin-left:auto;color:var(--accent-text); }
+.requirementReviewAction p { flex-basis:100%;margin:0;color:var(--danger); }

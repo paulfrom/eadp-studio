@@ -12,7 +12,7 @@ export interface ScenarioGate {
 export interface ScenarioWriteChange { id: string; title: string; kind: 'added' | 'changed' | 'removed'; before: string; after: string; addedLines: number; removedLines: number }
 /** Host-created proposal; the model may only supply conclusions, evidence IDs and the full body. */
 export interface ScenarioWriteProposal {
-  id: string; entityId: string; baseHash: string; templateRef: FixedReference; contextHash: string;
+  id: string; entityId: string; baseBody: string; baseHash: string; templateRef: FixedReference; contextHash: string;
   /** Local task worktree the proposal was asked in; the write never leaves it. */
   taskId: string;
   evidenceIds: string[]; conclusions: Array<{ id: string; text: string }>; body: string; changes: ScenarioWriteChange[]; createdAt: string;
@@ -21,7 +21,7 @@ export interface ScenarioWriteProposal {
   status: 'pending' | 'consumed' | 'rejected'; operationId?: string; error?: string;
 }
 /** Review data contains chapter text; write authorization remains Host-owned. */
-export interface ScenarioWriteProposalView { id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceIds: string[]; changes: ScenarioWriteChange[]; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
+export interface ScenarioWriteProposalView { currentBody: string; proposedBody: string; id: string; baseHash: string; createdAt: string; conclusions: string[]; evidenceIds: string[]; changes: ScenarioWriteChange[]; target?: 'context'; status: ScenarioWriteProposal['status']; error?: string }
 /** Chapters, evidence and remaining business answers reported after one whole-body write. */
 export interface ScenarioWriteSummary { added: string[]; removed: string[]; changed: string[]; evidence: string[]; unanswered: string[] }
 /** One user-facing choice raised by the current material conversation turn. */

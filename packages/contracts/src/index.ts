@@ -264,6 +264,7 @@ export const RepairStartSchema = object({ ...repairFields, userActionId: IdSchem
 export type RepairStartRequest = Static<typeof RepairStartSchema>;
 export const RepairTerminationReasonSchema = Type.Union([Type.Literal('cancelled'), Type.Literal('concurrent-edit'), Type.Literal('missing-evidence'), Type.Literal('no-improvement'), Type.Literal('round-limit')]);
 export const RepairEventSchema = Type.Union([
+  object({ ...repairFields, type: Type.Literal('adopt-input'), expectedHash: Sha256Schema, hashAfter: Sha256Schema }),
   object({ ...repairFields, type: Type.Literal('round'), expectedHash: Sha256Schema, hashAfter: Sha256Schema, improved: Type.Boolean() }),
   object({ ...repairFields, type: Type.Literal('pause'), expectedHash: Sha256Schema, reason: Type.Literal('business-answer-required') }),
   object({ ...repairFields, type: Type.Literal('resume'), expectedHash: Sha256Schema, userActionId: IdSchema }),

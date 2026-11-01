@@ -42,18 +42,4 @@ export const DESKTOP_POLICY_EDITS = [
     ["if (process.platform === 'win32') installMandatoryUpdateOverlay()",
       "if (process.platform === 'win32' && process.argv.includes('--dsh-mandatory-updates')) installMandatoryUpdateOverlay()"],
   ]),
-  // Keep upstream regression sources aligned with the removed loopback-only contract.
-  edit('apps/desktop/tests/mandatory-update-policy.spec.ts', [
-    ['requires explicit production origins and confines HTTP to an explicit local policy fixture', 'accepts HTTP and HTTPS policy origins without a development-only switch'],
-    ["expect(() => resolveDesktopPolicyConfig({ ...deployment, origin: 'http://127.0.0.1:19001' })).toThrow('HTTPS')", "expect(resolveDesktopPolicyConfig({ ...deployment, origin: 'http://127.0.0.1:19001' })!.origin).toBe('http://127.0.0.1:19001')"],
-    ["expect(resolveDesktopPolicyConfig({ ...deployment, origin: 'http://127.0.0.1:19001' }, true)!.origin).toBe('http://127.0.0.1:19001')", "expect(resolveDesktopPolicyConfig({ ...deployment, origin: 'http://100.119.183.44' })!.origin).toBe('http://100.119.183.44')"],
-    ["expect(() => resolveDesktopPolicyConfig({ ...deployment, origin: 'http://example.com' }, true)).toThrow('HTTPS')", "expect(() => resolveDesktopPolicyConfig({ ...deployment, origin: 'ftp://example.com' })).toThrow('HTTPS')"],
-  ]),
-  edit('apps/desktop/tests/desktop-policy-environment.spec.ts', [
-    ["undefined, '', 'http://test.example.com',", "undefined, '', 'ftp://test.example.com',"],
-    ['{\"allowedPageOrigins\":[\"http://example.com\"]}', '{\"allowedPageOrigins\":[\"ftp://example.com\"]}'],
-  ]),
-  edit('apps/desktop/tests/fixtures/local-updater.mjs', [
-    ['intervalMs: 600_000, timeoutMs: 1000 }, true)', 'intervalMs: 600_000, timeoutMs: 1000 })'],
-  ]),
 ]

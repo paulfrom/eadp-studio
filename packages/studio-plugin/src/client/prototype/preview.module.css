@@ -9,10 +9,7 @@
 .route > svg { flex-shrink:0; width:13px; height:13px; }
 .route input { width:100%; min-width:0; border:0; background:transparent; font:11px var(--mono); }
 .spacer { flex: 1; }
-.devices { display: flex; gap: 2px; }
-.devices button[aria-pressed='true'] { color: var(--accent-text); background: var(--accent-soft); }
 .canvas { flex: 1; min-height: 0; overflow: auto; padding: 13px; background: var(--bg); }
-.frame[data-device=mobile] { border-radius:16px; }
 .frame { display: flex; flex-direction: column; height: 100%; margin: 0 auto; min-height: 100%; max-width: 100%; background: var(--surface); border:1px solid var(--border); border-radius:6px; overflow:hidden; box-shadow:var(--shadow-sm); }
 .empty { display:grid; align-content:center; flex:1; min-height:160px; padding:32px 24px; text-align: center; color: var(--text-3); }
 .spinner { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border: 2px solid var(--border); border-top-color: var(--accent-text); border-radius: 50%; animation: spin .8s linear infinite; }

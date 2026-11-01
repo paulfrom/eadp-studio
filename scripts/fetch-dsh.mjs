@@ -42,6 +42,20 @@ async function main() {
   }
   let staging;
   try {
+    const destination = path.join(upstream, 'dsh');
+    const receiptPath = path.join(upstream, 'dsh.source.json');
+    // Published source is verified against the lock; its download archive is no longer an input.
+    if (!archiveOnly && await exists(destination)) {
+      if (!(await lstat(destination)).isDirectory()) throw new Error('Existing source destination must be a real directory.');
+      const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+      if (receipt.commit !== dsh.commit || receipt.archiveSha256 !== dsh.archive.sha256) throw new Error('Existing source receipt differs from the fixed source version; refusing to overwrite.');
+      for (const [name, expected] of Object.entries(dsh.verifiedFiles)) {
+        if (sha256(await readFile(path.join(destination, name))) !== expected) throw new Error(`Existing source critical file changed: ${name}; refusing to overwrite.`);
+      }
+      console.log(`Existing source critical files verified: ${dsh.sourceDirectory}. Nothing overwritten.`);
+      return;
+    }
+    if (!archiveOnly && await exists(receiptPath)) throw new Error('Source receipt exists without its directory; inspect manually before continuing.');
     staging = await mkdtemp(path.join(upstream, '.dsh-fetch-'));
     const archive = path.join(upstream, `dsh-${dsh.commit}.tar.gz`);
     // GNU tar (from Git Bash/MSYS2 on PATH) parses a leading drive letter as a
@@ -113,21 +127,6 @@ async function main() {
       console.log(`Archive ready: ${path.relative(repo, archive)}. No source extraction or release acceptance claimed.`);
       return;
     }
-    const destination = path.join(upstream, 'dsh');
-    const receiptPath = path.join(upstream, 'dsh.source.json');
-    if (await exists(destination)) {
-      if (!(await lstat(destination)).isDirectory()) throw new Error('Existing source destination must be a real directory.');
-      const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-      if (receipt.commit !== dsh.commit || receipt.archiveSha256 !== dsh.archive.sha256) throw new Error('Existing source receipt differs from the fixed source version; refusing to overwrite.');
-      for (const [name, expected] of Object.entries(dsh.verifiedFiles)) {
-        if (sha256(await readFile(path.join(destination, name))) !== expected) throw new Error(`Existing source critical file changed: ${name}; refusing to overwrite.`);
-      }
-      await rmdir(staging);
-      staging = undefined;
-      console.log(`Existing source critical files verified: ${dsh.sourceDirectory}. Nothing overwritten.`);
-      return;
-    }
-    if (await exists(receiptPath)) throw new Error('Source receipt exists without its directory; inspect manually before continuing.');
     const probeTarget = path.join(staging, 'symlink-target');
     const probeLink = path.join(staging, 'symlink-link');
     await writeFile(probeTarget, 'source-symlink-probe', { flag: 'wx' });

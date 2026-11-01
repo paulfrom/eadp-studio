@@ -1,17 +1,19 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { cancelHostNativeSession } from './native-prompt-admission.ts'
 import path from 'node:path'
 import { installModelSelection, type AgentHandle, type AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import type {} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { AttachmentAdmissionPart, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { SessionOutput } from '../../application/ports.ts'
 import type { TaskView } from '../../../shared/studio.ts'
-import type { PrototypeConversationAttachment, PrototypeConversationMessage, PrototypeInstructionAttachment } from '../../../shared/prototype.ts'
+import type { PrototypeInstructionAttachment } from '../../../shared/prototype.ts'
 import { findMaterialFile } from '../assets/materials.ts'
 import { inheritStudioExecutionScope, registerStudioExecutionScope, updateStudioWriteScope } from '../platform/execution-guard.ts'
 import { loadPrototypeRules, type PrototypeRuleBinding, type PrototypeTaskIdentity } from '../../prototype/generation.ts'
@@ -19,21 +21,27 @@ import { readTemplateManifest } from '../../prototype/template.ts'
 import type { PrototypeMaterialContext } from '../../application/prototype-material-context.ts'
 import { registerPrototypeMaterialTools } from './prototype-material-tools.ts'
 import type { PrototypeBrowserTools } from './prototype-browser-tools.ts'
+import { registerPrototypeRuntimeTools, type PrototypeRuntimeExecutor } from './prototype-runtime-tools.ts'
 
 const configuredAgents = new WeakSet<object>()
-const conversationText = (value: string): { text: string; truncated?: true } => ({ text: value.slice(0, 100_000), ...(value.length > 100_000 ? { truncated: true as const } : {}) })
-const conversationAttachments = (content: ReadonlyArray<{ type: string; attachment?: { attachmentId: string; name?: string; bytes: number; width?: number; height?: number } }>): PrototypeConversationAttachment[] => content.flatMap(part => part.attachment ? [{ id: part.attachment.attachmentId, kind: part.type === 'image' ? 'image' as const : 'file' as const, ...(part.attachment.name ? { name: part.attachment.name } : {}), bytes: part.attachment.bytes, ...(part.attachment.width !== undefined ? { width: part.attachment.width } : {}), ...(part.attachment.height !== undefined ? { height: part.attachment.height } : {}) }] : [])
 export type ScenarioContextReader = (task: TaskView, signal: AbortSignal) => Promise<{ text: string; readPaths: string[] }>
 
 export class DshTaskSessions {
+  /** Locate persisted or live native sessions by their exact creation workspace. */
+  async findPrototypeSessions(worktree: string): Promise<string[]> {
+    const directory = path.resolve(worktree)
+    const records = await this.ctx.sessionQuery.filterSessions([{ kind: 'cwd', values: [directory] }])
+    return records.filter(record => record.header.cwd !== undefined && path.resolve(record.header.cwd) === directory && record.header.id.startsWith('studio-')).map(record => record.header.id)
+  }
   private readonly handles = new Map<string, AgentHandle>()
   private readonly worktrees = new Map<string, string>()
   private readonly durableSessions = new Set<string>()
   private readonly bindings = new Map<string, PrototypeRuleBinding>()
+  private readonly prototypeSessionRules = new Map<string, string>()
   private readonly imageCalls = new Map<string, string>()
   private readonly releaseOutput: () => void
   private readonly releaseInheritance: () => void
-  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader, private readonly skillsDirectory?: string, private readonly prototypeWriteAuthorization?: (task: TaskView) => Promise<() => Promise<void>>, private readonly prototypeMaterials?: () => PrototypeMaterialContext, private readonly prototypeBrowser?: PrototypeBrowserTools) {
+  constructor(private readonly ctx: Context, readonly manifestPath: string, private readonly onOutput: (sessionId: string, output: SessionOutput) => Promise<void>, private readonly scenarioContext?: ScenarioContextReader, private readonly skillsDirectory?: string, private readonly prototypeWriteAuthorization?: (task: TaskView) => Promise<() => Promise<void>>, private readonly prototypeMaterials?: () => PrototypeMaterialContext, private readonly prototypeBrowser?: PrototypeBrowserTools, private readonly prototypeRuntime?: PrototypeRuntimeExecutor) {
     this.releaseOutput = ctx.on('session/event', (session, event) => this.enqueueOutput(session.id, event))
     this.releaseInheritance = ctx.on('agent/created', ({ agent }) => {
       const parentId = agent.session.header.parentSession
@@ -53,6 +61,7 @@ export class DshTaskSessions {
     scope.plugin({ apply }, { providerName: 'eadp-bundled', includeDefaultRoots: false, customSkillDirs: [this.skillsDirectory!], watch: false })
   }
   async open(task: TaskView, rules: string, input: PrototypeTaskIdentity | undefined, requireExisting = false): Promise<string> {
+    if (task.purpose === 'prototype') this.prototypeSessionRules.set(task.sessionId, rules)
     if (task.purpose === 'review' && input) throw new Error('评审任务不能取得原型写入权限')
     // Materials are named after their titles, so the session resolves their current paths instead of deriving them.
     const scenarioFile = task.purpose === 'material' ? await findMaterialFile(task.worktree, 'scenario', task.entityId) : undefined
@@ -107,7 +116,12 @@ export class DshTaskSessions {
       })
       await this.ctx.agentPresets.mount(scope, agentPreset)
       if (scenarioTask && this.skillsDirectory) await this.mountBundledSkills(scope)
-      scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
+      if (task.purpose === 'prototype') scope.systemPrompt.context({ name: 'eadp-task', order: 50, required: true, interpolate: false, text: () => {
+        const current = this.prototypeSessionRules.get(task.sessionId)
+        if (!current) throw new Error('原型会话上下文已释放，不能继续发送模型请求')
+        return current
+      } })
+      else scope.systemPrompt.section({ name: 'eadp-task', order: 50, text: rules, interpolate: false })
       let readPaths: string[] = []
       if (scenarioTask && this.scenarioContext) {
         let latest = ''
@@ -143,6 +157,7 @@ export class DshTaskSessions {
         }, agent), 'studio: prototype file boundary')
         if (this.prototypeMaterials) registerPrototypeMaterialTools(scope, agent, task, this.prototypeMaterials())
         this.prototypeBrowser?.register(scope, agent, task)
+        if (this.prototypeRuntime) registerPrototypeRuntimeTools(scope, agent, task, this.prototypeRuntime)
         const binding = await loadPrototypeRules(input, { load: async request => {
           scope.systemPrompt.section({ name: 'eadp-template-rules', order: 60, text: request.content, interpolate: false })
           return { loaded: true, sessionId: task.sessionId, sha256: request.sha256, entrypoint: 'AgentRegistry.setup → systemPrompt.section' }
@@ -221,6 +236,10 @@ export class DshTaskSessions {
     } })
     this.bindings.set(task.sessionId, binding); return binding
   }
+  hasPendingMessages(sessionId: string): boolean {
+    const agent = this.ctx.agents.get(sessionId as SessionId)
+    return !!agent && (agent.inbox.nextTurn.length > 0 || agent.inbox.nextStep.length > 0)
+  }
   async prompt(sessionId: string, text: string, operationId?: string, attachments: PrototypeInstructionAttachment[] = []): Promise<void> {
     const handle = this.handles.get(sessionId)
     if (!handle) throw new Error('任务会话尚未恢复')
@@ -256,36 +275,14 @@ export class DshTaskSessions {
     const handle = this.handles.get(sessionId)
     if (handle && !await this.ctx.sessions.flush(handle.agent.session).catch(() => false)) return 'unknown'
     const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId).catch(() => undefined)
-    if (inspection?.events.some(event => event.type === 'user/message' && event.data.source.kind === 'studio-task' && event.data.source.operationId === operationId)) return 'delivered'
-    if (inspection?.events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => message.source.kind === 'studio-task' && message.source.operationId === operationId))) return 'admitted'
+    const matches = (source: { kind: string; operationId?: string; rpcId?: string }) => source.kind === 'studio-task' ? source.operationId === operationId : source.kind === 'user' && source.rpcId === operationId
+    if (inspection?.events.some(event => event.type === 'user/message' && matches(event.data.source))) return 'delivered'
+    if (inspection?.events.some(event => event.type === 'agent/inbox/spliced' && event.data.inserted.some(message => matches(message.source)))) return 'admitted'
     return inspection ? 'absent' : 'unknown'
-  }
-  async readPrototypeConversation(sessionId: string): Promise<PrototypeConversationMessage[]> {
-    const inspection = await this.ctx.sessionController.inspect(sessionId as SessionId)
-    const messages: PrototypeConversationMessage[] = [], toolNames = new Map<string, string>()
-    for (const event of inspection.events) {
-      if (event.type === 'user/message') {
-        if (!['studio-task', 'user', 'user-rpc'].includes(event.data.source.kind)) continue
-        const text = event.data.content.filter(part => part.type === 'text').map(part => part.text).join('\n'), attachments = conversationAttachments(event.data.content)
-        if (text || attachments.length) messages.push({ sequence: event.seq, role: 'user', ...conversationText(text), source: event.data.source.kind,
-          ...(event.data.source.kind === 'studio-task' && event.data.source.operationId ? { operationId: event.data.source.operationId } : {}), ...(attachments.length ? { attachments } : {}) })
-      } else if (event.type === 'assistant/message') {
-        const text = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-        if (text) messages.push({ sequence: event.seq, role: 'assistant', ...conversationText(text), ...(event.data.interrupted ? { interrupted: true } : {}) })
-      } else if (event.type === 'tool/call') {
-        toolNames.set(event.data.callId, event.data.name)
-        messages.push({ sequence: event.seq, role: 'assistant', kind: 'tool', ...conversationText(event.data.arguments), tool: { callId: event.data.callId, name: event.data.name, status: 'running', arguments: event.data.arguments.slice(0, 100_000) } })
-      } else if (event.type === 'tool/result') {
-        const callId = event.data.message.toolCallId, text = event.data.message.content.filter(part => part.type === 'text').map(part => part.text).join('\n'), attachments = conversationAttachments(event.data.message.content)
-        messages.push({ sequence: event.seq, role: 'assistant', kind: 'tool', ...conversationText(text), ...(attachments.length ? { attachments } : {}),
-          tool: { callId, name: toolNames.get(callId) ?? '工具', status: event.data.message.isError ? 'failed' : 'completed', result: text.slice(0, 100_000) } })
-      }
-    }
-    return messages
   }
   /** Use the same cancellation command as DSH's native conversation surface. */
   async cancel(sessionId: string): Promise<void> {
-    if (this.ctx.agents.get(sessionId as SessionId)) this.ctx.sessionController.cancel({ sessionId: sessionId as SessionId })
+    if (this.ctx.agents.get(sessionId as SessionId)) await cancelHostNativeSession(this.ctx, sessionId as SessionId)
   }
   /** Cancel without discarding pending inbox work, then wait for the whole native agent and persistence. */
   async settlePrototype(sessionId: string, cancel: boolean, allowPending = false): Promise<boolean> {
@@ -307,7 +304,7 @@ export class DshTaskSessions {
     for (const [sessionId, directory] of [...this.worktrees]) {
       if (directory !== target) continue
       const handle = this.handles.get(sessionId)
-      this.worktrees.delete(sessionId); this.handles.delete(sessionId); this.durableSessions.delete(sessionId); this.bindings.delete(sessionId)
+      this.worktrees.delete(sessionId); this.handles.delete(sessionId); this.durableSessions.delete(sessionId); this.bindings.delete(sessionId); this.prototypeSessionRules.delete(sessionId)
       for (const key of [...this.imageCalls.keys()]) if (key.startsWith(`${sessionId}:`)) this.imageCalls.delete(key)
       if (handle) released.push(handle)
       if (this.prototypeBrowser) closing.push(this.prototypeBrowser.close(sessionId))
@@ -323,7 +320,7 @@ export class DshTaskSessions {
     await this.prototypeBrowser?.dispose()
     this.releaseOutput(); this.releaseInheritance()
     const handles = [...this.handles.values()]
-    this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear()
+    this.handles.clear(); this.worktrees.clear(); this.durableSessions.clear(); this.imageCalls.clear(); this.bindings.clear(); this.prototypeSessionRules.clear()
     const results = await Promise.allSettled(handles.map(handle => handle.dispose())), failures = results.filter(result => result.status === 'rejected')
     if (failures.length) throw new AggregateError(failures.map(result => result.reason), '原生会话句柄未能完整释放')
   }

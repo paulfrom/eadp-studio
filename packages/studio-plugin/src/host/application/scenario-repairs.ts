@@ -8,7 +8,7 @@ import { CollaborationError } from '../adapters/collaboration/client.ts'
 import { syncProjectContext } from './scenario-package.ts'
 import type { ScenarioRecord, ScenarioWorkspaces } from './scenario-workspaces.ts'
 
-export interface LocalScenarioRepair { projectId: string; entityId: string; view: RepairTaskView; task: TaskView; question?: string; message?: string; waiting: boolean; nextRound?: boolean; pending?: RepairEventRequest; recoverPending?: RepairEventRequest; pendingAnswer?: string; turnEnded?: boolean; abortRequested?: boolean; lastHandledSeq?: number }
+export interface LocalScenarioRepair { projectId: string; entityId: string; view: RepairTaskView; task: TaskView; question?: string; message?: string; waiting: boolean; nextRound?: boolean; pending?: RepairEventRequest; recoverPending?: RepairEventRequest; pendingAnswer?: string; turnEnded?: boolean; abortRequested?: boolean; lastHandledSeq?: number; requestedHash?: string }
 /** Runs one bounded, explicitly authorized repair task through the existing DSH Agent. */
 export class ScenarioRepairs {
   constructor(private readonly workspaces: ScenarioWorkspaces, private readonly confirm: (entityId: string, hash: string, repairId: string) => Promise<void>) {}
@@ -19,14 +19,17 @@ export class ScenarioRepairs {
   }
   async start(command: Extract<ScenarioCommand, { action: 'startScenarioRepair' }>): Promise<void> {
     const w = this.workspaces, record = await w.record(command.entityId)
-    if (record.repairAuthorization?.status === 'pending') throw new Error('上次修复授权结果待核对，请先重试核对')
+    if (record.repairAuthorization?.status === 'pending') { await this.retryStart(command.entityId); return }
     const local = await w.store.read(), existing = local.scenarioRepairs.findLast(r => r.entityId === command.entityId && r.projectId === record.projectId)
-    if (existing?.pending || existing?.recoverPending) throw new Error('上次修复操作结果待核对，请先重试核对')
+    if (existing?.pending || existing?.recoverPending) { await this.recoverPending(existing); return }
     if (existing?.view.userActionId === command.userActionId) return
-    if (existing && ['active', 'paused'].includes(existing.view.status)) throw new Error('当前修复尚未结束，请先核对或撤销')
+    if (existing && ['active', 'paused'].includes(existing.view.status)) {
+      if (!await this.current(existing)) return
+      if (existing.view.status === 'active' && !existing.waiting) await this.request(existing)
+      return
+    }
     const { entity, task } = await w.editable(command.entityId), draft = await readMaterial(task.worktree, 'scenario', entity.id)
     if (record.observationError) throw new Error(record.observationError)
-    if (draft.sha256 !== command.expectedHash) throw new Error('正文已变化，请核对当前内容后重新开始修复')
     record.repairAuthorization = {
       request: { idempotencyKey: command.userActionId, token: await w.deps.owned(entity), userActionId: command.userActionId, startHash: draft.sha256 },
       task: { ...task, sessionId: `studio-${randomUUID()}`, purpose: 'review', scenarioRepair: true }, status: 'pending',
@@ -67,8 +70,7 @@ export class ScenarioRepairs {
     const repair = await this.latest(command.entityId)
     if (repair.pending || repair.recoverPending) throw new Error('上次修复操作结果待核对，请先重试核对')
     if (repair.view.status !== 'paused' || !command.answer.trim()) throw new Error('仅暂停的修复可通过补充业务答案继续')
-    const { task } = await this.workspaces.editable(command.entityId), draft = await readMaterial(task.worktree, 'scenario', command.entityId)
-    if (draft.sha256 !== repair.view.currentHash || command.expectedHash !== draft.sha256) { await this.terminate(repair, 'concurrent-edit'); return }
+    if (!await this.current(repair)) return
     repair.pendingAnswer = command.answer; await this.workspaces.store.save()
     await this.event(repair, { type: 'resume', userActionId: command.userActionId })
     await this.recoverPending(repair)
@@ -90,8 +92,16 @@ export class ScenarioRepairs {
   private async current(repair: LocalScenarioRepair): Promise<boolean> {
     const relative = await findMaterialFile(repair.task.worktree, 'scenario', repair.entityId)
     const bytes = relative ? await containedFile(repair.task.worktree, relative).then(file => readFile(file)).catch(() => undefined) : undefined
-    if (bytes && digest(bytes) === repair.view.currentHash) return true
-    await this.terminate(repair, 'concurrent-edit'); return false
+    if (!bytes) { await this.terminate(repair, 'missing-evidence'); return false }
+    const hash = digest(bytes)
+    if (hash === repair.view.currentHash) return true
+    // Adopt the current local input under the same occupation without spending
+    // or resetting a repair round; in-flight output still binds its old base.
+    await this.workspaces.editable(repair.entityId, repair.projectId)
+    await this.event(repair, { type: 'adopt-input', hashAfter: hash })
+    repair.message = '已读取最新本地修改，修复将基于当前内容继续'
+    await this.workspaces.store.save()
+    return true
   }
   /** A lost event response must resume the continuation without writing or counting the round twice. */
   private async recoverPending(repair: LocalScenarioRepair, continueWork = true): Promise<void> {
@@ -134,10 +144,13 @@ export class ScenarioRepairs {
     if (repair.view.status !== 'active') return
     if (repair.view.roundsUsed >= 3) { await this.terminate(repair, 'round-limit'); return }
     const context = await w.context(repair.task)
+    const requestContext = (await w.record(repair.entityId, repair.projectId)).requestContexts?.[repair.task.sessionId]
+    if (!requestContext) throw new Error('修复材料上下文不存在')
+    repair.requestedHash = requestContext.draftHash
     await w.ports.session(repair.task, '你是只读场景修复助手。先用可读中文说明修复要点，再按协议给出修复候选；根据可信Host传入的当前材料和实际读取依据生成修复候选，不直接写文件、不执行确认。场景只确认触发条件、角色、主要路径、必要分支及业务结果形成完整流程。金额阈值、字段、计算口径等细节留待需求确认，不能因此阻断。可依据当前正文及用户明确答复，不强制要求外部资料；缺少决定流程走向的答案才提问，不得编造。')
     const answer = repair.pendingAnswer ?? ''
     repair.waiting = true; repair.turnEnded = false; delete repair.nextRound; delete repair.pendingAnswer; await w.store.save()
-    await w.ports.prompt(repair.task.sessionId, `本任务已由用户授权修复后由Host确认，最多3轮，当前已用${repair.view.roundsUsed}轮。${context}\n本次业务补答：${answer}\n先用可读中文逐项说明本轮修复了什么、对应哪条门禁阻断、依据哪些已读资料；再在回答最后给出唯一 eadp-repair 代码块：{"baseHash":"${repair.view.currentHash}","body":"完整修复后正文","flowComplete":true,"openQuestions":[],"evidenceIds":[]}。块内只写这些字段，引用已读资料时在evidenceIds填写实际ID；仅依据当前正文和用户明确答复时保持空数组。身份、标题、模板与正式依据由Host保留。缺业务答案时先说明缺口，只输出{"baseHash":"${repair.view.currentHash}","question":"需要用户补充的具体问题"}。`)
+    await w.ports.prompt(repair.task.sessionId, `本任务已由用户授权修复后由Host确认，最多3轮，当前已用${repair.view.roundsUsed}轮。${context}\n本次业务补答：${answer}\n先用可读中文逐项说明本轮修复了什么、对应哪条门禁阻断、依据哪些已读资料；再在回答最后给出唯一 eadp-repair 代码块：{"baseHash":"${repair.requestedHash}","body":"完整修复后正文","flowComplete":true,"openQuestions":[],"evidenceIds":[]}。块内只写这些字段，引用已读资料时在evidenceIds填写实际ID；仅依据当前正文和用户明确答复时保持空数组。身份、标题、模板与正式依据由Host保留。缺业务答案时先说明缺口，只输出{"baseHash":"${repair.requestedHash}","question":"需要用户补充的具体问题"}。`)
   }
   async accept(sessionId: string, output: { kind: string; content?: string; reason?: string; seq?: number }): Promise<boolean> {
     const w = this.workspaces, local = await w.store.read(), repair = local.scenarioRepairs.find(r => r.task.sessionId === sessionId)
@@ -170,7 +183,19 @@ export class ScenarioRepairs {
       if (repair.view.status !== 'active') return true
       const { task, entity } = await w.editable(repair.entityId, repair.projectId), draft = await readMaterial(task.worktree, 'scenario', entity.id)
       const result = JSON.parse(matches[0]![1]!) as { baseHash: string; question?: string; body?: string; flowComplete?: unknown; openQuestions?: unknown; evidenceIds?: unknown }
-      if (result.baseHash !== repair.view.currentHash || draft.sha256 !== result.baseHash) { await this.terminate(repair, 'concurrent-edit'); return true }
+      if (result.baseHash !== repair.view.currentHash || draft.sha256 !== result.baseHash) {
+        if (!repair.requestedHash || draft.sha256 === repair.requestedHash) {
+          delete repair.nextRound
+          throw new Error('本轮修复候选的版本无效，已保留当前文件，请重试本次修复')
+        }
+        // Never apply an old answer over a newer local edit. Request a new
+        // answer after this turn finishes, keeping the existing authorization.
+        repair.nextRound = true
+        repair.message = '本地内容已更新，正在依据最新内容继续修复'
+        await w.store.save()
+        if (repair.turnEnded) { delete repair.nextRound; await this.request(repair) }
+        return true
+      }
       if (typeof result.question === 'string' && result.question.trim()) {
         repair.question = result.question.slice(0, 4000); await this.event(repair, { type: 'pause', reason: 'business-answer-required' }); return true
       }
@@ -204,9 +229,23 @@ export class ScenarioRepairs {
     repair.pending = { ...input, idempotencyKey: randomUUID(), token: await this.workspaces.deps.owned(entity), expectedHash: repair.view.currentHash } as RepairEventRequest
     await this.workspaces.store.save(); await this.sendPending(repair)
   }
+  /** Binds confirmation to its final Host-produced bytes under the existing authorization. */
+  async adoptConfirmationInput(entityId: string, repairId: string, hash: string, projectId?: string): Promise<void> {
+    const local = await this.workspaces.store.read()
+    const repair = local.scenarioRepairs.find(value => value.entityId === entityId && value.view.id === repairId && value.projectId === (projectId ?? local.selectedProjectId))
+    if (!repair) throw new Error('原修复授权不存在')
+    if (repair.pending || repair.recoverPending) await this.recoverPending(repair, false)
+    if (repair.view.status !== 'active') throw new Error('原修复授权已结束')
+    if (repair.view.currentHash !== hash) await this.event(repair, { type: 'adopt-input', hashAfter: hash })
+  }
   private async sendPending(repair: LocalScenarioRepair): Promise<void> {
     const pending = repair.pending!
-    repair.view = await this.workspaces.api.request('POST', `/v1/projects/${repair.projectId}/repairs/${repair.view.id}/events`, repair.pending)
+    try {
+      repair.view = (await this.workspaces.api.request<{ result: RepairTaskView }>('GET', `/v1/projects/${repair.projectId}/operations/${pending.idempotencyKey}`)).result
+    } catch (error) {
+      if (!(error instanceof CollaborationError) || error.code !== 'OPERATION_NOT_FOUND') throw error
+      repair.view = await this.workspaces.api.request('POST', `/v1/projects/${repair.projectId}/repairs/${repair.view.id}/events`, pending)
+    }
     if ((pending.type === 'round' || pending.type === 'resume') && repair.view.status === 'active') repair.recoverPending = pending
     if (!['active', 'paused'].includes(repair.view.status)) delete repair.recoverPending
     delete repair.pending; await this.workspaces.store.save()

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, mkdir, mkdtemp, open, readFile, readlink, realpath, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, open, readlink, realpath, rm, rmdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { PlatformRuntime, ProcessResult, RunOptions } from '../platform/runtime.ts'
+import { containedFile } from '../assets/materials.ts'
 import { mergePrototype, restorePrototypeConflict, type PrototypeMergeResult, type PrototypeConflictWriteback } from './prototype-merge.ts'
 export type { PrototypeConflictObservation, PrototypeConflictWriteback, PrototypeConflictWritebackFile } from './prototype-merge.ts'
 
@@ -304,6 +305,25 @@ export class WorkspaceGit {
     if (!result.name || !result.email.includes('@') || /[\r\n\0]/.test(result.name + result.email)) throw new Error('请先配置当前机器可信的 Git user.name 和 user.email。')
     return result
   }
+  /** Merges independent document edits without touching the working tree or Git index. */
+  async mergeText(base: string, current: string, proposed: string): Promise<string> {
+    if (base === current || current === proposed) return proposed
+    const directory = await mkdtemp(path.join(tmpdir(), 'eadp-proposal-'))
+    const files = ['current', 'base', 'proposed'].map(name => path.join(directory, name))
+    try {
+      await Promise.all(files.map((file, index) => writeFile(file, [current, base, proposed][index]!, 'utf8')))
+      const handle = await this.runtime.start('git', ['merge-file', '-p', ...files], { cwd: directory, timeoutMs: 30_000, maxOutputBytes: 8_000_000 })
+      const result = await handle.done
+      if (result.exitCode === 0) return result.stdout
+      if (result.exitCode > 0 && result.exitCode < 128) throw new Error('当前文档与 AI 提议修改了同一段；两份内容均已保留，请人工合并该段后重新审阅提议，无须重新提问')
+      console.warn('Git 文档合并未完成', result.exitCode, result.stderr)
+      throw new Error('文档合并未完成，两份内容均已保留，请重试')
+    } finally {
+      await Promise.all(files.map(file => rm(file, { force: true })))
+      await rmdir(directory)
+    }
+  }
+
   async local(root: string, args: readonly string[]): Promise<string> {
     if (!['ls-files', 'status', 'symbolic-ref', 'for-each-ref', 'rev-list'].includes(args[0] ?? '') || args.some(value => value.includes('\0'))) throw new Error('本地 Git 操作不受支持。')
     return (await this.command(root, args)).stdout
@@ -443,11 +463,17 @@ export class WorkspaceGit {
     if (!files.length || !message.trim() || message.length > 500) throw new Error('Git 提交信息无效。')
     validateIdentity(identity)
     const paths = files.map(gitRelativePath)
-    const staged = await this.command(root, ['diff', '--cached', '--name-only', '-z'])
-    if (staged.stdout) throw new Error('存在其他暂存改动，请先处理后再固定材料。')
+    // --only commits these paths and preserves unrelated staged work.
     await this.command(root, ['add', '--', ...paths])
     await this.command(root, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'commit', '--only', '-m', message, '--', ...paths])
     return fixedSha((await this.command(root, ['rev-parse', 'HEAD'])).stdout.trim())
+  }
+  /** Reads the bytes Git will store, applying the project's ordinary text attributes without staging files. */
+  async readWorkingFile(root: string, relativePath: string): Promise<Buffer> {
+    const relative = gitRelativePath(relativePath)
+    await containedFile(root, relative)
+    const object = fixedSha((await this.command(root, ['hash-object', '-w', `--path=${relative}`, '--', relative])).stdout.trim())
+    return (await this.command(root, ['cat-file', 'blob', object])).stdoutBytes
   }
   /**
    * Push one fixed commit to the stable branch.
@@ -466,7 +492,7 @@ export class WorkspaceGit {
     await this.command(root, ['push', '--porcelain', `--force-with-lease=${ref}:${expectedSha ?? ""}`, 'origin', `${candidateSha}:${ref}`], true)
   }
   async verifyFile(root: string, commit: string, relativePath: string): Promise<void> {
-    const expected = await readFile(path.join(root, gitRelativePath(relativePath)))
+    const expected = await this.readWorkingFile(root, relativePath)
     if (!expected.equals(await this.readBlob(root, commit, relativePath))) throw new Error('固定 Git 材料字节与当前确认快照不一致。')
   }
   private async command(cwd: string, args: readonly string[], network = false, signal?: AbortSignal, explicitUrl?: string): Promise<ProcessResult> {

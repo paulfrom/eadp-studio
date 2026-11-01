@@ -306,7 +306,6 @@ export class CollaborationService {
       requireCondition(!value.builtinKey, 'BUILTIN_SCENARIO_IMMUTABLE', 'The built-in general scenario cannot be edited', 409);
       requireCondition(!(await c.query("SELECT id FROM studio_integrations WHERE project_id=$1 AND status='prepared' AND occupation_id=$2", [projectId, occupation.occupationId])).rowCount,
         'INTEGRATION_PENDING', 'Reconcile the prepared confirmation before changing directory fields');
-      await repairs.invalidateEntityRepairs(c, projectId, id, actor);
       value.title = input.title; if (input.summary !== undefined) value.summary = input.summary;
       value.revision++; occupation.expectedRevision = value.revision;
       await repository.saveEntity(c, projectId, value);

@@ -85,24 +85,10 @@ export function parseWriteProposal(response: string, draft: MaterialDraft, readE
 /** Stable key for a conclusion text; a rejected conclusion cannot return under another model-chosen ID. */
 export const conclusionKey = (conclusion: { text: string }): string => digest(conclusion.text.trim())
 
-function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  const left = [...new Set(a)].sort(), right = [...new Set(b)].sort()
-  return left.length === right.length && left.every((value, index) => value === right[index])
-}
-
-/** Every bound input must still match; any change voids the proposal and requires a fresh question. */
+/** Only changes to the write target require refreshing its reviewed difference. */
 export function proposalInvalidReason(proposal: ProposalState, current: ProposalCurrent): string | undefined {
-  // A context proposal is bound to CONTEXT.md alone; the scenario body and template are not its target.
-  if (proposal.target === 'context') {
-    if (proposal.contextHash !== current.contextHash) return 'CONTEXT.md 已变化，写入提议已作废，请重新提问'
-    if (!sameSet(proposal.evidenceIds, current.evidenceIds)) return '依据集合已变化，写入提议已作废，请重新提问'
-    return undefined
-  }
-  if (proposal.baseHash !== current.draftHash) return '正文已变化，写入提议已作废，请重新提问'
-  if (proposal.templateRef.commitSha !== current.templateRef.commitSha || proposal.templateRef.path !== current.templateRef.path || proposal.templateRef.sha256 !== current.templateRef.sha256) return '模板已变化，写入提议已作废，请重新提问'
-  if (proposal.contextHash !== current.contextHash) return 'CONTEXT.md 已变化，写入提议已作废，请重新提问'
-  if (!sameSet(proposal.evidenceIds, current.evidenceIds)) return '依据集合已变化，写入提议已作废，请重新提问'
-  return undefined
+  const changed = proposal.target === 'context' ? proposal.contextHash !== current.contextHash : proposal.baseHash !== current.draftHash
+  return changed ? '目标文件已更新，请查看保留的提议与最新差异' : undefined
 }
 
 /**

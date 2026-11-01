@@ -9,7 +9,7 @@ import type { NamespaceView, EntityOccupancyView, EntityView, FixedReference, Fi
 import type { Candidate, ConfirmationChoice, MaterialDraft, ProjectProgressReply, StudioCommand, StudioReply, StudioState, TaskView } from '../../shared/studio.ts'
 import { digest, findMaterialFile, parseMaterial, readMaterial, saveMaterial } from '../adapters/assets/materials.ts'
 import { CollaborationClient, CollaborationError } from '../adapters/collaboration/client.ts'
-import { initialMetadata, type HostPorts, type SessionOutput } from './ports.ts'
+import { initialMetadata, type HostPorts, type SessionOutput, type PrototypeRuntimeAction, type PrototypeRuntimeResult } from './ports.ts'
 import { StudioStore, type PendingOperation, type AdoptionOperation, type MaterialReservation } from './state.ts'
 import { ProjectWorkspaces } from './projects.ts'
 import { TaskMaintenance } from './task-maintenance.ts'
@@ -72,6 +72,32 @@ export class StudioApplication {
   private readonly candidateMerges: CandidateMerges
   private readonly integrations: GitIntegrations
   private readonly confirmations: MaterialConfirmations
+  nativePrototypeControl(sessionId: string, action: 'updateQueue' | 'cancel', execute?: () => Promise<void>): Promise<void> {
+    if (action === 'cancel') { this.prototypeCollaboration.invalidateNativeSession(sessionId); return Promise.resolve() }
+    const result = this.queue.then(async () => {
+      await this.prototypeCollaboration.nativeControl(sessionId, action)
+      if (!execute) throw new Error('原生队列变更执行入口缺失')
+      await execute()
+    })
+    this.queue = result.catch(() => undefined)
+    return result
+  }
+  /** Native input enters the durable development operation before official inbox admission. */
+  nativePrototypePrompt(request: import('@deepseek-ai/dsh-api-session-controller').SessionPromptRequest, signal: AbortSignal): Promise<boolean> {
+    const result = this.queue.then(() => { signal.throwIfAborted(); return this.prototypeCollaboration.nativePrompt(request, signal) })
+    this.queue = result.catch(() => undefined)
+    return result
+  }
+  /** Native tools share the local writer lane with UI commands, without recursively dispatching a UI command. */
+  executePrototypeRuntimeTool(task: TaskView, action: PrototypeRuntimeAction, signal: AbortSignal): Promise<PrototypeRuntimeResult> {
+    const result = this.queue.then(async () => {
+      signal.throwIfAborted()
+      await this.requireAccount()
+      return this.prototypeCollaboration.executeRuntimeTool(task, action, signal)
+    })
+    this.queue = result.catch(() => undefined)
+    return result
+  }
   private readonly prototypeCollaboration: PrototypeCollaboration
   private readonly prototypeBaselineWorkspaces: PrototypeBaselineWorkspaces
   private readonly prototypeCandidates: PrototypeCandidates
@@ -128,6 +154,7 @@ export class StudioApplication {
     this.confirmations = new MaterialConfirmations(store, ports, this.scenarios, this.fixedCandidates, this.integrations, this.reviews, {
       entity: (id, projectId) => this.entity(id, projectId), designTask: (remote, entity) => this.designTask(remote, entity), owned: entity => this.requireOwned(entity),
       deliver: work => { this.lane.append(work) }, identity: projectId => this.identity(projectId),
+      adoptRepairInput: (entityId, repairId, hash, projectId) => this.repairs.adoptConfirmationInput(entityId, repairId, hash, projectId),
     })
     this.repairs = new ScenarioRepairs(this.scenarios, async (entityId, expectedHash, repairId) => {
       const operation = await this.confirmations.confirm({ operationId: digest(`${repairId}:${expectedHash}`), entityId, expectedHash, repairId })
@@ -194,7 +221,15 @@ export class StudioApplication {
   prototypePreviewStopped(identity: PrototypePreviewIdentity): void {
     const previews = identity.source.kind === 'task' ? this.prototypePreviews : this.prototypeBaselinePreviews
     const id = identity.source.kind === 'task' ? identity.source.prototypeTaskId : identity.source.baselineId
-    if (previews.get(id)?.identity.previewId === identity.previewId) previews.delete(id)
+    if (previews.get(id)?.identity.previewId !== identity.previewId) return
+    previews.delete(id)
+    if (identity.source.kind === 'task') {
+      const result = this.queue.then(async () => {
+        // Replacing a preview stops the previous instance before installing the new one.
+        if (!this.prototypePreviews.has(id)) await this.prototypeCollaboration.previewStopped(id)
+      })
+      this.queue = result.catch(() => undefined)
+    }
   }
   /** Publish a preview only after the Host has built and checked the requested workspace. */
   private async runPrototypeRuntime(task: TaskView, kind: 'preview' | 'checks', operationId: string): Promise<void> {
@@ -226,7 +261,15 @@ export class StudioApplication {
       if (command.action !== 'savePrototypeFile' && command.source.kind === 'task' && (prototypeFiles.source.kind !== 'task' || prototypeFiles.source.projectId !== command.source.projectId)) throw new Error('原型事项不属于所选项目')
       return { ok: true, state: await this.state(), prototypeFiles }
     }
-    if (command.action === 'startPrototypeCollaboration') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.start(command) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'startPrototypeCollaboration') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.start(command, true) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
+    if (command.action === 'enterPrototypeRequirement') {
+      const { entity } = await this.entity(command.requirementId, command.projectId)
+      if (entity.kind !== 'requirement') throw new Error('请选择当前项目中的需求')
+      const before = (await this.prototypeCollaboration.view()).selectedTaskId
+      try { await this.prototypeCollaboration.enterRequirement(this.requirementDevelopmentCommand(command.projectId, entity, command.operationId)) }
+      finally { await this.syncPrototypePreviewSelection(before) }
+      return { ok: true, state: await this.state() }
+    }
     if (command.action === 'correctPrototypeRequirement') { await this.prototypeCollaboration.correct(command); return { ok: true, state: await this.state() } }
     if (command.action === 'confirmPrototypeRequirement') { await this.prototypeCollaboration.confirm(command); return { ok: true, state: await this.state() } }
     if (command.action === 'selectPrototypeQueueItem') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; await this.prototypeCollaboration.select(command.prototypeTaskId, command.operationId); await this.syncPrototypePreviewSelection(before); return { ok: true, state: await this.state() } }
@@ -235,7 +278,7 @@ export class StudioApplication {
     if (command.action === 'resumePrototypeQueueItem') { const before = (await this.prototypeCollaboration.view()).selectedTaskId; try { await this.prototypeCollaboration.resumeQueued(command.prototypeTaskId) } finally { await this.syncPrototypePreviewSelection(before) }; return { ok: true, state: await this.state() } }
     if (command.action === 'endPrototypeTask') { const operationId = await this.prototypeCollaboration.prepareCancellation(command.prototypeTaskId, command.operationId); await this.prototypeIntegrations.cancel(command.prototypeTaskId, operationId); return { ok: true, state: await this.state() } }
     if (command.action === 'queryPrototypeMessage') { await this.prototypeCollaboration.queryMessage(command.prototypeTaskId); return { ok: true, state: await this.state() } }
-    if (command.action === 'readPrototypeConversation') return { ok: true, state: await this.state(), prototypeConversation: await this.prototypeCollaboration.conversation(command.prototypeTaskId) }
+    if (command.action === 'retryPrototypeNativePrompt') { await this.prototypeCollaboration.retryNativePrompt(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
     if (command.action === 'readPrototypeQueue') return { ok: true, state: await this.state() }
     if (command.action === 'savePrototypeInstructionDraft') { await this.prototypeCollaboration.saveDraft(command.operationId, command.draft); return { ok: true, state: await this.state() } }
     if (command.action === 'preparePrototypeConfirmation') { await this.prototypeCandidates.prepare(command.prototypeTaskId, command.operationId); return { ok: true, state: await this.state() } }
@@ -251,6 +294,7 @@ export class StudioApplication {
       const sessionId = await this.prototypeCollaboration.sessionId(command.prototypeTaskId)
       if (sessionId) await this.ports.stopPreview(sessionId)
       this.prototypePreviews.delete(command.prototypeTaskId)
+      await this.prototypeCollaboration.previewStopped(command.prototypeTaskId)
       return { ok: true, state: await this.state() }
     }
     if (command.action === 'checkPrototypeBaseline' || command.action === 'startPrototypeBaselinePreview') {
@@ -814,6 +858,10 @@ export class StudioApplication {
     const authority = await this.reviews.confirmation(confirmationChoice(choice), snapshot.review)
     await this.integrations.submit(snapshot.task, snapshot.draft, { ...snapshot.prepare, confirmations: snapshot.confirmations.map(value => ({ ...value, readHash: value.fixed.sha256, ...authority, authorConfirmed: true as const })) })
   }
+  /** Explicit requirement entry and automatic development share the same bounded instruction. */
+  private requirementDevelopmentCommand(projectId: string, entity: Pick<EntityView, 'id' | 'title'>, operationId: string): Parameters<PrototypeCollaboration['start']>[0] {
+    return { action: 'startPrototypeCollaboration', projectId, operationId, title: `需求开发：${entity.title}`, instruction: `请实现需求 ${entity.title}（${entity.id}）。读取该需求及关联材料，仅在授权范围内修改原型代码；不要修改需求正文，不要自行确认、集成、发布或生成基线。`, developmentRequirementIds: [entity.id], referenceRequirementIds: [], writeScope: [] }
+  }
   private enqueuePrototypeDevelopment(command: Parameters<PrototypeCollaboration['start']>[0]): Promise<void> {
     const result = this.queue.then(() => this.prototypeCollaboration.start(command))
     this.queue = result.catch(() => undefined)
@@ -853,7 +901,7 @@ export class StudioApplication {
         const record = await this.scenarios.record(entity.id, operation.projectId)
         record.splitOffered = true; this.scenarios.stopObservation(task); await this.store.save()
       } else if (entity.kind === 'requirement') {
-        await this.enqueuePrototypeDevelopment({ action: 'startPrototypeCollaboration', projectId: operation.projectId, operationId: digest(`prototype-requirement:${integration.id}`), title: `需求开发：${entity.title}`, instruction: `请实现已确认需求 ${entity.title}（${entity.id}）。读取该需求及关联材料，仅在授权范围内修改原型代码；不要修改需求正文，不要自行确认、集成、发布或生成基线。`, developmentRequirementIds: [entity.id], referenceRequirementIds: [], writeScope: [] })
+        await this.enqueuePrototypeDevelopment(this.requirementDevelopmentCommand(operation.projectId, entity, digest(`prototype-requirement:${integration.id}`)))
       }
     })
     for (const adoptionId of operation.adoptionIds ?? []) schedule(`adoption-success:${adoptionId}`, async () => {

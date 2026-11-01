@@ -97,7 +97,7 @@ UTF-8 无 BOM、LF，文件名为业务名称（例如 `需求/订单审核.md`�
 
 完整字段及 Schema 见 `@eadp/contracts`。每个需求至少绑定一个同项目已确认场景及其固定版本，`scenarioIds` 与场景 `sources` 一一对应，可有多个来源。场景与需求均不含分类字段，都必须含 `templateId` 和 `templateRef: {commitSha,path,sha256}`（分别指向场景/需求模板目录中的已接受固定版本）；业务编号由后台分配，不写成可由材料修改的编号字段。场景必须适用；只有需求可声明 `applicability: {status:"not-applicable",reason:"..."}`，该确认版本会阻断后续生产与新采用，旧历史保留。
 
-`businessEvidence` 是用户选定的正式依据：原始文件及实际引用的抽取文本归档于用户工程 `.eadp/evidence/`，每项记录来源、文件路径、SHA-256 及实际引用的文本行范围。二进制原件可与 UTF-8 抽取文本分别列入 `files`，`ranges` 指向已归档的可读文本。材料顶层 `files` 是显式关联文件的路径/hash 清单。两类文件本体都必须能从材料确认的同一提交读取，允许该树中未修改的文件；缺失、越界、hash 不符或引用范围不成立均阻断。未选资料、会话、提示词及工具过程只留本地。
+`businessEvidence` 是用户选定的正式依据：原始文件及实际引用的抽取文本归档于用户工程 `.eadp/evidence/`，每项记录来源、文件路径、SHA-256 及实际引用的文本行范围。二进制原件可与 UTF-8 抽取文本分别列入 `files`，`ranges` 指向已归档的可读文本。材料顶层 `files` 是显式关联文件的路径/hash 清单。两类文件本体都必须能从材料确认的同一提交读取，允许该树中未修改的文件；越界路径仍拒绝；普通关联文件 hash 自动刷新，场景缺失或无效依据排除本次固定引用并提醒，需求真实依据缺失仍阻断。未选资料、会话、提示词及工具过程只留本地。
 
 后端保存确认固定引用、标题/摘要、适用性、来源关系和确认事实，不保存整包 `metadata`、正式依据清单或确认文件快照。当前关联文件路径表只用于目录投影。确认请求不上传 `metadata`，后端从固定 Git 材料读取并校验；`FixedVersion.metadata` 仅在读取响应时从 Git 补齐，不落业务表、集成请求、幂等结果或审计。历史材料及清单始终按对应确认 `commitSha` 读取，不能用当前目录投影重建。
 
@@ -206,7 +206,7 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，受理后以
 
 ## 验证边界
 
-验证分为共享契约/后端类型检查、后端单元测试、隔离 PostgreSQL 的数据库与 API 集成检查。隔离 GitLab HTTP fixture 验证请求、固定字节与故障路径，不能证明真实企业 GitLab 实例已验收。真实建仓/成员分配、用户工程 Git 推送、双作者/双客户端、实际模型资料读取及 Windows 原生宿主仍须单独验收。
+源码检查包含共享契约和后端类型检查；类型检查不能证明真实企业 GitLab 实例已验收。真实建仓/成员分配、用户工程 Git 推送、双作者/双客户端、实际模型资料读取及 Windows 原生宿主仍须单独验收。
 
 后端源码检查命令在仓库根执行：
 
@@ -214,17 +214,6 @@ Host 从 `recognizedHead` 构造候选并推送临时任务引用，受理后以
 pnpm --filter @eadp/contracts typecheck
 pnpm --filter @eadp/asset-domain typecheck
 pnpm --filter @eadp/collaboration-api typecheck
-pnpm --filter @eadp/collaboration-api exec tsx --test src/*.test.ts src/auth/*.test.ts src/modules/*.test.ts src/persistence/*.test.ts
-```
-
-`tests/collaboration/backend-lifecycle.test.ts`、`backend-scenarios.test.ts`、`backend-consistency.test.ts`、`backend-comparisons.test.ts`、`backend-status-reports.test.ts`、`backend-prototype-recovery.test.ts`、`local-development-claims.test.ts`、`studio-workflow.test.ts` 使用 `STUDIO_TEST_DATABASE_URL`，各自须指向一个命名为 `eadp_auth_check_<字母数字>` 的空白、可丢弃临时数据库；各套件会执行整份新 Schema，不能共用一个非空测试库，也不能在同一库上合并为一次运行。未配置变量时数据库用例跳过，跳过不算通过。`tests/collaboration/scenario-schema.test.mjs` 另用 `SCENARIO_SCHEMA_TEST_DATABASE_URL`，命名和空库门禁以测试源码为准。临时库建在本机共用的 PostgreSQL 实例里，不再另起数据库容器；每次运行前重建空库，运行后删除整个临时库：
-
-```sh
-# 在共用实例中重建空的临时库；实例名与账号按本机实际情况替换。
-docker exec pg17 psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS eadp_auth_check_backend"
-docker exec pg17 psql -U postgres -d postgres -c "CREATE DATABASE eadp_auth_check_backend OWNER scenario_test"
-STUDIO_TEST_DATABASE_URL=postgresql://scenario_test:scenario_test@127.0.0.1:5433/eadp_auth_check_backend \
-  pnpm --filter @eadp/collaboration-api exec tsx --test ../../tests/collaboration/backend-lifecycle.test.ts
 ```
 
 `pnpm --filter @eadp/collaboration-api check:transactions` 仅在显式配置 `SCENARIO_TRANSACTION_TEST_DATABASE_URL`、库名符合 `eadp_scenario_transaction_check_<字母数字或下划线>` 且 public 为空时运行。它初始化独立 Schema，检查编号预留/并发/失败重试、幂等、占用与释放；保留不可变记录供检查，由调用方删除整个临时数据库，不在已初始化业务库创建或清理测试数据。
@@ -249,3 +238,11 @@ EADP_API_PORT=6973 ./start-backend.sh   # 端口被占时覆盖
 `start-backend.sh` 只构建 api 镜像并等待其健康，`--remove-orphans` 会清除本项目此前遗留的数据库与缓存容器。数据库与缓存的地址、凭证和 TLS 决定都在 `.env` 里，脚本不再代替它们选择实例。宿主机防火墙若只放行 ssh 等少数端口，发布端口不受影响；若改用宿主机网络模式监听本机套接字，则必须先在防火墙上放行该端口。
 
 手动构建运行：`docker build -f apps/collaboration-api/Dockerfile -t eadp-collaboration-api:local .`，运行时显式传 `-e DATABASE_URL=... -e PG_SSL=disable -e GITLAB_URL=...` 等配置；镜像默认 `HOST=0.0.0.0`、容器内默认监听 3001，可用 `-e HOST=...` 覆盖。
+
+## 2026-11-01 文件协作边界
+
+Git 是文件版本与历史权威；协同服务负责材料占用、身份和接受结果，不以冗余文件清单代替 Git。普通关联文件的 hash 在形成固定候选时从当前内容自动刷新。场景无效依据排除本次固定正式引用、保留本地文件并提示；需求真实已读证据仍是业务要求。文本仅 LF／CRLF 转换不视为实质变化。依据归档目录通过 `.gitattributes` 的 `* -text` 保留原始字节，避免 Git 检出时转换换行；普通关联文件 hash 按 Git canonical blob 计算，不修改工作文件，也不暂存文件。
+
+AI 写入采用基文、当前正文与候选的 Git 三方合并；非重叠修改自动衔接，真实重叠保留候选和当前正文供处理，外部变化不要求重新提问。模板读取失败及结构检查只提醒，不阻止材料确认。修复任务在同一有效占用内通过 `adopt-input` 同步当前 hash，不因正常编辑终止或重置累计轮次；操作结果丢失先查 operations，不重复执行。清理失败只进入诊断，不使已完成业务操作失败。无关 dirty／staged 文件不阻止按本次明确路径精确提交，亦不得夹带提交。
+
+本轮仅修改源码及文档，按用户要求不进行真实桌面操作。`pnpm check` 与后端类型检查已通过；Host／Client 编译及插件两端打包均已通过。修复协议新增 adopt-input 及对应数据库事件枚举；本轮未部署后端或修改实际数据库。这些检查不表示真实桌面闭环验收通过。

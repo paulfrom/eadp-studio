@@ -52,14 +52,9 @@ node scripts/fetch-dsh.mjs --archive-only
 
 满足源码解包权限后，运行 `node scripts/fetch-dsh.mjs` 准备完整 DSH 工作副本。Windows 需要真实符号链接创建能力。
 
-## 仓库校验与测试组
+## 仓库校验
 
-`pnpm check` 校验跟踪文件、模板哈希与发行边界；`lefthook` 的 pre-commit 会自动运行它与离线测试组。
-
-| 命令 | 覆盖 | 前置 |
-| --- | --- | --- |
-| `pnpm test` | `tests/scripts/`、`tests/scenario-client/*.test.mjs` 的离线组 | 根依赖安装 |
-| `pnpm test:all` | 追加 `tests/scenario-client/*.test.ts`、`tests/gitlab-auth-host/`、`tests/windows-desktop/`、`tests/collaboration/` | `node scripts/fetch-dsh.mjs` 与协作后端依赖（.ts 组经 `apps/collaboration-api` 的 tsx loader 运行）；数据库集成用例需 `STUDIO_TEST_DATABASE_URL`／`SCENARIO_SCHEMA_TEST_DATABASE_URL`，缺变量时跳过，跳过不等于通过 |
+`pnpm check` 校验跟踪文件、模板哈希与发行边界；`lefthook` 的 pre-commit 会自动运行该检查。桌面验收仍须完成真实运行闭环。
 
 ## 本地桌面开发与调试
 
@@ -71,7 +66,7 @@ pnpm dev:desktop
 
 需要 Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、真实符号链接创建权限及首次下载网络。该命令按需安装依赖、校验固定 DSH 源码、装配当前 Studio 和模板、构建并准备开发运行环境，随后启动上游 Electron 开发入口；首次执行会下载和构建较多内容。
 
-后续仍执行同一条命令。输入、依赖和实际装配内容未变且构建产物校验通过时，复用已有准备与构建；源码修改、删除、模板更新或其他 worktree 改写共享构建树后，会先重新装配和构建。当前不监听源码变化：修改后退出本轮调试，再运行 `pnpm dev:desktop`。产品源码在本仓库维护，`.local/build/dsh` 是可重新生成的构建副本。
+后续仍执行同一条命令。输入、依赖和实际装配内容未变且构建产物校验通过时，复用已有准备与构建；固定 Node/Python 运行时在输入及完整文件树校验通过后也会复用，避免每次重新解压和复制，仍执行官方运行检查。源码修改、删除、模板更新或其他 worktree 改写共享构建树后，会先重新装配和构建。当前不监听源码变化：修改后退出本轮调试，再运行 `pnpm dev:desktop`。产品源码在本仓库维护，`.local/build/dsh` 是可重新生成的构建副本。
 
 默认打开 DevTools；主进程、Renderer 和插件 Host 调试端口分别为 `9229`、`9222`、`9230`。开发数据与 Electron 配置位于 `.local/build/dsh/apps/desktop/.desktop-build/development/`，与安装版 `%USERPROFILE%\.eadp-studio` 隔离。退出应用或按 `Ctrl+C` 结束调试后，入口释放共享构建锁；调试期间不能同时打包或从另一 worktree 启动同一构建树。
 

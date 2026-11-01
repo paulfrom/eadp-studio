@@ -85,7 +85,7 @@ COMMENT ON TYPE studio_confirmation_method IS '确认方式';
 CREATE TYPE studio_repair_status AS ENUM ('active','paused','completed','terminated');
 COMMENT ON TYPE studio_repair_status IS '修复状态';
 
-CREATE TYPE studio_repair_event_type AS ENUM ('round','pause','resume','terminate','complete');
+CREATE TYPE studio_repair_event_type AS ENUM ('adopt-input','round','pause','resume','terminate','complete');
 COMMENT ON TYPE studio_repair_event_type IS '修复事件类型';
 
 CREATE TYPE studio_applicability AS ENUM ('applicable','not-applicable');

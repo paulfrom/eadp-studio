@@ -155,6 +155,14 @@ export class MaterialSources {
 
   /** Removes only Host-created, untracked archives no material in this worktree still references. */
   async pruneEvidence(task: TaskView): Promise<void> {
+    try { await this.pruneUnreferencedEvidence(task) }
+    catch (error) {
+      // Housekeeping must not turn a completed selection or confirmation into a failed operation.
+      console.warn('未完成本地依据清理，已保留剩余文件', error)
+    }
+  }
+
+  private async pruneUnreferencedEvidence(task: TaskView): Promise<void> {
     const local = await this.store.read()
     const tasks = local.tasks.filter(value => value.projectId === task.projectId && path.resolve(value.worktree) === path.resolve(task.worktree) && (value.purpose === 'material' || value.purpose === 'handoff'))
     const byEntity = new Map(tasks.map(value => [value.entityId, value]))
@@ -184,7 +192,7 @@ export class MaterialSources {
           try { if (digest(await readFile(filename)) === source.sha256) originalPreserved = true } catch { /* Keep the archive if the imported original is unavailable. */ }
         }
       }
-      if (!originalPreserved) throw new Error('未引用归档的原始资料无法核实，已保留文件，请恢复本地资料后再清理')
+      if (!originalPreserved) continue
       try { await rm(await containedFile(task.worktree, relative), { force: true }) }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
       removed.add(relative)

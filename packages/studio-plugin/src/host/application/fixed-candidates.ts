@@ -54,19 +54,8 @@ export class FixedCandidates {
     const drafts = [{ entity, draft }]
     {
       checkMaterial(draft)
-      if (entity.kind === 'scenario') {
-        const contextBytes = await readFile(await containedFile(task.worktree, 'CONTEXT.md')).catch(error => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-          throw error
-        })
-        if (contextBytes && !draft.metadata.files?.some(file => file.path === 'CONTEXT.md' && file.sha256 === digest(contextBytes))) throw new Error('项目上下文尚未纳入场景文件包，请保存场景后重新确认')
-      }
       const materialPaths = drafts.map(value => value.draft.path)
       const evidenceFiles = new Map(drafts.flatMap(value => [...value.draft.metadata.businessEvidence.flatMap(evidence => evidence.files), ...(value.draft.metadata.files ?? [])]).map(file => [file.path, file]))
-      for (const file of evidenceFiles.values()) {
-        const bytes = await readFile(await containedFile(task.worktree, file.path))
-        if (digest(bytes) !== file.sha256) throw new Error(`正式依据或关联文件已变化：${file.path}`)
-      }
       paths = [...new Set([...materialPaths, ...evidenceFiles.keys()])]
       const replaced = await this.replacedMaterialPaths(task, prepareBase.expectedHead, new Set(drafts.map(value => value.entity.id)))
       allowedPaths = [...new Set([...paths, ...replaced])]
@@ -158,8 +147,8 @@ export class FixedCandidates {
 
   private async candidateSha(task: TaskView, expectedHead: string, allowed: (file: string) => boolean, files: string[], message: string): Promise<{ sha: string; changed: string[] }> {
     const dirty = await this.dirtyPaths(task)
-    if (dirty.some(file => !allowed(file))) throw new Error('存在本任务允许范围外的变更，请先处理后再固定候选')
-    const sha = dirty.length ? await this.ports.git.commitFiles(task.worktree, files.length ? files : dirty, message, await this.deps.identity(task.projectId)) : (await this.ports.git.state(task.worktree)).head
+    const selected = dirty.filter(file => files.includes(file) && allowed(file))
+    const sha = selected.length ? await this.ports.git.commitFiles(task.worktree, files, message, await this.deps.identity(task.projectId)) : (await this.ports.git.state(task.worktree)).head
     const changed = await this.ports.git.changedFiles(task.worktree, expectedHead, sha)
     if (!changed.length || changed.some(file => !allowed(file))) throw new Error('候选相对当前项目基线没有有效变化或包含本任务范围外提交')
     return { sha, changed }
@@ -204,7 +193,7 @@ export class FixedCandidates {
         if (error.code === 'ENOENT') return undefined
         throw error
       })
-      result.push({ path: relative, sha256: bytes ? digest(bytes) : null })
+      result.push({ path: relative, sha256: bytes ? digest(await this.ports.git.readWorkingFile(root, relative)) : null })
     }
     return result
   }

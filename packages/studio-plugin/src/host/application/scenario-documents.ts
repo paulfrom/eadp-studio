@@ -6,6 +6,7 @@ import { isMaterialMetadata, type FixedReference, type MaterialMetadata } from '
 import type { MaterialDraft } from '../../shared/studio.ts'
 import type { ScenarioGate } from '../../shared/scenarios.ts'
 import { atomicWriteFile, containedFile, digest, findMaterialFile, materialTargetPath, materialText, parseMaterial, readMaterial, unidentifiedMaterialFile } from '../adapters/assets/materials.ts'
+import { verifiedEvidenceBytes } from './material-file-references.ts'
 
 export function sameTemplate(a: FixedReference, b: FixedReference): boolean { return a.commitSha === b.commitSha && a.path === b.path && a.sha256 === b.sha256 }
 
@@ -142,7 +143,9 @@ export function checkScenarioDocument(input: ScenarioCheckInput): { hash: string
     }
   }
   const gate = (id: ScenarioGate['id'], label: string, messages: string[], enabled = true): ScenarioGate => ({ id, label, messages, status: !enabled ? 'disabled' : messages.length ? 'blocked' : 'passed' })
-  const groups = [gate('business', metadata.kind === 'scenario' ? '业务流程' : '业务内容', business), { ...gate('evidence', '资料与引用', evidence), ...(metadata.kind === 'scenario' && evidence.length ? { status: 'warning' as const, invalidEvidenceIndexes: input.invalidEvidenceIndexes ?? [] } : {}) }, gate('version', '版本与占用', version), gate('template', '模板结构', template, input.structureCheck === true)]
+  const templateGate = gate('template', '模板结构', template, input.structureCheck === true)
+  if (templateGate.status === 'blocked') templateGate.status = 'warning'
+  const groups = [gate('business', metadata.kind === 'scenario' ? '业务流程' : '业务内容', business), { ...gate('evidence', '资料与引用', evidence), ...(metadata.kind === 'scenario' && evidence.length ? { status: 'warning' as const, invalidEvidenceIndexes: input.invalidEvidenceIndexes ?? [] } : {}) }, gate('version', '版本与占用', version), templateGate]
   return { hash: draft.sha256, passed: groups.every(group => group.status !== 'blocked'), groups }
 }
 
@@ -160,10 +163,18 @@ function headings(markdown: string): string[] {
 /** Checks current bytes; confirmation must repeat the same checks against its fixed Git tree. */
 export async function scenarioFileErrors(root: string, draft: MaterialDraft): Promise<string[]> {
   const errors: string[] = [], files = new Map<string, string>()
+  const evidencePaths = new Set(draft.metadata.businessEvidence.flatMap(evidence => evidence.files.map(file => file.path)))
   for (const file of [...(draft.metadata.files ?? []), ...draft.metadata.businessEvidence.flatMap(item => item.files)]) {
     if (files.has(file.path)) { if (files.get(file.path) !== file.sha256) errors.push(`文件 hash 声明冲突：${file.path}`); continue }
     files.set(file.path, file.sha256)
-    try { if (digest(await readFile(await containedFile(root, file.path))) !== file.sha256) errors.push(`文件内容已变化：${file.path}`) }
+    try {
+      const bytes = await readFile(await containedFile(root, file.path))
+      // Associated files follow the next Git version; only formal readings bind old source bytes.
+      if (evidencePaths.has(file.path)) {
+        try { verifiedEvidenceBytes(bytes, file.sha256) }
+        catch { errors.push(`正式资料已更新，需要重新读取：${file.path}`) }
+      }
+    }
     catch { errors.push(`文件缺失或路径无效：${file.path}`) }
   }
   for (const evidence of draft.metadata.businessEvidence) for (const range of evidence.ranges) {

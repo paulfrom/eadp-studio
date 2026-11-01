@@ -4,7 +4,7 @@ import type { Candidate, SplitTaskBinding } from './requirements.ts'
 import type { ConsistencyCommand, ConsistencyTaskView } from './consistency.ts'
 import type { ConsistencyComparisonView } from '@eadp/contracts'
 import type { RequirementSourceView, RequirementWorkspaceCommand } from './requirement-workspace.ts'
-import type { PrototypeAdoptionView, PrototypeCandidateFile, PrototypeCandidateSummary, PrototypeCheckReport, PrototypeCollaborationCommand, PrototypeConversationMessage, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeMaterialRead, PrototypePreviewIdentity, PrototypeQueueView } from './prototype.ts'
+import type { PrototypeAdoptionView, PrototypeCandidateFile, PrototypeCandidateSummary, PrototypeCheckReport, PrototypeCollaborationCommand, PrototypeEditBuffer, PrototypeFileCommand, PrototypeFileResult, PrototypeInstructionDraft, PrototypeMaterialRead, PrototypePreviewIdentity, PrototypeQueueView } from './prototype.ts'
 export type { Candidate } from './requirements.ts'
 
 /** One project template catalog; `defaultTemplateId` is absent while a project has published no template. */
@@ -93,7 +93,7 @@ export type StudioCommand = ScenarioCommand | ConsistencyCommand | RequirementWo
   | { action: 'generateHandoff'; baselineId: string }
   | { action: 'acknowledgeHandoff'; entityId: string; note: string }
   | { action: 'publish' | 'revokePublication' }
-export type StudioReply = { ok: true; state: StudioState; sessionId?: string; comparisons?: ConsistencyComparisonView[]; requirementSource?: RequirementSourceView; prototypeFiles?: PrototypeFileResult; prototypeBuffer?: PrototypeEditBuffer | null; prototypeConversation?: PrototypeConversationMessage[]; prototypeCandidateFile?: PrototypeCandidateFile; prototypeMergedText?: string } | { ok: false; message: string; code: string }
+export type StudioReply = { ok: true; state: StudioState; sessionId?: string; comparisons?: ConsistencyComparisonView[]; requirementSource?: RequirementSourceView; prototypeFiles?: PrototypeFileResult; prototypeBuffer?: PrototypeEditBuffer | null; prototypeCandidateFile?: PrototypeCandidateFile; prototypeMergedText?: string } | { ok: false; message: string; code: string }
 export type { EntityView, MaterialMetadata }
 
 export type * from './scenarios.ts'

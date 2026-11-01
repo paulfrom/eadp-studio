@@ -1,4 +1,5 @@
 import type { CheckEvidence, FixedReference, MaterialMetadata, PrototypeEngineeringEvidence, StudioIdentity, StudioUser } from '@eadp/contracts'
+import type { SessionPromptRequest } from '@deepseek-ai/dsh-api-session-controller'
 import type { TaskView } from '../../shared/studio.ts'
 import type { ConsistencyModelInput } from '../../shared/consistency.ts'
 import type { WorkspaceGit } from '../adapters/workspace/git.ts'
@@ -12,6 +13,14 @@ export interface ScenarioSourceRead { status: 'read' | 'partial' | 'failed'; ran
 export interface MergeConflictInput { path: string; base?: string; ours?: string; theirs?: string }
 export interface MergeConflictResult { content?: string; delete?: true }
 
+export type PrototypeRuntimeAction = 'preview' | 'checks' | 'stop' | 'diagnostics'
+export interface PrototypeRuntimeResult {
+  status: 'passed' | 'failed' | 'stopped' | 'idle'
+  message: string
+  reports?: PrototypeCheckReport[]
+}
+export type PrototypeRuntimeExecutor = (task: TaskView, action: PrototypeRuntimeAction, signal: AbortSignal) => Promise<PrototypeRuntimeResult>
+
 export interface HostPorts {
   workspaceRoot: string
   prototypeManifestPath?: string
@@ -22,11 +31,14 @@ export interface HostPorts {
   account(): Promise<StudioUser | undefined>
   installTemplate(destination: string): Promise<void>
   session(task: TaskView, rules: string, requireExisting?: boolean): Promise<string>
+  /** Discover native session identities bound to the exact task workspace without opening an Agent. */
+  findPrototypeSessions(worktree: string): Promise<string[]>
+  nativePrototypePrompt?(request: SessionPromptRequest, signal?: AbortSignal): Promise<void>
+  hasPendingPrototypeMessages?(sessionId: string): boolean
   prompt(sessionId: string, text: string, operationId?: string, attachments?: PrototypeInstructionAttachment[]): Promise<void>
   inspectPrompt(sessionId: string, operationId: string): Promise<'delivered' | 'admitted' | 'absent' | 'unknown'>
   /** Last durable native turn is an observation, never a request to resume model work. */
   lastPrototypeTurn?(sessionId: string): Promise<Extract<SessionOutput, { kind: 'turn-ended' }> | undefined>
-  readPrototypeConversation(sessionId: string): Promise<import('../../shared/prototype.ts').PrototypeConversationMessage[]>
   /** Read-only one-shot identification; its result is checked against the original instruction and project directory. */
   identifyPrototypeRequirements?(input: { instruction: string; requirements: RequirementIdentity[]; existingIds: string[]; explicitIds: string[] }, signal: AbortSignal): Promise<string>
   /** One-shot DSH inference with no Agent tools, Session persistence, or Git access. */

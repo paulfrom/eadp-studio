@@ -134,8 +134,7 @@ export class RequirementSaves {
     operation.root ??= await realpath(context.task.worktree)
     operation.occupation ??= structuredClone(context.token)
     const currentMetadata = await syncProjectContext(operation.root, metadata)
-    if (operation.metadata && canonical(operation.metadata) !== canonical(currentMetadata)) throw new SaveProblem('invalid', '项目上下文已变化，请核对当前材料后重新保存')
-    operation.metadata ??= structuredClone(currentMetadata)
+    if (!operation.document) operation.metadata = structuredClone(currentMetadata)
     await this.persist(operation)
   }
   private async lookup<T extends UpdateEntityRequest | UpdateRelationsRequest>(operation: RequirementSaveOperation, phase: 'relations' | 'directory', step: RemoteStep<T>): Promise<boolean> {
@@ -203,7 +202,7 @@ export class RequirementSaves {
       operation.phase = 'document'
       await this.persist(operation)
       this.revision(operation, (await this.context(operation)).token)
-      if (canonical(await syncProjectContext(operation.root!, operation.request.metadata)) !== canonical(operation.metadata)) throw new SaveProblem('invalid', '项目上下文在保存期间变化，请核对后重新保存')
+      operation.metadata = await syncProjectContext(operation.root!, operation.request.metadata)
       operation.document = await (await this.deps.documents(operation.projectId)).save({ root: operation.root!, metadata: operation.metadata!, body: operation.request.body, operationId: operation.operationId })
       await this.persist(operation)
     }

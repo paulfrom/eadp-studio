@@ -32,7 +32,8 @@ export function ScenarioWriteProposalCard({ proposal, sources = [], disabled, on
   const added = proposal.changes.reduce((count, change) => count + change.addedLines, 0)
   const removed = proposal.changes.reduce((count, change) => count + change.removedLines, 0)
   const evidence = proposal.evidenceIds.map(id => sources.find(source => source.id === id) ?? { id, name: id, status: 'failed' as const, ranges: [] })
-  useEffect(() => { setSelected(new Set(proposal.changes.map(change => change.id))); setDeferred(false); setReviewing(false) }, [proposal.id])
+  const reviewSignature = JSON.stringify([proposal.id, proposal.baseHash, proposal.changes.map(change => [change.id, change.before, change.after])])
+  useEffect(() => { setSelected(new Set(proposal.changes.map(change => change.id))); setDeferred(false); setReviewing(false) }, [reviewSignature])
   useEffect(() => { if (all.current) all.current.indeterminate = selected.size > 0 && selected.size < proposal.changes.length }, [selected, proposal.changes.length])
   useEffect(() => {
     if (lastReviewRequest.current === reviewRequested) return
@@ -50,15 +51,20 @@ export function ScenarioWriteProposalCard({ proposal, sources = [], disabled, on
     {pending && <div className={css.dockActions}>
       <span className={css.muted}>{deferred ? '已暂存，随时可以继续审阅' : '写入前可逐章核对'}</span>
       <button disabled={disabled} onClick={() => setDeferred(true)}>稍后</button>
+      {failed && <button disabled={disabled} onClick={() => onResolve('reject')}>保留当前正文，结束提议</button>}
       {!hideReviewAction && <button className={css.primary} disabled={disabled || !proposal.changes.length} onClick={open}>{failed ? '重新审阅' : `审阅 ${proposal.changes.length} 处变更`}</button>}
     </div>}
     <MaterialWorkspaceSheet open={reviewing} title="审阅写入变更" subtitle={`${proposal.target === 'context' ? '项目 CONTEXT.md' : `${materialLabel}文档`} · 勾选要保留的变更`} size="wide" onClose={() => setReviewing(false)}>
+      {failed && <section className={reviewCss.change} aria-label="冲突内容对照">
+        <p>当前文档与 AI 候选均已保留。可在文档编辑区手工合并，再结束本提议；结束提议不会写入或撤销文档修改。</p>
+        <div className={reviewCss.comparison}><details data-side="before"><summary>查看完整当前文档</summary><pre>{proposal.currentBody || '（无内容）'}</pre></details><details data-side="after"><summary>查看完整 AI 候选</summary><pre>{proposal.proposedBody || '（无内容）'}</pre></details></div>
+      </section>}
       <div className={reviewCss.selection}><label><input ref={all} type="checkbox" checked={selected.size === proposal.changes.length && selected.size > 0} onChange={event => setSelected(new Set(event.target.checked ? proposal.changes.map(change => change.id) : []))} />全选</label><span>已选 {selected.size} / {proposal.changes.length} 处</span><span className={reviewCss.added}>+{added}</span><span className={reviewCss.removed}>−{removed}</span></div>
       <div className={reviewCss.diffBody}>{proposal.changes.map(change => <section className={reviewCss.change} key={change.id}>
         <label className={reviewCss.changeHead}><input type="checkbox" checked={selected.has(change.id)} onChange={event => setSelected(current => { const next = new Set(current); if (event.target.checked) next.add(change.id); else next.delete(change.id); return next })} /><strong>{change.title}</strong><span>{({ added: '新增', changed: '修改', removed: '删除' } as const)[change.kind]}</span><small className={reviewCss.added}>+{change.addedLines}</small><small className={reviewCss.removed}>−{change.removedLines}</small></label>
         <div className={reviewCss.comparison}><div data-side="before"><small>写入前</small><pre>{change.before || '（无内容）'}</pre></div><div data-side="after"><small>写入后</small><pre>{change.after || '（删除本章）'}</pre></div></div>
       </section>)}</div>
-      <footer className={reviewCss.sheetFoot}><span>未勾选的章节保留原文</span><button disabled={disabled} onClick={() => { onResolve('reject'); setReviewing(false) }}>不写入</button><button onClick={() => setReviewing(false)}>取消</button><button className={`${css.primary} ${reviewCss.writeButton}`} disabled={disabled || !selected.size} onClick={() => { onResolve('write', [...selected]); setReviewing(false) }}>写入所选的 {selected.size} 处</button></footer>
+      <footer className={reviewCss.sheetFoot}><span>未勾选的章节保留原文</span><button disabled={disabled} onClick={() => { onResolve('reject'); setReviewing(false) }}>{failed ? '保留当前正文，结束提议' : '不写入'}</button><button onClick={() => setReviewing(false)}>取消</button><button className={`${css.primary} ${reviewCss.writeButton}`} disabled={disabled || !selected.size} onClick={() => { onResolve('write', [...selected]); setReviewing(false) }}>写入所选的 {selected.size} 处</button></footer>
     </MaterialWorkspaceSheet>
   </section>
 }

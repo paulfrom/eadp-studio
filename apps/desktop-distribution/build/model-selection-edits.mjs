@@ -1,5 +1,3 @@
-import { STUDIO_MODEL_SELECTION_FIXTURE_EDITS } from './model-selection-fixture-edits.mjs'
-
 /** Share one scope-owned model-switch notice listener across official selection installers. */
 const selectionEdit = {
   file: 'packages/core/agent/src/model-selection.ts',
@@ -78,7 +76,6 @@ export const STUDIO_MODEL_SELECTION_EDITS = [
       return applyAnchors(source, [["      'agent/pre-step', { messages: claimed, ...position, signal },", "      'agent/pre-step', { messages: claimed, ...position, signal, assembly },"]])
     },
   },
-  ...STUDIO_MODEL_SELECTION_FIXTURE_EDITS,
 ]
 
 function applyAnchors(source, anchors) {

@@ -38,6 +38,9 @@
 现于 `prepare-runtime` 增加 studio-tools 准备步骤。
 缺：发行方附加运行时资源的官方装配步骤。
 
+官方开发启动即使跳过构建，也每次重新解压和复制 primary-runtime。当前通过 `build/primary-runtime-edits.mjs` 精确锚定准备函数，按固定输入身份与完整文件树摘要复用已准备 payload；内容变化或缺失时重新准备，保留 Office 资源准备与官方 smoke 检查。
+缺：官方运行时准备接口的完整性校验及增量复用能力。上游具备等效能力后移除该发行编辑。
+
 ## 7. `agent/pre-step` 载荷
 
 现于 core agent 事件载荷增加 `assembly` 以支持模型切换提示去重。
@@ -52,3 +55,11 @@
 
 `SessionCommandController.create` 仅接收 `cwd`／workspace 身份，`JsonlSessionPersistence` 的 `Config.root` 是全局根，持久化接口没有逐项目存储路由或日志重定位能力。当前保持官方全局日志目录，不手工搬动会话文件，不新增绕过。
 缺：可由可信 Host 按项目配置的会话存储路由，以及可核对完成结果的导出／重定位接口。在此能力具备并验证前，项目文件夹包含业务文件与插件过程数据，但不能宣称包含全部原生对话历史。目录设计见 `docs/design/project-workspace.md`。
+
+## 原生会话消息准入及未发送附件恢复
+
+固定宿主缺少官方消息进入 inbox 前的业务准入接口。当前仅通过 `build/native-prompt-edits.mjs` 精确锚定扩展串行准入事件，Studio 持久记录并授权后继续官方原生发送；不覆盖会话 UI 或附件协议。上游需要公开可等待、可拒绝且保留 requestId、queue/steer、完整原始附件与取消信号的准入 seam，才能移除该发行编辑。
+
+未发送原生附件仍由浏览器 File 或宿主内存 receipt 持有；尚无公开的跨崩溃草稿附件持久化、恢复顺序和清理接口。不能宣称重启后未发送附件无损恢复，亦不建立平行附件存储来掩盖缺口。原型 Host 仅保留已经提交的原始消息操作及引用；失效 receipt 必须显示实际失败并保留操作核对，不盲目重发。
+
+消息准入还需要覆盖原生队列修改与停止：现有发行编辑提供 `session/control-admission`，队列实际 mutation 与 Host 完成事实在同一串行范围执行；取消使用官方取消接口；没有已授权 pending 时立即撤销本进程许可，有 pending 时保留同段 FIFO，业务暂停仍使许可失效。上游公开替代接口时须同时保留这两个控制面的约束。

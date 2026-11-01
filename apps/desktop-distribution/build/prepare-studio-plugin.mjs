@@ -1,3 +1,5 @@
+import { STUDIO_NATIVE_PROMPT_EDIT } from './native-prompt-edits.mjs'
+import { PRIMARY_RUNTIME_EDIT } from './primary-runtime-edits.mjs'
 /**
  * Assemble the Studio plugin into a DSH build tree and build its two halves.
  *
@@ -86,6 +88,8 @@ const UPSTREAM_EDITS = [
   STUDIO_PACKAGE_SET_TAR_EDIT,
   STUDIO_TYPERT_EDIT,
   ...STUDIO_MODEL_SELECTION_EDITS,
+  STUDIO_NATIVE_PROMPT_EDIT,
+  PRIMARY_RUNTIME_EDIT,
   STUDIO_TEMPLATE_EDIT,
   ...STUDIO_TEMPLATE_TRANSFORM_EDITS,
   {
@@ -162,6 +166,7 @@ const WORKSPACE_DEPENDENCIES = [
   '@deepseek-ai/dsh-command-compact',
   '@deepseek-ai/dsh-compaction-tool-result-pruner',
   '@deepseek-ai/dsh-session-projection',
+  '@deepseek-ai/dsh-session-query',
   '@deepseek-ai/dsh-session',
   '@deepseek-ai/dsh-system-prompt',
   '@deepseek-ai/dsh-tools',

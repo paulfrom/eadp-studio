@@ -37,7 +37,7 @@ type UndoWriteCommand = Extract<DesignCommand, { action: 'undoScenarioWrite' | '
 const occupationKey = (token: OccupationToken): string => `${token.occupationId}:${token.generation}:${token.taskId}:${token.clientId}`
 const matchesTemplate = (metadata: MaterialMetadata, entity: EntityView): boolean => (metadata.kind === 'scenario' || metadata.kind === 'requirement') && metadata.templateId === entity.templateId && !!entity.templateRef && sameTemplate(metadata.templateRef, entity.templateRef)
 export interface ScenarioRecord {
-  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
+  projectId: string; entityId: string; sources: ScenarioSource[]; sourcePaths: Record<string, string>; localEvidencePaths?: string[]; activeSessionId?: string; splitOffered?: boolean; writeProposal?: ScenarioWriteProposal; requestContexts?: Record<string, ProposalCurrent & { body: string; contextBody: string }>; decisionQuestions?: Record<string, MaterialDecisionQuestionTurn>; decisionQuestionErrors?: Record<string, string>; templateBinding?: MaterialTemplateBinding; writeReceipt?: ScenarioWriteReceipt; rejectedConclusions?: string[]; observationError?: string; impact?: ScenarioWorkspace['impact']; repairAuthorization?: { request: RepairStartRequest; task: TaskView; status: 'pending' | 'accepted'; message?: string };
   /** Explains why the latest model proposal could not become an actionable write. */
   writeProposalError?: string;
   requirementSaves?: RequirementSaveOperation[];
@@ -177,7 +177,7 @@ export class ScenarioWorkspaces {
     const fixed = draft.metadata.templateRef
     const check = await this.confirmationChecks.inspect({ project: remote.project, entity, ...(task ? { task } : {}), draft })
     if (!check) return undefined
-    const templateBody = check.templateBody
+    const templateBody = check.templateBody ?? ''
     const gates = check.groups
     if (!readOnly && task) this.observe(task, draft.path)
     const cleanup = settlementTask?.cleanup
@@ -197,9 +197,10 @@ export class ScenarioWorkspaces {
         !!proposalInvalidReason(questionTurn, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: currentContext.hash, evidenceIds: this.readEvidenceIds(record) })
       decisionQuestions = { id: questionTurn.id, sessionId: questionTurn.sessionId, createdAt: questionTurn.createdAt, questions: questionTurn.questions, stale }
     }
+    const proposalCurrentBody = record.writeProposal?.target === 'context' && task ? (await this.projectContext(task.worktree)).bytes?.toString('utf8') ?? '' : draft.body
     return { entityId: entity.id, draft, readOnly, template: { id: draft.metadata.templateId, name: draft.metadata.templateId, fixed, body: templateBody }, structureCheck: local.scenarioStructureCheck, gates, sources: (readOnly && !recoveringRequirement ? await this.sources.fixedSources(remote.project.id, entity.current!.fixed.commitSha, draft) : record.sources).map(source => ({ ...source, text: '' })),
       ...(decisionQuestions ? { decisionQuestions } : {}), ...(activeSessionId && record.decisionQuestionErrors?.[activeSessionId] ? { decisionQuestionsError: record.decisionQuestionErrors[activeSessionId] } : {}),
-      ...(record.writeProposal ? { writeProposal: { id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceIds: record.writeProposal.evidenceIds, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
+      ...(record.writeProposal ? { writeProposal: { currentBody: proposalCurrentBody, proposedBody: record.writeProposal.body, id: record.writeProposal.id, baseHash: record.writeProposal.baseHash, createdAt: record.writeProposal.createdAt, conclusions: record.writeProposal.conclusions.map(conclusion => conclusion.text), evidenceIds: record.writeProposal.evidenceIds, changes: record.writeProposal.changes, ...(record.writeProposal.target ? { target: record.writeProposal.target } : {}), status: record.writeProposal.status, ...(record.writeProposal.error ? { error: record.writeProposal.error } : {}) } } : {}), settlement,
       ...(record.writeProposalError ? { writeProposalError: record.writeProposalError } : {}),
       ...(record.writeReceipt && !record.writeReceipt.undone ? { writeReceipt: { operationId: record.writeReceipt.operationId, createdAt: record.writeReceipt.createdAt, afterHash: record.writeReceipt.afterHash, summary: record.writeReceipt.summary, canUndo: !readOnly && draft.sha256 === record.writeReceipt.afterHash } } : {}), sessions: readOnly ? [] : tasks, ...(!readOnly && (record.activeSessionId ?? task?.sessionId) ? { activeSessionId: (record.activeSessionId ?? task?.sessionId)! } : {}), ...(record.splitOffered !== undefined ? { splitOffered: record.splitOffered } : {}), ...(record.impact ? { impact: record.impact } : {}),
       ...(requirementSave ? { requirementSave } : {}),
@@ -327,8 +328,7 @@ export class ScenarioWorkspaces {
     if (path.basename(task.worktree) !== proposal.taskId) throw new Error('材料任务已变化，写入提议已作废，请重新提问')
     // A context proposal binds only the project-root file; it never rewrites the scenario body.
     if (proposal.target === 'context') {
-      const evidenceIds = this.readEvidenceIds(record)
-      if (!evidenceIds.every(id => proposal.evidenceIds.includes(id)) || evidenceIds.length !== proposal.evidenceIds.length) throw new Error('依据集合已变化，写入提议已作废，请重新提问')
+
       return this.resolveContextProposal(task, proposal, command.selectedChangeIds)
     }
     const draft = await this.localMaterial(task)
@@ -337,7 +337,14 @@ export class ScenarioWorkspaces {
     if (record.writeReceipt?.operationId === proposal.id && draft.sha256 === record.writeReceipt.afterHash) {
       proposal.status = 'consumed'; proposal.operationId = proposal.id; await this.store.save(); return
     }
-    if (command.expectedHash !== draft.sha256) throw new Error('当前正文不是用户确认的版本，请刷新后重新提问')
+    if (proposal.baseHash !== draft.sha256) {
+      proposal.body = await this.ports.git.mergeText(proposal.baseBody, draft.body, proposal.body)
+      proposal.baseBody = draft.body; proposal.baseHash = draft.sha256
+      proposal.changes = describeWriteChanges(draft.body, proposal.body)
+      await this.store.save()
+      throw new Error('已合并当前编辑并更新提议差异，请查看后写入所选修改')
+    }
+    if (command.expectedHash !== draft.sha256) throw new Error('目标文件已更新，请查看最新差异后写入')
     const invalid = proposalInvalidReason(proposal, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: (await this.projectContext(task.worktree)).hash, evidenceIds: this.readEvidenceIds(record) })
     if (invalid) throw new Error(invalid)
     const body = applyWriteChanges(draft.body, proposal.body, command.selectedChangeIds)
@@ -364,7 +371,14 @@ export class ScenarioWorkspaces {
    */
   private async resolveContextProposal(task: TaskView, proposal: ScenarioWriteProposal, selectedChangeIds: readonly string[] | undefined): Promise<void> {
     const current = await this.projectContext(task.worktree)
-    if (current.hash !== proposal.baseHash) throw new Error('CONTEXT.md 已变化，写入提议已作废，请重新提问')
+    if (current.hash !== proposal.baseHash) {
+      const body = current.bytes?.toString('utf8') ?? ''
+      proposal.body = await this.ports.git.mergeText(proposal.baseBody, body, proposal.body)
+      proposal.baseBody = body; proposal.baseHash = current.hash; proposal.contextHash = current.hash
+      proposal.changes = describeWriteChanges(body, proposal.body)
+      await this.store.save()
+      throw new Error('已合并项目上下文编辑并更新差异，请查看后写入所选修改')
+    }
     const body = applyWriteChanges(current.bytes?.toString('utf8') ?? '', proposal.body, selectedChangeIds)
     const target = await containedFile(task.worktree, 'CONTEXT.md', true)
     await atomicWriteFile(target, body)
@@ -421,11 +435,15 @@ export class ScenarioWorkspaces {
     const local = await this.store.read(); if (!local.tasks.some(t => t.sessionId === task.sessionId && t.projectId === task.projectId) && !local.scenarioRepairs.some(r => r.task.sessionId === task.sessionId && r.projectId === task.projectId)) throw new Error('会话不属于当前登录用户')
     const { entity, task: currentTask, draft } = await this.currentInput(task)
     if (draft.metadata.kind !== 'scenario' && draft.metadata.kind !== 'requirement') throw new Error('材料上下文无效')
-    const ref = draft.metadata.templateRef, bytes = await this.projects.readFixed(task.projectId, ref.commitSha, ref.path, ref.sha256)
-    if (digest(bytes) !== ref.sha256) throw new Error('模板 hash 不符')
+    const ref = draft.metadata.templateRef
+    let templateBody = '模板当前不可用；依据当前材料正文继续协作，不推测模板内容。'
+    try {
+      const bytes = await this.projects.readFixed(task.projectId, ref.commitSha, ref.path, ref.sha256)
+      if (digest(bytes) === ref.sha256) templateBody = Buffer.from(bytes).toString('utf8')
+    } catch { /* Template availability does not prevent working on the current material. */ }
     const record = await this.record(entity.id, task.projectId)
     record.requestContexts ??= {}
-    record.requestContexts[task.sessionId] = { draftHash: draft.sha256, templateRef: { ...ref }, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record) }
+    record.requestContexts[task.sessionId] = { body: draft.body, contextBody: (await this.projectContext(currentTask.worktree)).bytes?.toString('utf8') ?? '', draftHash: draft.sha256, templateRef: { ...ref }, contextHash: (await this.projectContext(currentTask.worktree)).hash, evidenceIds: this.readEvidenceIds(record) }
     // The coming answer replaces the previous answer's failure explanation.
     delete record.writeProposalError
     await this.store.save()
@@ -444,7 +462,7 @@ ${entity.kind === 'scenario' ? '本阶段只确认业务流程完整性。金额
 {"entityId":"${task.entityId}","conclusions":[{"id":"C1","text":"本轮结论"}],"evidenceIds":[],"body":"整篇新正文"}
 \`\`\`
 问题块先于提议块；可以只输出问题块、只输出提议块，或按需同时输出两块。每种块至多一个，代码块之后不再写解释文字。不要用 XML 标签替代围栏。提议块内只写示例中的四个字段，不得写提议 ID、hash、授权或确认字段；结论 ID 使用 C1、C2 等字母数字标识，evidenceIds 只能原样填写下方实际已读资料的 ID，没有引用资料时保持空数组，不得填写占位文字。Host 自行生成提议并校验 baseHash、模板、CONTEXT.md 与依据。用户必须在界面点击“写入”才生效，聊天中的肯定、否认、未答或歧义都不写入；同一结论被拒绝后不要重复提问，除非出现新结论。`
-    return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${Buffer.from(bytes).toString('utf8')}\n${await this.sources.context(task)}`
+    return `${protocol}\n当前有效材料绝对路径：${path.join(currentTask.worktree, draft.path)}；历史会话的旧工作目录不构成本轮文件上下文，读取材料必须使用本路径。\n当前元数据：${JSON.stringify(draft.metadata)}\n当前Markdown正文：\n${draft.body}\n固定模板：\n${templateBody}\n${await this.sources.context(task)}`
   }
   /**
    * Turns one answer into a pending proposal from local state only: the draft,
@@ -499,13 +517,16 @@ ${entity.kind === 'scenario' ? '本阶段只确认业务流程完整性。金额
       const input = record.requestContexts?.[sessionId]
       if (!input) throw new Error('会话材料上下文已失效，请重新提问')
       const context = await this.projectContext(task.worktree)
-      const invalid = proposalInvalidReason({ baseHash: input.draftHash, templateRef: input.templateRef, contextHash: input.contextHash, evidenceIds: input.evidenceIds }, { draftHash: draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record) })
-      if (invalid) throw new Error(invalid)
-      const parsed = parseWriteProposal(content, draft, this.readEvidenceIds(record))
+      const parsed = parseWriteProposal(content, { ...draft, body: input.body }, input.evidenceIds)
+      const baseBody = parsed.target === 'context' ? input.contextBody : input.body
+      let currentBody = parsed.target === 'context' ? context.bytes?.toString('utf8') ?? '' : draft.body
+      let mergeError: string | undefined
+      try { parsed.body = await this.ports.git.mergeText(baseBody, currentBody, parsed.body) }
+      catch (error) { currentBody = baseBody; mergeError = error instanceof Error ? error.message : '提议合并失败，候选已保留' }
       if (parsed.conclusions.map(conclusionKey).some(key => record.rejectedConclusions?.includes(key))) throw new Error('同一结论已被拒绝，出现新结论后再提问')
       if (parsed.target === 'context' && context.bytes?.toString('utf8') === parsed.body) throw new Error('写入提议与当前项目上下文相同')
       // Host owns the ID, the task binding and every bound hash; the answer only supplied content.
-      record.writeProposal = { id: randomUUID(), entityId: task.entityId, taskId: path.basename(task.worktree), baseHash: parsed.target === 'context' ? context.hash : draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, changes: describeWriteChanges(parsed.target === 'context' ? context.bytes?.toString('utf8') ?? '' : draft.body, parsed.body), createdAt: new Date().toISOString(), status: 'pending', ...(parsed.target === 'context' ? { target: 'context' as const } : {}) }
+      record.writeProposal = { id: randomUUID(), entityId: task.entityId, taskId: path.basename(task.worktree), baseBody: currentBody, baseHash: mergeError ? (parsed.target === 'context' ? input.contextHash : input.draftHash) : parsed.target === 'context' ? context.hash : draft.sha256, templateRef: draft.metadata.templateRef, contextHash: context.hash, evidenceIds: this.readEvidenceIds(record), conclusions: parsed.conclusions, body: parsed.body, ...(mergeError ? { error: mergeError } : {}), changes: describeWriteChanges(currentBody, parsed.body), createdAt: new Date().toISOString(), status: 'pending', ...(parsed.target === 'context' ? { target: 'context' as const } : {}) }
       delete record.writeProposalError
       await this.store.save(); return true
     } catch (error) {
