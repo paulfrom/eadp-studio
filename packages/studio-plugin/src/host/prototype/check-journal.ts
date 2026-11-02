@@ -1,9 +1,8 @@
-import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import type { PrototypeCheckDiagnostic, PrototypeCheckReport } from '../../shared/prototype.ts'
 import type { TaskView } from '../../shared/studio.ts'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { localDatabasePath, readLocalRecord, writeLocalRecords } from '../adapters/local-state/sqlite-state.ts'
 import type { StudioStore } from '../application/state.ts'
 import type { PrototypeCheckResult, PrototypeCheckStep } from './checks.ts'
 
@@ -12,9 +11,13 @@ export class PrototypeCheckJournal {
   private readonly active = new Set<string>()
   constructor(private readonly store: StudioStore, private readonly toolsHash: string) {}
   private key(projectId: string, taskId: string): string { return createHash('sha256').update(JSON.stringify([projectId, taskId])).digest('hex') }
-  private async storage(projectId: string, taskId: string): Promise<AtomicState<PrototypeCheckReport[]>> {
+  private async storage(projectId: string, taskId: string) {
     if (!this.store.accountId) throw new Error('请先登录后查看工程检查')
-    return new AtomicState(path.join(await this.store.projectDirectory(projectId), 'prototype-checks', `${this.key(projectId, taskId)}.json`))
+    const database = localDatabasePath(await this.store.projectDirectory(projectId)), key = `prototype-checks/${this.key(projectId, taskId)}`
+    return {
+      read: () => readLocalRecord<PrototypeCheckReport[]>(database, key),
+      write: (value: PrototypeCheckReport[]) => writeLocalRecords([{ database, key, value }]),
+    }
   }
   async begin(task: TaskView, sourceSha: string, operationId: string, kind: PrototypeCheckReport['kind']) {
     const accountId = this.store.accountId, storage = await this.storage(task.projectId, task.entityId), reports = await storage.read() ?? []

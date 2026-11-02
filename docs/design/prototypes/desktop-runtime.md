@@ -127,7 +127,7 @@ worktree 路径限定在账号／项目的受管根目录，使用 prototypeTask
 Host 在账号串行入口内先保存用户动作、指令及固定 messageOperationId，再完成创建、初始 claims／scope 和现场准备。没有其他运行事项时直接派发；已有运行事项时持久入队，当前执行不被抢占。创建或重新领取失败保留输入及恢复操作，不把未成功操作伪装成有效开发许可。
 待开始项由调度器自动派发原首次指令；纠偏独立保存并重新取得需求占用。已经 sending 或结果未知的指令先核对投递，不作为 pending 重发。完成事件按 operationId 与 turnSeq 区分迟到重复和崩溃恢复，只有原操作可继续消费同一完成事件。
 
-复用账号隔离 StudioStore 目录中的 `prototype-queue.json` 与 AtomicState，保存任务顺序、currentSelectedTask、逐需求 development 和 operations，不另建分布式队列或 Redis／BullMQ。
+本地队列使用账户与项目隔离的 `studio.sqlite`，通过 ATTACH 事务共同保存项目事项与账户调度顺序。逐需求 development 和 operations 留在项目数据库，跨项目 order/currentSelectedTask 与全局 revision 留在账户数据库；不另建分布式队列或 Redis／BullMQ。详见 [ADR-0010](../../adr/0010-local-sqlite-state.md)。
 每项只保存恢复需要的有限元数据；代码正文、模型历史和后台事实分别留在原有责任层。
 
 | 本地字段 | 作用 |
@@ -142,7 +142,7 @@ Host 在账号串行入口内先保存用户动作、指令及固定 messageOper
 
 会话、工作树、branch、base/ref 及授权身份沿用事项记录，不再复制一套可独立漂移的任务实体。
 队列修改及 current／reorder／pause／correct／confirm／recover 由 Host 串行校验后持久化，再发布投影。
-保存沿用同目录临时文件与 rename；读取失败保留诊断，不能用空队列掩盖原记录损坏。
+保存使用 SQLite 原子事务；未变化的内容不写入。读取失败保留诊断，不能用空队列掩盖原记录损坏。
 其他设备只能看到后台占用事实，不能声称拥有本机队列、未提交代码或可无缝恢复的 worktree。
 
 ### 4.2 关闭与重启恢复次序
@@ -174,7 +174,7 @@ Host 进入关闭阶段后停止接收新的开始／切换／写入命令；在
 | 已实现机制 | 源码位置 | 事实 |
 | --- | --- | --- |
 | 队列与调度 | `host/application/prototype-collaboration.ts`、`shared/prototype.ts` | 账号隔离的跨项目队列、逐需求 development 阶段、自动串行推进、首次／纠偏释放时点及完成 hook。 |
-| 记录与保存 | `host/application/state.ts` | 项目管理、事项、候选、操作、评审、采用、初始化、材料预留、模板操作、场景、修复与一致性对比按账号隔离，串行 temp／rename 落盘。 |
+| 记录与保存 | `host/application/state.ts` | 项目管理、事项、候选、操作、评审、采用、初始化、材料预留、模板操作、场景、修复与一致性对比按账号隔离，以 SQLite 事务落盘。 |
 | 退出收敛 | `host/adapters/dsh/sessions.ts`（`settlePrototype`、`dispose`） | 关闭时取消模型、等待 idle、flush 原生会话；未收敛即中止关闭并保留事项与现场，不伪报已保存。 |
 | 崩溃恢复 | `client/prototype/PrototypeWorkbench.tsx`、`host/application/prototype-collaboration.ts` | 原 running 标记 recovery-required；恢复查询后台、原操作、未知消息和真实 ref 后自动继续。 |
 | 会话恢复 | `host/adapters/dsh/sessions.ts` | 通过官方 preset mount 与 resume 恢复原 session 与投影；不重发未知消息。 |
@@ -334,3 +334,9 @@ accepted 后本机主检出同步、会话释放、预览处理和现场收尾�
 最终按当前交付版本完成真实桌面 → 原生真实模型 → Host → 指定协同服务 → Git／持久化闭环。
 协同联调固定现有配置指向的 `100.119.183.44` 服务；本设计不授权远端修改或产品运行。
 局部检查、模板构建与静态页面均单独报告；未完成真实桌面闭环的部分明确记为未验收。
+
+### 运行与原生会话交互（2026-11-02）
+
+运行入口展开当前需求的原生会话，由既有 Host 流程恢复会话并发送运行指令；结果返回后重新读取队列。预览区域可独立收起，收起时原生会话占满工作区且保留运行入口，展开后继续显示原预览。运行失败显示可操作的实际原因；指令派发前失败不能暗示已有 AI 反馈。技术错误与完整运行日志保留在诊断面板，查看日志不关闭该面板。
+
+本次交互修改仍需在当前桌面版本以真实模型验证运行、反馈可见性和预览收起／展开，构建检查不替代桌面闭环验收。

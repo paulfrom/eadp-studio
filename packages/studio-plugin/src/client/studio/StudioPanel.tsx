@@ -59,6 +59,7 @@ export function StudioPanel(props: StudioProps) {
   const [comparisonError, setComparisonError] = useState('')
   const [projectDialog, setProjectDialog] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
+  const [recoveryFeedback, setRecoveryFeedback] = useState('')
   const sidebar = useStudioSidebar()
   const [filter, setFilter] = useState('')
   const [activeTab, setActiveTab] = useState<'material' | 'versions'>('material')
@@ -91,8 +92,21 @@ export function StudioPanel(props: StudioProps) {
     }
     finally { if (!background) { actions.current -= 1; setBusy(actions.current > 0) } }
   }, [run, props.openSettings])
+  const retryOperation = async (operationId: string) => {
+    setRecoveryFeedback('正在查询原操作结果并尝试恢复…')
+    const reply = await call({ action: 'retryOperation', operationId })
+    if (!reply.ok) { setRecoveryFeedback('查询或恢复未完成，请查看诊断详情后重试。'); return }
+    const operation = reply.state.pending.find(item => item.id === operationId)
+    setRecoveryFeedback(operation?.phase === 'accepted'
+      ? '已核实：操作已完成。'
+      : operation?.phase === 'rejected'
+        ? '已核实：操作未成功。请查看对应操作的原因。'
+        : operation
+          ? '查询已返回，操作尚未完成。下方显示最新状态，可再次查询。'
+          : '查询已返回，原操作已不在待处理列表中。请在对应场景或需求中核对最终成果。')
+  }
   const localCall = useCallback((command: StudioCommand) => call(command, true), [call])
-  const statusSignature = [error, state.recovery?.preservedPath, ...state.projectInitializations.map(item => item.id), ...state.pending.filter(item => item.phase !== 'accepted').map(item => `${item.id}:${item.message ?? item.phase}`)].filter(Boolean).join('|')
+  const statusSignature = [error, ...state.projectInitializations.map(item => item.id), ...state.pending.filter(item => item.phase !== 'accepted').map(item => `${item.id}:${item.message ?? item.phase}`)].filter(Boolean).join('|')
   useEffect(() => { if (statusSignature) setStatusOpen(true) }, [statusSignature])
   useEffect(() => {
     // The session joins a poll and a section's read into one Host round trip, and
@@ -285,7 +299,7 @@ export function StudioPanel(props: StudioProps) {
         </div>}
       </main>
     </div>{projectDialog && <ProjectDialog {...(state.workspace ? { defaultDirectory: state.workspace.defaultDirectory } : {})} localProjects={state.projects} pickDirectory={props.pickDirectory} busy={busy} projects={state.availableProjects} namespaces={state.namespaces} onClose={() => setProjectDialog(false)} onSubmit={async command => { if (!await flushBeforeLeave()) return; const result = await call(command); if (result?.ok) { setSelectedId(undefined); setProjectDialog(false) } }} />}
-    <StudioStatusDialog open={statusOpen} error={error} recovery={state.recovery} pending={state.pending} operations={state.projectInitializations} progress={progress} busy={busy} canAssist={!!statusEntity} onClose={() => setStatusOpen(false)} onRetryOperation={operationId => void call({ action: 'retryOperation', operationId })} onRetryProject={operationId => void call({ action: 'retryProjectInitialization', operationId })} onAssist={assistStatus} />
+    <StudioStatusDialog open={statusOpen} feedback={recoveryFeedback} error={error} pending={state.pending} operations={state.projectInitializations} progress={progress} busy={busy} canAssist={!!statusEntity} onClose={() => setStatusOpen(false)} onRetryOperation={operationId => void retryOperation(operationId)} onRetryProject={operationId => void call({ action: 'retryProjectInitialization', operationId })} onAssist={assistStatus} />
   </div>
 }
 function Empty({ text }: { text: string }) { return <div className={css.empty}>{text}</div> }

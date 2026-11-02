@@ -98,7 +98,7 @@ export class PrototypeMaterialContext {
   record(receipt: PrototypeMaterialRead): Promise<void> {
     const accountId = receipt.accountId
     if (this.store.accountId !== accountId) return Promise.reject(new Error('账号授权已变化'))
-    const storage = new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads.json', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat())
+    const storage = new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat())
     const work = this.pending.catch(() => undefined).then(async () => {
       if (this.store.accountId !== accountId) throw new Error('账号授权已变化')
       const records = await storage.read() ?? []
@@ -112,7 +112,7 @@ export class PrototypeMaterialContext {
   async reads(taskIds: string[]): Promise<PrototypeMaterialRead[]> {
     const accountId = this.store.accountId
     if (!accountId) return []
-    const records = await new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads.json', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat()).read() ?? []
+    const records = await new ProjectRecord<PrototypeMaterialRead[]>(this.store, 'prototype-material-reads', () => [], (values, id) => values.filter(x => x.projectId === id), values => values.flat()).read() ?? []
     if (this.store.accountId !== accountId) throw new Error('账号授权已变化')
     const local = await this.store.read(), projects = new Map<string, ProjectState>(), result: PrototypeMaterialRead[] = []
     for (const record of records.filter(value => taskIds.includes(value.prototypeTaskId))) {

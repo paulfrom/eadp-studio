@@ -134,3 +134,10 @@
 .requirementReviewAction { display:flex;flex-shrink:0;align-items:center;flex-wrap:wrap;gap:8px;padding:7px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-2); }
 .requirementReviewAction button { margin-left:auto;color:var(--accent-text); }
 .requirementReviewAction p { flex-basis:100%;margin:0;color:var(--danger); }
+
+.workspaceBody.previewCollapsed { grid-template-columns:minmax(0,1fr); }
+.result[hidden] { display:none; }
+@media(max-width:800px) { .previewCollapsed .conversation { position:static; width:auto; box-shadow:none; } }
+
+.heading button.panelToggle { display:inline-flex; width:auto; min-height:28px; padding:4px 8px; white-space:nowrap; }
+.previewCollapsed .heading { justify-content:flex-start; gap:8px; }

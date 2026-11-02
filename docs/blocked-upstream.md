@@ -63,3 +63,7 @@
 未发送原生附件仍由浏览器 File 或宿主内存 receipt 持有；尚无公开的跨崩溃草稿附件持久化、恢复顺序和清理接口。不能宣称重启后未发送附件无损恢复，亦不建立平行附件存储来掩盖缺口。原型 Host 仅保留已经提交的原始消息操作及引用；失效 receipt 必须显示实际失败并保留操作核对，不盲目重发。
 
 消息准入还需要覆盖原生队列修改与停止：现有发行编辑提供 `session/control-admission`，队列实际 mutation 与 Host 完成事实在同一串行范围执行；取消使用官方取消接口；没有已授权 pending 时立即撤销本进程许可，有 pending 时保留同段 FIFO，业务暂停仍使许可失效。上游公开替代接口时须同时保留这两个控制面的约束。
+
+## 原生欢迎页共享 Host 身份
+
+上游 main.ts 已通过 authenticateWebHost 取得 Host cookie，但 connectDesktopWelcome 仍经 Electron cookie jar 重新兑换启动 URL。缺少直接复用已认证 Host transport 的欢迎页构造接口。当前 desktop-startup-edits.mjs 精确锚定连接调用，去除启动 query，原生 HTTP/RPC 与账号流共享既有 Host cookie，并限制请求 origin、拒绝重定向。上游提供统一 transport 后移除此编辑；当前版本真实桌面启动与账号流程仍须复验。

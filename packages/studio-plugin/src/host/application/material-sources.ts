@@ -8,7 +8,7 @@ import { containedFile, digest, readMaterial } from '../adapters/assets/material
 import type { HostPorts, SessionOutput } from './ports.ts'
 import type { StudioStore } from './state.ts'
 import type { ProjectWorkspaces } from './projects.ts'
-import type { ScenarioDependencies, ScenarioRecord } from './scenario-workspaces.ts'
+import type { MaterialEntityContext, ScenarioDependencies, ScenarioRecord } from './scenario-workspaces.ts'
 import { ScenarioDocumentService } from './scenario-documents.ts'
 import { archiveSelectedEvidence } from './scenario-evidence.ts'
 import { syncProjectContext } from './scenario-package.ts'
@@ -17,8 +17,8 @@ import { syncProjectContext } from './scenario-package.ts'
 export class MaterialSources {
   constructor(private readonly store: StudioStore, private readonly ports: HostPorts, private readonly projects: ProjectWorkspaces, private readonly deps: ScenarioDependencies, private readonly record: (entityId: string, projectId?: string) => Promise<ScenarioRecord>) {}
 
-  async editable(entityId: string, projectId?: string, kind?: 'scenario') {
-    const context = await this.deps.entity(entityId, projectId)
+  async editable(entityId: string, projectId?: string, kind?: 'scenario', input?: MaterialEntityContext) {
+    const context = input ?? await this.deps.entity(entityId, projectId)
     if (kind && context.entity.kind !== kind) throw new Error('此操作只适用于项目场景')
     if (!['scenario', 'requirement'].includes(context.entity.kind)) throw new Error('资料只适用于场景与需求材料')
     if (context.entity.current && !context.entity.occupation) throw new Error('已确认材料只读，请先开始修订')

@@ -53,6 +53,7 @@ export class PrototypeCollaboration {
   private readonly liveClaims = new Map<string, { accountId: number; claim: string }>()
   private readonly files = new PrototypeFiles()
   private record?: QueueRecord
+  private lastSavedSnapshot: string | undefined
   private accountId?: number
   private projectIdentity?: string
   private storage?: ProjectRecord<QueueRecord>
@@ -65,12 +66,14 @@ export class PrototypeCollaboration {
     const projectIdentity = canonical((await this.store.read()).projects.map(project => [project.id, project.workspaceDirectory]).sort())
     if (this.accountId === account && this.loading) return this.loading
     if (this.accountId !== account || this.projectIdentity !== projectIdentity || !this.record) {
+      this.lastSavedSnapshot = undefined
       this.projectIdentity = projectIdentity
       this.liveClaims.clear()
       this.accountId = account
-      this.storage = new ProjectRecord<QueueRecord>(this.store, 'prototype-queue.json', () => ({ revision: 0, tasks: [], operations: [] }), (value, id) => {
+      this.storage = new ProjectRecord<QueueRecord>(this.store, 'prototype-queue', () => ({ revision: 0, tasks: [], operations: [] }), (value, id) => {
         const tasks = value.tasks.filter(x => x.projectId === id), taskIds = new Set(tasks.map(x => x.task.id))
-        return { revision: value.revision, tasks, operations: value.operations.filter(x => ('projectId' in x.request ? x.request.projectId === id : taskIds.has(x.request.prototypeTaskId))),
+        // The global scheduling revision belongs to account metadata, not each project payload.
+        return { revision: 0, tasks, operations: value.operations.filter(x => ('projectId' in x.request ? x.request.projectId === id : taskIds.has(x.request.prototypeTaskId))),
           drafts: (value.drafts ?? []).filter(x => x.projectId === id), buffers: (value.buffers ?? []).filter(x => taskIds.has(x.prototypeTaskId)),
           pauses: (value.pauses ?? []).filter(x => taskIds.has(x.taskId)), fileSaves: (value.fileSaves ?? []).filter(x => taskIds.has(x.prototypeTaskId)) }
       }, values => ({ revision: Math.max(0, ...values.map(x => x.revision)), tasks: values.flatMap(x => x.tasks), operations: values.flatMap(x => x.operations),
@@ -83,8 +86,9 @@ export class PrototypeCollaboration {
         const record = await storage.read() ?? { revision: 0, tasks: [], operations: [] }
         if (this.accountId !== account || this.store.accountId !== account) throw new Error('协同账号已变化')
         this.record = record
+        this.lastSavedSnapshot = this.queueSnapshot(record)
         // A previous process cannot establish that a model call has settled.
-        let changed = false
+        let changed = this.reconcileQueueIdentities(record)
         for (const task of record.tasks) if (task.state === 'running') { task.state = 'recovery-required'; task.nextAction = '核对原生会话中的执行结果'; changed = true }
         for (const task of record.tasks) if (task.runtimeRun) { task.runtimeRun.status = 'blocked'; delete task.runtimeRun.sourceFingerprint; task.nextAction = '上次预览进程已结束，现场已保留；核对原会话后可重新运行'; changed = true }
         for (const operation of record.operations) if (operation.phase === 'sending') { operation.phase = 'unknown'; operation.message = '消息投递结果未知，请核对原生会话'; changed = true }
@@ -96,7 +100,19 @@ export class PrototypeCollaboration {
     }
     return this.record
   }
-  private async save(): Promise<void> { if (!this.record || !this.storage) throw new Error('事项队列尚未初始化'); this.record.revision++; await this.storage.write(this.record) }
+  private queueSnapshot(data: QueueRecord): string {
+    const { revision: _revision, ...content } = data
+    return canonical(content)
+  }
+  private async save(): Promise<void> {
+    const record = this.record, storage = this.storage
+    if (!record || !storage) throw new Error('事项队列尚未初始化')
+    const snapshot = this.queueSnapshot(record)
+    if (snapshot === this.lastSavedSnapshot) return
+    record.revision++
+    await storage.write(structuredClone(record))
+    if (this.record === record && this.storage === storage) this.lastSavedSnapshot = snapshot
+  }
   async view(): Promise<PrototypeQueueView> {
     const data = await this.data()
     const pending = data.operations.filter(value => !value.taskId && value.phase !== 'superseded' && value.request.action === 'startPrototypeCollaboration').map(value => {
@@ -131,6 +147,27 @@ export class PrototypeCollaboration {
   private queuePosition(data: QueueRecord, id: string): number {
     const index = data.queueOrder?.indexOf(id) ?? -1
     return index < 0 ? Number.MAX_SAFE_INTEGER : index
+  }
+  /** Resolve creation identities against durable tasks before choosing the next queue entry. */
+  private reconcileQueueIdentities(data: QueueRecord): boolean {
+    const pending = data.operations.filter(operation => !operation.taskId && operation.phase !== 'superseded' && operation.request.action === 'startPrototypeCollaboration')
+    const valid = new Set([...data.tasks.map(item => item.task.id), ...pending.map(operation => `queued:${operation.id}`)])
+    const resolved = new Map(data.operations.filter(operation => operation.taskId && operation.phase !== 'superseded').map(operation => [`queued:${operation.id}`, operation.taskId!]))
+    const resolve = (id: string) => resolved.get(id) ?? id
+    const order = [...new Set([...(data.queueOrder ?? []).map(resolve), ...valid].filter(id => valid.has(id)))]
+    const selected = data.selectedTaskId ? resolve(data.selectedTaskId) : undefined
+    const selectedTaskId = selected && valid.has(selected) ? selected : undefined
+    const changed = canonical(data.queueOrder ?? []) !== canonical(order) || data.selectedTaskId !== selectedTaskId
+    if (changed) {
+      data.queueOrder = order
+      if (selectedTaskId) data.selectedTaskId = selectedTaskId
+      else delete data.selectedTaskId
+    }
+    return changed
+  }
+  private clearDevelopmentError(item: LocalTask, operation: Operation): void {
+    delete operation.message
+    if (item.development) delete item.development.message
   }
   cancellation(taskId: string): { projectId: string; task: PrototypeTaskView; sessionId: string; worktree: string } {
     const item = this.record?.tasks.find(value => value.task.id === taskId)
@@ -431,7 +468,7 @@ export class PrototypeCollaboration {
     }
     const item = data.tasks.find(value => value.task.id === operation!.taskId)
     if (!item) throw new Error('事项本地记录不存在')
-    await this.current(item); await this.workspace(item); operation.phase = 'workspace'; await this.save()
+    await this.current(item); await this.workspace(item); operation.phase = 'workspace'; this.clearDevelopmentError(item, operation); await this.save()
     if (data.tasks.some(value => value !== item && (value.state === 'running' || value.state === 'recovery-required'))) { item.nextAction = item.development ? '首次指令已保存，等待前一项完成' : '首次指令已保存，等待手动继续'; await this.save(); return }
     await this.dispatch(item, operation, command.instruction)
   }
@@ -456,7 +493,7 @@ export class PrototypeCollaboration {
         signal?.throwIfAborted()
         await this.ports.nativePrototypePrompt(operation.nativePrompt, signal)
       } else await this.ports.prompt(item.sessionId, instruction, operation.id, attachments)
-      operation.phase = 'sent'; if (operation.runtimeRequest) item.nextAction = 'AI 正在运行工程，可在当前对话中查看进展'; if (item.development) item.development.stage = 'developing'; await this.save()
+      operation.phase = 'sent'; this.clearDevelopmentError(item, operation); if (operation.runtimeRequest) item.nextAction = 'AI 正在运行工程，可在当前对话中查看进展'; if (item.development) item.development.stage = 'developing'; await this.save()
     } catch (error) {
       this.liveClaims.delete(item.task.id)
       operation.phase = 'unknown'; item.state = 'recovery-required'; item.nextAction = '核对原生会话中的消息结果'; operation.message = error instanceof Error ? error.message : '消息投递结果未知'
@@ -607,6 +644,13 @@ export class PrototypeCollaboration {
       if ('operation' in candidate) {
         const pending = candidate.operation
         if (pending.request.action === 'startPrototypeCollaboration') {
+          const projectId = pending.request.projectId, requirements = pending.resolvedRequirementIds ?? pending.request.developmentRequirementIds
+          const existing = requirements.length ? data.tasks.find(item => item.projectId === projectId && item.task.status === 'active' && requirements.every(id => item.task.developmentRequirementIds.includes(id))) : undefined
+          if (existing) {
+            const message = '这些需求已有本机原型开发事项，请从需求菜单进入原会话；本次指令仍保留。'
+            if (pending.message !== message) { pending.message = message; await this.save() }
+            continue
+          }
           try { await this.start(pending.request); delete pending.message }
           catch (error) { pending.message = error instanceof Error ? error.message : '需求开发领取待恢复'; await this.save() }
         }
@@ -909,7 +953,7 @@ export class PrototypeCollaboration {
     const prior = (data.queueReorders ?? []).find(value => value.id === command.operationId)
     if (prior) {
       if (prior.fingerprint !== fingerprint) throw new Error('队列重排操作不能用于其他顺序')
-      await this.storage!.write(data)
+      await this.save()
       return
     }
     if (command.expectedRevision !== data.revision) throw new Error('事项队列已变化，请刷新后重新排序')
@@ -1088,7 +1132,7 @@ export class PrototypeCollaboration {
     if (remote.id !== taskId || remote.status !== 'accepted' || remote.ownerId !== accountId || remote.clientId !== local.clientId) throw new Error('后台接受事项身份无法核对')
     item.task = remote; item.state = 'awaiting-user'; item.nextAction = `后台已接受原型基线 ${baselineId}；本机现场已保留`
     if (!storage) throw new Error('事项队列尚未初始化')
-    data.revision++; await storage.write(data)
+    await this.save()
   }
   /** Persist cancellation without deleting the author's worktree, session log or local operation history. */
   async cancelled(taskId: string, gitRecovery: 'clear' | 'unknown' | 'reconcile-required'): Promise<void> {
@@ -1104,7 +1148,7 @@ export class PrototypeCollaboration {
     item.task = remote; item.state = 'awaiting-user'; item.gitRecovery = gitRecovery
     item.nextAction = gitRecovery === 'clear' ? '事项已结束；本机现场已保留' : `事项已结束；Git 恢复状态为 ${gitRecovery}，本机现场已保留`
     if (!storage) throw new Error('事项队列尚未初始化')
-    data.revision++; await storage.write(data)
+    await this.save()
   }
   /** Resume durable development steps without repeating a model request or an already verified Git step. */
   async recover(): Promise<void> {

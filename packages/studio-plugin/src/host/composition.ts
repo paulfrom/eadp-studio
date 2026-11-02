@@ -2,6 +2,7 @@ import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
+import { ActivityLog, studioStateDirectory } from './adapters/platform/activity-log.ts'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { deliverHostNativePrompt } from './adapters/dsh/native-prompt-admission.ts'
@@ -54,14 +55,14 @@ export interface Config {
   publication?: { projectId: string; host: string; port: number; username: string; knownHostKey: string; root: string; url: string; node: string; flock: string; credentialKey: `publication-${string}`; access: 'public' | 'restricted' }
 }
 /** Product deployment config belongs in the shipped Host bundle; users do not deploy a backend. */
-export async function composeStudio(ctx: Context, config: Config): Promise<StudioApplication> {
+export async function composeStudio(ctx: Context, config: Config, activity: ActivityLog): Promise<StudioApplication> {
   const collaborationUrl = config.collaborationUrl ?? 'http://100.119.183.44:6972'
-  const stateDirectory = config.stateDirectory ?? path.join(process.env.APPDATA ?? path.join(homedir(), '.local/share'), 'eadp-studio', 'studio')
+  const stateDirectory = studioStateDirectory(config.stateDirectory)
   const workspaceRoot = config.workspaceRoot ?? path.join(homedir(), 'EADP')
   const runtimeRoot = config.runtimeRoot ?? path.join(path.dirname(process.argv[4] ?? ''), 'studio-tools')
   const runtime = await PlatformRuntime.load(path.join(runtimeRoot, 'runtime-manifest.json'), runtimeRoot, ctx.subprocess)
   const credentials = new DesktopSecretStore()
-  const collaboration = new CollaborationTransport(collaborationUrl)
+  const collaboration = new CollaborationTransport(collaborationUrl, activity)
   const auth = new CollaborationSession(collaborationUrl, credentials, collaboration.request)
   const api = new CollaborationClient(collaborationUrl, () => auth.getAccessToken(), token => auth.invalidateToken(token), collaboration.request)
   ctx.effect(() => () => collaboration.dispose(), 'studio: collaboration transport')

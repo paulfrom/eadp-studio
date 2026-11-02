@@ -1,3 +1,4 @@
+import { ActivityLog, studioStateDirectory } from './adapters/platform/activity-log.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { composeStudio, type Config } from './composition.ts'
@@ -21,11 +22,13 @@ const COMPOSE_DEADLINE_MS = 60_000
 /** Remote is a trusted UI entry; these methods are never registered as Agent tools. */
 export class StudioService extends TypertRemoteService {
   private readonly application: Promise<StudioApplication>
+  private readonly activity: ActivityLog
   constructor(ctx: Context, config: Config) {
     super(ctx, 'studio')
     // Composition settles once for the process lifetime: a stalled or failed
     // composition must make every command fail loudly on its own deadline.
-    this.application = composeStudio(ctx, config)
+    this.activity = new ActivityLog(studioStateDirectory(config.stateDirectory))
+    this.application = composeStudio(ctx, config, this.activity)
     ctx.on('session/control-admission', async admission => {
       if (admission.action === 'cancel' && isHostNativeControl(admission.sessionId)) { admission.pass = true; return }
       const application = await within(this.application, COMPOSE_DEADLINE_MS, '工作台服务尚未就绪，请稍后重试。')
@@ -43,8 +46,10 @@ export class StudioService extends TypertRemoteService {
   }
   @Remote
   async command(command: StudioCommand): Promise<StudioReply> {
-    try { return await (await within(this.application, COMPOSE_DEADLINE_MS, '工作台服务尚未就绪，请稍后重试。')).command(command) }
-    catch (error) { return { ok: false, code: 'STUDIO_UNAVAILABLE', message: error instanceof Error ? error.message : '工作台服务尚未就绪' } }
+    return this.activity.run('command', command.action, async (): Promise<StudioReply> => {
+      try { return await (await within(this.application, COMPOSE_DEADLINE_MS, '工作台服务尚未就绪，请稍后重试。')).command(command) }
+      catch (error) { return { ok: false, code: 'STUDIO_UNAVAILABLE', message: error instanceof Error ? error.message : '工作台服务尚未就绪' } }
+    }, reply => reply.ok ? { ok: true } : { ok: false, code: reply.code })
   }
   /** Progress is advisory: an uncomposed or failed workbench reports nothing running. */
   @Remote

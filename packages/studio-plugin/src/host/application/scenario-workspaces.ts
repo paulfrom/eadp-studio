@@ -30,6 +30,7 @@ export interface MaterialTemplateBinding {
   /** A fresh user decision can preserve newer local bytes after the backend already accepted the binding. */
   application?: { operationId: string; expectedHash: string };
 }
+export type MaterialEntityContext = { remote: ProjectState; entity: EntityView }
 type DesignCommand = ScenarioCommand | RequirementWorkspaceCommand
 type SaveCommand = Extract<DesignCommand, { action: 'saveScenario' | 'saveRequirement' }>
 type ResolveWriteCommand = Extract<DesignCommand, { action: 'resolveScenarioWriteProposal' | 'resolveRequirementWriteProposal' }>
@@ -129,8 +130,8 @@ export class ScenarioWorkspaces {
     for (const kind of ['scenario', 'requirement'] as const) if (await findMaterialFile(task.worktree, kind, task.entityId)) return readMaterial(task.worktree, kind, task.entityId)
     throw new Error('本地材料文件不存在，请重新打开材料')
   }
-  async editable(entityId: string, projectId?: string) {
-    const context = await this.sources.editable(entityId, projectId)
+  async editable(entityId: string, projectId?: string, input?: MaterialEntityContext) {
+    const context = await this.sources.editable(entityId, projectId, undefined, input)
     const { task, entity } = context
     if (entity.kind !== 'scenario' && entity.kind !== 'requirement') throw new Error('请选择场景或需求材料')
     const relative = await findMaterialFile(task.worktree, entity.kind, task.entityId)
@@ -210,8 +211,8 @@ export class ScenarioWorkspaces {
       ...(entity.current ? { confirmedBy: entity.current.confirmedBy, confirmedAt: entity.current.confirmedAt } : {}),
       ...(!readOnly && task ? { git: await this.ports.git.state(task.worktree) } : {}) }
   }
-  async open(entityId: string): Promise<void> {
-    const { entity, remote } = await this.deps.entity(entityId)
+  async open(entityId: string, input?: MaterialEntityContext): Promise<void> {
+    const { entity, remote } = input ?? await this.deps.entity(entityId)
     if (entity.kind !== 'scenario' && entity.kind !== 'requirement' || entity.builtinKey) throw new Error('请选择可整理的场景或需求')
     this.activeEntityId = entityId
     if (!entity.current && !entity.occupation) await this.deps.task(remote, entity)
@@ -407,8 +408,8 @@ export class ScenarioWorkspaces {
     await (await this.documents(task.projectId)).save({ root: task.worktree, metadata: await syncProjectContext(task.worktree, draft.metadata), body: receipt.beforeBody, operationId: `${receipt.operationId}-undo` })
     receipt.undone = true; await this.store.save()
   }
-  async newSession(entityId: string): Promise<string> {
-    const { task, entity } = await this.editable(entityId), local = await this.store.read(), record = await this.record(entityId)
+  async newSession(entityId: string, input?: MaterialEntityContext): Promise<string> {
+    const { task, entity } = await this.editable(entityId, undefined, input), local = await this.store.read(), record = await this.record(entityId)
     const next = { ...task, sessionId: `studio-${randomUUID()}` }; local.tasks.push(next); record.activeSessionId = next.sessionId; await this.store.save()
     return this.ports.session(next, sessionRules(entity))
   }
@@ -428,8 +429,8 @@ export class ScenarioWorkspaces {
     await this.ports.prompt(sessionId, `请处理当前${entity.kind === 'scenario' ? '场景' : '需求'}中的以下事项。能直接解决就给出处理结果，否则给出可执行方案：\n\n${text}`, operationId)
     return sessionId
   }
-  async selectSession(entityId: string, sessionId: string): Promise<string> {
-    const { task, entity } = await this.editable(entityId), local = await this.store.read()
+  async selectSession(entityId: string, sessionId: string, input?: MaterialEntityContext): Promise<string> {
+    const { task, entity } = await this.editable(entityId, undefined, input), local = await this.store.read()
     const found = local.tasks.find(t => t.projectId === task.projectId && t.entityId === entityId && t.sessionId === sessionId && t.purpose === 'material')
     if (!found) throw new Error('此会话不属于当前材料')
     const record = await this.record(entityId); record.activeSessionId = sessionId; await this.store.save()

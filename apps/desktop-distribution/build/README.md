@@ -88,3 +88,7 @@ The archive cache is `.local/upstream/dsh-<commit>.tar.gz`; successful extractio
 同一编辑通过 `session/control-admission` 将受管队列的实际变更回调交给 Host 串行执行，避免“核对通过后、真正入队前”发生完成释放。原生停止本轮沿官方 FIFO 语义保留已经授权的待执行消息；业务暂停则撤销整个开发段许可。非 Studio 会话不等待 Studio 准入。当前消息与控制范围以项目构造的 `studio-` 会话身份为准；没有就绪的业务处理器时拒绝该受管范围，不影响普通原生会话。
 
 同一编辑同时约束受管会话 `updateQueue`／`cancel`：队列实际变更回调在 Studio 的同一串行写入范围执行，避免校验后再变更与完成释放竞争；原生停止沿用官方取消当前轮次且保留已入队消息的语义：有已授权 pending 时保留同段 FIFO；没有 pending 时立即撤销本进程许可，不等待完成 hook 队列。业务暂停始终撤销段许可。只有仓库实际构造的 `studio-` 会话进入这些事件，普通原生会话保持官方路径。
+
+### Native welcome Host authentication
+
+desktop-startup-edits.mjs reuses the cookie already issued by authenticateWebHost for native welcome HTTP/RPC and account streams. The launch query is removed before the welcome read; requests must retain the Host origin and reject redirects. This avoids a second token exchange through Electron's independent cookie jar. Missing or duplicated anchors fail closed. Current-version desktop startup and account verification remain required.

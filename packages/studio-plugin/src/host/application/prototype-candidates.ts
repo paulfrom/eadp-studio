@@ -40,7 +40,7 @@ export class PrototypeCandidates {
   constructor(private readonly store: StudioStore, private readonly api: CollaborationClient, private readonly ports: HostPorts, private readonly collaboration: PrototypeCollaboration, private readonly integrations: PrototypeIntegrations) {}
   private storage(): ProjectRecord<CandidateState> {
     if (!this.store.accountId) throw new Error('请先登录后固定原型成果')
-    return new ProjectRecord<CandidateState>(this.store, 'prototype-candidates.json', () => ({ operations: [] }), (value, id) => ({ operations: value.operations.filter(x => x.task.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations) }))
+    return new ProjectRecord<CandidateState>(this.store, 'prototype-candidates', () => ({ operations: [] }), (value, id) => ({ operations: value.operations.filter(x => x.task.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations) }))
   }
   private async account(accountId: number): Promise<void> {
     if (this.store.accountId !== accountId || (await this.ports.account())?.id !== accountId || this.store.accountId !== accountId) throw new Error('账号已变化，原型候选已保留')

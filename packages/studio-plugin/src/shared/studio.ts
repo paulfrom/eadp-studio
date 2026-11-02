@@ -39,13 +39,9 @@ export interface TaskCleanup {
 }
 export interface MaterialDraft { entityId: string; metadata: MaterialMetadata; body: string; sha256: string; path: string }
 export interface TaskView { projectId: string; entityId: string; sessionId: string; purpose: 'material' | 'split' | 'prototype' | 'handoff' | 'review'; scenarioRepair?: boolean; reviewId?: string; reviewSent?: boolean; inputHash: string; worktree: string; baseHead?: string; writePaths?: string[]; prototypeBaseline?: { id: string; commitSha: string }; error?: string; cleanup?: TaskCleanup; handoff?: { baselineId: string; sequence: number; commitSha: string; operationId: string; status: 'pending' | 'sending' | 'unknown' | 'sent' | 'failed' }; split?: SplitTaskBinding }
-/** A local recovery record the Host could not use, and where its bytes were preserved. */
-export interface StudioRecovery { preservedPath: string }
 export interface StudioState {
   workspace?: { defaultDirectory: string; applicationDirectory: string };
   connected: boolean; account?: StudioUser;
-  /** Set once per rebuild, so the surfaces can report where the unusable record was kept. */
-  recovery?: StudioRecovery;
   projects: LocalProject[]; selectedProjectId?: string; project?: ProjectView;
   availableProjects: ProjectView[]; namespaces: NamespaceView[];
   projectInitializations: Array<{ id: string; name: string; projectId?: string; phase: string; message?: string }>;

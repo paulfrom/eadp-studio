@@ -47,6 +47,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
   const [drawer, setDrawer] = useState<'diagnostics'>()
   const [confirmOpen, setConfirmOpen] = useState(initialView?.confirmOpen ?? false)
   const [aiCollapsed, setAiCollapsed] = useState(false)
+  const [previewCollapsed, setPreviewCollapsed] = useState(false)
   const [requestedRequirementId, setRequestedRequirementId] = useState<string>()
   const showAi = useRef<HTMLButtonElement>(null)
   const hideAi = useRef<HTMLButtonElement>(null)
@@ -239,6 +240,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
     finally {
       if (startingRef.current === sourceKey) startingRef.current = undefined
       setStarting(current => current === sourceKey ? undefined : current)
+      await call({ action: 'readPrototypeQueue' })
       refresh()
     }
   }
@@ -268,13 +270,15 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
     ? progressMessage
     : selected?.taskStatus === 'accepted' ? '当前成果已接受。选择需求可从项目认可成果继续开发。'
     : queueError ? queueFeedback : '在会话头部选择需求，进入对应的 AI 会话。'
+  const runtimeFeedback = runError && <p className={css.fileError} role="alert">{collaborationFeedback(runError, '运行未完成，请查看诊断中的具体原因。')}<button onClick={() => { setAiCollapsed(false); setPreviewCollapsed(true) }}>查看当前会话</button><button onClick={() => setDrawer('diagnostics')}>查看诊断</button></p>
   return <div className={css.workbench}>
     <header className={css.projectHeader}><div className={css.projectName}><span>交互原型</span><span aria-hidden="true">/</span><h1>{state.project?.name}</h1></div><span className={css.projectRequirementCount}>{requirements.length} 项需求</span></header>
     <div className={css.collaborationStrip}><span>当前协作</span><span>{requirementTitle ?? '选择需求继续协作'}</span><button onClick={() => setDrawer('diagnostics')}>现场详情</button></div>
-    <div className={`${css.workspaceBody} ${aiCollapsed ? css.aiCollapsed : ''}`}>
+    <div className={`${css.workspaceBody} ${aiCollapsed ? css.aiCollapsed : ''} ${previewCollapsed ? css.previewCollapsed : ''}`}>
     <section className={css.conversation} aria-label="原型协作" hidden={aiCollapsed}>
-      <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button ref={hideAi} title="收起 AI 协作" aria-label="收起 AI 协作" onClick={() => setAiCollapsed(true)}><Icon name="panel-left" /></button></header>
+      <header className={css.heading}><strong><Icon name="spark" />原型 AI 协作</strong><button className={css.panelToggle} aria-expanded={!previewCollapsed} aria-controls="prototype-result" onClick={() => { setPreviewCollapsed(value => !value); setAiCollapsed(false) }}>{previewCollapsed ? '展开预览' : '收起预览'}</button>{previewCollapsed && <button className={css.panelToggle} disabled={busy || !fileSource || !!starting} onClick={() => void toggleRun()}>{startingCurrent ? '启动中' : preview ? '停止' : '运行'}</button>}<button ref={hideAi} title="收起 AI 协作" aria-label="收起 AI 协作" onClick={() => { setAiCollapsed(true); setPreviewCollapsed(false) }}><Icon name="panel-left" /></button></header>
 
+      {previewCollapsed && runtimeFeedback}
       <div className={css.nativeSession}><NativeConversation {...faces} sessionId={nativeSessionId} selection={conversationSelection} emptyMessage={emptyConversation} /></div>
       {selected?.requirementId && <RequirementReviewAction key={selected.prototypeTaskId} item={selected} busy={busy} call={call} />}
       {selected?.pendingNativePromptOperationId && selected.nativePromptDelivery && <div className={css.taskInfo} role="status"><p>{selected.nativePromptDelivery === 'unknown' ? '上次发送结果尚未明确，请核对原指令。' : '上次指令尚未投递，可重试原指令。'}</p><button disabled={busy || recoveringPrompt} onClick={() => void recoverNativePrompt()}>{recoveringPrompt ? '正在核对原指令…' : selected.nativePromptDelivery === 'unknown' ? '核对上次发送' : '重试原指令'}</button></div>}
@@ -282,7 +286,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
       {sendError && <p role="alert" className={css.fileError}>{collaborationFeedback(sendError, '指令处理尚未完成，输入已保留，请查看诊断后恢复。')}<button onClick={() => setDrawer('diagnostics')}>查看诊断</button></p>}
 
     </section>
-    <section className={css.result} aria-label="原型成果">
+    <section id="prototype-result" className={css.result} aria-label="原型成果" hidden={previewCollapsed}>
       <div className={css.toolbar}>
         {aiCollapsed && <button ref={showAi} title="展开 AI 协作" aria-label="展开 AI 协作" onClick={() => setAiCollapsed(false)}><Icon name="panel-left" /></button>}
         <div className={css.modeSwitch} role="tablist" aria-label="工作区模式" onKeyDown={event => {
@@ -300,10 +304,10 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
           { id: 'diagnostics', label: '诊断信息', run: () => setDrawer('diagnostics') },
         ]} />
       </div>
-      {runError && <p className={css.fileError} role="alert">运行尚未成功，请查看 AI 反馈或诊断信息<button onClick={() => setDrawer('diagnostics')}>查看诊断</button></p>}
+      {runtimeFeedback}
       {!baseline && selected?.nextAction && <p className={css.nextAction} aria-live="polite">{progressMessage}{selectedRequirementId && (selected.pendingCreation || selected.localDispatchState === 'recovery-required') && <button disabled={busy || !!enteringRequirement} onClick={() => void enterRequirement(selectedRequirementId)}>恢复开发会话</button>}<button onClick={() => setDrawer('diagnostics')}>查看诊断</button>{!selected.pendingCreation && selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停 AI 处理</button>}</p>}
       <div className={css.previewPane} role="tabpanel" id="prototype-preview" aria-labelledby="prototype-preview-tab" hidden={tab !== 'preview'}>
-        <PrototypePreview key={preview?.identity.previewId ?? 'empty'} identity={preview?.identity} externalUrl={preview?.url} starting={startingCurrent} visible={tab === 'preview' && !drawer} />
+        <PrototypePreview key={preview?.identity.previewId ?? 'empty'} identity={preview?.identity} externalUrl={preview?.url} starting={startingCurrent} visible={tab === 'preview' && !drawer && !previewCollapsed} />
       </div>
       <div className={css.content} hidden={tab !== 'code'} role="tabpanel" id="prototype-code" aria-labelledby="prototype-code-tab">
         {fileSource ? <PrototypeFiles key={JSON.stringify(fileSource)} source={fileSource} requestDiff={requestDiff} call={call} registerFlush={registerFlush} onNeedsAttention={showCode} /> : <div className={css.empty}>{baselineId ? '所选基线不可用，请重新选择工程来源。' : '选择需求查看工程文件，也可在诊断中查看已接受基线。'}</div>}
@@ -327,7 +331,7 @@ export function PrototypeWorkbench({ state, entities, busy, call, refresh, regis
           </li>)}</ul>
           {checkReport.message && <p>{checkReport.message}</p>}<p>静态浏览器检查不等于业务用例验收。</p>
         </details> : <p>{startingCurrent ? '正在等待 Host 记录启动操作…' : '尚无运行与检查记录。'}</p>}</div>}
-      </section><button type="button" onClick={() => { setDrawer(undefined); setOutput('runtime') }}>查看运行与检查日志</button>{runError && <p role="alert">{runError}</p>}<label>工程来源 <select value={baseline?.id ?? ''} onChange={event => void selectBaseline(event.target.value)}><option value="">{selected ? '当前事项' : '选择已接受基线'}</option>{state.prototypeBaselines?.map(item => <option key={item.id} value={item.id}>原型基线 {item.sequence} · 只读</option>)}</select></label>{selected && materialReads.length > 0 && <details><summary>已读取的需求材料 · {materialReads.length} 次</summary><ul>{materialReads.map((item, index) => <li key={`${item.sessionId}:${item.readAt}:${index}`}>{item.title} · {item.source === 'draft' ? '本人草稿' : `已确认版本 ${item.version}`} · 正文第 {item.startLine}–{item.endLine} 行 · {item.readAt}{item.stale ? ' · 材料已更新，仅提醒，不重绑工程' : ''}</li>)}</ul></details>}{selected && <div className={css.taskInfo}><strong>{selected.title} · 会话与现场</strong><p>逐需求开发进度以队列为准；中断恢复由 Host 按持久记录自动处理。</p>{!selected.pendingCreation && selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{!selected.pendingCreation && selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{!selected.pendingCreation && selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}<details><summary>事项技术诊断</summary><p>调度状态：{selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}{selected.gitRecovery ? ` · Git：${selected.gitRecovery}` : ''}</p>{!selected.pendingCreation && selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}</details></div>}{baseline && selected?.taskStatus === 'active' && !selected.pendingCreation && <details><summary>复用到当前事项</summary><p>登记只固定来源与目标事项；后续代码调整仍需在当前事项中检查、确认并由后台接受。</p>{adoption ? <p>{adoption.status === 'succeeded' ? `复用已完成，目标基线 ${adoption.targetBaselineId}` : '复用已登记；等待当前事项形成并接受目标基线。'}</p> : <button type="button" disabled={busy} onClick={() => void adoptBaseline()}>登记复用来源</button>}</details>}</>}
+      </section><button type="button" onClick={() => { setOutput('runtime') }}>查看运行与检查日志</button>{runError && <p role="alert">{runError}</p>}<label>工程来源 <select value={baseline?.id ?? ''} onChange={event => void selectBaseline(event.target.value)}><option value="">{selected ? '当前事项' : '选择已接受基线'}</option>{state.prototypeBaselines?.map(item => <option key={item.id} value={item.id}>原型基线 {item.sequence} · 只读</option>)}</select></label>{selected && materialReads.length > 0 && <details><summary>已读取的需求材料 · {materialReads.length} 次</summary><ul>{materialReads.map((item, index) => <li key={`${item.sessionId}:${item.readAt}:${index}`}>{item.title} · {item.source === 'draft' ? '本人草稿' : `已确认版本 ${item.version}`} · 正文第 {item.startLine}–{item.endLine} 行 · {item.readAt}{item.stale ? ' · 材料已更新，仅提醒，不重绑工程' : ''}</li>)}</ul></details>}{selected && <div className={css.taskInfo}><strong>{selected.title} · 会话与现场</strong><p>逐需求开发进度以队列为准；中断恢复由 Host 按持久记录自动处理。</p>{!selected.pendingCreation && selected.localDispatchState === 'running' && <button type="button" disabled={busy} onClick={() => void pauseTask()}>暂停</button>}{!selected.pendingCreation && selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void pauseTask()}>核对暂停结果</button>}{!selected.pendingCreation && selected.taskStatus === 'active' && <button type="button" disabled={busy} onClick={() => void endTask()}>{selected.endOperationId ? '核对结束事项结果' : '结束事项'}</button>}<details><summary>事项技术诊断</summary><p>调度状态：{selected.localDispatchState}{selected.nextAction ? ` · ${selected.nextAction}` : ''}{selected.gitRecovery ? ` · Git：${selected.gitRecovery}` : ''}</p>{!selected.pendingCreation && selected.localDispatchState === 'recovery-required' && !selected.pauseOperationId && <button type="button" disabled={busy} onClick={() => void call({ action: 'queryPrototypeMessage', prototypeTaskId: selected.prototypeTaskId })}>核对消息记录</button>}</details></div>}{baseline && selected?.taskStatus === 'active' && !selected.pendingCreation && <details><summary>复用到当前事项</summary><p>登记只固定来源与目标事项；后续代码调整仍需在当前事项中检查、确认并由后台接受。</p>{adoption ? <p>{adoption.status === 'succeeded' ? `复用已完成，目标基线 ${adoption.targetBaselineId}` : '复用已登记；等待当前事项形成并接受目标基线。'}</p> : <button type="button" disabled={busy} onClick={() => void adoptBaseline()}>登记复用来源</button>}</details>}</>}
 
     </WorkbenchDrawer>}
   </div>

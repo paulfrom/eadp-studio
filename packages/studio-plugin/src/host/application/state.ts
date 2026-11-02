@@ -2,21 +2,20 @@ import type { LocalScenarioRepair } from './scenario-repairs.ts'
 import type { ScenarioRecord } from './scenario-workspaces.ts'
 import type { TemplateOperation } from './scenario-templates.ts'
 import type { LocalConsistencyComparison } from './consistency-comparisons.ts'
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { localDatabasePath, readLocalRecord, writeLocalRecords, type LocalRecordWrite } from '../adapters/local-state/sqlite-state.ts'
 import { randomUUID } from 'node:crypto'
 import type { AdoptRequest, AssetSource, FixedReference, IntegrationView, MaterialMetadata } from '@eadp/contracts'
 import type { LocalReview } from './reviews.ts'
-import type { Candidate, LocalProject, TaskView, StudioRecovery } from '../../shared/studio.ts'
+import type { Candidate, LocalProject, TaskView } from '../../shared/studio.ts'
 
-const recordName = 'studio-state.json'
+const recordKey = 'studio-state'
 /** Only this format carries the task and request identities required for safe recovery. */
 const formatVersion = 3
 /** Collections every current-version record carries; a record missing one is a previous version's. */
 const collections = ['projects', 'tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'projectInitializations', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
 const projectCollections = ['tasks', 'candidates', 'operations', 'reviews', 'adoptions', 'materialReservations', 'templateOperations', 'scenarios', 'scenarioRepairs', 'consistencyComparisons'] as const
-const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, '-')
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -79,64 +78,42 @@ function parseRecord(text: string): LocalState | undefined {
   return value as LocalState
 }
 
-/**
- * Read the client identity an unusable record still names.
- * Occupations on the collaboration backend are bound to this identity, so a
- * rebuilt record keeps it: the local work is lost, but tasks this device still
- * holds stay reachable instead of becoming unreleasable.
- * @param text - raw file contents of the record being preserved.
- * @returns the stored client identity, or undefined when the bytes do not name one.
- */
-function carriedIdentity(text: string): string | undefined {
-  try {
-    const value = JSON.parse(text) as { clientId?: unknown }
-    return typeof value.clientId === 'string' && value.clientId.length > 0 ? value.clientId : undefined
-  } catch (error) { if (error instanceof SyntaxError) return undefined; throw error }
-}
-
 /** One local writer per user: the Host's recovery record of attributable local work. */
 export class StudioStore {
   private value: LocalState | undefined
   private loading: Promise<LocalState> | undefined
   private userId: number | undefined
-  private preserved: StudioRecovery | undefined
   constructor(private readonly root: string) {}
   get rootDirectory(): string { return this.root }
   get directory(): string { if (!this.userId) throw new Error('请先登录协同工作台。'); return path.join(this.root, 'users', String(this.userId)) }
   get accountId(): number | undefined { return this.userId }
   get scoped(): boolean { return this.userId !== undefined }
-  /** The record this session rebuilt from, until another user is scoped. */
-  get preservedRecord(): StudioRecovery | undefined { return this.preserved }
   useUser(userId?: number): void {
     if (userId !== undefined && (!Number.isSafeInteger(userId) || userId <= 0)) throw new Error('协同用户身份无效。')
-    if (userId !== this.userId) { this.userId = userId; this.value = undefined; this.loading = undefined; this.preserved = undefined }
+    if (userId !== this.userId) { this.userId = userId; this.value = undefined; this.loading = undefined }
   }
-  /**
-   * Read the current user's record, rebuilding it when the stored file was
-   * written by another version. Rebuilding preserves the unusable file beside
-   * the record and writes the current version, so a previous version never
-   * blocks the workbench: it starts from empty local work and reports where the
-   * old bytes were kept. The client identity the old bytes name is kept, since
-   * occupations on the backend are bound to it.
-   * @returns the current-version local state.
-   */
+  /** Read the account index and project snapshots without rebuilding damaged state. */
   async read(): Promise<LocalState> {
     if (this.value) return this.value
     if (this.loading) return this.loading
     const directory = this.directory, userId = this.userId
     this.loading = (async () => {
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      const file = path.join(directory, recordName)
-      const text = await readFile(file, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('本地恢复记录无法读取，请保留现场并修复') })
-      const stored = text === undefined ? undefined : parseRecord(text)
+      const stored = await readLocalRecord<LocalState>(localDatabasePath(directory), recordKey)
       if (userId !== this.userId) throw new Error('协同登录身份已变化，请重新查询。')
-      if (stored) { if (projectCollections.some(key => stored[key].length > 0)) throw new Error('程序索引含有项目正文，请保留现场。'); await this.hydrateProjects(stored); this.value = stored; return stored }
-      const identity = text === undefined ? undefined : carriedIdentity(text)
-      if (text !== undefined) this.preserved = { preservedPath: await this.preserve(file) }
-      const rebuilt = { ...emptyState(), ...(identity ? { clientId: identity } : {}) }
-      this.value = rebuilt
-      await this.persist()
-      return rebuilt
+      if (stored) {
+        if (!parseRecord(JSON.stringify(stored))) throw new Error('本地状态无效，请保留数据库并检查。')
+        if (projectCollections.some(key => stored[key].length > 0)) throw new Error('程序索引含有项目正文，请保留现场。')
+        await this.hydrateProjects(stored)
+        this.value = stored
+        return stored
+      }
+      const legacy = await stat(path.join(directory, 'studio-state.json')).then(() => true, error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error })
+      if (legacy) throw new Error('检测到尚未导入的本地状态，请关闭桌面并执行一次性 SQLite 导入；原文件已保留。')
+      const initial = emptyState()
+      await writeLocalRecords([{ database: localDatabasePath(directory), key: recordKey, value: initial }])
+      if (userId !== this.userId) throw new Error('协同登录身份已变化，请重新查询。')
+      this.value = initial
+      return initial
     })().finally(() => { if (userId === this.userId) this.loading = undefined })
     return this.loading
   }
@@ -150,13 +127,13 @@ export class StudioStore {
   }
   private projectPath(project: LocalProject): string {
     if (!project.workspaceDirectory || !path.isAbsolute(project.workspaceDirectory)) throw new Error('项目文件夹登记无效，请重新打开项目。')
-    return path.join(project.workspaceDirectory, '.eadp', 'users', String(this.userId), 'local-state.json')
+    return localDatabasePath(path.join(project.workspaceDirectory, '.eadp', 'users', String(this.userId)))
   }
   /** Rebinds an orphaned project record before publishing its program index. */
   async registerProject(project: LocalProject): Promise<void> {
     const accountId = this.userId, value = await this.read()
     if (value.projects.some(item => item.id === project.id)) throw new Error('项目已在本机登记。')
-    const stored = await new AtomicState<Record<string, unknown>>(this.projectPath(project)).read()
+    const stored = await readLocalRecord<Record<string, unknown>>(this.projectPath(project), 'local-state')
     if (accountId !== this.userId) throw new Error('协同身份已变化，项目登记已停止')
     if (stored) {
       const hydrated = { ...emptyState(), clientId: value.clientId, projects: [project] }
@@ -180,7 +157,7 @@ export class StudioStore {
       const file = this.projectPath(project)
       if (!await this.workspaceExists(project)) continue
       if (accountId !== this.userId) throw new Error('协同身份已变化，旧读取已停止')
-      const stored = await new AtomicState<Record<string, unknown>>(file).read()
+      const stored = await readLocalRecord<Record<string, unknown>>(file, 'local-state')
       if (!stored || stored.projectId !== project.id || stored.accountId !== this.userId || projectCollections.some(key => !Array.isArray(stored[key]))) throw new Error(`项目本地记录缺失或损坏，请保留现场并重新打开项目：${project.name}`)
       for (const key of projectCollections) {
         const entries = stored[key] as Array<{ projectId?: string }>
@@ -190,7 +167,8 @@ export class StudioStore {
     }
     if (!parseRecord(JSON.stringify(value))) throw new Error('项目本地恢复记录无效，请保留现场。')
   }
-  private async persistProjects(value: LocalState): Promise<LocalState> {
+  private async projectWrites(value: LocalState): Promise<LocalRecordWrite[]> {
+    const writes: LocalRecordWrite[] = []
     const accountId = this.userId
     const known = new Set(value.projects.map(project => project.id))
     for (const key of projectCollections) if ((value[key] as Array<{ projectId: string }>).some(item => !known.has(item.projectId))) throw new Error('项目过程数据缺少对应的本地项目登记。')
@@ -199,12 +177,10 @@ export class StudioStore {
       if (accountId !== this.userId) throw new Error('协同身份已变化，旧保存已停止')
       const data: Record<string, unknown> = { projectId: project.id, accountId: this.userId }
       for (const key of projectCollections) data[key] = (value[key] as Array<{ projectId: string }>).filter(item => item.projectId === project.id)
-      await new AtomicState<Record<string, unknown>>(this.projectPath(project)).write(data)
+      writes.push({ database: this.projectPath(project), key: 'local-state', value: data })
       if (accountId !== this.userId) throw new Error('协同身份已变化，旧保存已停止')
     }
-    const index = { ...value }
-    for (const key of projectCollections) (index[key] as unknown[]) = []
-    return index
+    return writes
   }
   private saving: Promise<void> = Promise.resolve()
   save(): Promise<void> {
@@ -216,21 +192,15 @@ export class StudioStore {
     this.saving = running
     return running
   }
-  /** Rename an unusable record aside so nothing is deleted and the name states what it holds. */
-  private async preserve(file: string): Promise<string> {
-    const preserved = path.join(this.directory, `${recordName}.invalid-${timestamp()}`)
-    await rename(file, preserved)
-    return preserved
-  }
+  /** Commit project snapshots and their account index as one durable transaction. */
   private async persist(): Promise<void> {
     const userId = this.userId, directory = this.directory
     const value = await this.read()
+    const writes = await this.projectWrites(value)
+    const index = { ...value }
+    for (const key of projectCollections) (index[key] as unknown[]) = []
+    writes.push({ database: localDatabasePath(directory), key: recordKey, value: index })
     if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
-    const temp = path.join(directory, `${recordName}.${randomUUID()}.tmp`)
-    try {
-      await writeFile(temp, `${JSON.stringify(await this.persistProjects(value), null, 2)}\n`, { mode: 0o600 })
-      if (this.userId !== userId) throw new Error('协同身份已变化，旧保存已停止')
-      await rename(temp, path.join(directory, recordName))
-    } finally { await rm(temp, { force: true }) }
+    await writeLocalRecords(writes)
   }
 }

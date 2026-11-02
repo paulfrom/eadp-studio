@@ -2,18 +2,22 @@ import path from 'node:path'
 import { homedir } from 'node:os'
 import { lstat, mkdir, open, realpath, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { AtomicState } from '../adapters/local-state/atomic-state.ts'
+import { localDatabasePath, readLocalRecord, writeLocalRecords } from '../adapters/local-state/sqlite-state.ts'
 
 const contains = (parent: string, child: string): boolean => { const relative = path.relative(parent, child); return !relative || relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }
 
 /** User-selected project folders are independent of application state and installed tools. */
 export class WorkspaceLocation {
-  private readonly settings: AtomicState<{ defaultDirectory: string }>
+  private readonly database: string
   constructor(readonly applicationDirectory: string, private readonly protectedDirectories: string[], private readonly initialDirectory = path.join(homedir(), 'EADP')) {
-    this.settings = new AtomicState(path.join(applicationDirectory, 'workspace-location.json'))
+    this.database = localDatabasePath(applicationDirectory)
   }
   async view(): Promise<{ defaultDirectory: string; applicationDirectory: string }> {
-    const value = await this.settings.read()
+    const value = await readLocalRecord<{ defaultDirectory: string }>(this.database, 'workspace-location')
+    if (!value) {
+      const legacy = await lstat(path.join(this.applicationDirectory, 'workspace-location.json')).then(() => true, error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error })
+      if (legacy) throw new Error('检测到尚未导入的默认项目位置设置，请关闭桌面并先执行本地状态离线导入。')
+    }
     if (value && (typeof value.defaultDirectory !== 'string' || !path.isAbsolute(value.defaultDirectory))) throw new Error('默认项目位置记录无效，请检查本机设置。')
     return { defaultDirectory: value?.defaultDirectory ?? this.initialDirectory, applicationDirectory: this.applicationDirectory }
   }
@@ -41,13 +45,14 @@ export class WorkspaceLocation {
     }
   }
   async set(directory: string): Promise<void> {
+    await this.view()
     const target = await this.validate(directory)
     await mkdir(target, { recursive: true })
     if (!(await lstat(target)).isDirectory()) throw new Error('请选择文件夹。')
     const probe = path.join(target, `.eadp-write-${randomUUID()}`)
     const file = await open(probe, 'wx', 0o600)
     try { await file.close() } finally { await rm(probe, { force: true }) }
-    await this.settings.write({ defaultDirectory: target })
+    await writeLocalRecords([{ database: this.database, key: 'workspace-location', value: { defaultDirectory: target } }])
   }
   async project(projectId: string, repositoryPath: string, selected?: string): Promise<string> {
     const slug = repositoryPath.split('/').at(-1)!.replace(/\.git$/, '').replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40) || 'project'

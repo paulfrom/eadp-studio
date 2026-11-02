@@ -75,6 +75,10 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   // fan-in to one Host round trip.
   let syncing: Promise<void> | undefined
   let summaryRead = 0
+  // A navigation reply already opened this native session. Consume it once on
+  // mounting the conversation instead of reopening it and reading all state again.
+  let openedSession: Extract<StudioReply, { ok: true }> | undefined
+  const opensSession = new Set(['startSession', 'newScenarioSession', 'selectScenarioSession', 'newRequirementSession', 'selectRequirementSession'])
 
   const applyRead = (token: number, reply: StudioReply): void => {
     if (token !== newest) return
@@ -84,6 +88,7 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   }
 
   const sync = (): void => {
+    openedSession = undefined
     if (syncing !== undefined) return
     const token = ++newest
     actions.start()
@@ -95,11 +100,19 @@ export function createStudioSession(call: (command: StudioCommand) => Promise<St
   // A command reply that is a full projection supersedes a read still
   // outstanding, which is why the token moves and the read slot is released.
   const execute = async (command: StudioCommand, settle: boolean): Promise<StudioReply> => {
+    if (command.action === 'restoreSession' && openedSession?.sessionId === command.sessionId) {
+      const reply = openedSession
+      openedSession = undefined
+      return reply
+    }
+    openedSession = undefined
     const query = command.action === 'readRequirementSource' || command.action === 'listConsistencyComparisons' || command.action === 'listConsistencySummaries'
     const summaryToken = command.action === 'listConsistencySummaries' ? ++summaryRead : undefined
     if (!query) { newest += 1; syncing = undefined }
+    const navigationToken = newest
     try {
       const reply = await call(command)
+      if (navigationToken === newest && reply.ok && reply.sessionId && opensSession.has(command.action)) openedSession = reply
       if (settle && reply.ok) {
         if (!query) actions.settle(preserveComparisons(reply.state, instance.getSnapshot().projection))
         else if (command.action === 'listConsistencySummaries' && summaryToken === summaryRead) {

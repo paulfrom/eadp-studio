@@ -61,7 +61,7 @@ export class PrototypeIntegrations {
     if (this.account !== account || !this.storage) {
       this.account = account
       this.record = undefined
-      this.storage = new ProjectRecord<RecordFile>(this.store, 'prototype-integrations.json', () => ({ operations: [], taskEnds: [] }), (value, id) => ({ operations: value.operations.filter(x => x.projectId === id), taskEnds: value.taskEnds.filter(x => x.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations), taskEnds: values.flatMap(x => x.taskEnds) }))
+      this.storage = new ProjectRecord<RecordFile>(this.store, 'prototype-integrations', () => ({ operations: [], taskEnds: [] }), (value, id) => ({ operations: value.operations.filter(x => x.projectId === id), taskEnds: value.taskEnds.filter(x => x.projectId === id) }), values => ({ operations: values.flatMap(x => x.operations), taskEnds: values.flatMap(x => x.taskEnds) }))
     }
     const storage = this.storage!
     const promise = (async () => {

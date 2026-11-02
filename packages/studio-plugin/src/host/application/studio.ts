@@ -186,7 +186,7 @@ export class StudioApplication {
    * (worktree, dependency install, checks, agent resume) cannot hold the state the
    * workbench and the settings surface render; every other action keeps the single
    * local-writer queue. A projection reads the local store while a writer is mid-save,
-   * which the store's atomic file replacement already tolerates.
+   * which the store's committed SQLite snapshots already tolerate.
    */
   command(command: StudioCommand): Promise<StudioReply> {
     if (command.action === 'state') return this.project()
@@ -550,13 +550,13 @@ export class StudioApplication {
     const { entity, remote } = await this.entity(command.entityId)
     if (entity.kind !== 'requirement') throw new Error('此操作只适用于需求材料')
     switch (command.action) {
-      case 'openRequirement': await this.scenarios.open(entity.id); break
+      case 'openRequirement': await this.scenarios.open(entity.id, { remote, entity }); break
       case 'saveRequirement':
         await this.scenarios.save(command); break
       case 'resolveRequirementWriteProposal': await this.scenarios.resolveWriteProposal(command); break
       case 'undoRequirementWrite': await this.scenarios.undoWrite(command); break
-      case 'newRequirementSession': return this.scenarios.newSession(entity.id)
-      case 'selectRequirementSession': return this.scenarios.selectSession(entity.id, command.sessionId)
+      case 'newRequirementSession': return this.scenarios.newSession(entity.id, { remote, entity })
+      case 'selectRequirementSession': return this.scenarios.selectSession(entity.id, command.sessionId, { remote, entity })
       case 'startRequirementRevision': {
         if (!entity.current || entity.revision !== command.expectedRevision) throw new Error('需求版本已变化，请刷新后重新开始修订')
         const task = await this.designTask(remote, entity)
@@ -664,7 +664,6 @@ export class StudioApplication {
     if (scenario) { await this.repairs.checkConcurrent(scenario.entityId); const repair = await this.repairs.view(scenario.entityId); if (repair) scenario.repair = repair }
     const materialSources = remote ? await this.scenarios.sources.views(remote, drafts) : []
     const templatePreview = local.templateOperations.findLast(op => op.projectId === selected?.id && op.phase !== 'accepted')?.preview
-    const recovery = this.store.preservedRecord
     // One confirmation owns its integration notice. Emitting the child as a
     // second pending row duplicated the key and hid the child's real failure.
     const claimed = new Set(local.scenarios.filter(record => record.projectId === selected?.id)
@@ -677,7 +676,7 @@ export class StudioApplication {
     const prototypeMaterialReads = await this.prototypeMaterials.reads(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeCandidates = await this.prototypeCandidates.latest(prototypeQueue.items.map(item => item.prototypeTaskId))
     const prototypeAdoptions = selected && remote?.project.initializationStatus === 'ready' ? await this.api.request<PrototypeAdoptionView[]>('GET', this.route(selected.id, '/prototype/adoptions')) : undefined
-    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), ...(recovery ? { recovery } : {}), connected: true, workspace: workspaceLocation, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeMaterialReads, prototypeCandidates, ...(prototypeCheckReports ? { prototypeCheckReports } : {}), prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values(), ...this.prototypeBaselinePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}), ...(prototypeAdoptions ? { prototypeAdoptions } : {}),
+    const state: StudioState = { ...(scenario ? { scenario } : {}), ...(requirement ? { requirement } : {}), ...(materialSources.length ? { materialSources } : {}), ...(templatePreview ? { templatePreview } : {}), connected: true, workspace: workspaceLocation, account, projects, availableProjects, namespaces: this.namespaces, prototypeQueue, prototypeMaterialReads, prototypeCandidates, ...(prototypeCheckReports ? { prototypeCheckReports } : {}), prototypeInstructionDrafts: await this.prototypeCollaboration.drafts(), prototypePreviews: [...this.prototypePreviews.values(), ...this.prototypeBaselinePreviews.values()], ...(prototypeBaselines ? { prototypeBaselines } : {}), ...(prototypeAdoptions ? { prototypeAdoptions } : {}),
       projectInitializations: local.projectInitializations
         // Unfinished local work is reported only while the backend still offers its project; a
         // record the account can no longer read cannot be finished, so it stops being a task
@@ -688,14 +687,18 @@ export class StudioApplication {
       candidates: local.candidates.filter(candidate => candidate.projectId === selected?.id), ...(this.previewState ? { preview: this.previewState } : {}),
       consistencyTasks: await this.comparisons.views(selected?.id), consistencyLatest: this.comparisons.latestViews(selected?.id),
       pending: [
-        ...[...local.operations.filter(op => !claimed.has(op.id)), ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id && op.phase !== 'superseded').map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
+        ...[...local.operations.filter(op => !claimed.has(op.id)), ...local.adoptions.filter(op => op.phase !== 'succeeded')].filter(op => op.projectId === selected?.id && op.phase !== 'superseded').map(op => ({ id: op.id, entityId: op.entityId, phase: op.phase === 'accepted' && 'deliveryMessage' in op && op.deliveryMessage ? 'delivery-recovery' : op.phase === 'accepted' && local.adoptions.some(adoption => adoption === op) ? 'processing' : op.phase, ...('deliveryMessage' in op && op.deliveryMessage ? { message: op.deliveryMessage } : op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.repairAuthorization?.status === 'pending').map(record => ({ id: record.repairAuthorization!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.repairAuthorization!.message ?? '修复授权结果待核对' })),
         ...local.scenarioRepairs.filter(record => record.projectId === selected?.id && (record.pending || record.recoverPending)).map(record => ({ id: (record.pending ?? record.recoverPending)!.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.message ?? '修复轮次结果待核对' })),
         ...local.templateOperations.filter(op => op.projectId === selected?.id && op.phase === 'unknown').map(op => ({ id: op.preview.operationId, entityId: 'templates', phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
         ...local.scenarios.filter(record => record.projectId === selected?.id && record.templateBinding?.status === 'pending').map(record => ({ id: record.templateBinding!.application?.operationId ?? record.templateBinding!.request.idempotencyKey, entityId: record.entityId, phase: 'unknown', message: record.templateBinding!.message ?? '模板绑定结果待核对' })),
         ...local.scenarios.filter(record => record.projectId === selected?.id).flatMap(record => {
           const save = this.scenarios.requirementSaves.view(record), confirmation = this.confirmations.view(record, local.operations)
-          return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? confirmation!.phase, message: save?.message ?? confirmation!.message }] : []
+          const completed = record.materialConfirmations?.at(-1)
+          if (!save && !confirmation && completed?.phase === 'accepted') return [{ id: completed.operationId, entityId: record.entityId, phase: 'accepted', message: '材料确认已完成，协同服务已接受确认结果。' }]
+          const child = completed?.integrationId ? local.operations.find(operation => operation.id === completed.integrationId && operation.projectId === record.projectId) : undefined
+          const confirmationPhase = child && (child.phase === 'unknown' || child.phase === 'rejected') ? child.phase : confirmation?.phase
+          return save || confirmation ? [{ id: save?.operationId ?? confirmation!.operationId, entityId: record.entityId, phase: save?.phase ?? confirmationPhase!, message: save?.message ?? confirmation!.message }] : []
         }),
         ...local.materialReservations.filter(op => op.projectId === selected?.id && op.phase !== 'materialized').map(op => ({ id: op.id, entityId: op.entityId ?? op.id, phase: op.phase, ...(op.message ? { message: op.message } : {}) })),
       ] }
