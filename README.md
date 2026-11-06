@@ -10,6 +10,10 @@
 - `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。
 - `apps/desktop-distribution/`：固定 DSH 版本、装配 Studio 插件和模板、生成 Windows 未签名安装包。
 
+## 本地需求与原型改造方案
+
+目标方案见 [分包改造文档](docs/refactoring/local-requirements/README.md)：按项目管理需求 Markdown，仅保留需求编辑与原型文件/运行，新增内置只读知识卡与用户本机知识库（用户可维护、AI 可提议、用户确认写入）。该方案尚未实施，下文“当前实现”仍描述现有代码。
+
 ## 文件位置
 
 | 路径 | 内容 |
