@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { diffLines } from 'diff'
+import { diffWithCap, isValidSummary, ReadTracker } from '@eadp/contracts'
 import type { KnowledgeDraft, KnowledgeProposal } from '@eadp/contracts/knowledge'
 import { KnowledgeStore, fail, validateDraft } from './store.ts'
 const string = {
@@ -23,7 +23,7 @@ const issue = {
 /** 在 Host 生命周期内保存 Agent 身份、读取版本和待审提案。 */
 export class KnowledgeProposals {
   private proposals = new Map<string, KnowledgeProposal>()
-  private reads = new WeakMap<Agent, Map<string, string>>()
+  private readonly reads = new ReadTracker<string>()
   private installed = new WeakSet<Agent>()
   constructor(private ctx: Context, private store: KnowledgeStore) {
   }
@@ -61,34 +61,20 @@ export class KnowledgeProposals {
   private async propose(agent: Agent, action: string, documentId: string | undefined, baseVersion: string | undefined, draft: KnowledgeDraft, summary: string, signal: AbortSignal) {
     signal.throwIfAborted()
     validateDraft(draft)
-    if (typeof summary !== 'string' || !summary.trim() || summary.length > 2000)
+    if (!isValidSummary(summary))
       fail('INVALID_ARGUMENT', '摘要不能为空且最多 2000 字。')
     const loaded = await this.store.load('user')
     let baseText = ''
     if (action === 'update') {
       if (!documentId || !loaded.texts.has(documentId))
         fail('NOT_FOUND', '必须修改已有用户卡。')
-      if (this.reads.get(agent)?.get(documentId!) !== baseVersion || baseVersion !== loaded.manifest.version)
+      if (this.reads.get(agent, documentId!) !== baseVersion || baseVersion !== loaded.manifest.version)
         fail('VERSION_MISMATCH', '请先读取当前用户卡，再提出修改。')
       baseText = loaded.texts.get(documentId!)!
     }
     else if (action !== 'create' || documentId !== undefined || baseVersion !== undefined)
       fail('INVALID_ARGUMENT', '新增提案不能指定 id 或 baseVersion。')
-    const changes = diffLines(baseText, draft.text, {
-      timeout: 200, maxEditLength: 4000
-    }), diff: KnowledgeProposal['diff'] = []
-    let diffTruncated = changes === undefined
-    outer: if (changes)
-      for (const change of changes)
-        for (const line of change.value.replace(/\n$/, '').split('\n')) {
-          if (diff.length >= 2000) {
-            diffTruncated = true
-            break outer
-          }
-          diff.push({
-            kind: change.added ? 'added' : change.removed ? 'removed' : 'context', text: line
-          })
-        }
+    const { diff, truncated: diffTruncated } = diffWithCap(baseText, draft.text)
     const p: KnowledgeProposal = {
       proposalId: randomUUID(), action: action as 'create' | 'update', target: 'user', documentId: documentId ?? randomUUID(), baseVersion: loaded.manifest.version, draft: {
         ...draft, tags: [...draft.tags]
@@ -192,14 +178,7 @@ export class KnowledgeProposals {
         identity(exec.agent, exec.signal)
         const result = await this.store.read(args.packId, args.documentId, args.expectedPackVersion ?? null, args.offset ?? 0, args.length ?? 8000)
         exec.signal.throwIfAborted()
-        if (args.packId === 'user') {
-          let reads = this.reads.get(agent)
-          if (!reads) {
-            reads = new Map()
-            this.reads.set(agent, reads)
-          }
-          reads.set(args.documentId, result.reference.packVersion)
-        }
+        if (args.packId === 'user') this.reads.set(agent, args.documentId, result.reference.packVersion)
         return result
       },
     })))

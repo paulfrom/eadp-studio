@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { FsError, type FsTarget } from '@deepseek-ai/dsh-fs'
+import { checkPathNames } from '@eadp/contracts'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { ActiveDocuments } from './active-document.ts'
@@ -75,9 +76,8 @@ export class SessionPolicies {
         if (!inside(relative) || relative.split(path.sep).some(sensitive)) return '文件路径超出项目，或指向敏感文件。'
       } else {
         if (realpathSync.native(this.ctx.workingDirectory.get(agent.session)) !== root) return '会话当前工作目录已变化，请先通过原生目录操作恢复项目根目录。'
-        const parts = raw.replaceAll('\\', '/').split('/')
-        if (path.win32.isAbsolute(raw) || path.posix.isAbsolute(raw) || parts[0] !== '原型' || parts.length < 2
-          || parts.some(name => !name || name === '.' || name === '..' || /[<>:"|?*\x00-\x1f]/u.test(name) || /[ .]$/u.test(name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(name))) return '写入路径必须是原型/下明确的相对文件路径。'
+        const checked = checkPathNames(raw.replaceAll('\\', '/'))
+        if (!checked.ok || path.win32.isAbsolute(raw) || path.posix.isAbsolute(raw) || checked.names.length < 2 || checked.names[0] !== '原型') return '写入路径必须是原型/下明确的相对文件路径。'
         if (!prototypeTarget(root, resolveFuture(path.resolve(root, raw)))) return '只能修改原型源文件，不能写需求、背景、依赖、敏感文件或保护目录。'
       }
     } catch { return '文件路径不可访问，或其真实目录已变化。' }

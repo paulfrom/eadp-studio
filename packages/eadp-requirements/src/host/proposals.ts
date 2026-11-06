@@ -4,9 +4,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { FsError } from '@deepseek-ai/dsh-fs'
-import { diffLines } from 'diff'
+import { diffWithCap, isValidSummary, ReadTracker } from '@eadp/contracts'
 import type { RequirementDocument } from '@eadp/contracts/files'
-import type { RequirementProposal, ProposalDiffLine } from '@eadp/contracts/requirements'
+import type { RequirementProposal } from '@eadp/contracts/requirements'
 import { RequirementFiles } from './files.ts'
 
 const nullableVersion = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
@@ -14,7 +14,7 @@ const nullableVersion = { oneOf: [{ type: 'string' }, { type: 'null' }] } as con
 /** Keeps AI candidates in Host memory; only trusted UI application mutates files. */
 export class RequirementProposals {
   private readonly proposals = new Map<string, RequirementProposal>()
-  private readonly reads = new WeakMap<Agent, Map<string, string | null>>()
+  private readonly reads = new ReadTracker<string>()
   private readonly installed = new WeakSet<Agent>()
   constructor(private readonly ctx: Context, private readonly files: RequirementFiles) {}
 
@@ -56,9 +56,7 @@ export class RequirementProposals {
     if (relativePath === 'CONTEXT.md' && await this.files.statVersion(projectId, relativePath) === null) document = { relativePath, text: '', version: null }
     else document = await this.files.read(projectId, relativePath, relativePath === 'CONTEXT.md')
     signal.throwIfAborted()
-    let reads = this.reads.get(agent)
-    if (!reads) { reads = new Map(); this.reads.set(agent, reads) }
-    reads.set(projectId + '/' + relativePath, document.version)
+    this.reads.set(agent, projectId + '/' + relativePath, document.version)
     const characters = Array.from(document.text)
     const end = Math.min(start + size, characters.length)
     return { ...document, text: characters.slice(start, end).join(''), offset: start, truncated: end < characters.length, nextOffset: end < characters.length ? end : null }
@@ -68,27 +66,16 @@ export class RequirementProposals {
     signal.throwIfAborted()
     const projectId = await this.project(agent)
     const key = projectId + '/' + relativePath
-    const reads = this.reads.get(agent)
-    if (!reads?.has(key) || reads.get(key) !== baseVersion) throw new FsError('必须先读取目标及当前版本，再生成提案。', 'FS_NOT_OBSERVED')
+    if (this.reads.get(agent, key) !== baseVersion) throw new FsError('必须先读取目标及当前版本，再生成提案。', 'FS_NOT_OBSERVED')
     if (text.length > 1_000_000 || Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024 || text.includes('\0')) throw new FsError('提案正文过大或不是有效文本。', 'FS_TOO_LARGE')
-    if (!summary.trim() || summary.length > 2000) throw new FsError('提案摘要不能为空且不能超过 2000 字符。', 'FS_NOT_TEXT')
+    if (!isValidSummary(summary)) throw new FsError('提案摘要不能为空且不能超过 2000 字符。', 'FS_NOT_TEXT')
     const current = relativePath === 'CONTEXT.md' && await this.files.statVersion(projectId, relativePath) === null
       ? { relativePath, text: '', version: null }
       : await this.files.read(projectId, relativePath, relativePath === 'CONTEXT.md')
     signal.throwIfAborted()
     if (current.version !== baseVersion) throw new FsError('文件已变化，请重新生成提案。', 'FS_STALE_VERSION')
     if (current.text === text) throw new FsError('提案与当前正文相同。', 'FS_NOT_TEXT')
-    const changes = diffLines(current.text, text, { timeout: 200, maxEditLength: 4000 })
-    const diff: ProposalDiffLine[] = []
-    let diffTruncated = changes === undefined
-    outer: if (changes) for (const change of changes) {
-      const lines = change.value.split('\n')
-      if (lines.at(-1) === '') lines.pop()
-      for (const line of lines) {
-        if (diff.length === 2000) { diffTruncated = true; break outer }
-        diff.push({ kind: change.added ? 'added' : change.removed ? 'removed' : 'context', text: line })
-      }
-    }
+    const { diff, truncated: diffTruncated } = diffWithCap(current.text, text)
     const proposal: RequirementProposal = { proposalId: randomUUID(), projectId, relativePath, baseVersion, text, baseText: current.text, summary, diff, diffTruncated, target: relativePath === 'CONTEXT.md' ? 'context' : 'requirement', createdAt: new Date().toISOString(), sessionId: agent.session.id }
     signal.throwIfAborted()
     this.proposals.set(proposal.proposalId, proposal)

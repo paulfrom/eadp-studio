@@ -4,6 +4,7 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { PrototypeContent, PrototypeErrorCode, PrototypeFileList, PrototypeRunLog, PrototypeRunState } from '@eadp/contracts/prototype'
+import { failureMessage, mapFailureCode } from '@eadp/contracts'
 import { PrototypeBoundary } from './boundary.ts'
 import { PrototypeFiles } from './files.ts'
 import { PrototypeSupervisor } from './supervisor.ts'
@@ -63,14 +64,13 @@ export class PrototypeService extends TypertRemoteService {
     try { return await operation() } catch (error) {
       const remote = remoteErrorOf(error)
       if (remote) throw remote
-      const failure = error as { code?: string; message?: string }
       const codes: Record<string, PrototypeErrorCode> = {
         PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND', ENOENT: 'NOT_FOUND', FS_NOT_FOUND: 'NOT_FOUND', FS_SANDBOX_DENIED: 'OUTSIDE_PROJECT',
         FS_PERMISSION_DENIED: 'PERMISSION_DENIED', EACCES: 'PERMISSION_DENIED', EPERM: 'PERMISSION_DENIED',
         EEXIST: 'EXISTS', FS_NOT_DIRECTORY: 'INVALID_PATH', FS_NOT_REGULAR_FILE: 'INVALID_PATH',
         FS_TOO_LARGE: 'TOO_LARGE', FS_NOT_TEXT: 'NOT_TEXT', FS_STALE_VERSION: 'STALE_VERSION',
       }
-      throw new RemoteError('eadp/prototype', failure.message ?? '原型操作失败。', { code: codes[failure.code ?? ''] ?? 'IO_ERROR' })
+      throw new RemoteError('eadp/prototype', failureMessage(error, '原型操作失败。'), { code: mapFailureCode(error, codes, 'IO_ERROR') })
     }
   }
 }

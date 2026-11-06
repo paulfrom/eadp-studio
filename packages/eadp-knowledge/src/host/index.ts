@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { KnowledgeCatalog, KnowledgeDraft, KnowledgePackId, KnowledgeProposal, KnowledgeRead, KnowledgeSearchResult } from '@eadp/contracts/knowledge'
+import { failureMessage, isRemoteCancellation } from '@eadp/contracts'
 import { KnowledgeStore, KnowledgeError } from './store.ts'
 import { KnowledgeProposals } from './proposals.ts'
 export const name = 'eadp-knowledge'
@@ -31,9 +32,9 @@ export class KnowledgeService extends TypertRemoteService {
       return await fn()
     }
     catch (error) {
-      if ((error as Error).name === 'AbortError')
+      if (isRemoteCancellation(error))
         throw new RemoteError('gateway/cancelled', '知识操作已取消。', {})
-      throw new RemoteError('eadp/knowledge', (error as Error).message, {
+      throw new RemoteError('eadp/knowledge', failureMessage(error, '知识操作失败。'), {
         code: error instanceof KnowledgeError ? error.code : 'UNAVAILABLE'
       })
     }

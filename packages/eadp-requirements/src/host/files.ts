@@ -6,23 +6,26 @@ import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsTarget, FsVersion } from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { RequirementDocument, RequirementEntry } from '@eadp/contracts/files'
+import { checkPathNames, MutationQueue } from '@eadp/contracts'
 
 class FileBoundaryError extends Error {
   constructor(message: string, readonly code: 'INVALID_PATH' | 'PROJECT_NOT_FOUND') { super(message) }
 }
 
 const MAX_BYTES = 2 * 1024 * 1024
-const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu
 const SENSITIVE = /^(?:\.env(?:\..*)?|\.git|node_modules|dist|\.umi.*)$|\.(?:pem|key|pfx|p12)$/iu
 
 /** Reject ambiguous names before resolving them against the Workspace. */
 function parts(relativePath: string): string[] {
-  if (typeof relativePath !== 'string' || relativePath.length > 1024 || relativePath.includes('\\')) throw new FileBoundaryError('文件路径无效。', 'INVALID_PATH')
-  const value = relativePath.split('/')
-  if (value.some(name => !name || name === '.' || name === '..' || name.length > 120 || name.startsWith('.') || /[<>:"|?*\x00-\x1f]/u.test(name) || /[ .]$/u.test(name) || RESERVED.test(name) || SENSITIVE.test(name))) {
+  const checked = checkPathNames(relativePath, { maxPathLength: 1024, maxNameLength: 120 })
+  if (!checked.ok) {
+    const shape = checked.reason === 'invalid-path' || checked.reason === 'backslash'
+    throw new FileBoundaryError(shape ? '文件路径无效。' : '文件名包含保留名称、敏感路径或非法字符。', 'INVALID_PATH')
+  }
+  if (checked.names.some(name => name.startsWith('.') || SENSITIVE.test(name))) {
     throw new FileBoundaryError('文件名包含保留名称、敏感路径或非法字符。', 'INVALID_PATH')
   }
-  return value
+  return checked.names
 }
 function requirementPath(relativePath: string, directory: boolean): void {
   const value = parts(relativePath)
@@ -35,15 +38,12 @@ function textLimit(text: string): void {
 
 /** File authority comes from a freshly resolved native Workspace for each operation. */
 export class RequirementFiles {
-  private readonly writes = new Map<string, Promise<unknown>>()
+  private readonly writes = new MutationQueue()
   constructor(private readonly ctx: Context) {}
 
   /** Serializes this module's mutations; external processes still require version checks. */
-  async mutate<T>(projectId: string, action: () => Promise<T>): Promise<T> {
-    const previous = this.writes.get(projectId) ?? Promise.resolve()
-    const operation = previous.catch(() => undefined).then(action)
-    this.writes.set(projectId, operation)
-    try { return await operation } finally { if (this.writes.get(projectId) === operation) this.writes.delete(projectId) }
+  mutate<T>(projectId: string, action: () => Promise<T>): Promise<T> {
+    return this.writes.run(projectId, action)
   }
 
   async root(projectId: string): Promise<string> {

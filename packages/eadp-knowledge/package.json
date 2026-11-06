@@ -51,8 +51,7 @@
     "resources/builtin"
   ],
   "dependencies": {
-    "@eadp/contracts": "workspace:*",
-    "diff": "9.0.0"
+    "@eadp/contracts": "workspace:*"
   },
   "devDependencies": {
     "react": "^18.2.0",

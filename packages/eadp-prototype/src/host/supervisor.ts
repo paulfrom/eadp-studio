@@ -5,6 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import type { PrototypeRunLog, PrototypeRunState } from '@eadp/contracts/prototype'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import { MutationQueue } from '@eadp/contracts'
 import { PrototypeFiles } from './files.ts'
 import { PrototypeRuntime } from './runtime.ts'
 
@@ -51,17 +52,14 @@ function pause(signal: AbortSignal): Promise<void> {
 /** Owns handles, serializes user mutations, and keeps independent installation/run outcomes. */
 export class PrototypeSupervisor {
   private readonly runs = new Map<string, OwnedRun>()
-  private readonly queues = new Map<string, Promise<unknown>>()
+  private readonly queues = new MutationQueue()
   private runtimePromise?: Promise<PrototypeRuntime>
   private disposed = false
   constructor(private readonly ctx: Context, private readonly files: PrototypeFiles) {}
 
   async serial<T>(projectId: string, action: () => Promise<T>): Promise<T> {
     if (this.disposed) throw new Error('原型运行服务已关闭。')
-    const previous = this.queues.get(projectId) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(action)
-    this.queues.set(projectId, current)
-    try { return await current } finally { if (this.queues.get(projectId) === current) this.queues.delete(projectId) }
+    return this.queues.run(projectId, action)
   }
   private runtime(): Promise<PrototypeRuntime> {
     if (!this.runtimePromise) this.runtimePromise = PrototypeRuntime.load(this.ctx).catch(error => { delete this.runtimePromise; throw error })
@@ -234,7 +232,7 @@ export class PrototypeSupervisor {
   async dispose(): Promise<void> {
     this.disposed = true
     for (const record of this.runs.values()) { record.abort?.abort(); if (record.handle) record.state.status = 'stopping' }
-    await Promise.allSettled([...this.queues.values()])
+    await this.queues.settled()
     if (this.runtimePromise) await (await this.runtimePromise).dispose()
   }
 }

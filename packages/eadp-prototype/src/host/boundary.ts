@@ -4,17 +4,21 @@ import type { Context } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
+import { checkPathNames } from '@eadp/contracts'
 
-const RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu
 const HIDDEN = /^(?:node_modules|\.git|\.umi.*|dist|build|coverage|logs|cache|\.logs|\.eslintcache|\.stylelintcache|\.parcel-cache|\.DS_Store|\.cache|\.next|\.turbo|\.pnpm-store|\.env.*|\.npmrc|\.yarnrc.*)$|\.(?:pem|key|pfx|p12|log|tsbuildinfo)$/iu
 
 /** Shared validation for the read-only browser and trusted local execution directory. */
 export function prototypeParts(value: string, allowEmpty = false, trustedTemplate = false): string[] {
-  if (typeof value !== 'string' || value.length > 2048 || value.includes('\\')) throw new FsError('原型路径无效。', 'FS_SANDBOX_DENIED')
-  if (allowEmpty && value === '') return []
-  const names = value.split('/')
-  if (names.some(name => !name || name === '.' || name === '..' || name.length > 255 || /[<>:"|?*\x00-\x1f]/u.test(name) || /[ .]$/u.test(name) || RESERVED.test(name) || (HIDDEN.test(name) && !(trustedTemplate && (name === '.env.example' || name === '.npmrc'))))) throw new FsError('原型路径包含敏感或非法名称。', 'FS_SANDBOX_DENIED')
-  return names
+  const checked = checkPathNames(value, { maxPathLength: 2048, maxNameLength: 255, allowEmpty })
+  if (!checked.ok) {
+    const shape = checked.reason === 'invalid-path' || checked.reason === 'backslash'
+    throw new FsError(shape ? '原型路径无效。' : '原型路径包含敏感或非法名称。', 'FS_SANDBOX_DENIED')
+  }
+  if (checked.names.some(name => HIDDEN.test(name) && !(trustedTemplate && (name === '.env.example' || name === '.npmrc')))) {
+    throw new FsError('原型路径包含敏感或非法名称。', 'FS_SANDBOX_DENIED')
+  }
+  return checked.names
 }
 
 /** Every operation re-resolves the registered native Workspace and rejects all linked components. */
