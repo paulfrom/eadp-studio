@@ -19,5 +19,12 @@ export class RequirementsClientService extends Service implements EadpRequiremen
     if (this.hasUnsaved()) return { ok: false, message: '等待保存期间输入或文件状态已变化，请处理后重试。' }
     return { ok: true }
   }
-  hasUnsaved(): boolean { return [...this.buffers.values()].some(buffer => { const value = buffer.getSnapshot(); return value.dirty || value.saving || value.composing || value.external !== undefined }) }
+  hasUnsavedExcept(excluded: DraftBuffer): boolean {
+    return [...this.buffers.values()].some(buffer => buffer !== excluded && this.unsaved(buffer))
+  }
+  private unsaved(buffer: DraftBuffer): boolean {
+    const value = buffer.getSnapshot()
+    return value.dirty || value.saving || value.applying || value.composing || value.external !== undefined
+  }
+  hasUnsaved(): boolean { return [...this.buffers.values()].some(buffer => this.unsaved(buffer)) }
 }

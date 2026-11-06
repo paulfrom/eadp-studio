@@ -21,3 +21,12 @@
 .conflict pre { white-space:pre-wrap; max-height:240px; overflow:auto; }
 .form { display:flex; gap:8px; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--border); }
 .empty { padding:24px; }
+
+.proposals { border-top:1px solid var(--border); max-height:45%; overflow:auto; padding:0 16px 16px; }
+.proposal { border-bottom:1px solid var(--border); padding:16px 0; }
+.proposal .actions { margin:12px 0 0; }
+.version { opacity:.65; font-size:12px; overflow-wrap:anywhere; }
+.diff { font:12px/1.7 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; padding:12px; background:var(--muted); }
+.diff span { display:block; }
+.added { background:color-mix(in srgb, #298755 16%, transparent); }
+.removed { background:color-mix(in srgb, #bd4444 16%, transparent); }

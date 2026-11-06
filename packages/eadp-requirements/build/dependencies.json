@@ -5,5 +5,7 @@
   "@deepseek-ai/dsh-client-locale",
   "@deepseek-ai/dsh-fs",
   "@deepseek-ai/dsh-workspace",
-  "@deepseek-ai/dsh-typert-protocol"
+  "@deepseek-ai/dsh-typert-protocol",
+  "@deepseek-ai/dsh-agent",
+  "@deepseek-ai/dsh-tools"
 ]

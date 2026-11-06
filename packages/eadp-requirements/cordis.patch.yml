@@ -1,6 +1,7 @@
-# Host services: typert, workspaceRegistry, fs.
+# Host services: typert, workspaceRegistry, fs, agents, tools.
 # Client services: slots, locale, remote.
 # Child slot: eadp.requirements.view (single, root), declared by eadp-shell.
 - insert:
     - id: eadp-requirements
       name: '@eadp/requirements'
+      inject: [typert, workspaceRegistry, fs, agents, tools]

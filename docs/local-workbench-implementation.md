@@ -14,7 +14,7 @@
 
 主 Agent 静态门禁：Host / Client 编译通过；五包各自 Host / Client `tsc --noEmit` 通过；共享契约和四个插件构建通过，声明入口存在、客户端无未打包的产品包 import。命令为 `node apps/desktop-distribution/build/prepare-workbench.mjs --stage-only` 后调用其 `buildWorkbench()`；完整可复用入口为 `pnpm build:plugins`。本机详细日志 `.local/build/workbench-stage1-build.log`，可重建，不作为运行时证据。根 `pnpm check` 结果随阶段提交记录。
 
-仍未实现/验证：桌面退出前异步保存协调、禁止宿主自动创建默认 Workspace（均 blocked-upstream）；本阶段全部桌面行为；后续需求编辑/提案、原型、知识库与最终发行。阶段 3–7 尚未完成。
+仍未实现/验证：桌面退出前异步保存协调、禁止宿主自动创建默认 Workspace（均 blocked-upstream）；本阶段全部桌面行为；后续需求编辑/提案、原型、知识库与最终发行。阶段 4–7 尚未完成。
 
 
 ## 阶段 2
@@ -26,3 +26,12 @@ Client 使用抽象后的正文 DraftBuffer，串行防抖保存、IME 状态、
 主 Agent 执行 `pnpm build:plugins` 通过：Host→官方 Typert→Client、五包各 face `tsc --noEmit` 和全部插件构建；日志 `.local/build/workbench-stage2-build.log`。根检查与提交门禁也由主 Agent 执行。以上仅为静态结果。
 
 旧链路调用方核查：RequirementSaves 同时被 ScenarioWorkspaces、Studio 调度、材料确认保存使用；metadata/source/candidate UI 跨旧场景与需求复用。新包没有引入这些调用链；旧包源码及其共用调用方仍保留，等待阶段 6 整体退役，不能说已物理删除。删除范围的这一项仍未关闭，最终验收须核对整包及调用方移除。
+
+
+## 阶段 3
+
+2026-11-06：新增需求 list/read/propose 三项 Agent-scoped 工具。工具从真实会话解析 Workspace，记忆该 Agent 读到的文件版本；读取按 Unicode 字符分页（默认 12000，最大 24000）。提案只存 Host 内存，包含单文件候选与有界行级差异，取消不创建提案。所有工具显式声明 output.schema/render、对象 additionalProperties 与属性 required:true。
+
+用户在提案面板审阅并应用/丢弃。应用暂停自动保存、等待在途请求、重核 IME/草稿 revision/项目 epoch；Host 再核对用户期望、提案基准与当前磁盘版本后执行条件写入。失败保留提案与输入；应用期间新输入仍保留为草稿。CONTEXT 缺失时使用 createIfAbsent。需求角色的原生 write/edit 仍禁用，guard 仅放行受控提案工具。
+
+主 Agent 执行 `pnpm build:plugins`、各包/face `tsc --noEmit`、全部插件构建、根 `pnpm check` 与提交检查；静态构建日志 `.local/build/workbench-stage3-build.log`。没有运行任何模型或桌面提案样本。旧聊天代码块、章节确认与 prompt-admission 源码仍在未装配的旧包中，阶段 6 统一删除并按引用复核。

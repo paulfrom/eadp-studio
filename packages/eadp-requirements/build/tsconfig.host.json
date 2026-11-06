@@ -23,6 +23,12 @@
     },
     {
       "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/tools"
     }
   ]
 }

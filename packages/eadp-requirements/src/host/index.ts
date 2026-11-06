@@ -3,17 +3,26 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { FileErrorCode, RequirementDocument, RequirementEntry, ContextDocument } from '@eadp/contracts/files'
+import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-tools'
+import type { RequirementProposal } from '@eadp/contracts/requirements'
+import { RequirementProposals } from './proposals.ts'
 import { RequirementFiles } from './files.ts'
 
 export const name = 'eadp-requirements'
-export const inject = ['typert', 'workspaceRegistry', 'fs']
+export const inject = ['typert', 'workspaceRegistry', 'fs', 'agents', 'tools']
 
 /** Trusted user editing API; none of these methods is registered as an Agent tool. */
 export class RequirementsService extends TypertRemoteService {
   private readonly files: RequirementFiles
+  private readonly proposals: RequirementProposals
   constructor(ctx: Context) {
     super(ctx, 'eadpRequirements', { namespace: 'eadpRequirements' })
     this.files = new RequirementFiles(ctx)
+    this.proposals = new RequirementProposals(ctx, this.files)
+    ctx.on('agent/created', ({ agent }) => { this.proposals.install(agent) })
+    for (const agent of ctx.agents.list()) this.proposals.install(agent)
+    ctx.effect(() => () => this.proposals.dispose())
   }
 
   @Remote
@@ -68,6 +77,21 @@ export class RequirementsService extends TypertRemoteService {
   async statVersion(projectId: string, relativePath: string): Promise<string | null> {
     return this.run(() => this.files.statVersion(projectId, relativePath))
   }
+  @Remote
+  async listProposals(projectId: string): Promise<RequirementProposal[]> {
+    return this.run(async () => { await this.files.root(projectId); return this.proposals.list(projectId) })
+  }
+
+  @Remote
+  async applyProposal(projectId: string, proposalId: string, expectedVersion: string | null): Promise<RequirementDocument> {
+    return this.run(() => this.proposals.apply(projectId, proposalId, expectedVersion))
+  }
+
+  @Remote
+  async discardProposal(projectId: string, proposalId: string): Promise<void> {
+    await this.run(async () => { await this.files.root(projectId); this.proposals.discard(projectId, proposalId) })
+  }
+
   /** Keep filesystem failures machine-readable across the official Remote transport. */
   private async run<T>(operation: () => Promise<T>): Promise<T> {
     try { return await operation() } catch (error) {

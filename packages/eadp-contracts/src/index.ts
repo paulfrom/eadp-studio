@@ -336,3 +336,5 @@ export interface ConsistencyContextView {
 export * from './local-workbench.js'
 
 export * from './files.js'
+
+export * from './requirements.js'

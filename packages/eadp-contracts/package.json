@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./files": "./src/files.ts"
+    "./files": "./src/files.ts",
+    "./requirements": "./src/requirements.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

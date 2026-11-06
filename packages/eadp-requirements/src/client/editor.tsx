@@ -14,7 +14,7 @@ export function RequirementEditor({ selection, api, discardMissing, locked, t }:
   useEffect(() => {
     let active = true, reading = false
     const refresh = async () => {
-      if (reading || buffer.getSnapshot().saving) return
+      if (reading || (buffer.getSnapshot().saving || buffer.getSnapshot().applying)) return
       reading = true
       try {
         const version = await api.statVersion(projectId, path)
@@ -37,11 +37,11 @@ export function RequirementEditor({ selection, api, discardMissing, locked, t }:
     return () => { active = false; clearInterval(timer); window.removeEventListener('focus', focused) }
   }, [buffer, api, projectId, path])
   return <section className={css.editor} aria-label={path}>
-    <header className={css.editorHeader}><strong>{path}</strong><span role="status">{t(snapshot.composing ? 'composing' : snapshot.saving ? 'saving' : snapshot.dirty ? 'dirty' : 'saved')}</span><button disabled={locked || snapshot.composing || snapshot.saving} onClick={() => { void buffer.flush() }}>{t('save')}</button></header>
+    <header className={css.editorHeader}><strong>{path}</strong><span role="status">{t(snapshot.composing ? 'composing' : snapshot.applying ? 'applyingProposal' : snapshot.saving ? 'saving' : snapshot.dirty ? 'dirty' : 'saved')}</span><button disabled={locked || snapshot.applying || snapshot.composing || snapshot.saving} onClick={() => { void buffer.flush() }}>{t('save')}</button></header>
     {snapshot.error && <p role="alert" className={css.error}>{snapshot.error}</p>}
     {snapshot.external !== undefined && <section className={css.conflict} role="alert">
       <p>{t('conflict')}</p>
-      {snapshot.external ? <><button disabled={locked || snapshot.composing || snapshot.saving} onClick={() => buffer.loadExternal()}>{t('loadDisk')}</button>{' '}<button disabled={locked || snapshot.composing || snapshot.saving} onClick={() => buffer.keepDraft()}>{t('keepDraft')}</button><details><summary>{t('disk')}</summary><pre>{snapshot.external.text}</pre></details></> : <><p>{t('missing')}</p><button disabled={locked || snapshot.composing || snapshot.saving} onClick={() => { void buffer.recreate(text => path === 'CONTEXT.md' ? api.saveContext(projectId, text, null) : api.create(projectId, path, text)) }}>{t('recreate')}</button>{' '}<button disabled={locked || snapshot.composing || snapshot.saving} onClick={discardMissing}>{t('discardMissing')}</button></>}
+      {snapshot.external ? <><button disabled={locked || snapshot.applying || snapshot.composing || snapshot.saving} onClick={() => buffer.loadExternal()}>{t('loadDisk')}</button>{' '}<button disabled={locked || snapshot.applying || snapshot.composing || snapshot.saving} onClick={() => buffer.keepDraft()}>{t('keepDraft')}</button><details><summary>{t('disk')}</summary><pre>{snapshot.external.text}</pre></details></> : <><p>{t('missing')}</p><button disabled={locked || snapshot.applying || snapshot.composing || snapshot.saving} onClick={() => { void buffer.recreate(text => path === 'CONTEXT.md' ? api.saveContext(projectId, text, null) : api.create(projectId, path, text)) }}>{t('recreate')}</button>{' '}<button disabled={locked || snapshot.applying || snapshot.composing || snapshot.saving} onClick={discardMissing}>{t('discardMissing')}</button></>}
     </section>}
     <textarea className={css.textarea} aria-label={path} value={snapshot.text} readOnly={locked} spellCheck={false} onChange={event => buffer.edit(event.target.value)} onCompositionStart={() => buffer.compose(true)} onCompositionEnd={() => buffer.compose(false)} onBlur={() => { void buffer.flush() }} />
   </section>

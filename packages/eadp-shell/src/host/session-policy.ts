@@ -8,6 +8,7 @@ import type { ActiveDocuments } from './active-document.ts'
 
 const CONTROL_TOOLS = new Set(['ask_user_question', 'todo_write'])
 const READ_TOOLS = new Set(['read', 'read_image'])
+const REQUIREMENT_TOOLS = new Set(['eadp_requirements_list', 'eadp_requirement_read', 'eadp_requirement_propose'])
 
 /** Installs scoped policy before native creation/resume listeners release queued work. */
 export class SessionPolicies {
@@ -42,6 +43,10 @@ export class SessionPolicies {
     if (execution.agent !== agent) return '工具调用与当前会话身份不一致。'
     if (CONTROL_TOOLS.has(execution.name)) return undefined
     if (!projectId || !root || this.ctx.workspaceRegistry.get(projectId)?.path !== root) return '会话未绑定有效项目，不能操作文件。'
+    if (REQUIREMENT_TOOLS.has(execution.name)) {
+      const preset = agent.session.header.agentPreset
+      return preset === 'eadp-requirements' || preset === 'eadp-prototype' ? undefined : '当前会话角色不能使用需求工具。'
+    }
     if (!READ_TOOLS.has(execution.name)) return '当前会话不允许该工具；文件修改与运行请使用工作台对应操作。'
     const args = execution.arguments
     if (args === null || typeof args !== 'object' || !('file_path' in args) || typeof args.file_path !== 'string') return '文件工具缺少有效路径。'

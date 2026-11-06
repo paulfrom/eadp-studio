@@ -19,6 +19,9 @@ export function requirementsApi(ctx: Context) {
     saveContext: async (projectId: string, text: string, version: string | null) => unwrap(await remote.saveContext(projectId, text, version)),
     rename: async (projectId: string, path: string, next: string) => unwrap(await remote.rename(projectId, path, next)),
     remove: async (projectId: string, path: string) => unwrap(await remote.remove(projectId, path)),
+    listProposals: async (projectId: string) => unwrap(await remote.listProposals(projectId)),
+    applyProposal: async (projectId: string, id: string, version: string | null) => unwrap(await remote.applyProposal(projectId, id, version)),
+    discardProposal: async (projectId: string, id: string) => unwrap(await remote.discardProposal(projectId, id)),
     statVersion: async (projectId: string, path: string) => unwrap(await remote.statVersion(projectId, path)),
   }
 }

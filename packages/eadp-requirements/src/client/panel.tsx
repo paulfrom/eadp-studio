@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { EadpRequirementsSlotProps, RequirementDocument, RequirementEntry } from '@eadp/contracts'
+import type { EadpRequirementsSlotProps, RequirementDocument, RequirementEntry, RequirementProposal } from '@eadp/contracts'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { DraftBuffer } from './DraftBuffer.ts'
 import type { RequirementsClientService } from './service.ts'
 import type { RequirementsApi } from './api.ts'
+import { RequirementProposals } from './proposals.tsx'
 import { RequirementEditor, type Selection } from './editor.tsx'
 import { NS } from './locales.ts'
 import css from './requirements.module.css'
@@ -23,6 +24,8 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
   const [contextAbsent, setContextAbsent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const unavailable = busy || applying
   const [error, setError] = useState('')
   const [form, setForm] = useState<'create' | 'folder' | 'rename' | 'remove'>()
   const [pathInput, setPathInput] = useState('')
@@ -38,13 +41,13 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
   }, [api, projectId, isCurrent])
   useEffect(() => {
     epoch.current += 1
-    setSelection(undefined); setContextAbsent(false); setEntries([]); setForm(undefined); setError(''); setBusy(false); setLoading(true)
+    setSelection(undefined); setContextAbsent(false); setEntries([]); setForm(undefined); setError(''); setBusy(false); setApplying(false); setLoading(true)
     const current = epoch.current
     void refresh().catch((reason: unknown) => { if (isCurrent(current)) setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { if (isCurrent(current)) setLoading(false) })
     return () => { epoch.current += 1 }
   }, [projectId, refresh])
   const run = (operation: () => Promise<void>) => {
-    if (busy) return
+    if (unavailable) return
     if (selected?.buffer.getSnapshot().composing) { setError(t('composing')); return }
     setBusy(true); setError('')
     const current = epoch.current
@@ -63,6 +66,19 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
     return api.read(projectId, path)
   }
   const assertClean = () => { if (editors.hasUnsaved()) throw new Error(t('dirty')) }
+  const bufferFor = (path: string, document: RequirementDocument | null) => {
+    let buffer = editors.get(key(path))
+    if (buffer) buffer.receive(document)
+    else {
+      buffer = new DraftBuffer(document, async (text, version) => {
+        if (path === 'CONTEXT.md') return api.saveContext(projectId, text, version)
+        if (version === null) throw new Error(t('missing'))
+        return api.save(projectId, path, text, version)
+      }, () => readDocument(path))
+      editors.register(key(path), buffer)
+    }
+    return buffer
+  }
   const open = async (path: string, current = epoch.current) => {
     if (!isCurrent(current)) return
     await flush()
@@ -76,18 +92,39 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
       await setActiveDocument(projectId, path)
       return
     }
-    let buffer = editors.get(key(path))
-    if (buffer) buffer.receive(document)
-    else {
-      buffer = new DraftBuffer(document, async (text, version) => {
-        if (path === 'CONTEXT.md') return api.saveContext(projectId, text, version)
-        if (version === null) throw new Error(t('missing'))
-        return api.save(projectId, path, text, version)
-      }, () => readDocument(path))
-      editors.register(key(path), buffer)
-    }
-    setSelection({ projectId, path, buffer }); setContextAbsent(false)
+    const buffer = bufferFor(path, document)
+    setSelection({ projectId, path, buffer }); setContextAbsent(false); setForm(undefined)
     await setActiveDocument(projectId, path)
+  }
+  const applyProposal = async (proposal: RequirementProposal) => {
+    if (unavailable) throw new Error(t('prepareFailed'))
+    const current = epoch.current
+    let buffer: DraftBuffer | undefined
+    let prepared = false
+    setApplying(true)
+    try {
+      const document = await readDocument(proposal.relativePath)
+      if (!isCurrent(current)) return
+      buffer = bufferFor(proposal.relativePath, document)
+      const input = await buffer.prepareWrite()
+      if (!input) throw new Error(t('prepareFailed'))
+      prepared = true
+      if (!isCurrent(current)) return
+      if (!buffer.matchesPrepared(input) || editors.hasUnsavedExcept(buffer)) throw new Error(t('prepareFailed'))
+      const accepted = await api.applyProposal(projectId, proposal.proposalId, input.version)
+      buffer.acknowledgeWrite(accepted, input)
+      if (!isCurrent(current)) return
+      // Editing a different document during application keeps that document visible.
+      if (!editors.hasUnsavedExcept(buffer)) {
+        setSelection({ projectId, path: accepted.relativePath, buffer }); setContextAbsent(false); setForm(undefined)
+        await setActiveDocument(projectId, accepted.relativePath)
+        if (!isCurrent(current)) return
+      }
+      await refresh(current)
+    } finally {
+      if (prepared) buffer?.finishWrite()
+      if (isCurrent(current)) setApplying(false)
+    }
   }
   const begin = async (kind: 'create' | 'folder' | 'rename' | 'remove') => {
     const current = epoch.current
@@ -150,15 +187,16 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
   if (!active) return null
   return <section className={css.workbench} aria-label={t('title')}>
     <aside className={css.tree}><h2>{t('title')}</h2><div className={css.actions}>
-      <button disabled={busy} onClick={() => run(() => begin('create'))}>{t('create')}</button><button disabled={busy} onClick={() => run(() => begin('folder'))}>{t('folder')}</button><button disabled={busy} onClick={() => run(() => refresh())}>{t('refresh')}</button>
-    </div><button disabled={busy} onClick={() => run(() => open('CONTEXT.md'))}>{t('context')}</button>
-      {loading ? <p>{t('loading')}</p> : entries.length === 0 ? <p>{t('empty')}</p> : <ul className={css.entries}>{entries.map(entry => <li key={entry.relativePath}>{entry.type === 'directory' ? <div className={css.directory}>{entry.relativePath}/</div> : <button disabled={busy} aria-current={selected?.path === entry.relativePath} title={entry.relativePath} onClick={() => run(() => open(entry.relativePath))}>{entry.relativePath.replace(/^需求\//u, '')}</button>}</li>)}</ul>}
+      <button disabled={unavailable} onClick={() => run(() => begin('create'))}>{t('create')}</button><button disabled={unavailable} onClick={() => run(() => begin('folder'))}>{t('folder')}</button><button disabled={unavailable} onClick={() => run(() => refresh())}>{t('refresh')}</button>
+    </div><button disabled={unavailable} onClick={() => run(() => open('CONTEXT.md'))}>{t('context')}</button>
+      {loading ? <p>{t('loading')}</p> : entries.length === 0 ? <p>{t('empty')}</p> : <ul className={css.entries}>{entries.map(entry => <li key={entry.relativePath}>{entry.type === 'directory' ? <div className={css.directory}>{entry.relativePath}/</div> : <button disabled={unavailable} aria-current={selected?.path === entry.relativePath} title={entry.relativePath} onClick={() => run(() => open(entry.relativePath))}>{entry.relativePath.replace(/^需求\//u, '')}</button>}</li>)}</ul>}
     </aside>
     <main className={css.main}>
       {error && <p role="alert" className={css.error}>{error}</p>}
-      {selected && selected.path !== 'CONTEXT.md' && <div className={css.editorHeader}><button disabled={busy} onClick={() => run(() => begin('rename'))}>{t('rename')}</button><button disabled={busy} onClick={() => run(() => begin('remove'))}>{t('remove')}</button></div>}
-      {form && <form className={css.form} onSubmit={event => { event.preventDefault(); run(submit) }}>{form === 'remove' ? <p>{t('confirmRemove')}</p> : <label>{t('name')} <input required value={pathInput} onChange={event => setPathInput(event.target.value)} /></label>}<button disabled={busy}>{t('confirm')}</button><button type="button" disabled={busy} onClick={() => setForm(undefined)}>{t('cancel')}</button></form>}
-      {selected ? <RequirementEditor key={`${projectId}:${selected.path}`} selection={selected} api={api} t={t} locked={busy} discardMissing={discardDeleted} /> : <div className={css.empty}>{contextAbsent ? <><p>{t('contextAbsent')}</p><button disabled={busy} onClick={() => run(createContext)}>{t('createContext')}</button></> : <p>{t('select')}</p>}</div>}
+      {selected && selected.path !== 'CONTEXT.md' && <div className={css.editorHeader}><button disabled={unavailable} onClick={() => run(() => begin('rename'))}>{t('rename')}</button><button disabled={unavailable} onClick={() => run(() => begin('remove'))}>{t('remove')}</button></div>}
+      {form && <form className={css.form} onSubmit={event => { event.preventDefault(); run(submit) }}>{form === 'remove' ? <p>{t('confirmRemove')}</p> : <label>{t('name')} <input required value={pathInput} onChange={event => setPathInput(event.target.value)} /></label>}<button disabled={unavailable}>{t('confirm')}</button><button type="button" disabled={unavailable} onClick={() => setForm(undefined)}>{t('cancel')}</button></form>}
+      {selected ? <RequirementEditor key={`${projectId}:${selected.path}`} selection={selected} api={api} t={t} locked={busy} discardMissing={discardDeleted} /> : <div className={css.empty}>{contextAbsent ? <><p>{t('contextAbsent')}</p><button disabled={unavailable} onClick={() => run(createContext)}>{t('createContext')}</button></> : <p>{t('select')}</p>}</div>}
+      <RequirementProposals projectId={projectId} api={api} apply={applyProposal} disabled={unavailable} t={t} />
     </main>
   </section>
 }

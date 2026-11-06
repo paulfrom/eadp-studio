@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "\u9700\u6c42\u5de5\u4f5c\u53f0\u63d2\u4ef6",
+  "description": "需求工作台插件",
   "main": "lib/index.js",
   "types": "lib/types/host/index.d.ts",
   "exports": {
@@ -50,7 +50,8 @@
     "lib/typert.remote-client.d.ts"
   ],
   "dependencies": {
-    "@eadp/contracts": "workspace:*"
+    "@eadp/contracts": "workspace:*",
+    "diff": "9.0.0"
   },
   "devDependencies": {
     "react": "^18.2.0",
