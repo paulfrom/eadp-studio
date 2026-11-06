@@ -216,3 +216,16 @@
 ## 8. 结论
 
 固定 rc.2 已足够支撑“Workspace 即项目、会话归属、版本条件写入、工具级写边界、官方 UI 扩展、原生会话/模型/设置”。本方案因此比原草案更小：**不新增 project 包、不新增项目注册表、不新增 `.eadp` 身份文件、不保留协同/浏览器/任务栈**。未核实项集中在真实桌面行为、guard 覆盖、原型端口/进程、内置知识卡初始内容、用户知识库 UI/存储与 AI 知识提案/应用，已在 [implementation.md](implementation.md) 的切片前置与未验证清单中列明。
+
+
+## 9. 阶段 0 静态核查修正（2026-11-06）
+
+执行边界以 execution-plan.md 为准：禁止桌面、模型和运行时验收。逐项源码证据与未验证操作已移交 [静态核查记录](../../local-workbench-static-audit.md)，缺口登记见 [blocked-upstream](../../blocked-upstream.md)。
+
+- ToolGuard 为同步函数，不能在 guard 内 await ctx.fs.resolve；permissions-runtime 的逐次路径核验必须同步实现，不能返回 Promise 冒充拒绝。
+- tool-fs-search 不保证敏感文件逐项过滤；按既有设计禁用无法保证过滤的 glob/grep，不仅检查搜索起始目录。
+- 本文 6.2 中裸 backend/Node 正文写入的处理建议不适用；版本写接口不符应登记并修正，禁止 fallback。
+- architecture 4.2、user-flows 4.9/11.3、permissions-runtime 和 Shell 设计中的“正常关闭等待 flush、失败阻止关闭”缺少固定宿主公开接口，标为 blocked-upstream，不能作为已有能力实施。普通关闭在 rc.2 为隐藏；真正退出不调用插件草稿保存。项目/文档内部切换可以协调，不证明桌面退出可协调。
+- 当前 Linux 无法通过强制原生 Windows x64 的最终装配门禁；不更改平台限制。
+
+阶段 0 静态源码核查已落盘；由于退出生命周期接口缺口，未进入阶段 1。后续阶段及 docs/refactoring 删除尚未执行。静态检查通过不等于桌面验收或生产就绪。
