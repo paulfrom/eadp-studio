@@ -92,3 +92,13 @@ The archive cache is `.local/upstream/dsh-<commit>.tar.gz`; successful extractio
 ### Native welcome Host authentication
 
 desktop-startup-edits.mjs reuses the cookie already issued by authenticateWebHost for native welcome HTTP/RPC and account streams. The launch query is removed before the welcome read; requests must retain the Host origin and reject redirects. This avoids a second token exchange through Electron's independent cookie jar. Missing or duplicated anchors fail closed. Current-version desktop startup and account verification remain required.
+
+## Local workbench assembly (static refactoring)
+
+`node apps/desktop-distribution/build/prepare-workbench.mjs --stage-only` assembles the five local workbench packages into the isolated, reconstructible `.local/build/local-workbench-dsh` tree. The same command without `--stage-only` installs build dependencies and runs Host compilation, official Typert generation, Client compilation, package `tsc --noEmit`, and plugin bundles. It never launches the desktop, a model, or a prototype. The older installer entry remains pending replacement in retirement stage 6; the isolated assembly carries no Studio plugin.
+
+`workbench-edits.mjs` owns two product integration edits, replayed from the fixed upstream source: the unique `const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate` anchor in `apps/desktop/src/project-manager.ts` appends the four product bundles; the production `dependencies` object in `apps/cli/package.json` receives those same four packages and rejects missing/already-present entries. Missing/duplicated anchors fail the assembly. `prepare-workbench.mjs` also inserts the five source aliases at the unique `"paths": {` anchor and face references at each unique `"references": [` anchor; missing/duplicated markers fail. No source in `.local/upstream/` is changed.
+
+The new tree is a build artifact, not a backup or an alternative source location. All maintained implementation remains in `packages/eadp-*` and this `build/` directory. No runtime or desktop acceptance has been performed.
+
+The isolated workbench assembly also replays the existing `studio-typert-edits.mjs` exact-anchor change (`WorkspaceAnalyzer.analyze()` → `analyzeInBatches()`) into `packages/typert/generator/src/workspace.ts`. Missing/duplicated anchors fail. The source fetch verifier runs before staging; metadata/version checks do not replace its pinned source receipt and critical-file checks.

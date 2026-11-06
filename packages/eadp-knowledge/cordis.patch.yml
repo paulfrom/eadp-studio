@@ -1,0 +1,6 @@
+# Host has no service dependencies in this skeleton.
+# Client requires slots + locale; the child slot is declared by eadp-shell.
+# Target slot: eadp.knowledge.view (single, root).
+- insert:
+    - id: eadp-knowledge
+      name: '@eadp/knowledge'

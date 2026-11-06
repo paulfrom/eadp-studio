@@ -332,3 +332,5 @@ export interface ConsistencyContextView {
   requirements: Array<{ id: string; code?: string; title: string; revision: number; materialVersion: number; confirmationStatus: 'draft' | 'confirmed'; occupied: boolean; path?: string; sources: AssetSource[] }>;
   prerequisites: Array<{ requirementId: string; code?: string; title: string; version: number; confirmationId: string; path?: string }>;
 }
+
+export * from './local-workbench.js'

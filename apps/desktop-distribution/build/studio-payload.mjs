@@ -65,10 +65,10 @@ async function verifyFiles(root, files) {
 /** Hash the exact staged product inputs, excluding generated output and machine dependencies. */
 export async function studioSourceDigest(repo) {
   const entries = []
-  for (const directory of ['packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/contracts/src', 'packages/asset-domain/src']) {
+  for (const directory of ['packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/eadp-contracts/src', 'packages/asset-domain/src']) {
     for (const file of await inventory(path.join(repo, directory))) entries.push([`${directory}/${file.path}`, file.sha256])
   }
-  for (const filename of ['packages/studio-plugin/package.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/contracts/package.json', 'packages/asset-domain/package.json']) {
+  for (const filename of ['packages/studio-plugin/package.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/eadp-contracts/package.json', 'packages/asset-domain/package.json']) {
     entries.push([filename, hash(await readFile(path.join(repo, filename)))])
   }
   return hash(JSON.stringify(entries.sort(([a], [b]) => a.localeCompare(b, 'en'))))

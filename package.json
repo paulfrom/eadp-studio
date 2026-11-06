@@ -12,7 +12,8 @@
     "build:desktop": "node scripts/build-desktop.mjs",
     "check": "node scripts/check-repository.mjs",
     "check:repository": "node scripts/check-repository.mjs",
-    "fetch:dsh": "node scripts/fetch-dsh.mjs"
+    "fetch:dsh": "node scripts/fetch-dsh.mjs",
+    "build:plugins": "node apps/desktop-distribution/build/prepare-workbench.mjs"
   },
   "devDependencies": {
     "lefthook": "^2.2.2"

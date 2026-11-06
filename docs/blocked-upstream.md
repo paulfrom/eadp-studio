@@ -48,3 +48,9 @@
 ## 环境门禁阻塞
 
 当前为 Linux；`scripts/build-desktop.mjs:40-41` 强制原生 Windows x64。阶段 6/7 的 `pnpm build:desktop` 不能在本环境通过，不能删除或绕过平台检查，也不能用其它构建替代通过记录。此为环境阻塞，不是宿主 API 缺口；尚未执行阶段 6 构建。
+
+## 阶段 1 新确认：默认 Workspace 初始化
+
+`packages/client/ui-workspace/src/client/navigation.ts:463,473-475` 在 Workspace/会话为空时主动调用 `initializeDefaultWorkspace()`。Workspace Controller 配置只有 documentsDirectory / documentsLookupTimeoutMs，没有关闭初始化的公开开关。因此“首次启动首页为空且不自动创建默认项目”暂为 blocked-upstream；不得伪造 Workspace 登记或覆盖官方导航内部实现。需要上游公开禁用默认项目初始化的配置。Shell 只展示真实官方列表，不自行创建默认项目。
+
+2026-11-06 继续执行：退出协调缺口只阻塞依赖该接口的关闭行为，不阻塞包骨架与内部导航等可独立实现。阶段 1 在隔离装配树推进，原有“停在阶段 0”记录是首次核查时点，不表示后续工作未开展；各阶段状态以静态实施记录为准。所有缺口仍不绕过，不能宣称完整目标已实现。

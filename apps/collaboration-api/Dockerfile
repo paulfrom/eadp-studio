@@ -12,12 +12,12 @@ RUN --mount=type=cache,id=eadp-corepack,target=/root/.cache/node/corepack \
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY apps/collaboration-api/package.json apps/collaboration-api/
 COPY packages/asset-domain/package.json packages/asset-domain/
-COPY packages/contracts/package.json packages/contracts/
+COPY packages/eadp-contracts/package.json packages/eadp-contracts/
 RUN --mount=type=cache,id=eadp-pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter @eadp/collaboration-api... --store-dir=/pnpm/store
 COPY apps/collaboration-api apps/collaboration-api
 COPY packages/asset-domain packages/asset-domain
-COPY packages/contracts packages/contracts
+COPY packages/eadp-contracts packages/eadp-contracts
 RUN --mount=type=cache,id=eadp-pnpm-store,target=/pnpm/store \
     pnpm --filter @eadp/collaboration-api deploy --prod --legacy /out --store-dir=/pnpm/store
 

@@ -305,11 +305,11 @@ async function referencePlugin(incremental = false) {
   }
   for (const name of ['contracts', 'asset-domain']) {
   const target = path.join(buildTree, 'packages/eadp', name)
-  if (incremental) await removeDeletedSourceOutputs(path.join(repo, `packages/${name}/src`), target)
+  if (incremental) await removeDeletedSourceOutputs(path.join(repo, `packages/${name === 'contracts' ? 'eadp-contracts' : name}/src`), target)
   await rm(incremental ? path.join(target, 'src') : target, { recursive: true, force: true })
   await mkdir(target, { recursive: true })
-  await cp(path.join(repo, `packages/${name}/src`), path.join(target, 'src'), { recursive: true })
-  const manifest = JSON.parse(await readFile(path.join(repo, `packages/${name}/package.json`), 'utf8'))
+  await cp(path.join(repo, `packages/${name === 'contracts' ? 'eadp-contracts' : name}/src`), path.join(target, 'src'), { recursive: true })
+  const manifest = JSON.parse(await readFile(path.join(repo, `packages/${name === 'contracts' ? 'eadp-contracts' : name}/package.json`), 'utf8'))
   manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
   manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' } }
   manifest.files = ['lib/index.js', 'lib/types/**/*.d.ts', 'lib/types/**/*.d.ts.map', 'lib/types/**/*.js', 'lib/types/**/*.js.map']

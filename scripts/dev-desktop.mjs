@@ -170,8 +170,8 @@ export async function withDesktopLock(buildRoot, action) {
   }
 }
 
-const PRODUCT_DEPENDENCIES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'packages/studio-plugin/package.json', 'packages/contracts/package.json']
-const PRODUCT_INPUTS = [...PRODUCT_DEPENDENCIES, 'scripts/dev-desktop.mjs', 'scripts/fetch-dsh.mjs', 'apps/desktop-distribution/release.lock.json', 'apps/desktop-distribution/build', 'packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/contracts/src']
+const PRODUCT_DEPENDENCIES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'packages/studio-plugin/package.json', 'packages/eadp-contracts/package.json']
+const PRODUCT_INPUTS = [...PRODUCT_DEPENDENCIES, 'scripts/dev-desktop.mjs', 'scripts/fetch-dsh.mjs', 'apps/desktop-distribution/release.lock.json', 'apps/desktop-distribution/build', 'packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/eadp-contracts/src']
 const BUILT_OUTPUTS = ['apps/desktop/lib', 'apps/desktop-host/lib', 'apps/cli/lib', 'apps/web/dist', 'packages/eadp/contracts/lib']
 
 /** One build graph, followed by the official --skip-build launcher; failures never launch Electron. */
