@@ -8,7 +8,8 @@
     "./client": "./src/client.ts",
     "./files": "./src/files.ts",
     "./requirements": "./src/requirements.ts",
-    "./prototype": "./src/prototype.ts"
+    "./prototype": "./src/prototype.ts",
+    "./knowledge": "./src/knowledge.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

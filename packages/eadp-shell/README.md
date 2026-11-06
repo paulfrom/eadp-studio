@@ -2,7 +2,7 @@
 
 `@eadp/shell` 复用 DSH Workspace 作为项目身份，组合需求、原型、知识库 slot，并承载官方原生会话。Host 使用 `eadpShell` Typert 命名空间，Client 不读取本地文件。
 
-阶段 1 提供工作台骨架与会话策略。当前 guard 拒绝全部文件写入，原型写入策略在后续阶段接入；不注册 shell、子 Agent 或原生搜索工具。需求与原型 preset 使用官方声明式 Agent preset。
+Shell 提供工作台骨架、活动需求登记与会话策略。需求角色只允许读取与提案；原型角色的 write/edit 限于 `原型/` 源文件，并在解析目标后复核范围；不放行 shell、子 Agent 或原生搜索工具。需求与原型 preset 使用官方声明式 Agent preset。
 
 源码通过发行维护入口装配到固定 rc.2 工作区，`build/dependencies.json` 列出装配时注入的官方依赖，Host 构建后生成 Typert Remote，再构建 Client。`build/tsconfig*.json` 是装配位置的配置，不在源仓库伪造官方 workspace。
 

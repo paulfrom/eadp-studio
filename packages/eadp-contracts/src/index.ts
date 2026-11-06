@@ -340,3 +340,5 @@ export * from './files.js'
 export * from './requirements.js'
 
 export * from './prototype.js'
+
+export * from './knowledge.js'

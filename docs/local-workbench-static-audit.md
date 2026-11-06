@@ -53,3 +53,13 @@
 ## 阶段 4 补充限制
 
 原型模板创建使用路径包含/逐段链接检查与独占文件创建；这些检查和 Node 写入之间不是 OS 原子操作，不能宣称抵抗外部进程在窗口内替换父目录。运行就绪依赖本次受管 handle 的 Umi `Local:` 输出、Host 选定端口及 HTTP 响应，不是 OS 监听者身份查询；端口抢占/输出与真正监听归属样本未做运行验证。普通 subprocess 无公开 PID/OS 启动时间与恢复接口，孤儿识别仍 blocked-upstream；不得按端口猜进程或终止未知进程。
+
+## 阶段 5：原生文件工具的有效目录
+
+固定 `packages/fs/tool-fs/src/session-cwd.ts` 从公开 `workingDirectory` 服务读取每次调用的有效目录；它可以不同于不可变的 session header.cwd。只按 header 解析相对路径不足以证明原生工具实际访问的目标。因此原生 read/read_image 使用项目内绝对路径；原型 write/edit 仍要求原型/相对路径，同时核对有效目录为项目根，并通过官方 fs/write-intent 与 fs/edit-intent 前置监听再次拒绝解析后的越界目标，保持原生 observation-policy 返回的版本 intent。
+
+读取已安装依赖的 API 声明不授予写权限：原生绝对路径读取可访问项目内依赖文件，敏感文件仍拒绝；node_modules/构建目录仍禁止写入，glob/grep 仍禁用。此约定使模板 AGENT.md 的同版本声明核对具有可用读取通道，不用提示词代替权限边界。真实通道、并发 cwd 变化及 Windows 链接行为均未运行验证。
+
+## 静态实施记录
+
+2026-11-06，阶段 1→4 分别提交于 `d06a990`、`58cb4ce`、`12bb28d`、`15d8e8e`；每阶段根检查及新五包 Host→Typert→Client 编译、包级 `tsc --noEmit` 与 bundle 已通过。阶段 5 接入原型源文件守卫、内置/用户知识库、搜索/读取/提案工具及知识界面；当前源码的 `pnpm check`（456 个跟踪文件、46 个模板 hash、2 张知识卡 hash）与 `pnpm build:plugins` 通过。没有启动桌面、真实模型或任何运行时验收；这些记录只证明静态构建，不能证明产品闭环。内置卡为有出处的公开方法参考，团队适用性未核实。桌面退出协调、默认项目初始化和孤儿进程恢复仍有上游缺口。

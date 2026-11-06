@@ -14,6 +14,18 @@
     },
     {
       "path": "../eadp-contracts"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../util/home-paths"
     }
   ]
 }

@@ -74,6 +74,9 @@ importers:
       '@eadp/contracts':
         specifier: workspace:*
         version: link:../eadp-contracts
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
     devDependencies:
       '@types/react':
         specifier: ~18.3.1

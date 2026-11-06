@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "packId": "builtin",
+  "version": "2026.11.1",
+  "documents": [
+    {
+      "id": "requirements-clarity",
+      "title": "需求表达的澄清问题",
+      "source": "NASA Systems Engineering Handbook, NASA SP-2016-6105 Rev2, Appendix C (C.2–C.4); https://www.nasa.gov/wp-content/uploads/2018/09/nasa_systems_engineering_handbook_0.pdf ; 查阅 2026-11-06",
+      "scope": "方法建议：需求文字澄清；不代表项目业务规则，团队适用性未核实",
+      "tags": [
+        "需求",
+        "歧义",
+        "可验证性",
+        "方法参考"
+      ],
+      "path": "cards/requirements-clarity.md",
+      "sha256": "bb2bbf52e5a4b9ec080e00b7a7ff3c608575e04e0a378d78cea2a7a4ebf7caca"
+    },
+    {
+      "id": "prototype-learning",
+      "title": "围绕待解问题选择原型",
+      "source": "GOV.UK Service Manual, Making prototypes; https://www.gov.uk/service-manual/design/making-prototypes ; 发布 2016-10-18，无独立版本号；查阅 2026-11-06",
+      "scope": "方法建议：原型探索与讨论；不代表项目业务规则，团队适用性未核实",
+      "tags": [
+        "原型",
+        "交互",
+        "探索",
+        "方法参考"
+      ],
+      "path": "cards/prototype-learning.md",
+      "sha256": "b84e547a2cf67d9394dc2a5423eea55efbcaef9772ccd963912a8abde2d8db60"
+    }
+  ]
+}

@@ -66,22 +66,19 @@ export async function stageWorkbench() {
       await rm(assetTarget, { recursive: true, force: true })
       await mkdir(assetTarget, { recursive: true })
       await writeFile(path.join(assetTarget, 'prototype-template.manifest.json'), templateBytes)
-      const seen = new Set()
-      for (const entry of [...template.files, ...template.addedFiles]) {
-        if (seen.has(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Invalid or duplicate template hash entry')
-        seen.add(entry.path)
-        if (!entry.path || entry.path.includes('\\') || path.isAbsolute(entry.path) || entry.path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid template asset path')
-        const target = path.join(assetTarget, 'prototype-template', entry.path)
-        await mkdir(path.dirname(target), { recursive: true })
-        let sourceFile = path.join(assets, 'prototype-template')
-        for (const part of entry.path.split('/')) {
-          sourceFile = path.join(sourceFile, part)
-          if ((await lstat(sourceFile)).isSymbolicLink()) throw new Error('Linked template asset')
-        }
-        const bytes = await readFile(sourceFile)
-        if (!(await lstat(sourceFile)).isFile() || createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error(`Template source hash mismatch: ${entry.path}`)
-        await writeFile(target, bytes)
-      }
+      await copyVerifiedFiles(path.join(assets, 'prototype-template'), path.join(assetTarget, 'prototype-template'), [...template.files, ...template.addedFiles])
+    }
+    if (name === 'eadp-knowledge') {
+      const resources = path.join(source, 'resources/builtin')
+      const target = path.join(destination, 'resources/builtin')
+      const manifestBytes = await readFile(path.join(resources, 'manifest.json'))
+      const pack = JSON.parse(manifestBytes.toString('utf8'))
+      if (pack.schemaVersion !== 1 || pack.packId !== 'builtin' || !pack.version || !Array.isArray(pack.documents)) throw new Error('Invalid built-in knowledge manifest')
+      await rm(path.join(destination, 'resources'), { recursive: true, force: true })
+      await mkdir(target, { recursive: true })
+      await writeFile(path.join(target, 'manifest.json'), manifestBytes)
+      await writeFile(path.join(target, 'SOURCES.md'), await readFile(path.join(resources, 'SOURCES.md')))
+      await copyVerifiedFiles(resources, target, pack.documents)
     }
     await save(path.join(destination, 'package.json'), manifest)
   }
@@ -101,6 +98,28 @@ export async function stageWorkbench() {
     await writeFile(path.join(workbenchTree, `tsconfig.${face}.json`), source.replace('"references": [', '"references": [\n' + refs.map(ref => JSON.stringify(ref) + ',').join('\n')))
   }
   console.log('Local workbench source staged; no desktop or runtime started.')
+}
+
+/** Copy precisely the validated bytes; neither symlinks nor concurrent second reads enter the payload. */
+async function copyVerifiedFiles(sourceRoot, destinationRoot, entries) {
+  const sourceInfo = await lstat(sourceRoot)
+  if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) throw new Error('Resource root must be an unlinked directory')
+  const seen = new Set()
+  for (const entry of entries) {
+    if (typeof entry.path !== 'string' || !entry.path || entry.path.includes('\\') || path.isAbsolute(entry.path) || entry.path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid resource path')
+    if (seen.has(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Invalid or duplicate resource hash')
+    seen.add(entry.path)
+    let sourceFile = sourceRoot
+    for (const part of entry.path.split('/')) {
+      sourceFile = path.join(sourceFile, part)
+      if ((await lstat(sourceFile)).isSymbolicLink()) throw new Error('Linked resource source')
+    }
+    const bytes = await readFile(sourceFile)
+    if (!(await lstat(sourceFile)).isFile() || createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error(`Resource source hash mismatch: ${entry.path}`)
+    const destination = path.join(destinationRoot, entry.path)
+    await mkdir(path.dirname(destination), { recursive: true })
+    await writeFile(destination, bytes)
+  }
 }
 
 function command(args, cwd = workbenchTree) {

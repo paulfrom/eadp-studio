@@ -78,4 +78,4 @@
           - *eadp-compaction
     - id: eadp-shell
       name: '@eadp/shell'
-      inject: [typert, workspaceRegistry, sessionController, agents, tools, systemPrompt]
+      inject: [typert, workspaceRegistry, sessionController, agents, tools, systemPrompt, fs, workingDirectory]

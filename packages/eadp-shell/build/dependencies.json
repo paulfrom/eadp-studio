@@ -23,5 +23,7 @@
   "@deepseek-ai/dsh-tool-fs",
   "@deepseek-ai/dsh-compaction-basic",
   "@deepseek-ai/dsh-command-compact",
-  "@deepseek-ai/dsh-compaction-tool-result-pruner"
+  "@deepseek-ai/dsh-compaction-tool-result-pruner",
+  "@deepseek-ai/dsh-fs",
+  "@deepseek-ai/dsh-working-directory"
 ]

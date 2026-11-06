@@ -12,7 +12,7 @@ import { ActiveDocuments } from './active-document.ts'
 import { SessionPolicies } from './session-policy.ts'
 
 export const name = 'eadp-shell'
-export const inject = ['typert', 'workspaceRegistry', 'sessionController', 'agents', 'tools', 'systemPrompt']
+export const inject = ['typert', 'workspaceRegistry', 'sessionController', 'agents', 'tools', 'systemPrompt', 'fs', 'workingDirectory']
 
 /** UI-only project session operations; no method here is an Agent tool. */
 export class ShellService extends TypertRemoteService {
