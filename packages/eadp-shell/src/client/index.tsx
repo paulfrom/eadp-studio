@@ -1,5 +1,5 @@
 /** Local workbench Client registers only official main/sidebar seats. */
-import type { Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -27,9 +27,19 @@ function unwrap<T>(result: RemoteResult<T>): T {
   return result.value
 }
 
+/** Exposes document context without sharing the Shell component or internal state. */
+class ShellClientService extends Service {
+  static inject = ['remote.eadpShell']
+  constructor(ctx: Context) { super(ctx, 'eadpShellClient') }
+  async setActiveDocument(projectId: string, relativePath: string | null): Promise<void> {
+    unwrap(await this.ctx.remote.eadpShell.setActiveDocument(projectId, relativePath))
+  }
+}
+
 /** Mount the generated Remote contract before injecting its namespace. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(shellRemote)
+  ctx.plugin(ShellClientService)
   ctx.effect(() => ctx.locale.register('eadpShell', { zh, en }), 'eadp-shell: locale')
   const ui = ctx.inject(['remote.eadpShell', 'eadpRequirementsClient'], (scope: Context) => {
     const face: ShellFace = {

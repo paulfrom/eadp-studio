@@ -1,8 +1,88 @@
 import type { Context } from '@deepseek-ai/cordis'
+import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import type {} from '@deepseek-ai/dsh-fs'
+import type {} from '@deepseek-ai/dsh-workspace'
+import type { FileErrorCode, RequirementDocument, RequirementEntry, ContextDocument } from '@eadp/contracts/files'
+import { RequirementFiles } from './files.ts'
 
 export const name = 'eadp-requirements'
-/** Reserved Remote namespace for the module's trusted UI methods. */
-export const remoteNamespace = 'eadpRequirements'
+export const inject = ['typert', 'workspaceRegistry', 'fs']
 
-/** Domain behavior is registered by subsequent implementation stages. */
-export function apply(_ctx: Context): void {}
+/** Trusted user editing API; none of these methods is registered as an Agent tool. */
+export class RequirementsService extends TypertRemoteService {
+  private readonly files: RequirementFiles
+  constructor(ctx: Context) {
+    super(ctx, 'eadpRequirements', { namespace: 'eadpRequirements' })
+    this.files = new RequirementFiles(ctx)
+  }
+
+  @Remote
+  async list(projectId: string): Promise<RequirementEntry[]> { return this.run(() => this.files.list(projectId)) }
+
+  @Remote
+  async read(projectId: string, relativePath: string): Promise<RequirementDocument> { return this.run(() => this.files.read(projectId, relativePath)) }
+
+  @Remote
+  async createDirectory(projectId: string, relativePath: string): Promise<void> {
+    await this.run(() => this.files.mutate(projectId, () => this.files.makeDirectory(projectId, relativePath)))
+  }
+
+  @Remote
+  async create(projectId: string, relativePath: string, text: string): Promise<RequirementDocument> {
+    const target = relativePath.toLowerCase().endsWith('.md') ? relativePath : relativePath + '.md'
+    return this.run(() => this.files.mutate(projectId, () => this.files.write(projectId, target, text, null)))
+  }
+
+  @Remote
+  async save(projectId: string, relativePath: string, text: string, expectedVersion: string): Promise<RequirementDocument> {
+    return this.run(() => this.files.mutate(projectId, () => this.files.write(projectId, relativePath, text, expectedVersion)))
+  }
+
+  @Remote
+  async rename(projectId: string, relativePath: string, newRelativePath: string): Promise<string> {
+    const target = newRelativePath.toLowerCase().endsWith('.md') ? newRelativePath : newRelativePath + '.md'
+    await this.run(() => this.files.mutate(projectId, () => this.files.rename(projectId, relativePath, target)))
+    return target
+  }
+
+  @Remote
+  async remove(projectId: string, relativePath: string): Promise<void> {
+    await this.run(() => this.files.mutate(projectId, () => this.files.remove(projectId, relativePath)))
+  }
+
+  @Remote
+  async readContext(projectId: string): Promise<ContextDocument> {
+    return this.run(async () => {
+      if (await this.files.statVersion(projectId, 'CONTEXT.md') === null) return { kind: 'absent' }
+      const document = await this.files.read(projectId, 'CONTEXT.md', true)
+      return { kind: 'present', ...document }
+    })
+  }
+
+  @Remote
+  async saveContext(projectId: string, text: string, expectedVersion: string | null): Promise<RequirementDocument> {
+    return this.run(() => this.files.mutate(projectId, () => this.files.write(projectId, 'CONTEXT.md', text, expectedVersion, true)))
+  }
+
+  @Remote
+  async statVersion(projectId: string, relativePath: string): Promise<string | null> {
+    return this.run(() => this.files.statVersion(projectId, relativePath))
+  }
+  /** Keep filesystem failures machine-readable across the official Remote transport. */
+  private async run<T>(operation: () => Promise<T>): Promise<T> {
+    try { return await operation() } catch (error) {
+      const failure = error as { code?: string; name?: string; message?: string }
+      if (failure.name === 'AbortError' || failure.code === 'FS_ABORTED') throw new RemoteError('gateway/cancelled', '文件操作已取消。', {})
+      const codes: Record<string, FileErrorCode> = {
+        INVALID_PATH: 'INVALID_PATH', PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND', FS_NOT_FOUND: 'NOT_FOUND', ENOENT: 'NOT_FOUND', FS_NOT_OBSERVED: 'EXISTS', EEXIST: 'EXISTS',
+        FS_STALE_VERSION: 'STALE_VERSION', FS_SANDBOX_DENIED: 'OUTSIDE_PROJECT', FS_PERMISSION_DENIED: 'PERMISSION_DENIED',
+        EACCES: 'PERMISSION_DENIED', EPERM: 'PERMISSION_DENIED', FS_TOO_LARGE: 'TOO_LARGE', FS_NOT_TEXT: 'NOT_TEXT',
+        FS_NOT_DIRECTORY: 'INVALID_PATH', FS_NOT_REGULAR_FILE: 'INVALID_PATH', ENOTDIR: 'INVALID_PATH', EINVAL: 'INVALID_PATH',
+      }
+      throw new RemoteError('eadp/file', failure.message ?? '文件操作失败。', { code: codes[failure.code ?? ''] ?? 'IO_ERROR' })
+    }
+  }
+
+}
+
+export function apply(ctx: Context): void { ctx.plugin(RequirementsService) }

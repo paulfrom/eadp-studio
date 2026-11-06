@@ -40,11 +40,11 @@ export async function stageWorkbench() {
     const manifest = await json(path.join(source, 'package.json'))
     if (name === 'eadp-contracts') {
       manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
-      manifest.exports = { '.': { types: './lib/types/index.d.ts', default: './lib/index.js' }, './client': { types: './lib/types/client.d.ts', default: './lib/types/client.js' } }
+      manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, { types: value.replace('./src/', './lib/types/').replace(/\.ts$/, '.d.ts'), default: key === '.' ? './lib/index.js' : value.replace('./src/', './lib/types/').replace(/\.ts$/, '.js') }]))
       manifest.files = ['lib']
       delete manifest.scripts
-      await writeFile(path.join(destination, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }] }, null, 2))
-      await writeFile(path.join(destination, 'tsconfig.client.json'), JSON.stringify({ extends: '../../../tsconfig.base.client.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types', tsBuildInfoFile: 'lib/client.tsbuildinfo' }, include: ['src/client.ts', 'src/local-workbench.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }] }, null, 2))
+      await writeFile(path.join(destination, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
+      await writeFile(path.join(destination, 'tsconfig.client.json'), JSON.stringify({ extends: '../../../tsconfig.base.client.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types', tsBuildInfoFile: 'lib/client.tsbuildinfo' }, include: ['src/client.ts', 'src/local-workbench.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
       await writeFile(path.join(destination, 'tsdown.config.ts'), "export default { entry: ['lib/types/index.js'], outDir: 'lib', format: ['esm'], platform: 'node', fixedExtension: false, dts: false, clean: false }\n")
     } else {
       const dependencies = await json(path.join(source, 'build/dependencies.json'))
@@ -63,7 +63,7 @@ export async function stageWorkbench() {
     const packageName = name === 'eadp-contracts' ? '@eadp/contracts' : `@eadp/${name.slice(5)}`
     const entry = name === 'eadp-contracts' ? 'src/index.ts' : 'src/host/index.ts'
     return [JSON.stringify(packageName) + ': ' + JSON.stringify([`./packages/eadp/${name}/${entry}`]) + ',',
-      ...(name === 'eadp-contracts' ? ['"@eadp/contracts/client": ["./packages/eadp/eadp-contracts/src/client.ts"],'] : [])]
+      ...(name === 'eadp-contracts' ? ['"@eadp/contracts/*": ["./packages/eadp/eadp-contracts/src/*"],'] : [])]
   }).join('\n')
   if (base.split('"paths": {').length !== 2) throw new Error('Source paths anchor mismatch')
   await writeFile(path.join(workbenchTree, 'tsconfig.base.json'), base.replace('"paths": {', '"paths": {\n' + aliases))

@@ -11,3 +11,8 @@ export interface EadpRequirementsClient {
   hasUnsaved(): boolean
 }
 export const EADP_ERRORS = { projectNotFound: 'PROJECT_NOT_FOUND', invalidPath: 'INVALID_PATH', outsideProject: 'OUTSIDE_PROJECT', staleVersion: 'STALE_VERSION', unavailable: 'UNAVAILABLE' } as const
+
+/** Updates only the document hint used by native session context. */
+export interface EadpShellClient {
+  setActiveDocument(projectId: ProjectId, relativePath: string | null): Promise<void>
+}

@@ -1,6 +1,6 @@
-# Host has no service dependencies in this skeleton.
-# Client requires slots + locale; the child slot is declared by eadp-shell.
-# Target slot: eadp.requirements.view (single, root).
+# Host services: typert, workspaceRegistry, fs.
+# Client services: slots, locale, remote.
+# Child slot: eadp.requirements.view (single, root), declared by eadp-shell.
 - insert:
     - id: eadp-requirements
       name: '@eadp/requirements'

@@ -1,40 +1,27 @@
-import { Service, type Context } from '@deepseek-ai/cordis'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { EadpRequirementsSlotProps, EadpRequirementsClient } from '@eadp/contracts'
+/** Requirement editing is mounted into the Shell-owned slot through generated Remote. */
+import type { Context } from '@deepseek-ai/cordis'
 import { EADP_SLOTS } from '@eadp/contracts'
 import type {} from '@eadp/contracts/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import requirementsRemote from '@eadp/requirements/remote'
+import { requirementsApi } from './api.ts'
+import { RequirementsClientService } from './service.ts'
+import { RequirementsPanel } from './panel.tsx'
+import { NS, zh, en } from './locales.ts'
 
-const NS = 'eadp.requirements'
-const zh = { title: '需求', empty: '暂无需求文件' }
-const en = { title: 'Requirements', empty: 'No requirement files yet' }
+export const inject = ['slots', 'locale', 'remote']
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface LocaleNamespaceMap { 'eadp.requirements': keyof typeof zh }
-}
-
-export const inject = ['slots', 'locale']
-
-/** Empty editor lifecycle before requirement editing is installed. */
-class RequirementsClientService extends Service implements EadpRequirementsClient {
-  constructor(ctx: Context) { super(ctx, 'eadpRequirementsClient') }
-  async flushActive(): Promise<{ ok: boolean; message?: string }> { return { ok: true } }
-  hasUnsaved(): boolean { return false }
-}
-
-function EmptyView({ active, t }: EadpRequirementsSlotProps & PropsLocale<typeof NS>) {
-  if (!active) return null
-  return <section style={{ padding: '1.5rem', color: 'inherit' }} aria-label={t('title')}>
-    <h2>{t('title')}</h2><p>{t('empty')}</p>
-  </section>
-}
-
-/** Register only through the Shell-owned child slot, independently of load order. */
-export function apply(ctx: Context): void {
-  ctx.plugin(RequirementsClientService)
+export async function apply(ctx: Context): Promise<() => Promise<void>> {
+  const disposeRemote = await ctx.remote.$mount(requirementsRemote)
+  const editors = new RequirementsClientService(ctx)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }))
-  ctx.slots.inject(EADP_SLOTS.requirements, () => ctx.slots.register({
-    name: EADP_SLOTS.requirements, locale: NS,
-  }, EmptyView))
+  const ui = ctx.inject(['remote.eadpRequirements', 'eadpShellClient'], (scope: Context) => {
+    const api = requirementsApi(scope)
+    return scope.slots.inject(EADP_SLOTS.requirements, () => scope.slots.register({
+      name: EADP_SLOTS.requirements, locale: NS,
+      inject: () => ({ api, editors, setActiveDocument: (projectId: string, path: string | null) => scope.eadpShellClient.setActiveDocument(projectId, path) }),
+    }, RequirementsPanel))
+  })
+  return async () => { await ui.dispose(); await disposeRemote() }
 }
