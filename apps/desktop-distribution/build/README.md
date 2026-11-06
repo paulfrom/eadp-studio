@@ -1,108 +1,61 @@
-# Desktop source preparation
+# 桌面发行装配
 
-`desktop-policy-edits.mjs` also initializes mandatory-update IPC before creating the main window. The main window passes `--dsh-mandatory-updates` to its sandboxed preload only when a policy is configured; Windows installs the embedded overlay only with that argument. After window creation the existing policy UI synchronizes its parent and state. Unconfigured development launches therefore do not invoke an absent status handler. These edits use unique, fail-closed anchors.
+本目录维护固定 DSH 源码之上的产品装配脚本和唯一授权的上游锚定编辑。`../release.lock.json` 固定上游提交、包版本与归档校验；`.local/upstream/dsh/` 是只读取证缓存，`.local/build/local-workbench-dsh/` 是可重建装配树，二者都不是维护源码位置。
 
-The product repository stores the fixed upstream source contract in `../release.lock.json`. DSH source itself is downloaded from the exact commit archive into the ignored `.local/upstream/dsh/` directory. It is not a Git submodule or nested Git checkout. Product-specific build scripts and necessary upstream patches belong in this `build/` directory. Upstream integration points that have no official interface are registered, with the bypass this directory implements, in [`docs/blocked-upstream.md`](../../../docs/blocked-upstream.md). [`prepare-studio-plugin.mjs`](prepare-studio-plugin.mjs) currently assembles the Studio plugin into an ignored build tree (`<primary checkout>/.local/build/dsh`), builds its two halves in the official Host-before-Client order, packs the plugin tarball, and replays anchored upstream edits:
+所有编辑只写入装配树。每个编辑都要求精确锚点唯一存在；锚点缺失、重复或部分应用都会抛错并中止，不得在缓存或装配树中手工修补。宿主缺口与编辑的对应关系见 [`docs/blocked-upstream.md`](../../../docs/blocked-upstream.md)。
 
-- `apps/cli/package.json` — declare the plugin as a production dependency through [`desktop-plugin-edits.mjs`](desktop-plugin-edits.mjs), so official resolution includes it in the packaged CLI installation. No manual package-set root extension is used.
-- `apps/desktop/scripts/prepare-package-set.ts` — accept `DSH_DESKTOP_PACKED_EXTRA` (the plugin tarball directory).
-- `apps/desktop/src/project-manager.ts` — append the plugin to the shipped profile's `dsh.profile.bundles`.
-- [`desktop-policy-edits.mjs`](desktop-policy-edits.mjs) — accept HTTP or HTTPS policy request origins at packaging and runtime, retaining URL structure checks and HTTPS login/download-page restrictions. The same edits update upstream tests and remove the former development-only loopback argument. They do not disable policy requests or replace unavailable decisions with successful responses.
-
-The selected policy origin is an origin only. The maintained public Windows settings select `http://100.119.183.44:6972`, verified on 2026-10-16 to return the valid allow payload for `/api/v0/check_client_update?scenario=launch` (the former no-port example returns HTTP 404). For anonymous checks, the local Windows file selects `DSH_DESKTOP_AUTO_UPDATE_ENV=production` and `DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN`. Download-page origins remain explicitly restricted to `https://www.zyjsm.top`. Packaging validates configuration without querying the service. Runtime launch starts the existing asynchronous check without awaiting it: connection errors, HTTP 404, invalid JSON/HTML and timeouts remain `unavailable`, preserving the current blocking state. A valid `40005` still blocks, and only a valid allow response clears it.
-
-
-It never writes to the verified source tree. From the product root, run `./build-desktop.ps1` (or `node scripts/build-desktop.mjs`) on native Windows x64. The entry installs root dependencies with the product lock, verifies/fetches fixed DSH source, stages maintained integration, installs the assembled workspace, checks the upstream toolchain/configuration, builds/packs Studio and invokes the official `package:desktop:win:x64:unsigned` NSIS pipeline. `DSH_DESKTOP_PACKED_EXTRA` is supplied internally as a separate environment value. The final installer and SHA256 receipt are copied to `artifacts/windows/`. Every command failure stops the pipeline before publishing a result. A shared `.local/build/.studio-desktop-build.lock` rejects simultaneous entry-point builds; a later entry automatically reclaims a lock after its recorded owner exits. Do not run manual assembly/packaging concurrently.
-
-`./build-desktop.ps1 --check` stages source, installs build dependencies and runs the official packaging preflight without compilation or installer output; `--help` has no prerequisites. The entry checks native Windows x64, the upstream Node range, pnpm 11.x, Git/tar, Visual Studio C++ tooling and real symbolic links before downloading/building. The upstream package manager declaration selects its fixed pnpm version. Upstream checks and the real package build retain Windows SDK, runtime and installer validation.
-
-The packaging child uses the official `ELECTRON_BUILDER_CACHE` variable, fixed to `<primary checkout>/.local/cache/electron-builder`. The entry creates the directory before packaging and passes its path as a process environment value, including Chinese, spaces and shell characters. This keeps builder toolsets (icons, NSIS and related downloads) in the workspace-owned ignored cache instead of inheriting a different application's global cache. It does not clean global caches or retry a failed build. The current pinned `app-builder-lib` resolves this variable in `getCacheDirectory({ allowEnvVarOverride: true })` for builder toolset downloads.
-
-The first invocation copies [`windows-package.env.example`](windows-package.env.example) to the ignored build tree's `apps/desktop/.env.windows` using exclusive creation. Existing local settings and credentials are never overwritten or printed; an App ID conflict fails with an explicit remediation. Change deployment policy settings there if your environment differs. This file contains no signing or upload credentials and the source entry always requests unsigned packaging. Public product identity is stable: `eadp studio`, executable `eadp studio.exe`, App ID `io.github.paulfrom.eadp.studio`, URL scheme `eadp-studio://`, installer `eadp-studio-<version>-win-x64-unsigned.exe`. [`desktop-brand-edits.mjs`](desktop-brand-edits.mjs) owns the anchored assembly changes, including installer messages, locale/about/menu/tray text and upstream smoke-test paths. Installed Electron user data uses `%APPDATA%\eadp studio`; packaged product launches set the Host's `DSH_HOME` to `%USERPROFILE%\.eadp-studio`, isolating official DSH profiles and locks. Unpackaged development preserves the official launcher's isolated home and Electron user-data directories under `apps/desktop/.desktop-build/development/`. No existing DSH data is migrated. Upstream npm package names/dependency contracts stay intact inside the source workspace; packaged shell metadata is product-owned. Existing icon artwork is unchanged.
-
-Installed-app and release qualification remain separate from source-build checks. An unsigned source build does not establish signing, upgrades, clean-machine installation or release readiness.
-
-The product edit also changes the official profile's sole `DSH_CLIENT_TITLE` declaration in `scripts/client-build-environment.ts` to `eadp studio`. The existing upstream Vite transformation supplies the initial HTML title, `DocumentTitle` retains dynamic session titles with the product suffix, and release verification reads the same official profile when validating the artifact receipt. Setting only Electron's app name would leave the workspace title as DeepSeek Harness; no supplier/model copy is changed.
-
-Packaging also carries the single Git snapshot already captured by the official desktop entry into `DSH_CLIENT_COMMIT_HASH`. The maintained edit adds `packaged.commit` to `desktopBuildCommitEnvironment` alongside its existing desktop commit metadata. Client compilation and release receipt validation therefore use the same product-checkout commit even if another process advances HEAD during a long build; this value is not the locked DSH upstream commit. No second Git lookup, option or retry is added.
-
-Current assembly puts `@eadp/contracts` and `@eadp/asset-domain` into the plugin's production dependencies and packs all three product packages for the upstream package-set closure. Alpha.4 assembly uses the official `build:lib` entry, retaining its Host-before-Client build and aggregate TypeScript checks. Packaging then uses `scripts/build.ts --profile official --scope artifacts`, whose artifact graph omits aggregate script/test programs. Full repository checks remain separate. A second packaging edit passes the official `--concurrency 4` to `release:pack` on Windows, which upstream reserves for macOS; the bounded scheduler packs every member independently and the recorded publish order is unchanged. A third keeps `prepare-package-set.ts` tarball manifest reads local under GNU tar, which otherwise parses a leading drive letter as a remote host; the edit reuses the relative-name pattern of the upstream `scripts/release/tarball.ts`.
-
-Workspace reflection also uses the fixed upstream `WorkspaceAnalyzer.analyzeInBatches()` API, whose default is eight selected contributors per TypeScript program. The product patch changes only the generator's analyzer invocation and retains stable graph merging and all artifact emit/validation. This bounds reflection memory during the workspace bundler pass without increasing the Node heap.
-
-The build rejects the former empty Host and missing generated Remote files, validates every template file, and records source and shipped output hashes in `studio-build.json`. The current source receipt must match when checking the prepared or extracted final app resources:
-
-The npm package carries the template as `assets/prototype-template.tar.gz`, generated only from its manifest allowlist. npm filters `.gitignore` and `.npmrc` from loose package assets, so these files must cross that boundary inside the archive with their original names and bytes. The official `prepare:dsh` phase verifies the archive receipt, rejects extra members, links and escaping paths, then materializes and hashes every allowlisted file at the original `assets/prototype-template` path before runtime descriptors and smoke checks. The Host consumes that fixed path. The final receipt covers both the archive and every expanded file. The build helper reuses `tar` from the fixed DSH development dependency tree; it is not a plugin runtime dependency.
-
-```powershell
-node apps/desktop-distribution/build/verify-studio-distribution.mjs <dsh-resource-directory> <runtime/studio-tools-directory>
-```
-
-This also checks `@eadp/contracts` and TypeBox resolution from the actual production installation, plus every runtime file (including companion DLLs). To check an ASAR, first extract it using the existing Electron ASAR tooling, then pass the extracted `dsh` directory and the final adjacent `runtime/studio-tools` directory. Prepared-tree verification alone does not prove final ASAR contents or installed-app startup.
-
-`prepareStudioTools(destination, archiveCache)` reuses only checksum-verified fixed `node.zip`, `pnpm.tgz` and `git.zip` archives. A corrupt cache fails closed. The official runtime preparation uses `apps/desktop/.desktop-build/downloads/studio-tools-archives`; a separate downloaded cache can be copied there before packaging. Host tool discovery follows the fixed official child argument contract: `argv[4]` is `primary-runtime`, and Studio uses its sibling `studio-tools` directory.
-
-From the product repository root:
+## 入口与静态检查
 
 ```sh
-node scripts/fetch-dsh.mjs --archive-only
-node scripts/fetch-dsh.mjs
+pnpm check
+pnpm build:plugins
+pnpm build:desktop
 ```
 
-The first command downloads or reuses the fixed archive, checks its SHA256, archive paths, relative symlink boundaries, critical file hashes and package metadata. The default command additionally extracts to a temporary sibling directory and publishes the checked source tree by same-filesystem rename. It requires Node's built-in fetch and system `tar`. It does not install dependencies. No override URL, mutable branch, replacement source or fallback is accepted.
+- `pnpm build:plugins` 调用 `prepare-workbench.mjs`：校验固定源码，装配 `eadp-contracts`、`eadp-shell`、`eadp-requirements`、`eadp-prototype`、`eadp-knowledge`，依次完成 Host 编译、官方 Typert 生成、Client 编译、各包 `tsc --noEmit`、插件打包和产物回执校验。五个 tarball 写入 `.local/build/packed-workbench/`。
+- `pnpm build:desktop` 仅支持原生 Windows x64。它复用同一装配入口，运行官方打包预检和 NSIS 流程，将 `packed-workbench` 作为额外包输入，产出未签名安装包及 SHA-256 回执。不安装、不启动桌面，不执行模型或原型验收。
+- `node apps/desktop-distribution/build/verify-workbench-distribution.mjs <dsh-resource-directory> <runtime/eadp-tools-directory>` 校验解包后的五包回执、生产依赖解析、模板/知识资源和完整 Node/pnpm 文件清单。
+- `pnpm dev:desktop --prepare` 是 Windows 开发准备入口；本重构的静态门禁不执行该命令，也不启动 Electron。
 
-## Desktop development
+构建锁防止并发装配相互覆盖。依赖升级脚本在固定源码变化后删除 `local-workbench-dsh` 与 `packed-workbench`，并把验收状态重置为未通过。静态构建成功不代表桌面验收或生产就绪。
 
-From the product root on native Windows x64, run `pnpm dev:desktop`. The entry prepares dependencies, fixed source, current Studio and runtimes, then delegates to the official `start:desktop` launcher. `--prepare` builds and verifies the same preparation without opening Electron; `--help` prints prerequisites and behavior.
+## 插件与资源装配
 
-The developer pipeline stages incrementally, retaining compiler outputs and dependency links; removed source clears the affected package outputs so TypeScript cannot retain deleted modules. Maintained upstream targets are replayed from verified source, allowing updated product edits to replace previously assembled edits. The cache checks product inputs, actual staged bytes, Studio payload integrity, startup output directories and tool inventory. Template input hashing follows its manifest allowlist and excludes local template dependencies/preview output. A current build uses the upstream artifact graph once, followed by the desktop build; it does not first run the separate library/packaging pipeline. No installer, signing or publishing step runs.
+`workbench-edits.mjs` 将 `@eadp/shell`、`@eadp/requirements`、`@eadp/prototype`、`@eadp/knowledge` 加入 CLI 生产依赖和 shipped profile；`@eadp/contracts` 随四个插件的依赖闭包进入安装结果。`cordis.patch.yml` 显式声明各插件的 service 与 slot 依赖。
 
-Electron binary installation uses the official `install-electron` executable, checksum validation and `electron_config_cache`, scoped to `<primary checkout>/.local/cache/electron`. Its `TEMP`/`TMP` are scoped to that cache's `tmp` directory so temporary downloads and cache moves remain on the same volume. Other child processes keep their existing environment. The upstream launcher retains default DevTools and inspector ports 9229, 9222 and 9230, prepares the development project and prepares/smoke-tests primary-runtime. The entry supplies the existing Studio tools beside primary-runtime.
+原型模板唯一维护位置是 `packages/eadp-prototype/assets/prototype-template/`。装配只复制 manifest 允许且 SHA-256 匹配的文件。npm 打包同时使用 `assets/prototype-template.tar.gz` 保留 `.npmrc`、`.gitignore` 等名称；官方 `prepare:dsh` 阶段解包并拒绝额外成员、链接、逃逸路径和回执不符。
 
-`primary-runtime-edits.mjs` adds verified reuse at the official runtime preparation boundary. A receipt identifies the locked payload, pnpm version, carrier version and preparation/pruning implementation; every reuse verifies the complete payload tree before skipping interpreter extraction and copying. Missing or changed payload entries rebuild from locked archives. Office assets preparation and the official runtime smoke checks still run. The edit rejects missing, duplicated or partially applied anchors.
+内置知识只从 `packages/eadp-knowledge/resources/builtin/` 的 manifest、`SOURCES.md` 和已登记卡片装配。用户知识库位于本机应用数据目录，不进入发行负载。
 
-Existing fixed source is checked directly against its receipt and locked critical-file hashes before archive processing. Full archive boundary, symlink and checksum verification remains mandatory for first extraction and explicit `fetch:dsh --archive-only` checks.
+`workbench-payload.mjs` 对五个包记录当前维护源码摘要和实际输出哈希到各自的 `workbench-build.json`。缺文件、空产物、旧源码回执或哈希变化均失败。
 
-Development timing sample (2026-11-01, Windows x64, Node 22.22.0, product HEAD `9e809ab` plus working changes, fixed DSH `687f282e8625c6b8d11ff58211a90524be2e4317`): existing-source verification decreased from 2.707 s to 0.199 s. Calling the patched official `preparePrimaryRuntime` with an isolated output directory and the existing download cache took 129.918 s initially and 2.448 s on reuse, including Office asset copying. The separate, unchanged official `smokePrimaryRuntime` passed in 28.754 s (Python requirements, Office document round trips and pnpm). These are preparation measurements, not complete desktop startup or desktop/business acceptance; the running development desktop was left untouched. No collaboration backend was contacted.
+## 保留的锚定编辑
 
-Exit and rerun after source changes; this command adds no source watcher. Debug sessions and installer builds share the same lock. Ctrl+C stops only the command's owned process tree before releasing it; failed process-tree cleanup retains the lock for inspection and never reclaims it automatically. Locks left by forced termination or power loss are reclaimed after verifying the recorded PID and process start time.
+下表列出全部编辑文件及其锚点。新增文件由对应模块原样写入；所有替换均 fail-closed。
 
-## Upgrading the fixed source
+| 维护模块 | 上游文件与锚点 | 用途 |
+| --- | --- | --- |
+| `desktop-brand-edits.mjs` | `scripts/client-build-environment.ts` 的 `DSH_CLIENT_TITLE`；桌面品牌、协议、安装器与 smoke 文件中的固定 DeepSeek Harness 文案和 `dsh` 协议锚点 | 设置 `eadp studio` 产品身份、`eadp-studio://`、独立用户数据与 DSH_HOME |
+| `desktop-startup-edits.mjs` | `apps/desktop/src/main.ts` 的完整 `openInitialWindow`、welcome Host 连接块及 `nativeTheme/net/protocol` 导入锚点 | 直接进入本地工作台；保留原生 welcome 请求的同源 Host cookie 约束 |
+| `workbench-edits.mjs` | `apps/desktop/src/project-manager.ts` 的唯一 `const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate` | 将四个新插件加入实际 shipped profile |
+| `workbench-edits.mjs` | `apps/cli/package.json` 的 `@deepseek-ai/dsh` 生产 dependencies，四个依赖必须原先不存在 | 将四个新插件纳入 CLI 生产依赖闭包 |
+| `workbench-runtime-edits.mjs` | `apps/desktop/scripts/prepare-runtime.ts` 的 `prepareCommandLink` 导入和 `readPrimaryRuntime` 前锚点 | 在官方运行时准备阶段生成固定 `eadp-tools` |
+| `workbench-runtime-edits.mjs` | `packages/subprocess/subprocess-local/src/index.ts` 的 `windows-job` 返回锚点 | Windows Job 不可用时拒绝运行，不退化为无进程树约束的执行 |
+| `prepare-eadp-tools.mjs`、`eadp-runtime.lock.json` | 新增 `apps/desktop/scripts/prepare-eadp-tools.{mjs,d.mts}` 与锁文件 | 只交付锁定 Node 22.22.3 和 pnpm 11.28.5；下载字节、展开文件和工具入口全部校验，不含 Git/SSH |
+| `prototype-template-edits.mjs` | `apps/desktop/scripts/prepare-dsh.ts` 的 `runtime:manifests` 步骤前锚点 | 在运行时清单前校验并展开 `@eadp/prototype` 模板归档 |
+| `prototype-template-edits.mjs` | `prepare-runtime-manifests.ts` 的 fs 导入与 `electron-builder-config.mjs` 的 Office 导入锚点 | 装载模板 file-transformer，避免把模板源文件当已安装依赖清单处理 |
+| `studio-packaging-edits.mjs` | `package-target.ts` 的 `build:official` 与 macOS 并发参数锚点 | 使用官方 artifact 范围构建，并在 Windows 使用有界并发打包 |
+| `studio-packaging-edits.mjs` | `desktop-build-commit.mjs` 的 packaged commit 环境锚点 | 让 Client 与桌面回执使用同一产品 Git 快照 |
+| `studio-packaging-edits.mjs` | `prepare-package-set.ts` 的 tarball `package.json` 读取锚点 | 用相对 tarball 名称避免 GNU tar 将 Windows 盘符解释为远程主机 |
+| `workbench-edits.mjs` | `prepare-package-set.ts` 的 path 导入和默认 inputs 锚点 | 接收内部设置的 `DSH_DESKTOP_PACKED_EXTRA` 五包 tarball 目录 |
+| `studio-typert-edits.mjs` | `packages/typert/generator/src/workspace.ts` 的 WorkspaceAnalyzer `.analyze()` 锚点 | 使用固定上游已有的 `analyzeInBatches()` 限制反射内存 |
+| `model-selection-edits.mjs` | `agent/src/model-selection.ts`、`agent/src/runtime-types.ts`、`agent-loop/src/agent.ts` 的模型通知与 pre-step 类型/调用锚点 | 共享模型切换通知监听，并把最终 prompt assembly 传到通知处理 |
+| `primary-runtime-edits.mjs` | `scripts/primary-runtime/prepare.ts` 的导入、staging、资源准备和函数注释锚点 | 对完整 primary-runtime 负载做哈希后复用；缺失或损坏仍从锁定归档重建 |
 
-The pinned commit is decided in `release.lock.json` itself (`dsh.commit`/`dsh.tag`), so the upgrade is a normal reviewed lock change; `scripts/dependency-update.mjs` takes no version argument (run via `scripts/dependency-update.sh` on Linux/macOS or `scripts/dependency-update.ps1` on Windows). After editing the lock's commit/tag to the new upstream release, run the script: it validates the tag against the pinned repository, obtains the commit archive, recomputes every derived archive fact (SHA256, byte size, entry and symlink counts, critical-file hashes, package requirements), rewrites those lock sections, replaces the machine-local cache, and re-runs `scripts/fetch-dsh.mjs` as the authoritative verification and extraction. On rejection the lock is restored. A tag that does not resolve to the recorded commit, or a local source that no longer matches the lock's critical-file hashes, fails loudly. Materialization resets build-time acceptance and deletes the stale build tree `.local/build/dsh` and packed plugin, so `prepare-studio-plugin.mjs` and the focused regressions must be re-run before assembly acceptance is claimed again. When the local source already matches the lock the script is a no-op.
+`prototype-template-archive.mjs` 与 `prototype-template-transform.mjs` 是上述模板编辑的新增维护源码；`workbench-runtime-edits.mjs` 同时登记其三个新增运行时文件。任何新增文件不再存在于维护目录都会使装配失败。
 
-The upstream package declares Node `^22.19.0 || >=24.0.0`, `pnpm@11.28.5` and TypeScript `^6.0.3`; its `pnpm-lock.yaml` is part of the source archive. Use the upstream package manager and lockfile when preparing dependencies. Studio's root workspace and the prototype template have independent toolchain boundaries.
+## 已删除的旧编辑
 
-The fixed archive has 18,674 entries, including 14 real relative symbolic links. Windows must already permit creation of symbolic links. After Developer Mode was enabled, full extraction passed on this workstation. The fetch script uses UTF-8 archive names and creates each real Windows symlink with its target type. It does not change Windows settings or replace symlinks with copies, and it does not publish an incomplete tree.
+协同 HTTP 策略、秘密凭据 IPC、旧设置桥/分组、内嵌 Chromium 与画布、原型浏览器 IPC、原生 prompt/control admission、旧 Studio 插件/领域包/模板载荷均已删除。最终装配不引用这些模块，不携带浏览器运行时，也不配置协同更新服务。
 
-The archive cache is `.local/upstream/dsh-<commit>.tar.gz`; successful extraction also writes `.local/upstream/dsh.source.json`. Existing source is never overwritten: its receipt and critical hashes must match. This existing-directory check is not a full audit of every source file. A changed or unknown source tree must be inspected explicitly. Concurrent fetches are rejected by the `.local/upstream/.dsh-fetch.lock` directory. Incomplete downloads/extractions remain in `.dsh-fetch-*` directories for inspection. If a process is killed, inspect and manually remove its empty lock directory before retrying. The script performs no recursive deletion.
-
-`release.lock.json` records the last complete source-script run for alpha.4 with its hashes, source commit and dirty-tree status. This is a development-machine unsigned source build; installed startup, clean-machine installation and distribution qualification remain unverified. A successful build does not establish release readiness.
-
-原型预览沿已有 layout 桥接传递 navigation（站内 path 或 reload），复用顶层窗口及 Host 选定实例校验；只允许当前注册 loopback origin 内导航。
-
-### 原生原型消息准入
-
-`native-prompt-edits.mjs` 在官方 `SessionController.prompt` 完成参数校验后、写入原生 inbox 前增加 `session/prompt-admission` 串行事件。Studio 对登记的原型会话先持久记录原始 requestId、mode、内容与附件引用，再复用开发段占用与完成 hook。非原型会话明确放行；未安装或未就绪的处理器拒绝发送。Host 内部递送只凭同进程精确对象 WeakSet 放行，浏览器不能伪造旁路字段。编辑锚点缺失、重复或部分应用立即报错。
-
-同一编辑通过 `session/control-admission` 将受管队列的实际变更回调交给 Host 串行执行，避免“核对通过后、真正入队前”发生完成释放。原生停止本轮沿官方 FIFO 语义保留已经授权的待执行消息；业务暂停则撤销整个开发段许可。非 Studio 会话不等待 Studio 准入。当前消息与控制范围以项目构造的 `studio-` 会话身份为准；没有就绪的业务处理器时拒绝该受管范围，不影响普通原生会话。
-
-同一编辑同时约束受管会话 `updateQueue`／`cancel`：队列实际变更回调在 Studio 的同一串行写入范围执行，避免校验后再变更与完成释放竞争；原生停止沿用官方取消当前轮次且保留已入队消息的语义：有已授权 pending 时保留同段 FIFO；没有 pending 时立即撤销本进程许可，不等待完成 hook 队列。业务暂停始终撤销段许可。只有仓库实际构造的 `studio-` 会话进入这些事件，普通原生会话保持官方路径。
-
-### Native welcome Host authentication
-
-desktop-startup-edits.mjs reuses the cookie already issued by authenticateWebHost for native welcome HTTP/RPC and account streams. The launch query is removed before the welcome read; requests must retain the Host origin and reject redirects. This avoids a second token exchange through Electron's independent cookie jar. Missing or duplicated anchors fail closed. Current-version desktop startup and account verification remain required.
-
-## Local workbench assembly (static refactoring)
-
-`node apps/desktop-distribution/build/prepare-workbench.mjs --stage-only` assembles the five local workbench packages into the isolated, reconstructible `.local/build/local-workbench-dsh` tree. The same command without `--stage-only` installs build dependencies and runs Host compilation, official Typert generation, Client compilation, package `tsc --noEmit`, and plugin bundles. It never launches the desktop, a model, or a prototype. The older installer entry remains pending replacement in retirement stage 6; the isolated assembly carries no Studio plugin.
-
-`workbench-edits.mjs` owns two product integration edits, replayed from the fixed upstream source: the unique `const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate` anchor in `apps/desktop/src/project-manager.ts` appends the four product bundles; the production `dependencies` object in `apps/cli/package.json` receives those same four packages and rejects missing/already-present entries. Missing/duplicated anchors fail the assembly. `prepare-workbench.mjs` also inserts the five source aliases at the unique `"paths": {` anchor and face references at each unique `"references": [` anchor; missing/duplicated markers fail. No source in `.local/upstream/` is changed.
-
-The new tree is a build artifact, not a backup or an alternative source location. All maintained implementation remains in `packages/eadp-*` and this `build/` directory. No runtime or desktop acceptance has been performed.
-
-The isolated workbench assembly also replays the existing `studio-typert-edits.mjs` exact-anchor change (`WorkspaceAnalyzer.analyze()` → `analyzeInBatches()`) into `packages/typert/generator/src/workspace.ts`. Missing/duplicated anchors fail. The source fetch verifier runs before staging; metadata/version checks do not replace its pinned source receipt and critical-file checks.
-
-Workbench assets are staged exclusively from the prototype manifest allowlist. The manifest and each source file are read once, validated, and those exact bytes are written into the generated tree; ignored dependency/build directories never enter the staged asset set. The public entry holds the existing build ownership lock in `.local/build/local-workbench-lock` throughout staging and compilation, so concurrent invocations fail rather than mixing outputs. This is an isolated generated build tree, not a backup of user projects.
-
-Built-in knowledge resources are staged from `packages/eadp-knowledge/resources/builtin/manifest.json`: the manifest, `SOURCES.md`, and precisely the listed cards. Hash, duplicate/path and symlink failures stop assembly. Root `pnpm check` additionally verifies Git tracking and source/scope metadata. The two initial cards are public methodology references; team applicability is unconfirmed. User knowledge under `resolveDshHome()/knowledge/` never enters the payload.
+Windows 公共示例 `windows-package.env.example` 只保留产品 App ID。既有机器本地 `.env.windows` 不会被覆盖；其中如仍有旧部署配置，需要由维护者显式清理，本仓库不读取或迁移其秘密值。

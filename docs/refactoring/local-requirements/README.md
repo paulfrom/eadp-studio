@@ -1,6 +1,6 @@
 # 本地需求与原型工作台改造
 
-状态：实施设计，尚未实施。日期：2026-11-05。基线 `62d896d15edf0cf39f2a4ba549190dbfdbc01066`；工作区已有 `README.md` 修改、未跟踪的 `docs/refactoring/`，以及 `docs/` 下旧设计/ADR/发行说明的删除（`git status` 为 `D`）。本轮只新增/修订文档，不修改产品代码、不提交、不推送、不发布。
+状态：实施设计，尚未实施。日期：2026-11-05；2026-11-06 修订基线状态。方案与旧文档删除已提交于 `c89f0e8`（父提交 `62d896d15edf0cf39f2a4ba549190dbfdbc01066`“修正交互逻辑”），工作区干净，仅剩未跟踪的 `skills/`。本轮只新增/修订文档，不修改产品代码、不提交、不推送、不发布。
 
 ## 1. 总体目标
 
@@ -67,12 +67,12 @@ EADP 只保留需求与原型：
 ## 5. 参考基准
 
 - EADP 固定 DSH：`apps/desktop-distribution/release.lock.json` 的 `687f282e8625c6b8d11ff58211a90524be2e4317` / `0.2.1-rc.2`；不升级宿主来迁就参考代码。
-- Editor 参考：`D:/project/skills/dsh-editor`，提交 `52450c6a0235d9bf07654d3fecf15f071ce45599`；它绑定 rc.5，只借机制，不复制代码/补丁/私有 RPC/root 遮蔽。
+- Editor 参考：`/home/paul/project/dsh-editor`，提交 `52450c6a0235d9bf07654d3fecf15f071ce45599`；它绑定 rc.5，只借机制，不复制代码/补丁/私有 RPC/root 遮蔽。
 - 上游缓存 `.local/upstream/dsh/` 只作取证；新增发行编辑仍只能进入 `apps/desktop-distribution/build/`，锚点缺失即失败，并登记 `build/README.md` 与仓库缺口清单（当前 `docs/blocked-upstream.md` 缺失，见第 6 节）。
 
 ## 6. 旧文档与仓库文档的当前状态
 
-当前工作区 `docs/` 下除本目录外的旧设计、ADR、发行说明已被删除（`git status` 显示为 `D`）。本目录是唯一现行方案入口；不自动从 Git 恢复旧文，也不把旧文与现方案拼用。仍有效的旧决定在本目录继承；被本次范围取消的旧流程不执行。若这些文件是误删，需要用户确认后再从 Git 恢复；恢复前不写回、不引用。
+当前工作区 `docs/` 下除本目录外的旧设计、ADR、发行说明已在 `c89f0e8` 中删除。本目录是唯一现行方案入口；不自动从 Git 恢复旧文，也不把旧文与现方案拼用。仍有效的旧决定在本目录继承；被本次范围取消的旧流程不执行。若这些文件是误删，需要用户确认后再从 Git 恢复；恢复前不写回、不引用。
 
 仓库要求的 `docs/blocked-upstream.md` 也在本次删除范围内，当前不存在。目标方案的缺口已记录在 [evidence.md](evidence.md) 第 6 节与 [implementation.md](implementation.md) 的前置表；实施前需按 AGENTS 恢复或重建该登记文件，不能因为没有该文件而跳过缺口登记。
 

@@ -20,7 +20,7 @@ Visual Studio C++ build tools, real symlink permission, and download access.
 The DSH source/version and bundled runtimes are fixed by the maintained lock files.
 --check validates the host, stages source, installs build dependencies, and runs
 the upstream packaging preflight. It does not compile or create an installer.
-Existing .local/build/dsh/apps/desktop/.env.windows is preserved; on first use
+Existing .local/build/local-workbench-dsh/apps/desktop/.env.windows is preserved; on first use
 the public windows-package.env.example is copied there. No signing/upload occurs.
 Electron-builder tools use .local/cache/electron-builder under the primary checkout.
 `
@@ -78,21 +78,21 @@ async function checkSymlinks(buildRoot) {
 
 /** Sequential source pipeline; the same runner is used by the CLI and the failure-propagation regression. */
 export async function buildDesktop({ root, sharedRoot, check = false, runNode, pnpm = runPnpm, configure = ensureWindowsEnvironment }) {
-  const tree = path.join(sharedRoot, '.local/build/dsh')
+  const tree = path.join(sharedRoot, '.local/build/local-workbench-dsh')
   const desktop = path.join(tree, 'apps/desktop')
   pnpm('productInstall', root)
   runNode(path.join(sharedRoot, 'scripts/fetch-dsh.mjs'), [], sharedRoot)
-  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), ['--stage-only'], root)
+  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-workbench.mjs'), ['--stage-only'], root)
   await configure(desktop)
   pnpm('install', tree)
   pnpm('checkWindows', tree)
   if (check) return undefined
-  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), ['--browser-runtime'], root)
+  runNode(path.join(root, 'apps/desktop-distribution/build/prepare-workbench.mjs'), [], root)
   const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
   await mkdir(builderCache, { recursive: true })
   const environment = {
     ...process.env,
-    DSH_DESKTOP_PACKED_EXTRA: path.join(sharedRoot, '.local/build/packed-studio'),
+    DSH_DESKTOP_PACKED_EXTRA: path.join(sharedRoot, '.local/build/packed-workbench'),
     ELECTRON_BUILDER_CACHE: builderCache,
   }
   pnpm('packageWindows', tree, environment)

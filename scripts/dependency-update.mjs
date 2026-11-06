@@ -170,8 +170,8 @@ async function main() {
     }
 
     // The old build tree was assembled from the previous source; never reuse it.
-    await rm(path.join(repo, '.local/build/dsh'), { recursive: true, force: true });
-    await rm(path.join(repo, '.local/build/packed-studio'), { recursive: true, force: true });
+    await rm(path.join(repo, '.local/build/local-workbench-dsh'), { recursive: true, force: true });
+    await rm(path.join(repo, '.local/build/packed-workbench'), { recursive: true, force: true });
     const verified = JSON.parse(await readFile(lockPath, 'utf8'));
     verified.acceptance = {
       sourceArchiveVerified: true,
@@ -186,7 +186,7 @@ async function main() {
     verified.status = 'source-archive-extraction-verified';
     await writeFile(lockPath, `${JSON.stringify(verified, null, 2)}\n`);
     console.log(`Fixed source materialized: ${commit} (${dsh.tag}).`);
-    console.log('The stale build tree was removed. Re-run node apps/desktop-distribution/build/prepare-studio-plugin.mjs and the focused regressions before claiming assembly acceptance.');
+    console.log('The stale build tree was removed. Re-run pnpm build:plugins and pnpm build:desktop before claiming static assembly verification.');
   } finally {
     await rm(staging, { recursive: true, force: true });
   }

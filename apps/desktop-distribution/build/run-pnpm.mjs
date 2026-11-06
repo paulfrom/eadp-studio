@@ -1,4 +1,4 @@
-/** Fixed pnpm operations used to assemble the Studio plugin. */
+/** Fixed pnpm operations used to assemble the local Workbench. */
 import { spawnSync } from 'node:child_process'
 
 const OPERATIONS = {
@@ -13,11 +13,8 @@ const OPERATIONS = {
   startDesktop: ['run', 'start:desktop'],
   electron: ['--filter', '@deepseek-ai/dsh-desktop', 'exec', 'install-electron'],
   primaryRuntime: ['--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime'],
-  // Relative to .local/build/dsh/packages/eadp/studio-plugin. Keeping this
-  // fixed avoids placing a machine-local path into a Windows shell command.
-  pack: ['pack', '--pack-destination', '../../../../packed-studio'],
-  // Regenerate the Studio shell's Tailwind utilities from its source classes.
-  studioStyles: ['exec', 'tailwindcss', '-i', 'src/client/studio.tw.css', '-o', 'src/client/studio.tw.generated.css', '--minify'],
+  // Relative to .local/build/local-workbench-dsh/packages/eadp/<package>.
+  pack: ['pack', '--pack-destination', '../../../../packed-workbench'],
 }
 
 export function pnpmInvocation(operation) {

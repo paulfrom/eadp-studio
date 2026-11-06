@@ -6,15 +6,15 @@
 
 | 项目 | 事实 |
 | --- | --- |
-| EADP 仓库 HEAD | `62d896d15edf0cf39f2a4ba549190dbfdbc01066`；提交说明“修正交互逻辑” |
-| 工作区 | `README.md` 已修改；`docs/refactoring/` 未跟踪；`docs/` 下旧设计/ADR/`blocked-upstream.md` 等为删除状态（`D`）；产品源码未改 |
+| EADP 仓库 HEAD | `c89f0e8`“重构方案确定”（2026-11-06），父提交 `62d896d15edf0cf39f2a4ba549190dbfdbc01066`“修正交互逻辑”；产品源码自 `62d896d` 未变，本轮文档与旧文档删除已提交 |
+| 工作区 | 干净；仅剩未跟踪的 `skills/`。实施前必须重新记录 HEAD 和工作区变更，不能沿用本文的干净状态作为未来事实 |
 | 固定 DSH | `apps/desktop-distribution/release.lock.json` 锁定 `687f282e8625c6b8d11ff58211a90524be2e4317`，`@deepseek-ai/dsh-root` `0.2.1-rc.2` |
 | 上游源码缓存 | `.local/upstream/dsh/`，无 `.git`，只能按 `package.json` 版本与 `release.lock.json` 对账；不是维护源码 |
-| Editor 参考 | `D:/project/skills/dsh-editor`，HEAD `52450c6a0235d9bf07654d3fecf15f071ce45599`，工作树干净 |
+| Editor 参考 | `/home/paul/project/dsh-editor`，HEAD `52450c6a0235d9bf07654d3fecf15f071ce45599`，工作树干净 |
 | Editor 宿主版本 | **DSH 0.2.1-rc.5**；另有 3 个锁死 rc.5 的上游补丁；不能把其代码当作 EADP rc.2 已支持 |
 | 仓库检查 | `pnpm check` 在完整访问下通过：396 个跟踪文件，48 个模板哈希匹配，`releaseReady=false`。沙箱内的管道限制会使 `spawnSync git` 报 EPERM，属执行环境问题 |
 
-本轮只完成方案与文档，不修改产品代码，不提交、推送或发布。实施前必须重新记录 HEAD 和工作区变更，不能沿用本文的干净/未跟踪状态作为未来事实。
+本轮只完成方案与文档，不修改产品代码，不提交、推送或发布。
 
 ## 2. 已确认的产品目标
 
@@ -35,7 +35,7 @@
 
 | 位置 | 事实 |
 | --- | --- |
-| `packages/studio-plugin/src` | 159 个 ts/tsx，17,314 行；host 86 文件/12,484 行，client 66/4,447，shared 7/383 |
+| `packages/studio-plugin/src` | 159 个 ts/tsx，17,921 行；host 86 文件/12,876 行，client 66/4,644，shared 7/401 |
 | `host/composition.ts` | 228 行；同时装配协同认证、远端 API、Git、原型检查/预览/发布、DSH 会话、桌面浏览器运行时 |
 | `host/index.ts` | `StudioService extends TypertRemoteService`，`@Remote command/progress`；注册 `session/prompt-admission`、`session/control-admission` |
 | `shared/studio.ts` | `StudioState` 含 scenario/requirement/consistency/prototype/baseline/handoff/tasks/candidates；`StudioCommand` 是巨型联合 |
@@ -79,7 +79,7 @@
 | 模式 | Editor 事实 | EADP 采用方式 |
 | --- | --- | --- |
 | 项目 = DSH Workspace | `root-workspaces.tsx` 用 `ctx.workspaces.create({path})`、`ctx.uiWorkspace.openWorkspace`、`ctx.workspaces.delete`；`WorkspaceView` 含 workspaceId/path/title/sessionIds | 直接采用：项目身份 = WorkspaceId，目标目录 = Workspace.path；不自建项目注册表 |
-| 路径规范化与别名 | `workspace/tool.ts` 的 `realpathNormalize` 是唯一 canon；`resolveByPath` 按 canonical path 复用登记 | 采用：同一真实目录（含大小写/链接别名）复用同一 Workspace |
+| 路径规范化与别名 | `dsh-manuscript/host-api` 的 `normalizeWorkspaceRelative` + `fs.realpath` 做 canonical 根与逐段 containment（`workspace-kit/src/files.ts`、`entries.ts`）；按 canonical path 复用登记 | 采用：同一真实目录（含大小写/链接别名）复用同一 Workspace |
 | 版本条件写入 | `rpc/files.ts` 的 `writeTextFile(..., {replaceIfVersion}, expectedVersion)`；`proposal.ts` 应用前重读版本、唯一原文匹配 | 机制采用；EADP 直接用固定宿主 `ctx.fs.writeText(..., {kind:'replaceIfVersion'})`，不复制 Editor RPC |
 | 离场保存 | `save-before-leave.ts` 保存前后核对 composing/conflict/身份/实时输入；await 后 typing 返回失败 | 采用其顺序；EADP 的编辑器无 Editor 的 CodeMirror 冲突模型，保留 IME/草稿/版本核对 |
 | 草稿定时器 | `draft-sync.ts` 只管理未触发的 setTimeout，不能取消已发出的保存 | 采用：UI 定时器不等于在途保存；在途保存单独等待 |

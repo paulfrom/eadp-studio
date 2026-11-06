@@ -25,4 +25,3 @@ Thumbs.db
 
 # build/ contains maintained scripts; never ignore it globally.
 .preview/
-/packages/studio-plugin/src/client/studio.tw.generated.css

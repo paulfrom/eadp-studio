@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "studioTools": {
-    "lockFile": "apps/desktop-distribution/build/studio-runtime.lock.json",
-    "resourceDirectory": "runtime/studio-tools",
-    "manifest": "runtime/studio-tools/runtime-manifest.json",
-    "windowsAcceptance": "passed-development-machine-unsigned-source-build"
+  "eadpTools": {
+    "lockFile": "apps/desktop-distribution/build/eadp-runtime.lock.json",
+    "resourceDirectory": "runtime/eadp-tools",
+    "manifest": "runtime/eadp-tools/runtime-manifest.json",
+    "windowsAcceptance": "not-verified"
   },
   "status": "source-archive-extraction-verified",
   "dsh": {

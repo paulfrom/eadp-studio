@@ -9,21 +9,21 @@ import { isDeepStrictEqual } from 'node:util'
 import { acquireDesktopBuildLock } from '../apps/desktop-distribution/build/desktop-build-lock.mjs'
 import { developmentAppPids } from '../apps/desktop-distribution/build/desktop-processes.mjs'
 import { pnpmInvocation } from '../apps/desktop-distribution/build/run-pnpm.mjs'
-import { recordStudioBuild, verifyRuntimePayload, verifyStudioPlugin } from '../apps/desktop-distribution/build/studio-payload.mjs'
-import { studioStagingPaths } from '../apps/desktop-distribution/build/prepare-studio-plugin.mjs'
+import { recordWorkbenchBuild, verifyRuntimePayload, verifyWorkbenchBuild } from '../apps/desktop-distribution/build/workbench-payload.mjs'
+import { workbenchStagingPaths } from '../apps/desktop-distribution/build/prepare-workbench.mjs'
 
 const repo = fileURLToPath(new URL('../', import.meta.url))
 let interruptedSignal
 const help = `Usage: pnpm dev:desktop [--prepare | --help]
 
-Prepare dependencies, fixed DSH source, current Studio and development runtimes;
+Prepare dependencies, fixed DSH source, current Workbench and development runtimes;
 then launch upstream Electron with DevTools and main/renderer/Host inspectors.
 --prepare performs the same preparation and build without launching Electron.
 Requires native Windows x64, Node ^22.19.0 or >=24, pnpm 11.x, Git, tar,
 real symbolic-link permission and download access on first preparation.
 Unchanged inputs reuse installed dependencies and verified build outputs.
 After source edits, quit the app from its tray menu and run this command again; no source watcher.
-Development data stays in .local/build/dsh/apps/desktop/.desktop-build/development.
+Development data stays in .local/build/local-workbench-dsh/apps/desktop/.desktop-build/development.
 `
 
 export function parseDevArguments(args) {
@@ -87,14 +87,14 @@ export async function assertNoRunningDevelopmentApp(desktop, appPids = developme
   throw new Error(`Desktop development app ${owners} still owns ${profile}. Quit it from the tray menu, then run this command again.`)
 }
 
-/** Stable content keys include deleted files; generated styles are rebuilt from their inputs. */
-export async function inputDigest(root, paths, { ignoreGeneratedStyles = false } = {}) {
+/** Stable content keys include deleted files. */
+export async function inputDigest(root, paths) {
   const hash = createHash('sha256')
   const visit = async relative => {
     const target = path.join(root, relative)
     if ((await stat(target)).isDirectory()) {
       for (const child of (await readdir(target)).sort()) await visit(path.join(relative, child))
-    } else if (!(ignoreGeneratedStyles && relative.endsWith('studio.tw.generated.css'))) {
+    } else {
       hash.update(relative.split(path.sep).join('/')).update('\0').update(await readFile(target)).update('\0')
     }
   }
@@ -170,17 +170,23 @@ export async function withDesktopLock(buildRoot, action) {
   }
 }
 
-const PRODUCT_DEPENDENCIES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'packages/studio-plugin/package.json', 'packages/eadp-contracts/package.json']
-const PRODUCT_INPUTS = [...PRODUCT_DEPENDENCIES, 'scripts/dev-desktop.mjs', 'scripts/fetch-dsh.mjs', 'apps/desktop-distribution/release.lock.json', 'apps/desktop-distribution/build', 'packages/studio-plugin/src', 'packages/studio-plugin/build', 'packages/studio-plugin/assets/prototype-template.manifest.json', 'packages/studio-plugin/cordis.patch.yml', 'packages/eadp-contracts/src']
-const BUILT_OUTPUTS = ['apps/desktop/lib', 'apps/desktop-host/lib', 'apps/cli/lib', 'apps/web/dist', 'packages/eadp/contracts/lib']
+const WORKBENCH_PACKAGES = ['eadp-contracts', 'eadp-shell', 'eadp-requirements', 'eadp-prototype', 'eadp-knowledge']
+const PRODUCT_DEPENDENCIES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', ...WORKBENCH_PACKAGES.map(name => `packages/${name}/package.json`)]
+const PRODUCT_INPUTS = [
+  ...PRODUCT_DEPENDENCIES, 'scripts/dev-desktop.mjs', 'scripts/fetch-dsh.mjs',
+  'apps/desktop-distribution/release.lock.json', 'apps/desktop-distribution/build',
+  ...WORKBENCH_PACKAGES.flatMap(name => [`packages/${name}/src`, ...(name === 'eadp-contracts' ? [] : [`packages/${name}/build`, `packages/${name}/cordis.patch.yml`])]),
+  'packages/eadp-prototype/assets/prototype-template.manifest.json', 'packages/eadp-knowledge/resources/builtin',
+]
+const BUILT_OUTPUTS = ['apps/desktop/lib', 'apps/desktop-host/lib', 'apps/cli/lib', 'apps/web/dist', ...WORKBENCH_PACKAGES.map(name => `packages/eadp/${name}/lib`)]
 
 /** One build graph, followed by the official --skip-build launcher; failures never launch Electron. */
-export async function devDesktop({ root, sharedRoot, prepare = false, execute = executeDev, verify = verifyStudioPlugin, record = recordStudioBuild, tools, electronReady, verifyTools = verifyRuntimePayload, appPids = developmentAppPids }) {
+export async function devDesktop({ root, sharedRoot, prepare = false, execute = executeDev, verify = verifyWorkbenchBuild, record = recordWorkbenchBuild, tools, electronReady, verifyTools = verifyRuntimePayload, appPids = developmentAppPids }) {
   await assertSharedSourceContract(root, sharedRoot)
-  const tree = path.join(sharedRoot, '.local/build/dsh')
+  const tree = path.join(sharedRoot, '.local/build/local-workbench-dsh')
   const desktop = path.join(tree, 'apps/desktop')
   if (!prepare) await assertNoRunningDevelopmentApp(desktop, appPids)
-  const statePath = path.join(sharedRoot, '.local/build/.studio-desktop-dev.json')
+  const statePath = path.join(sharedRoot, '.local/build/.workbench-desktop-dev.json')
   const state = await json(statePath) ?? {}
   // Build tools and runtime preparation share a writable, workspace-owned temp directory.
   const temporary = path.join(sharedRoot, '.local/cache/tmp')
@@ -201,25 +207,24 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
   } else console.log('Desktop development: reusing product dependencies.')
   console.log('Desktop development: verifying fixed DSH source...')
   await runNode(path.join(sharedRoot, 'scripts/fetch-dsh.mjs'), [], sharedRoot)
-  const template = await json(path.join(root, 'packages/studio-plugin/assets/prototype-template.manifest.json'))
+  const template = await json(path.join(root, 'packages/eadp-prototype/assets/prototype-template.manifest.json'))
   const templatePaths = [...template.files, ...template.addedFiles].map(entry => {
     if (!entry.path || entry.path.includes('\\') || entry.path.includes(':') || path.posix.isAbsolute(entry.path) || entry.path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid template bundle entry')
-    return `packages/studio-plugin/assets/prototype-template/${entry.path}`
+    return `packages/eadp-prototype/assets/prototype-template/${entry.path}`
   })
-  const inputs = await inputDigest(root, [...PRODUCT_INPUTS, ...templatePaths], { ignoreGeneratedStyles: true })
-  const plugin = path.join(tree, 'packages/eadp/studio-plugin')
+  const inputs = await inputDigest(root, [...PRODUCT_INPUTS, ...templatePaths])
   let stagedOutputs
-  try { stagedOutputs = await inputDigest(tree, studioStagingPaths) } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try { stagedOutputs = await inputDigest(tree, workbenchStagingPaths) } catch (error) { if (error.code !== 'ENOENT') throw error }
   if (state.staged !== inputs || state.stageOutputs !== stagedOutputs || !stagedOutputs) {
-    console.log('Desktop development: staging current Studio source and template...')
+    console.log('Desktop development: staging current Workbench source and resources...')
     delete state.built
     await save()
-    await runNode(path.join(root, 'apps/desktop-distribution/build/prepare-studio-plugin.mjs'), ['--dev-stage'])
+    await runNode(path.join(root, 'apps/desktop-distribution/build/prepare-workbench.mjs'), ['--stage-only'])
     state.staged = inputs
-    state.stageOutputs = await inputDigest(tree, studioStagingPaths)
+    state.stageOutputs = await inputDigest(tree, workbenchStagingPaths)
     await save()
-  } else console.log('Desktop development: reusing verified Studio staging.')
-  const treeDependencies = () => inputDigest(tree, ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'packages/eadp/studio-plugin/package.json', 'packages/eadp/contracts/package.json'])
+  } else console.log('Desktop development: reusing verified Workbench staging.')
+  const treeDependencies = () => inputDigest(tree, ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', ...WORKBENCH_PACKAGES.map(name => `packages/eadp/${name}/package.json`)])
   if (state.treeDependencies !== await treeDependencies() || !await exists(path.join(tree, 'node_modules/.modules.yaml'))) {
     console.log('Desktop development: installing DSH build dependencies...')
     delete state.built
@@ -240,7 +245,7 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
   let reusable = state.built?.inputs === inputs
   if (reusable) {
     try {
-      await verify(plugin, root)
+      await verify(tree, root)
       reusable = state.built.outputs === await inputDigest(tree, BUILT_OUTPUTS)
     } catch { reusable = false }
   }
@@ -251,27 +256,27 @@ export async function devDesktop({ root, sharedRoot, prepare = false, execute = 
     await pnpm('artifacts', tree)
     console.log('Desktop development: building the Electron desktop shell...')
     await pnpm('desktop', tree)
-    console.log('Desktop development: verifying current Studio build outputs...')
-    await record(plugin, root)
-    await verify(plugin, root)
+    console.log('Desktop development: verifying current Workbench build outputs...')
+    await record(tree, root)
+    await verify(tree, root)
     state.built = { inputs, outputs: await inputDigest(tree, BUILT_OUTPUTS) }
     await save()
-  } else console.log('Reusing verified desktop and Studio build outputs.')
-  const runtime = path.join(desktop, '.desktop-build/targets/win-x64/runtime/studio-tools')
-  const runtimeKey = await inputDigest(root, ['apps/desktop-distribution/build/studio-runtime.lock.json', 'apps/desktop-distribution/build/prepare-studio-tools.mjs'])
+  } else console.log('Reusing verified desktop and Workbench build outputs.')
+  const runtime = path.join(desktop, '.desktop-build/targets/win-x64/runtime/eadp-tools')
+  const runtimeKey = await inputDigest(root, ['apps/desktop-distribution/build/eadp-runtime.lock.json', 'apps/desktop-distribution/build/prepare-eadp-tools.mjs'])
   let toolsReady = state.tools === runtimeKey
   if (toolsReady) {
     try { await verifyTools(runtime) } catch { toolsReady = false }
   }
   if (!toolsReady) {
-    console.log('Desktop development: preparing fixed Studio runtime tools...')
-    const archiveCache = path.join(desktop, '.desktop-build/downloads/studio-tools-archives')
+    console.log('Desktop development: preparing fixed EADP runtime tools...')
+    const archiveCache = path.join(desktop, '.desktop-build/downloads/eadp-tools-archives')
     if (tools) await tools(runtime, archiveCache)
-    else await execute(process.execPath, ['--input-type=module', '-e', 'const { prepareStudioTools } = await import(process.argv[1]); await prepareStudioTools(process.argv[2], process.argv[3])', pathToFileURL(path.join(desktop, 'scripts/prepare-studio-tools.mjs')).href, runtime, archiveCache], tree, environment)
+    else await execute(process.execPath, ['--input-type=module', '-e', 'const { prepareEadpTools } = await import(process.argv[1]); await prepareEadpTools(process.argv[2], process.argv[3])', pathToFileURL(path.join(desktop, 'scripts/prepare-eadp-tools.mjs')).href, runtime, archiveCache], tree, environment)
     await verifyTools(runtime)
     state.tools = runtimeKey
     await save()
-  } else console.log('Desktop development: reusing verified Studio runtime tools.')
+  } else console.log('Desktop development: reusing verified EADP runtime tools.')
   // The upstream start path prepares and smoke-tests primary-runtime before Electron.
   // Preparation-only must exercise the same runtime step without opening a window.
   if (prepare) {

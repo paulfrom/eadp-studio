@@ -1,23 +1,33 @@
 /** Rebuildable isolated source assembly for the local workbench; never changes the upstream cache. */
-import { cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { WORKBENCH_EDITS } from './workbench-edits.mjs'
+import { WORKBENCH_ADDITIONS, WORKBENCH_EDITS } from './workbench-edits.mjs'
 import { acquireDesktopBuildLock } from './desktop-build-lock.mjs'
+import { runPnpm } from './run-pnpm.mjs'
+import { recordWorkbenchBuild, verifyWorkbenchBuild, WORKBENCH_PACKAGES } from './workbench-payload.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
-export const workbenchTree = path.join(root, '.local/build/local-workbench-dsh')
-const upstream = path.join(root, '.local/upstream/dsh')
-const packages = ['eadp-contracts', 'eadp-shell', 'eadp-requirements', 'eadp-prototype', 'eadp-knowledge']
+const commonDirectory = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, encoding: 'utf8' })
+if (commonDirectory.status !== 0) throw new Error('Cannot resolve the Git common directory.')
+const sharedRoot = path.dirname(commonDirectory.stdout.trim())
+export const workbenchTree = path.join(sharedRoot, '.local/build/local-workbench-dsh')
+export const packedWorkbenchDirectory = path.join(sharedRoot, '.local/build/packed-workbench')
+const upstream = path.join(sharedRoot, '.local/upstream/dsh')
+const packages = WORKBENCH_PACKAGES
 const json = async file => JSON.parse(await readFile(file, 'utf8'))
 const save = (file, value) => writeFile(file, JSON.stringify(value, null, 2) + '\n')
+const exists = async target => stat(target).then(() => true, error => {
+  if (error.code === 'ENOENT') return false
+  throw error
+})
 
 /** Stages only maintained inputs, retaining dependency/compiler caches in the isolated assembly. */
 export async function stageWorkbench() {
-  const verified = spawnSync(process.execPath, [path.join(root, 'scripts/fetch-dsh.mjs')], { cwd: root, stdio: 'inherit' })
+  const verified = spawnSync(process.execPath, [path.join(sharedRoot, 'scripts/fetch-dsh.mjs')], { cwd: sharedRoot, stdio: 'inherit' })
   if (verified.error) throw verified.error
   if (verified.status !== 0) throw new Error('Fixed upstream source verification failed')
   const lock = await json(path.join(root, 'apps/desktop-distribution/release.lock.json'))
@@ -25,6 +35,15 @@ export async function stageWorkbench() {
   if (metadata.version !== lock.dsh.package.version) throw new Error('Fixed DSH source version mismatch')
   if (!existsSync(workbenchTree)) {
     await cp(upstream, workbenchTree, { recursive: true, filter: source => !source.split(path.sep).includes('node_modules') })
+  } else {
+    for (const file of ['package.json', 'apps/desktop/package.json', 'pnpm-workspace.yaml']) {
+      if (!(await readFile(path.join(workbenchTree, file))).equals(await readFile(path.join(upstream, file)))) throw new Error(`Workbench tree differs from fixed DSH (${file}); remove the generated tree and retry.`)
+    }
+  }
+  for (const addition of WORKBENCH_ADDITIONS) {
+    const target = path.join(workbenchTree, addition.file)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, addition.source)
   }
   for (const edit of WORKBENCH_EDITS) {
     const source = await readFile(path.join(upstream, edit.file), 'utf8')
@@ -35,15 +54,16 @@ export async function stageWorkbench() {
   for (const name of packages) {
     const source = path.join(root, 'packages', name), destination = path.join(eadp, name)
     await mkdir(destination, { recursive: true })
-    // Generated compiler outputs are invalid after source changes; dependencies remain reconstructible.
     await rm(path.join(destination, 'src'), { recursive: true, force: true })
     await rm(path.join(destination, 'lib'), { recursive: true, force: true })
+    await rm(path.join(destination, 'workbench-build.json'), { force: true })
     await cp(path.join(source, 'src'), path.join(destination, 'src'), { recursive: true })
     const manifest = await json(path.join(source, 'package.json'))
+    manifest.files = [...new Set([...(manifest.files ?? []), 'workbench-build.json'])]
     if (name === 'eadp-contracts') {
       manifest.main = 'lib/index.js'; manifest.types = 'lib/types/index.d.ts'
       manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, { types: value.replace('./src/', './lib/types/').replace(/\.ts$/, '.d.ts'), default: key === '.' ? './lib/index.js' : value.replace('./src/', './lib/types/').replace(/\.ts$/, '.js') }]))
-      manifest.files = ['lib']
+      manifest.files = ['lib/index.js', 'lib/types/**/*.d.ts', 'lib/types/**/*.d.ts.map', 'lib/types/**/*.js', 'lib/types/**/*.js.map', 'workbench-build.json']
       delete manifest.scripts
       await writeFile(path.join(destination, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
       await writeFile(path.join(destination, 'tsconfig.client.json'), JSON.stringify({ extends: '../../../tsconfig.base.client.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types', tsBuildInfoFile: 'lib/client.tsbuildinfo' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
@@ -59,6 +79,7 @@ export async function stageWorkbench() {
       await cp(path.join(source, 'cordis.patch.yml'), path.join(destination, 'cordis.patch.yml'))
     }
     if (name === 'eadp-prototype') {
+      manifest.files = [...new Set([...manifest.files, 'assets/prototype-template.tar.gz'])]
       const assets = path.join(source, 'assets')
       const templateBytes = await readFile(path.join(assets, 'prototype-template.manifest.json'))
       const template = JSON.parse(templateBytes.toString('utf8'))
@@ -146,10 +167,31 @@ export async function buildWorkbench() {
       if (artifact === 'lib/client.js' && /require\(["'](?:@eadp\/|@deepseek-ai\/dsh-typert-protocol["'])/.test(bytes)) throw new Error(`Unbundled product import: ${name}/${artifact}`)
     }
   }
+  await recordWorkbenchBuild(workbenchTree, root)
+  await verifyWorkbenchBuild(workbenchTree, root)
+  await rm(packedWorkbenchDirectory, { recursive: true, force: true })
+  await mkdir(packedWorkbenchDirectory, { recursive: true })
+  for (const name of packages) runPnpm('pack', path.join(workbenchTree, 'packages/eadp', name))
+  console.log(`Packed the five Workbench packages into ${packedWorkbenchDirectory}`)
 }
+
+export const workbenchStagingPaths = [...new Set([
+  ...WORKBENCH_EDITS.map(edit => edit.file),
+  ...WORKBENCH_ADDITIONS.map(addition => addition.file),
+  'tsconfig.host.json', 'tsconfig.client.json', 'tsconfig.base.json',
+  ...packages.flatMap(name => [
+    `packages/eadp/${name}/src`, `packages/eadp/${name}/package.json`,
+    ...(name === 'eadp-contracts'
+      ? [`packages/eadp/${name}/tsconfig.json`, `packages/eadp/${name}/tsconfig.client.json`, `packages/eadp/${name}/tsdown.config.ts`]
+      : [`packages/eadp/${name}/cordis.patch.yml`, `packages/eadp/${name}/tsconfig.json`, `packages/eadp/${name}/tsconfig.host.json`, `packages/eadp/${name}/tsconfig.client.json`, `packages/eadp/${name}/tsdown.config.ts`]),
+    ...(name === 'eadp-prototype' ? [`packages/eadp/${name}/assets`] : []),
+    ...(name === 'eadp-knowledge' ? [`packages/eadp/${name}/resources`] : []),
+  ]),
+])]
+
 /** Reuse the maintained ownership lock for this generated tree's full mutation lifetime. */
 export async function withWorkbenchBuild(action) {
-  const lock = await acquireDesktopBuildLock(path.join(root, '.local/build/local-workbench-lock'))
+  const lock = await acquireDesktopBuildLock(path.join(sharedRoot, '.local/build/local-workbench-lock'))
   try { return await action() } finally { await lock.release() }
 }
 
