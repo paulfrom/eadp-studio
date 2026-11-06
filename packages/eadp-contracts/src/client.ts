@@ -1,7 +1,8 @@
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
+import type { EadpPrototypeClient } from './prototype.js'
 import type { EadpShellClient, EadpRequirementsClient, EadpRequirementsSlotProps, EadpPrototypeSlotProps, EadpKnowledgeSlotProps } from './local-workbench.js'
 declare module '@deepseek-ai/cordis' {
-  interface Context { eadpRequirementsClient: EadpRequirementsClient; eadpShellClient: EadpShellClient }
+  interface Context { eadpRequirementsClient: EadpRequirementsClient; eadpShellClient: EadpShellClient; eadpPrototypeClient: EadpPrototypeClient }
 }
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {

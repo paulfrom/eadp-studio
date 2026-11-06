@@ -21,14 +21,6 @@ export default defineConfig({
   },
   title: '需求原型',
   alias: { '@': resolve(__dirname, '../src') },
-  headScripts: [{ src: './prototype-guard.js' }],
-  metas: [
-    {
-      'http-equiv': 'Content-Security-Policy',
-      content: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'self'",
-    },
-    { name: 'eadp-prototype', content: 'synthetic-only-v1' },
-  ],
   extraBabelPlugins: [
     [
       '@ead/babel-plugin-suid-import',

@@ -15,7 +15,15 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    }
   },
   "dsh": {
     "bundle": {
@@ -26,13 +34,23 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-locale",
-        "@eadp/shell"
+        "@eadp/shell",
+        "@deepseek-ai/dsh-typert-client"
       ]
     }
   },
   "files": [
-    "lib",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/types/**/*.d.ts",
+    "lib/types/**/*.js",
+    "lib/typert.host.js",
+    "lib/typert.host.d.ts",
+    "lib/typert.remote-client.js",
+    "lib/typert.remote-client.d.ts",
+    "assets/prototype-template/**/*",
+    "assets/prototype-template.manifest.json"
   ],
   "dependencies": {
     "@eadp/contracts": "workspace:*"

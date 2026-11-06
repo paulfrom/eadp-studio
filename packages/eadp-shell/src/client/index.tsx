@@ -12,6 +12,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@eadp/contracts/client'
+import type { EadpPrototypeClient } from '@eadp/contracts/prototype'
 import shellRemote from '@eadp/shell/remote'
 import { ShellPanel } from './panel.tsx'
 import { zh, en } from './locales.ts'
@@ -40,6 +41,11 @@ class ShellClientService extends Service {
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(shellRemote)
   ctx.plugin(ShellClientService)
+  let prototype: EadpPrototypeClient | undefined
+  const prototypeScope = ctx.inject(['eadpPrototypeClient'], (scope: Context) => {
+    prototype = scope.eadpPrototypeClient
+    return () => { prototype = undefined }
+  })
   ctx.effect(() => ctx.locale.register('eadpShell', { zh, en }), 'eadp-shell: locale')
   const ui = ctx.inject(['remote.eadpShell', 'eadpRequirementsClient'], (scope: Context) => {
     const face: ShellFace = {
@@ -48,6 +54,10 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       createDirectory: (parent, name) => scope.uiWorkspace.createDirectory(parent, name),
       checkDirectory: async path => { await scope.uiWorkspace.listDirectory(path) },
       requirements: scope.eadpRequirementsClient,
+      stopProject: async projectId => {
+        if (!prototype) throw new Error(scope.locale.bind('eadpShell')('unavailable'))
+        await prototype.stopProject(projectId)
+      },
       validateRelocation: async path => unwrap(await scope.remote.eadpShell.validateRelocation(path)),
       assertRemovable: async projectId => unwrap(await scope.remote.eadpShell.assertRemovable(projectId)),
       createSession: async (projectId, role) => unwrap(await scope.remote.eadpShell.createSession(projectId, role)),
@@ -65,5 +75,5 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   })
   // Feature packages register the editor service after this module loads; keep
   // the dependency fiber pending without blocking the Client loader.
-  return async () => { await ui.dispose(); await disposeRemote() }
+  return async () => { await ui.dispose(); await prototypeScope.dispose(); await disposeRemote() }
 }

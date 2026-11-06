@@ -54,3 +54,9 @@
 `packages/client/ui-workspace/src/client/navigation.ts:463,473-475` 在 Workspace/会话为空时主动调用 `initializeDefaultWorkspace()`。Workspace Controller 配置只有 documentsDirectory / documentsLookupTimeoutMs，没有关闭初始化的公开开关。因此“首次启动首页为空且不自动创建默认项目”暂为 blocked-upstream；不得伪造 Workspace 登记或覆盖官方导航内部实现。需要上游公开禁用默认项目初始化的配置。Shell 只展示真实官方列表，不自行创建默认项目。
 
 2026-11-06 继续执行：退出协调缺口只阻塞依赖该接口的关闭行为，不阻塞包骨架与内部导航等可独立实现。阶段 1 在隔离装配树推进，原有“停在阶段 0”记录是首次核查时点，不表示后续工作未开展；各阶段状态以静态实施记录为准。所有缺口仍不绕过，不能宣称完整目标已实现。
+
+## 阶段 4 新确认：受管进程身份不公开
+
+固定 rc.2 `packages/subprocess/subprocess/src/types.ts:169-196` 的普通 `SubprocessHandle` 只提供流、done、terminate 与 waitForExit，不公开 PID 或 OS 启动时间；`:257-260` 的 PID 属于 terminal handle，不能移用于普通后台原型进程。正常运行/停止可使用同一个官方 handle 管理范围；但持久化 pid+启动时间并在重启后安全辨认/停止孤儿的设计缺少公开身份/重新关联接口，标记 blocked-upstream。
+
+当前绕过：无。不读取 provider 私有对象、不从端口猜 PID、不接管未知进程；不伪造运行记录。需要上游公开受管进程身份和可核验的恢复/终止协议。该缺口与桌面退出协调一并保留为未实现、未验证的能力，不以正常 handle 的静态类型通过冒充。

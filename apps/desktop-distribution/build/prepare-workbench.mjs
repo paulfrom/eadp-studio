@@ -1,10 +1,12 @@
 /** Rebuildable isolated source assembly for the local workbench; never changes the upstream cache. */
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { WORKBENCH_EDITS } from './workbench-edits.mjs'
+import { acquireDesktopBuildLock } from './desktop-build-lock.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 export const workbenchTree = path.join(root, '.local/build/local-workbench-dsh')
@@ -44,7 +46,7 @@ export async function stageWorkbench() {
       manifest.files = ['lib']
       delete manifest.scripts
       await writeFile(path.join(destination, 'tsconfig.json'), JSON.stringify({ extends: '../../../tsconfig.base.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
-      await writeFile(path.join(destination, 'tsconfig.client.json'), JSON.stringify({ extends: '../../../tsconfig.base.client.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types', tsBuildInfoFile: 'lib/client.tsbuildinfo' }, include: ['src/client.ts', 'src/local-workbench.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
+      await writeFile(path.join(destination, 'tsconfig.client.json'), JSON.stringify({ extends: '../../../tsconfig.base.client.json', compilerOptions: { rootDir: 'src', outDir: 'lib/types', tsBuildInfoFile: 'lib/client.tsbuildinfo' }, include: ['src/**/*.ts'], references: [{ path: '../../../vendor/cordis' }, { path: '../../client/ui-slots' }, { path: '../../typert/protocol' }] }, null, 2))
       await writeFile(path.join(destination, 'tsdown.config.ts'), "export default { entry: ['lib/types/index.js'], outDir: 'lib', format: ['esm'], platform: 'node', fixedExtension: false, dts: false, clean: false }\n")
     } else {
       const dependencies = await json(path.join(source, 'build/dependencies.json'))
@@ -55,6 +57,31 @@ export async function stageWorkbench() {
         if (file !== 'dependencies.json') await cp(path.join(source, 'build', file), path.join(destination, file))
       }
       await cp(path.join(source, 'cordis.patch.yml'), path.join(destination, 'cordis.patch.yml'))
+    }
+    if (name === 'eadp-prototype') {
+      const assets = path.join(source, 'assets')
+      const templateBytes = await readFile(path.join(assets, 'prototype-template.manifest.json'))
+      const template = JSON.parse(templateBytes.toString('utf8'))
+      const assetTarget = path.join(destination, 'assets')
+      await rm(assetTarget, { recursive: true, force: true })
+      await mkdir(assetTarget, { recursive: true })
+      await writeFile(path.join(assetTarget, 'prototype-template.manifest.json'), templateBytes)
+      const seen = new Set()
+      for (const entry of [...template.files, ...template.addedFiles]) {
+        if (seen.has(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Invalid or duplicate template hash entry')
+        seen.add(entry.path)
+        if (!entry.path || entry.path.includes('\\') || path.isAbsolute(entry.path) || entry.path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Invalid template asset path')
+        const target = path.join(assetTarget, 'prototype-template', entry.path)
+        await mkdir(path.dirname(target), { recursive: true })
+        let sourceFile = path.join(assets, 'prototype-template')
+        for (const part of entry.path.split('/')) {
+          sourceFile = path.join(sourceFile, part)
+          if ((await lstat(sourceFile)).isSymbolicLink()) throw new Error('Linked template asset')
+        }
+        const bytes = await readFile(sourceFile)
+        if (!(await lstat(sourceFile)).isFile() || createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error(`Template source hash mismatch: ${entry.path}`)
+        await writeFile(target, bytes)
+      }
     }
     await save(path.join(destination, 'package.json'), manifest)
   }
@@ -97,12 +124,20 @@ export async function buildWorkbench() {
     for (const artifact of name === 'eadp-contracts' ? ['lib/index.js'] : ['lib/index.js', 'lib/client.js']) {
       const bytes = await readFile(path.join(cwd, artifact), 'utf8')
       if (!bytes.trim()) throw new Error(`Empty build artifact: ${name}/${artifact}`)
-      if (artifact === 'lib/client.js' && /require\(["']@eadp\//.test(bytes)) throw new Error(`Unbundled product import: ${name}/${artifact}`)
+      if (artifact === 'lib/client.js' && /require\(["'](?:@eadp\/|@deepseek-ai\/dsh-typert-protocol["'])/.test(bytes)) throw new Error(`Unbundled product import: ${name}/${artifact}`)
     }
   }
 }
+/** Reuse the maintained ownership lock for this generated tree's full mutation lifetime. */
+export async function withWorkbenchBuild(action) {
+  const lock = await acquireDesktopBuildLock(path.join(root, '.local/build/local-workbench-lock'))
+  try { return await action() } finally { await lock.release() }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   if (process.argv.slice(2).some(arg => arg !== '--stage-only')) throw new Error('Usage: prepare-workbench.mjs [--stage-only]')
-  await stageWorkbench()
-  if (!process.argv.includes('--stage-only')) await buildWorkbench()
+  await withWorkbenchBuild(async () => {
+    await stageWorkbench()
+    if (!process.argv.includes('--stage-only')) await buildWorkbench()
+  })
 }

@@ -26,6 +26,12 @@
     },
     {
       "path": "../eadp-contracts"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../api/gateway/tsconfig.client.json"
     }
   ]
 }

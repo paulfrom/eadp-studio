@@ -106,14 +106,14 @@
     {
       "path": "config/config.ts",
       "sourceSha256": "1986fee3ff6053d4d6b69ccb98e2a04b2ec8c1b476c90cd94ee1ab676bb5807d",
-      "sha256": "02496450bc0bfc5318619995094827ad096cfe06dbc222c8b105717739ea644b",
-      "treatment": "maintained-g0-5"
+      "sha256": "bc9fa3c3f6fa32aef27fb6f4348423aa3b5e1468ec7f2b14ba83da579b865591",
+      "treatment": "maintained-local-prototype"
     },
     {
       "path": "package.json",
       "sourceSha256": "86a53da24460b47db518094c83e0f4ea6dc8822fbb5995715c7263449467598c",
-      "sha256": "cd40efd06153960956ff9a5a2ef69719ba9a166b09b983287b1abc251de2da17",
-      "treatment": "maintained-g0-3"
+      "sha256": "896b8eb7b3cab6faa8720eab513781ac801fb84fc34ad8086563ead4831ad636",
+      "treatment": "maintained-local-prototype"
     },
     {
       "path": "public/actuator/health",
@@ -124,8 +124,8 @@
     {
       "path": "public/app.config.json",
       "sourceSha256": "08e7b6223ac3fc084c61568af4dd58b4d8fe9e45136ca34cb319fff31871cbb7",
-      "sha256": "08127ec0d5b93a018775e8b127b50e78a8c4df702a6d8a4f8ff55179a25225e2",
-      "treatment": "maintained-g0-3"
+      "sha256": "d5e5fc39e695ef4786fb72ebc16dfd128a0f6ea6d30faf9a49a60803ba571082",
+      "treatment": "maintained-local-prototype"
     },
     {
       "path": "public/favicon.ico",
@@ -232,8 +232,8 @@
     {
       "path": "src/typings.d.ts",
       "sourceSha256": "8aac1d90b5c46d9213c002414ce1b6b001e7b479766dd2d4d5d95643934398cf",
-      "sha256": "d3e5522a5ca57256e2d7875d0858edaafe4f1d304231a3e1b8c6e62ba18123f6",
-      "treatment": "maintained-g0-3"
+      "sha256": "473788dca78a09fe1d085926cfe103fa45ba6a58cec140a99f8b21441445e23f",
+      "treatment": "maintained-local-prototype"
     },
     {
       "path": "tsconfig.json",
@@ -253,11 +253,11 @@
     },
     {
       "path": "AGENT.md",
-      "sha256": "2ad99e111ceb0f3f9868597cc413aa8904f64804005504260452df6e6e627745"
+      "sha256": "6b15a4fa21cce70bf6e3892084bf7bc94fa3f05a692c0312f2e190e23662b666"
     },
     {
       "path": "README.md",
-      "sha256": "8a21cd31d21ccbdcc35ffa57922ed339b2d420a21698b81346d1d04c9165e459"
+      "sha256": "5fd71f30dbbdd4892cc3957d2c01fe603ae22596f566830eef35508b47cb43c7"
     },
     {
       "path": "pnpm-lock.yaml",
@@ -266,14 +266,6 @@
     {
       "path": "pnpm-workspace.yaml",
       "sha256": "e28e1cb9e28a7da323c489ae48596b29f22bcaa020997e249648090cb0067fb0"
-    },
-    {
-      "path": "public/prototype-guard.js",
-      "sha256": "480ef2dd1033f506f0c4270bea47f0acdaf71494ab524aac72cb0e1cb6d1ac24"
-    },
-    {
-      "path": "scripts/preview.mjs",
-      "sha256": "5c87c2f7812ba97378ee59bbd181881a3293e99f222b9feb5770b42d8118c414"
     },
     {
       "path": "src/mock/fixtures.ts",
@@ -285,7 +277,7 @@
     },
     {
       "path": "src/mock/runtime.ts",
-      "sha256": "e4ea6c394b65060c4442c6e96bfdf7d8630ef1fc3845d729963cbed17eed29c3"
+      "sha256": "dcf9e6cd759ab47ff01ab88ed7d8f4aeb99934fd02bc3c7e8add292c663b189c"
     },
     {
       "path": "src/pages/Demo/service.ts",
@@ -309,110 +301,45 @@
     }
   ],
   "acceptance": {
-    "sourceImportVerified": true,
     "dependencyLockfilePresent": true,
     "templateAgentRulesPresent": true,
     "mockDirectoryPresent": true,
-    "testsPresent": false,
-    "dependencyInstallExecuted": true,
-    "buildExecuted": true,
+    "dependencyInstallExecuted": false,
+    "typecheckExecuted": false,
+    "lintExecuted": false,
+    "buildExecuted": false,
     "runtimeVerified": false,
-    "g0TemplateAcceptancePassed": false,
+    "desktopVerified": false,
+    "windowsVerified": false,
     "releaseReady": false,
-    "rulesLoadedInTargetDsh": false,
-    "frozenDependencyInstallVerified": true,
-    "typecheckExecuted": true,
-    "lintExecuted": true,
-    "staticServerReadyVerified": true,
-    "staticBrowserSmokeVerified": true,
-    "mockBoundarySmokeVerified": true,
-    "windowsAcceptancePending": true
+    "unverified": [
+      "Frozen dependency installation and current-version static checks",
+      "Umi development server startup, allocated port and HTTP readiness",
+      "System browser opening and prototype business interactions",
+      "Owned process tree stop, interruption, retry and exit recovery",
+      "Windows installation, startup, browser opening and process cleanup"
+    ]
   },
-  "version": "eadp-prototype@1.0.0-g0.10",
+  "version": "eadp-prototype@1.0.0-local.1",
   "removedFiles": [
     "config/router.config.ts",
-    "src/favicon.ico"
+    "src/favicon.ico",
+    "scripts/preview.mjs",
+    "public/prototype-guard.js"
   ],
   "contract": {
     "node": "22.22.3",
     "packageManager": "pnpm@11.28.5",
     "outputDirectory": "dist",
-    "previewReadyPath": "/__eadp_preview_ready",
     "rulesPath": "AGENT.md",
-    "mockMode": "synthetic-only-v1",
-    "protectedPaths": [
-      ".editorconfig",
-      ".env.example",
-      ".eslintignore",
-      ".eslintrc.js",
-      ".gitattributes",
-      ".gitignore",
-      ".npmrc",
-      ".prettierignore",
-      ".prettierrc.js",
-      ".stylelintignore",
-      ".stylelintrc.js",
-      "AGENT.md",
-      "README.md",
-      "config/config.ts",
-      "package.json",
-      "pnpm-lock.yaml",
-      "pnpm-workspace.yaml",
-      "public/actuator/health",
-      "public/app.config.json",
-      "public/favicon.ico",
-      "public/icons/128x128.png",
-      "public/icons/192x192.png",
-      "public/icons/512x512.png",
-      "public/prototype-guard.js",
-      "scripts/preview.mjs",
-      "src/app.tsx",
-      "src/assets/empty.svg",
-      "src/assets/item_empty.svg",
-      "src/assets/page_empty.svg",
-      "src/global.less",
-      "src/layouts/BlankLayout.tsx",
-      "src/loading.tsx",
-      "src/mock/runtime.ts",
-      "src/typings.d.ts",
-      "tsconfig.json",
-      "config/resource-fence.js",
-      "config/load-routes.ts",
-      "config/resource-fence.d.ts"
-    ],
-    "writablePrefixes": [
-      "src/pages/",
-      "src/components/",
-      "src/locales/",
-      "src/mock/fixtures.ts",
-      "src/mock/handlers.ts",
-      "config/routes.json"
-    ],
     "commands": {
       "install": [
         "install",
         "--frozen-lockfile"
       ],
-      "typecheck": [
+      "start": [
         "run",
-        "typecheck"
-      ],
-      "lint": [
-        "run",
-        "lint"
-      ],
-      "build": [
-        "run",
-        "build"
-      ],
-      "preview": [
-        "run",
-        "preview",
-        "--",
-        "--port",
-        "<host-allocated-port>",
-        "--instance",
-        "<host-instance>"
+        "start"
       ]
     }
   }

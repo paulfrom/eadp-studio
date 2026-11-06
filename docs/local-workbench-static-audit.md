@@ -49,3 +49,7 @@
 `apps/desktop/src/main.ts:1077-1088` 的窗口 close 只隐藏窗口，页面继续存活；`main.ts:1266-1285` 的真正退出经过 quitConfirmation 后调用 finishQuit。`apps/desktop-host/src/quit-inspection.ts:24-43` 仅统计活动 agent/job 和已设定的 schedule，未向 Client 请求保存，也没有接受草稿失败来否决退出的合同。对 `packages/client/`、`packages/api/`、`apps/desktop-host/src/`、`apps/desktop/src/` 搜索 `beforeunload`/`flushActive`/退出生命周期后，未找到公开的 Renderer 异步 flush + 可否决退出 seam。
 
 因此“正常关闭前等待 flush，保存失败阻止退出”不能据现有官方接口实现或宣称成立。`beforeunload` 的 fire-and-forget 保存、假造活动任务、接管桌面内部 IPC 均不能替代此接口。需要上游公开生命周期协议（开始退出→Client await flush→失败否决→成功后停止自有进程并退出）；本次不能自行新增未授权 hack。Shell 内部项目/文档切换的 flush 可以自行协调，但不等于桌面退出保证。该项应登记 `docs/blocked-upstream.md` 并阻塞依赖它的产品行为。
+
+## 阶段 4 补充限制
+
+原型模板创建使用路径包含/逐段链接检查与独占文件创建；这些检查和 Node 写入之间不是 OS 原子操作，不能宣称抵抗外部进程在窗口内替换父目录。运行就绪依赖本次受管 handle 的 Umi `Local:` 输出、Host 选定端口及 HTTP 响应，不是 OS 监听者身份查询；端口抢占/输出与真正监听归属样本未做运行验证。普通 subprocess 无公开 PID/OS 启动时间与恢复接口，孤儿识别仍 blocked-upstream；不得按端口猜进程或终止未知进程。

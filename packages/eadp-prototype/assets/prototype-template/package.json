@@ -6,10 +6,9 @@
     "start": "umi dev --host 127.0.0.1",
     "typecheck": "umi setup && tsc --noEmit",
     "lint": "pnpm run lint:script && pnpm run lint:style",
-    "lint:script": "eslint src config public/prototype-guard.js scripts/preview.mjs --ext .js,.mjs,.ts,.tsx --max-warnings 0",
+    "lint:script": "eslint src config --ext .js,.ts,.tsx --max-warnings 0",
     "lint:style": "stylelint \"src/**/*.less\"",
     "build": "umi build",
-    "preview": "node scripts/preview.mjs",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run build"
   },
   "dependencies": {

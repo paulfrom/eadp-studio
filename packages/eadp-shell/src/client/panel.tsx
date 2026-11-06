@@ -63,6 +63,7 @@ export function ShellPanel(props: PanelProps) {
   }
   const remove = async (item: WorkspaceView) => {
     await flush()
+    await props.stopProject(item.workspaceId)
     await props.assertRemovable(item.workspaceId)
     await props.workspaces.delete(item.workspaceId)
     if (projectId === item.workspaceId) await select()
@@ -71,11 +72,13 @@ export function ShellPanel(props: PanelProps) {
     await flush()
     const path = await props.pickDirectory()
     if (!path) return
+    await props.stopProject(item.workspaceId)
     await props.assertRemovable(item.workspaceId)
     await props.validateRelocation(path)
     const replacement = await props.workspaces.create({ path })
     if (replacement.workspaceId !== item.workspaceId) {
-      await props.assertRemovable(item.workspaceId)
+      await props.stopProject(item.workspaceId)
+    await props.assertRemovable(item.workspaceId)
       await props.workspaces.delete(item.workspaceId)
     }
     await select(replacement)

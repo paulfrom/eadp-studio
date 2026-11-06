@@ -10,6 +10,7 @@ export interface ShellFace {
   checkDirectory(path: string): Promise<void>
   validateRelocation(path: string): Promise<void>
   assertRemovable(projectId: string): Promise<void>
+  stopProject(projectId: string): Promise<void>
   requirements: EadpRequirementsClient
   createSession(projectId: string, role: SessionRole): Promise<string>
   restoreSession(projectId: string, sessionId: string): Promise<string>

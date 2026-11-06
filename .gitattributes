@@ -12,3 +12,6 @@
 *.gz -text
 *.exe -text
 *.pdf -text
+packages/eadp-prototype/assets/prototype-template/** text=auto eol=lf
+packages/eadp-prototype/assets/prototype-template/**/*.png -text
+packages/eadp-prototype/assets/prototype-template/**/*.ico -text

@@ -2,5 +2,10 @@
   "@deepseek-ai/cordis",
   "@deepseek-ai/dsh-client-ui-renderer",
   "@deepseek-ai/dsh-client-ui-slots",
-  "@deepseek-ai/dsh-client-locale"
+  "@deepseek-ai/dsh-client-locale",
+  "@deepseek-ai/dsh-fs",
+  "@deepseek-ai/dsh-workspace",
+  "@deepseek-ai/dsh-typert-protocol",
+  "@deepseek-ai/dsh-subprocess",
+  "@deepseek-ai/dsh-api-gateway"
 ]

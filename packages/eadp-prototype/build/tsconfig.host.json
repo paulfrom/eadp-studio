@@ -14,6 +14,18 @@
     },
     {
       "path": "../eadp-contracts"
+    },
+    {
+      "path": "../../fs/fs"
+    },
+    {
+      "path": "../../workspace/workspace"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../subprocess/subprocess"
     }
   ]
 }

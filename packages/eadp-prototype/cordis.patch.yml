@@ -1,6 +1,6 @@
-# Host has no service dependencies in this skeleton.
-# Client requires slots + locale; the child slot is declared by eadp-shell.
-# Target slot: eadp.prototype.view (single, root).
+# Host services: typert, workspaceRegistry, fs, subprocess (export const inject).
+# Client services: renderer, locale, remote, eadpShell; provided by declared client.inject packages.
+# Client slot: eadp.prototype.view (single/root), owned by @eadp/shell.
 - insert:
     - id: eadp-prototype
       name: '@eadp/prototype'

@@ -5,7 +5,7 @@ import { dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const templatePath = 'packages/studio-plugin/assets/prototype-template';
+const templatePath = 'packages/eadp-prototype/assets/prototype-template';
 const templateRoot = resolve(root, templatePath);
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -50,7 +50,7 @@ try {
   if (git('check-attr', 'eol', '--', example).trim() !== `${example}: eol: lf`) throw new Error('Template text must use LF');
   git('check-ignore', '--', '.local/probe');
   console.log(`Repository verified: ${tracked.length} tracked files; ${entries.length} template hashes match.`);
-  console.log(`Template releaseReady=${manifest.acceptance.releaseReady}; G0 and runtime acceptance remain separate.`);
+  console.log(`Template releaseReady=${manifest.acceptance.releaseReady}; desktop and runtime behavior remain unverified.`);
 } catch (error) {
   console.error(`Repository verification failed: ${error.message}`);
   process.exitCode = 1;
