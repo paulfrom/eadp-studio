@@ -1,0 +1,74 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eadp-space-2);
+  height: var(--eadp-control-md);
+  padding: 0 var(--eadp-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--eadp-radius-md);
+  background: transparent;
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-ui);
+  font-size: var(--eadp-text-md);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.button[data-size='sm'] {
+  height: var(--eadp-control-sm);
+  padding: 0 var(--eadp-space-2);
+  border-radius: var(--eadp-radius-sm);
+  font-size: var(--eadp-text-sm);
+}
+
+.button[data-variant='primary'] {
+  background: var(--eadp-accent);
+  color: var(--eadp-on-accent);
+}
+
+.button[data-variant='primary']:hover:not(:disabled) {
+  background: var(--eadp-accent-hover);
+}
+
+.button[data-variant='secondary'] {
+  border-color: var(--eadp-line-strong);
+  background: var(--eadp-raised);
+}
+
+.button[data-variant='secondary']:hover:not(:disabled) {
+  background: var(--eadp-hover);
+}
+
+.button[data-variant='ghost']:hover:not(:disabled) {
+  background: var(--eadp-hover);
+}
+
+.button[data-variant='danger'] {
+  background: var(--eadp-danger);
+  color: var(--eadp-raised);
+}
+
+.button[data-variant='danger']:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}

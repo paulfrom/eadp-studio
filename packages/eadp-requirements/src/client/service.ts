@@ -2,29 +2,74 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import type { EadpRequirementsClient } from '@eadp/contracts'
 import type { DraftBuffer } from './DraftBuffer.ts'
 
-/** Retains unsaved editor memory while a feature view is temporarily unmounted. */
+/** Why a project's pending input blocks navigation; the panel localizes the reason. */
+export type FlushFailure = 'composing' | 'conflict' | 'saving' | 'failed'
+
+export interface FlushResult {
+  ok: boolean
+  reason?: FlushFailure
+  /** Host failure text when a save failed. */
+  message?: string
+}
+
+/** Retains unsaved editor memory per project and path while views are unmounted. */
 export class RequirementsClientService extends Service implements EadpRequirementsClient {
-  private readonly buffers = new Map<string, DraftBuffer>()
+  private readonly buffers = new Map<string, Map<string, DraftBuffer>>()
+  /** Document each project last opened, so a remounted panel restores the same selection. */
+  private readonly documents = new Map<string, string>()
   constructor(ctx: Context) {
     super(ctx, 'eadpRequirementsClient')
-    ctx.effect(() => () => { for (const buffer of this.buffers.values()) buffer.dispose(); this.buffers.clear() }, 'eadp-requirements: drafts')
+    ctx.effect(() => () => {
+      for (const project of this.buffers.values()) for (const buffer of project.values()) buffer.dispose()
+      this.buffers.clear()
+      this.documents.clear()
+    }, 'eadp-requirements: drafts')
   }
-  get(key: string): DraftBuffer | undefined { return this.buffers.get(key) }
-  register(key: string, buffer: DraftBuffer): void { this.buffers.set(key, buffer) }
-  forget(key: string): void { this.buffers.get(key)?.dispose(); this.buffers.delete(key) }
-  async flushActive(): Promise<{ ok: boolean; message?: string }> {
-    for (const buffer of this.buffers.values()) {
-      if (!await buffer.flush()) return { ok: false, message: buffer.getSnapshot().error || '请先结束中文组字或处理外部文件冲突，输入已保留。' }
+  /** Returns the buffer only when this project currently retains that path. */
+  get(projectId: string, path: string): DraftBuffer | undefined { return this.buffers.get(projectId)?.get(path) }
+  register(projectId: string, path: string, buffer: DraftBuffer): void {
+    const project = this.buffers.get(projectId) ?? new Map<string, DraftBuffer>()
+    this.buffers.set(projectId, project)
+    project.set(path, buffer)
+  }
+  forget(projectId: string, path: string): void {
+    const project = this.buffers.get(projectId)
+    const buffer = project?.get(path)
+    if (!project || !buffer) return
+    buffer.dispose()
+    project.delete(path)
+    if (project.size === 0) this.buffers.delete(projectId)
+  }
+  /** Records the open document; `null` clears it after removal or discard. */
+  remember(projectId: string, path: string | null): void {
+    if (path === null) this.documents.delete(projectId)
+    else this.documents.set(projectId, path)
+  }
+  remembered(projectId: string): string | undefined { return this.documents.get(projectId) }
+  /** Saves this project's pending input; another project's draft never blocks navigation. */
+  async flushActive(projectId: string): Promise<FlushResult> {
+    for (const buffer of this.buffers.get(projectId)?.values() ?? []) {
+      if (await buffer.flush()) continue
+      const snapshot = buffer.getSnapshot()
+      if (snapshot.error?.code === 'failed') return { ok: false, reason: 'failed', message: snapshot.error.message }
+      if (snapshot.composing) return { ok: false, reason: 'composing' }
+      if (snapshot.external !== undefined) return { ok: false, reason: 'conflict' }
+      return { ok: false, reason: 'saving' }
     }
-    if (this.hasUnsaved()) return { ok: false, message: '等待保存期间输入或文件状态已变化，请处理后重试。' }
+    if (this.hasUnsaved(projectId)) return { ok: false, reason: 'saving' }
     return { ok: true }
   }
-  hasUnsavedExcept(excluded: DraftBuffer): boolean {
-    return [...this.buffers.values()].some(buffer => buffer !== excluded && this.unsaved(buffer))
+  /** Other buffers of this project that still hold input; another project never blocks. */
+  hasUnsavedExcept(projectId: string, excluded: DraftBuffer): boolean {
+    for (const buffer of this.buffers.get(projectId)?.values() ?? []) if (buffer !== excluded && this.unsaved(buffer)) return true
+    return false
   }
   private unsaved(buffer: DraftBuffer): boolean {
     const value = buffer.getSnapshot()
     return value.dirty || value.saving || value.applying || value.composing || value.external !== undefined
   }
-  hasUnsaved(): boolean { return [...this.buffers.values()].some(buffer => this.unsaved(buffer)) }
+  hasUnsaved(projectId: string): boolean {
+    for (const buffer of this.buffers.get(projectId)?.values() ?? []) if (this.unsaved(buffer)) return true
+    return false
+  }
 }

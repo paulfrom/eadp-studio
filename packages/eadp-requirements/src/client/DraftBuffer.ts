@@ -1,5 +1,10 @@
 import type { RequirementDocument } from '@eadp/contracts'
 
+/** Why the panel must show a message; Host text stays verbatim in `message`. */
+export type DraftError =
+  | { code: 'retained' }
+  | { code: 'failed'; message: string }
+
 /** One editor's unpersisted input and its last acknowledged file version. */
 export interface DraftSnapshot {
   text: string
@@ -8,11 +13,15 @@ export interface DraftSnapshot {
   saving: boolean
   composing: boolean
   applying: boolean
-  error: string
+  error: DraftError | null
   external: RequirementDocument | null | undefined
 }
 export interface PreparedWrite { text: string; version: string | null; revision: number }
 export type SaveDraft = (text: string, version: string | null) => Promise<RequirementDocument>
+
+function failure(error: unknown): DraftError {
+  return { code: 'failed', message: error instanceof Error ? error.message : String(error) }
+}
 
 /** Serializes versioned saves without replacing input entered during a request. */
 export class DraftBuffer {
@@ -25,7 +34,7 @@ export class DraftBuffer {
 
   constructor(document: RequirementDocument | null, private readonly save: SaveDraft, private readonly read: () => Promise<RequirementDocument | null>, private readonly delay = 800) {
     this.savedText = document?.text ?? ''
-    this.snapshot = { text: this.savedText, version: document?.version ?? null, dirty: false, saving: false, composing: false, applying: false, error: '', external: undefined }
+    this.snapshot = { text: this.savedText, version: document?.version ?? null, dirty: false, saving: false, composing: false, applying: false, error: null, external: undefined }
   }
   getSnapshot = (): DraftSnapshot => this.snapshot
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -35,10 +44,10 @@ export class DraftBuffer {
     this.cancelTimer()
     if (this.snapshot.dirty && !this.snapshot.applying && !this.snapshot.composing && this.snapshot.external === undefined) this.timer = setTimeout(() => { void this.flush() }, this.delay)
   }
-  reportError(error: string): void { this.publish({ ...this.snapshot, error }) }
+  reportError(message: string): void { this.publish({ ...this.snapshot, error: { code: 'failed', message } }) }
   edit(text: string): void {
     this.revision += 1
-    this.publish({ ...this.snapshot, text, dirty: text !== this.savedText, error: '' })
+    this.publish({ ...this.snapshot, text, dirty: text !== this.savedText, error: null })
     this.schedule()
   }
   compose(composing: boolean): void {
@@ -57,7 +66,7 @@ export class DraftBuffer {
   }
   private accept(document: RequirementDocument | null): void {
     this.savedText = document?.text ?? ''
-    this.publish({ ...this.snapshot, text: this.savedText, version: document?.version ?? null, dirty: false, error: '', external: undefined })
+    this.publish({ ...this.snapshot, text: this.savedText, version: document?.version ?? null, dirty: false, error: null, external: undefined })
   }
   /** User explicitly chooses the observed disk content; no write is performed. */
   loadExternal(): void {
@@ -68,22 +77,26 @@ export class DraftBuffer {
   keepDraft(): void {
     if (this.snapshot.external === undefined || this.snapshot.applying || this.snapshot.composing || this.snapshot.saving) return
     const external = this.snapshot.external
-    // A removed requirement is not silently recreated by an update save.
-    if (!external) { this.publish({ ...this.snapshot, error: '文件已被删除，请保留输入并重新创建文件。' }); return }
+    // A removed requirement is recreated only through the explicit recreate action.
+    if (!external) return
     this.savedText = external.text
-    this.publish({ ...this.snapshot, version: external.version, dirty: this.snapshot.text !== external.text, external: undefined, error: '' })
+    this.publish({ ...this.snapshot, version: external.version, dirty: this.snapshot.text !== external.text, external: undefined, error: null })
     this.schedule()
   }
+  /** Save now; joins an in-flight write and debounces the retry when input arrives mid-write. */
   flush = async (): Promise<boolean> => {
     this.cancelTimer()
     if (this.snapshot.applying || this.snapshot.composing || this.snapshot.external !== undefined) return false
-    if (this.pending) { const ok = await this.pending; return ok ? this.flush() : false }
+    if (this.pending) return this.pending
     if (!this.snapshot.dirty) return true
-    this.pending = this.write()
-    const ok = await this.pending
-    this.pending = undefined
-    if (!ok || this.snapshot.applying || this.snapshot.composing || this.snapshot.external !== undefined) return false
-    return this.snapshot.dirty ? this.flush() : !this.snapshot.saving
+    this.pending = this.write().then(ok => {
+      if (!ok) return false
+      // Input received during the write keeps the buffer dirty; retry through the
+      // normal debounce instead of writing again immediately.
+      if (this.snapshot.dirty) { this.schedule(); return false }
+      return true
+    }).finally(() => { this.pending = undefined })
+    return this.pending
   }
   /** Pause automatic writes before waiting, then require unchanged clean input. */
   async prepareWrite(): Promise<PreparedWrite | undefined> {
@@ -109,7 +122,7 @@ export class DraftBuffer {
     this.savedText = document.text
     this.publish({ ...this.snapshot, text, version: document.version, dirty: text !== document.text,
       external: external?.version === document.version ? undefined : external,
-      error: changed ? '提案已写入磁盘，应用期间输入已保留为草稿。' : '' })
+      error: changed ? { code: 'retained' } : null })
   }
   /** Resume automatic saving only after the explicit write has settled. */
   finishWrite(): void {
@@ -129,7 +142,7 @@ export class DraftBuffer {
   private async write(save: SaveDraft = this.save): Promise<boolean> {
     const text = this.snapshot.text
     const version = this.snapshot.version
-    this.publish({ ...this.snapshot, saving: true, error: '' })
+    this.publish({ ...this.snapshot, saving: true, error: null })
     try {
       let saved: RequirementDocument
       try { saved = await save(text, version) }
@@ -138,18 +151,25 @@ export class DraftBuffer {
         const observed = await this.read().catch(() => undefined)
         if (observed && observed.text === text) saved = observed
         else {
-          this.publish({ ...this.snapshot, saving: false, error: error instanceof Error ? error.message : String(error) })
+          // Synchronize the observed disk state first, then surface the failure: the
+          // panel must show both the conflict and the Host error.
+          this.publish({ ...this.snapshot, saving: false })
           if (observed !== undefined) this.receive(observed)
+          this.publish({ ...this.snapshot, error: failure(error) })
           return false
         }
       }
       this.savedText = saved.text
-      this.publish({ ...this.snapshot, version: saved.version, dirty: this.snapshot.text !== saved.text, saving: false, error: '', external: undefined })
+      this.publish({ ...this.snapshot, version: saved.version, dirty: this.snapshot.text !== saved.text, saving: false, error: null, external: undefined })
       return true
     } catch (error) {
-      this.publish({ ...this.snapshot, saving: false, error: error instanceof Error ? error.message : String(error) })
+      this.publish({ ...this.snapshot, saving: false, error: failure(error) })
       return false
     }
   }
-  dispose(): void { this.cancelTimer(); this.listeners.clear() }
+  dispose(): void {
+    this.cancelTimer()
+    this.snapshot = { ...this.snapshot, composing: false }
+    this.listeners.clear()
+  }
 }

@@ -1,0 +1,514 @@
+/* Material editor layout: 248px tree, document pane, CodeMirror paper card, proposals. */
+
+.surface {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+}
+
+.workbench {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── Material tree ─────────────────────────────────────────────────── */
+
+.materialTree {
+  flex: 0 0 232px;
+  width: 248px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--eadp-line);
+  background: var(--eadp-surface);
+}
+
+.treeHeader {
+  height: var(--eadp-header-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--eadp-space-1) 0 var(--eadp-space-3);
+  border-bottom: 1px solid var(--eadp-line);
+}
+
+.treeTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--eadp-text-md);
+  font-weight: 600;
+  color: var(--eadp-text);
+}
+
+.treeBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--eadp-space-1) var(--eadp-space-2) var(--eadp-space-2);
+}
+
+.contextRow {
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  width: 100%;
+  height: var(--eadp-control-sm);
+  padding: 0 var(--eadp-space-1);
+  border: 0;
+  border-radius: var(--eadp-radius-sm);
+  background: transparent;
+  color: var(--eadp-text);
+  font: inherit;
+  font-size: var(--eadp-text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.contextRow:hover {
+  background: var(--eadp-hover);
+}
+
+.contextRow[data-selected] {
+  background: var(--eadp-selected);
+}
+
+.contextRow[data-absent] {
+  color: var(--eadp-muted);
+}
+
+.contextRow:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.treeList {
+  list-style: none;
+  margin: var(--eadp-space-1) 0 0;
+  padding: 0;
+}
+
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  height: var(--eadp-control-sm);
+  padding-right: var(--eadp-space-1);
+  border-radius: var(--eadp-radius-sm);
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-md);
+  cursor: pointer;
+  user-select: none;
+}
+
+.treeRow:hover {
+  background: var(--eadp-hover);
+}
+
+.treeRow[data-selected] {
+  background: var(--eadp-selected);
+}
+
+.treeRow:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.treeChevron,
+.treeChevronSpacer {
+  flex-shrink: 0;
+  width: var(--eadp-icon);
+  height: var(--eadp-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--eadp-faint);
+}
+
+.treeIcon {
+  flex-shrink: 0;
+  width: var(--eadp-icon);
+  height: var(--eadp-icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--eadp-muted);
+}
+
+.treeLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeMore {
+  flex-shrink: 0;
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.treeRow:hover .treeMore,
+.treeRow:focus-within .treeMore,
+.treeRow[data-selected] .treeMore {
+  opacity: 1;
+}
+
+.treeNote {
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  margin: var(--eadp-space-2) var(--eadp-space-1);
+  color: var(--eadp-faint);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+}
+
+/* ── Document area ─────────────────────────────────────────────────── */
+
+.documentArea {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--eadp-bg);
+}
+
+.panelError {
+  flex-shrink: 0;
+  padding: var(--eadp-space-2) var(--eadp-space-3) 0;
+}
+
+.emptyDocument {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--eadp-space-6);
+}
+
+.documentPane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.documentHeader {
+  flex-shrink: 0;
+  height: var(--eadp-header-h);
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-2);
+  padding: 0 var(--eadp-space-3);
+  border-bottom: 1px solid var(--eadp-line);
+}
+
+.documentIdentity {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: var(--eadp-leading-tight);
+}
+
+.documentTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-md);
+  font-weight: 600;
+}
+
+.documentPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--eadp-faint);
+  font-size: var(--eadp-text-xs);
+}
+
+.documentStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  flex-shrink: 0;
+  color: var(--eadp-muted);
+  font-size: var(--eadp-text-sm);
+  white-space: nowrap;
+}
+
+.documentActions {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+}
+
+.notices {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-2);
+  padding: var(--eadp-space-2) var(--eadp-space-3) 0;
+}
+
+.noticeDetail {
+  margin: 0 0 var(--eadp-space-1);
+}
+
+/* Disk text is mounted only while expanded, so no hidden box survives the notice. */
+.diskBody {
+  margin: var(--eadp-space-1) 0 0;
+  max-width: 100%;
+  max-height: 160px;
+  overflow: auto;
+  padding: var(--eadp-space-2);
+  border-radius: var(--eadp-radius-sm);
+  background: var(--eadp-surface);
+  color: var(--eadp-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--eadp-text-xs);
+  line-height: var(--eadp-leading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.paperArea {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--eadp-space-2) var(--eadp-space-3);
+}
+
+.paper {
+  max-width: 760px;
+  margin: 0 auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-lg);
+  background: var(--eadp-raised);
+  box-shadow: var(--eadp-shadow-panel);
+}
+
+.editorHost {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.statusBar {
+  flex-shrink: 0;
+  height: var(--eadp-control-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-2);
+  padding: 0 var(--eadp-space-3);
+  border-top: 1px solid var(--eadp-line);
+  color: var(--eadp-faint);
+  font-size: var(--eadp-text-xs);
+}
+
+.version {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── Proposals ─────────────────────────────────────────────────────── */
+
+.proposals {
+  flex-shrink: 0;
+  max-height: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--eadp-line);
+  background: var(--eadp-bg);
+}
+
+.proposalsHeader {
+  flex-shrink: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  padding: 0 var(--eadp-space-2);
+  border-bottom: 1px solid var(--eadp-line);
+}
+
+.proposalsTitle {
+  flex-shrink: 0;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-md);
+  font-weight: 600;
+}
+
+.proposalsMemory {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--eadp-faint);
+  font-size: var(--eadp-text-xs);
+}
+
+.proposalsBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-2);
+  padding: var(--eadp-space-2) var(--eadp-space-3) var(--eadp-space-3);
+}
+
+/* Cards scroll as complete blocks; a squeezed flex item would overlap the next card. */
+.proposalsBody > * {
+  flex-shrink: 0;
+}
+
+.proposalCard {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-1);
+  padding: var(--eadp-space-2);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-raised);
+}
+
+.proposalCard[data-stale] {
+  border-color: var(--eadp-danger);
+}
+
+.proposalHeader {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--eadp-space-2);
+}
+
+.proposalPath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-sm);
+  font-weight: 600;
+}
+
+.proposalActions {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+}
+
+.proposalSummary {
+  margin: 0;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.diffToggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  min-height: var(--eadp-control-sm);
+  padding: 2px var(--eadp-space-1);
+  border: 0;
+  border-radius: var(--eadp-radius-sm);
+  background: transparent;
+  color: var(--eadp-muted);
+  font: inherit;
+  font-size: var(--eadp-text-xs);
+  cursor: pointer;
+}
+
+.diffToggle:hover {
+  color: var(--eadp-text);
+}
+
+.diffToggle:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.diff {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--eadp-space-2);
+  border-radius: var(--eadp-radius-sm);
+  background: var(--eadp-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--eadp-text-xs);
+  line-height: var(--eadp-leading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diffLine {
+  display: flex;
+  gap: var(--eadp-space-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diffLine[data-kind='added'] {
+  background: var(--eadp-success-soft);
+}
+
+.diffLine[data-kind='removed'] {
+  background: var(--eadp-danger-soft);
+}
+
+.diffSign {
+  flex-shrink: 0;
+  width: 1ch;
+  color: var(--eadp-faint);
+  user-select: none;
+}
+
+.diffNote {
+  margin: 0;
+  color: var(--eadp-warning);
+  font-size: var(--eadp-text-xs);
+}

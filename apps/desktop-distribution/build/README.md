@@ -21,7 +21,13 @@ pnpm build:desktop
 
 ## 插件与资源装配
 
-`workbench-edits.mjs` 将 `@eadp/shell`、`@eadp/requirements`、`@eadp/prototype`、`@eadp/knowledge` 加入 CLI 生产依赖和 shipped profile；`@eadp/contracts` 随四个插件的依赖闭包进入安装结果。`cordis.patch.yml` 显式声明各插件的 service 与 slot 依赖。
+`workbench-edits.mjs` 将 `@eadp/shell`、`@eadp/requirements`、`@eadp/prototype`、`@eadp/knowledge` 加入 CLI 生产依赖；`@eadp/contracts` 随四个插件的依赖闭包进入安装结果。`cordis.patch.yml` 显式声明各插件的 service 与 slot 依赖。
+
+## profile 装配
+
+桌面 profile 的 bundle 组合由应用自己拥有，但组合内容仍取自固定上游的 `PROFILE_TEMPLATES.web`，不复制模板常量。`eadp-profile.ts` 是新增维护源码，装配为 `apps/desktop/src/eadp-profile.ts`，导出四个 `@eadp/*` bundle 清单和 `deployEadpProfile()`：保留作者已安装 bundle 及其顺序、base bundle 缺失时前置、EADP 四个锁定在列表末尾，列表无变化时不写文件。
+
+部署在 `DesktopProjectManager.applyRelease()` 内、`createPluginProfile()` 之后执行，因此每次 Host 启动前都会收敛：升级后新增或移除的上游 bundle 会生效，官方 recovery 重置 bundle 列表后 EADP 也会重新出现。recovery 的 `sanitizeProfile()` 实参同时带上 `withEadpBundles()`，保证重置结果本身包含 EADP。四个 `@eadp/*` bundle 是锁定的应用组合：作者在插件管理器里取消勾选后，下次 Host 启动会重新加入，这是已接受的产品决策。应用自己的补丁不写入 profile 的 `cordis.patch.yml`（用户层，recovery 会备份并丢弃）。
 
 原型模板唯一维护位置是 `packages/eadp-prototype/assets/prototype-template/`。装配只复制 manifest 允许且 SHA-256 匹配的文件。npm 打包同时使用 `assets/prototype-template.tar.gz` 保留 `.npmrc`、`.gitignore` 等名称；官方 `prepare:dsh` 阶段解包并拒绝额外成员、链接、逃逸路径和回执不符。
 
@@ -37,7 +43,7 @@ pnpm build:desktop
 | --- | --- | --- |
 | `desktop-brand-edits.mjs` | `scripts/client-build-environment.ts` 的 `DSH_CLIENT_TITLE`；桌面品牌、协议、安装器与 smoke 文件中的固定 DeepSeek Harness 文案和 `dsh` 协议锚点 | 设置 `eadp studio` 产品身份、`eadp-studio://`、独立用户数据与 DSH_HOME |
 | `desktop-startup-edits.mjs` | `apps/desktop/src/main.ts` 的完整 `openInitialWindow`、welcome Host 连接块及 `nativeTheme/net/protocol` 导入锚点 | 直接进入本地工作台；保留原生 welcome 请求的同源 Host cookie 约束 |
-| `workbench-edits.mjs` | `apps/desktop/src/project-manager.ts` 的唯一 `const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate` | 将四个新插件加入实际 shipped profile |
+| `desktop-profile-edits.mjs` | `apps/desktop/src/project-manager.ts` 的 `@deepseek-ai/dsh-app-boot` 导入块、`applyRelease` 内 `createPluginProfile` 之后、`disableAllPlugins` 的 `sanitizeProfile(...)` 调用；并新增 `apps/desktop/src/eadp-profile.ts` | 每次 Host 启动前幂等部署 EADP 组合；recovery 重置 bundle 列表后仍保留四个 `@eadp/*` bundle |
 | `workbench-edits.mjs` | `apps/cli/package.json` 的 `@deepseek-ai/dsh` 生产 dependencies，四个依赖必须原先不存在 | 将四个新插件纳入 CLI 生产依赖闭包 |
 | `workbench-runtime-edits.mjs` | `apps/desktop/scripts/prepare-runtime.ts` 的 `prepareCommandLink` 导入和 `readPrimaryRuntime` 前锚点 | 在官方运行时准备阶段生成固定 `eadp-tools` |
 | `workbench-runtime-edits.mjs` | `packages/subprocess/subprocess-local/src/index.ts` 的 `windows-job` 返回锚点 | Windows Job 不可用时拒绝运行，不退化为无进程树约束的执行 |
@@ -52,10 +58,10 @@ pnpm build:desktop
 | `model-selection-edits.mjs` | `agent/src/model-selection.ts`、`agent/src/runtime-types.ts`、`agent-loop/src/agent.ts` 的模型通知与 pre-step 类型/调用锚点 | 共享模型切换通知监听，并把最终 prompt assembly 传到通知处理 |
 | `primary-runtime-edits.mjs` | `scripts/primary-runtime/prepare.ts` 的导入、staging、资源准备和函数注释锚点 | 对 primary-runtime 源码和二进制负载做哈希后复用，排除 Python 执行生成的 `__pycache__`、`.pyc`、`.pyo`，避免运行检查使缓存失效；缺失或损坏仍从锁定归档重建 |
 
-`prototype-template-archive.mjs` 与 `prototype-template-transform.mjs` 是上述模板编辑的新增维护源码；`workbench-runtime-edits.mjs` 同时登记其三个新增运行时文件。任何新增文件不再存在于维护目录都会使装配失败。
+`eadp-profile.ts` 是 `desktop-profile-edits.mjs` 的新增维护源码；`prototype-template-archive.mjs` 与 `prototype-template-transform.mjs` 是上述模板编辑的新增维护源码；`workbench-runtime-edits.mjs` 同时登记其三个新增运行时文件。任何新增文件不再存在于维护目录都会使装配失败。
 
 ## 已删除的旧编辑
 
-协同 HTTP 策略、秘密凭据 IPC、旧设置桥/分组、内嵌 Chromium 与画布、原型浏览器 IPC、原生 prompt/control admission、旧 Studio 插件/领域包/模板载荷均已删除。最终装配不引用这些模块，不携带浏览器运行时，也不配置协同更新服务。
+协同 HTTP 策略、秘密凭据 IPC、旧设置桥/分组、内嵌 Chromium 与画布、原型浏览器 IPC、原生 prompt/control admission、旧 Studio 插件/领域包/模板载荷均已删除。最终装配不引用这些模块，不携带浏览器运行时，也不配置协同更新服务。篡改 shipped profile 常量（`SHIPPED_PROFILE`/`WEB_PROFILE` 替换）的编辑同样已删除，改由 `desktop-profile-edits.mjs` 在每次 Host 启动前部署应用组合。
 
 Windows 公共示例 `windows-package.env.example` 只保留产品 App ID。既有机器本地 `.env.windows` 不会被覆盖；其中如仍有旧部署配置，需要由维护者显式清理，本仓库不读取或迁移其秘密值。

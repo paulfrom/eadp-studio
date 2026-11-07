@@ -1,0 +1,73 @@
+.dialog {
+  display: none;
+  width: min(480px, calc(100vw - 64px));
+  max-height: calc(100dvh - 64px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--eadp-radius-lg);
+  background: var(--eadp-raised);
+  color: var(--eadp-text);
+  box-shadow: var(--eadp-shadow-menu);
+  overflow: hidden;
+}
+
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog[data-width='sm'] {
+  width: min(400px, calc(100vw - 64px));
+}
+
+.dialog::backdrop {
+  background: var(--eadp-scrim);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eadp-space-3);
+  flex: none;
+  padding: var(--eadp-space-4) var(--eadp-space-4) 0;
+}
+
+.title {
+  margin: 0;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-lg);
+  font-weight: 600;
+  line-height: var(--eadp-leading-tight);
+}
+
+.description {
+  margin: 0;
+  padding: var(--eadp-space-1) var(--eadp-space-4) 0;
+  color: var(--eadp-muted);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+}
+
+.body {
+  display: grid;
+  gap: var(--eadp-space-4);
+  min-height: 0;
+  padding: var(--eadp-space-4);
+  overflow: auto;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--eadp-space-2);
+  flex: none;
+  padding: 0 var(--eadp-space-4) var(--eadp-space-4);
+}
+
+@media (forced-colors: active) {
+  .dialog {
+    border: 1px solid CanvasText;
+  }
+}

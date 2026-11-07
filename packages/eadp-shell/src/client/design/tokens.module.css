@@ -1,0 +1,159 @@
+/*
+ * EADP token scope. `.surface` wraps every panel root; `.popup` is added to
+ * portalled layers (menu, dialog) that may sit outside the panel hierarchy.
+ * Values mirror design/tokens.ts. Colors are the only literals allowed in
+ * token files; component stylesheets read the variables.
+ */
+
+.surface,
+.popup {
+  --eadp-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --eadp-font-doc: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --eadp-text-xs: 12px;
+  --eadp-text-sm: 12px;
+  --eadp-text-md: 13px;
+  --eadp-text-lg: 15px;
+  --eadp-leading: 1.6;
+  --eadp-leading-tight: 1.3;
+  --eadp-space-1: 4px;
+  --eadp-space-2: 8px;
+  --eadp-space-3: 12px;
+  --eadp-space-4: 16px;
+  --eadp-space-5: 20px;
+  --eadp-space-6: 24px;
+  --eadp-radius-sm: 4px;
+  --eadp-radius-md: 6px;
+  --eadp-radius-lg: 10px;
+  --eadp-radius-pill: 999px;
+  --eadp-control-sm: 28px;
+  --eadp-control-md: 32px;
+  --eadp-header-h: 44px;
+  --eadp-chat-w: 360px;
+  --eadp-icon: 16px;
+  --eadp-z-menu: 50;
+  --eadp-z-dialog: 60;
+
+  --eadp-bg: #f7f8f4;
+  --eadp-surface: #eef1ec;
+  --eadp-raised: #ffffff;
+  --eadp-text: #1e2420;
+  --eadp-muted: #5c655e;
+  --eadp-faint: #656e67;
+  --eadp-line: rgba(30, 36, 32, 0.1);
+  --eadp-line-strong: rgba(30, 36, 32, 0.18);
+  --eadp-hover: rgba(30, 36, 32, 0.06);
+  --eadp-selected: rgba(46, 79, 122, 0.12);
+  --eadp-accent: #2e4f7a;
+  --eadp-accent-hover: #233d5f;
+  --eadp-accent-soft: rgba(46, 79, 122, 0.1);
+  --eadp-accent-border: rgba(46, 79, 122, 0.32);
+  --eadp-on-accent: #ffffff;
+  --eadp-marker: #b23a2a;
+  --eadp-success: #2f6b3f;
+  --eadp-success-soft: #e3f0e5;
+  --eadp-warning: #8a5a12;
+  --eadp-warning-soft: #f6eedc;
+  --eadp-danger: #a8322a;
+  --eadp-danger-soft: #f7e4e1;
+  --eadp-scrim: rgba(16, 20, 18, 0.48);
+  --eadp-menu-fill: #ffffff;
+  --eadp-elevation-soft: 0 0 0 0.5px rgba(30, 36, 32, 0.16);
+  --eadp-elevation-panel: 0 0 0 0.5px rgba(30, 36, 32, 0.18), 0 6px 20px rgba(30, 36, 32, 0.08);
+  --eadp-elevation-prominent: 0 0 0 0.5px rgba(30, 36, 32, 0.2), 0 12px 32px rgba(30, 36, 32, 0.12);
+  --eadp-shadow-panel: var(--eadp-elevation-panel);
+  --eadp-shadow-menu: var(--eadp-elevation-prominent);
+  --eadp-focus-ring: 0 0 0 2px var(--eadp-accent-soft), 0 0 0 1px var(--eadp-accent);
+
+  color-scheme: light;
+}
+
+body[data-ds-dark-theme] .surface,
+body[data-ds-dark-theme] .popup {
+  --eadp-bg: #1c201d;
+  --eadp-surface: #202521;
+  --eadp-raised: #252a26;
+  --eadp-text: #dadfd6;
+  --eadp-muted: #97a096;
+  --eadp-faint: #8a938a;
+  --eadp-line: rgba(218, 223, 214, 0.1);
+  --eadp-line-strong: rgba(218, 223, 214, 0.18);
+  --eadp-hover: rgba(218, 223, 214, 0.06);
+  --eadp-selected: rgba(143, 176, 222, 0.16);
+  --eadp-accent: #8fb0de;
+  --eadp-accent-hover: #a9c3e8;
+  --eadp-accent-soft: rgba(143, 176, 222, 0.14);
+  --eadp-accent-border: rgba(143, 176, 222, 0.36);
+  --eadp-on-accent: #14181b;
+  --eadp-marker: #e07a68;
+  --eadp-success: #7cc78f;
+  --eadp-success-soft: #1f3326;
+  --eadp-warning: #e0b060;
+  --eadp-warning-soft: #332a1a;
+  --eadp-danger: #f08a7e;
+  --eadp-danger-soft: #3a1f1c;
+  --eadp-scrim: rgba(0, 0, 0, 0.55);
+  --eadp-menu-fill: #252a26;
+  --eadp-elevation-soft: 0 0 0 0.5px rgba(218, 223, 214, 0.18);
+  --eadp-elevation-panel: 0 0 0 0.5px rgba(218, 223, 214, 0.18), 0 6px 20px rgba(0, 0, 0, 0.35);
+  --eadp-elevation-prominent: 0 0 0 0.5px rgba(218, 223, 214, 0.2), 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  color-scheme: dark;
+}
+
+.surface {
+  background: var(--eadp-bg);
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-ui);
+  font-size: var(--eadp-text-md);
+  line-height: var(--eadp-leading);
+}
+
+.popup {
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-ui);
+  font-size: var(--eadp-text-md);
+  line-height: var(--eadp-leading);
+}
+
+/* Box sizing is scoped to EADP surfaces so host layout is untouched. */
+.surface,
+.surface *,
+.surface *::before,
+.surface *::after,
+.popup,
+.popup *,
+.popup *::before,
+.popup *::after {
+  box-sizing: border-box;
+}
+
+/* One scrollbar treatment for every EADP region, portals included. */
+.surface ::-webkit-scrollbar,
+.popup ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.surface ::-webkit-scrollbar-track,
+.popup ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.surface ::-webkit-scrollbar-thumb,
+.popup ::-webkit-scrollbar-thumb {
+  background: var(--eadp-line-strong);
+  border-radius: var(--eadp-radius-sm);
+}
+
+.surface ::-webkit-scrollbar-thumb:hover,
+.popup ::-webkit-scrollbar-thumb:hover {
+  background: var(--eadp-faint);
+}
+
+.surface ::selection,
+.popup ::selection {
+  background: var(--eadp-accent-soft);
+  color: var(--eadp-text);
+}

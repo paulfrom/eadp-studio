@@ -1,5 +1,5 @@
 /** Local workbench Client registers only official main/sidebar seats. */
-import { Service, type Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -29,18 +29,22 @@ function unwrap<T>(result: RemoteResult<T>): T {
 }
 
 /** Exposes document context without sharing the Shell component or internal state. */
-class ShellClientService extends Service {
-  static inject = ['remote.eadpShell']
-  constructor(ctx: Context) { super(ctx, 'eadpShellClient') }
-  async setActiveDocument(projectId: string, relativePath: string | null): Promise<void> {
-    unwrap(await this.ctx.remote.eadpShell.setActiveDocument(projectId, relativePath))
-  }
+function provideShellClient(ctx: Context): () => void {
+  const scope = ctx.inject(['remote', 'remote.eadpShell'], (inner: Context) => {
+    inner.provide('eadpShellClient')
+    inner.set('eadpShellClient', {
+      setActiveDocument: async (projectId: string, relativePath: string | null): Promise<void> => {
+        unwrap(await inner.remote.eadpShell.setActiveDocument(projectId, relativePath))
+      },
+    })
+  })
+  return () => { void scope.dispose() }
 }
 
 /** Mount the generated Remote contract before injecting its namespace. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(shellRemote)
-  ctx.plugin(ShellClientService)
+  const shellClient = provideShellClient(ctx)
   let prototype: EadpPrototypeClient | undefined
   const prototypeScope = ctx.inject(['eadpPrototypeClient'], (scope: Context) => {
     prototype = scope.eadpPrototypeClient
@@ -75,6 +79,6 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   })
   // Feature packages register the editor service after this module loads; keep
   // the dependency fiber pending without blocking the Client loader.
-  return async () => { await ui.dispose(); await prototypeScope.dispose(); await disposeRemote() }
+  return async () => { await ui.dispose(); await prototypeScope.dispose(); shellClient(); await disposeRemote() }
 }
 

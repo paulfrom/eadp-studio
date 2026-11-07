@@ -1,14 +1,15 @@
-import { FormDialog } from '@eadp/shell/client/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EadpRequirementsSlotProps, RequirementDocument, RequirementEntry, RequirementProposal } from '@eadp/contracts'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { Button, Dialog, EmptyState, Field, IconFile, Input, Notice, Surface } from '@eadp/shell/client/ui'
 import { DraftBuffer } from './DraftBuffer.ts'
-import type { RequirementsClientService } from './service.ts'
-import type { RequirementsApi } from './api.ts'
+import { MaterialTree } from './material/tree.tsx'
+import { MaterialEditor } from './material/material-editor.tsx'
 import { RequirementProposals } from './proposals.tsx'
-import { RequirementEditor, type Selection } from './editor.tsx'
+import type { FlushResult, RequirementsClientService } from './service.ts'
+import type { RequirementsApi } from './api.ts'
 import { NS } from './locales.ts'
-import css from './requirements.module.css'
+import css from './material-editor.module.css'
 
 interface RequirementsFace {
   api: RequirementsApi
@@ -17,187 +18,324 @@ interface RequirementsFace {
 }
 export type RequirementsProps = EadpRequirementsSlotProps & PropsLocale<typeof NS> & RequirementsFace
 
+interface Selection { projectId: string; path: string; buffer: DraftBuffer }
+type FormState = { kind: 'create' } | { kind: 'folder' } | { kind: 'rename' | 'remove'; path: string }
+
 /** File navigation changes only after the editor has acknowledged all current input. */
-export function RequirementsPanel({ projectId, active, api, editors, setActiveDocument, t }: RequirementsProps) {
+export function RequirementsPanel({ projectId, api, editors, setActiveDocument, t }: RequirementsProps) {
   const [entries, setEntries] = useState<RequirementEntry[]>([])
   const [selection, setSelection] = useState<Selection>()
   const selected = selection?.projectId === projectId ? selection : undefined
+  const [contextPresent, setContextPresent] = useState(false)
   const [contextAbsent, setContextAbsent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [applying, setApplying] = useState(false)
   const unavailable = busy || applying
   const [error, setError] = useState('')
-  const [form, setForm] = useState<'create' | 'folder' | 'rename' | 'remove'>()
+  const [form, setForm] = useState<FormState>()
   const [pathInput, setPathInput] = useState('')
   const epoch = useRef(0)
   const currentProject = useRef(projectId)
   currentProject.current = projectId
-  const isCurrent = useCallback((operationEpoch: number) => operationEpoch === epoch.current && currentProject.current === projectId, [projectId])
-  const key = (path: string) => `${projectId}\0${path}`
+  const isCurrent = useCallback((value: number) => value === epoch.current && currentProject.current === projectId, [projectId])
+  const reportError = useCallback((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)), [])
+  const flushMessage = useCallback((result: FlushResult): string => {
+    switch (result.reason) {
+      case 'composing': return t('flushComposing')
+      case 'conflict': return t('flushConflict')
+      case 'failed': return result.message ?? t('flushFailed')
+      default: return t('flushSaving')
+    }
+  }, [t])
   const refresh = useCallback(async (current = epoch.current) => {
     if (!isCurrent(current)) return
-    const rows = await api.list(projectId)
-    if (isCurrent(current)) setEntries(rows)
+    const [rows, contextVersion] = await Promise.all([api.list(projectId), api.statVersion(projectId, 'CONTEXT.md')])
+    if (!isCurrent(current)) return
+    setEntries(rows)
+    setContextPresent(contextVersion !== null)
   }, [api, projectId, isCurrent])
   useEffect(() => {
     epoch.current += 1
-    setSelection(undefined); setContextAbsent(false); setEntries([]); setForm(undefined); setError(''); setBusy(false); setApplying(false); setLoading(true)
     const current = epoch.current
-    void refresh().catch((reason: unknown) => { if (isCurrent(current)) setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { if (isCurrent(current)) setLoading(false) })
+    setSelection(undefined); setEntries([]); setContextPresent(false); setContextAbsent(false)
+    setForm(undefined); setPathInput(''); setError(''); setBusy(false); setApplying(false); setLoading(true)
+    void refresh(current)
+      .then(() => restore(current))
+      .catch(reason => { if (isCurrent(current)) reportError(reason) })
+      .finally(() => { if (isCurrent(current)) setLoading(false) })
     return () => { epoch.current += 1 }
-  }, [projectId, refresh])
-  const run = (operation: () => Promise<void>) => {
-    if (unavailable) return
-    if (selected?.buffer.getSnapshot().composing) { setError(t('composing')); return }
-    setBusy(true); setError('')
-    const current = epoch.current
-    void operation().catch((reason: unknown) => { if (isCurrent(current)) setError(reason instanceof Error ? reason.message : String(reason)) }).finally(() => { if (isCurrent(current)) setBusy(false) })
+  }, [projectId, refresh, isCurrent, reportError])
+  const flush = async (current: number): Promise<void> => {
+    const result = await editors.flushActive(projectId)
+    if (!isCurrent(current)) return
+    if (!result.ok) throw new Error(flushMessage(result))
   }
-  const flush = async () => {
-    const result = await editors.flushActive()
-    if (!result.ok) throw new Error(result.message ?? t('dirty'))
-  }
-  const readDocument = async (path: string): Promise<RequirementDocument | null> => {
+  const readDocument = useCallback(async (path: string): Promise<RequirementDocument | null> => {
     if (path === 'CONTEXT.md') {
       const context = await api.readContext(projectId)
       return context.kind === 'absent' ? null : { relativePath: path, text: context.text, version: context.version }
     }
     if (await api.statVersion(projectId, path) === null) return null
     return api.read(projectId, path)
-  }
-  const assertClean = () => { if (editors.hasUnsaved()) throw new Error(t('dirty')) }
-  const bufferFor = (path: string, document: RequirementDocument | null) => {
-    let buffer = editors.get(key(path))
-    if (buffer) buffer.receive(document)
-    else {
-      buffer = new DraftBuffer(document, async (text, version) => {
-        if (path === 'CONTEXT.md') return api.saveContext(projectId, text, version)
-        if (version === null) throw new Error(t('missing'))
-        return api.save(projectId, path, text, version)
-      }, () => readDocument(path))
-      editors.register(key(path), buffer)
-    }
+  }, [api, projectId])
+  const bufferFor = (path: string, document: RequirementDocument): DraftBuffer => {
+    const existing = editors.get(projectId, path)
+    if (existing) { existing.receive(document); return existing }
+    const buffer = new DraftBuffer(document, (text, version) => {
+      if (path === 'CONTEXT.md') return api.saveContext(projectId, text, version)
+      if (version === null) throw new Error(t('flushFailed'))
+      return api.save(projectId, path, text, version)
+    }, () => readDocument(path))
+    editors.register(projectId, path, buffer)
     return buffer
   }
-  const open = async (path: string, current = epoch.current) => {
-    if (!isCurrent(current)) return
-    await flush()
+  /* Activation never flushes: the navigation pipeline flushes exactly once before it. */
+  const activate = async (path: string, current: number): Promise<void> => {
     if (!isCurrent(current)) return
     const document = await readDocument(path)
     if (!isCurrent(current)) return
-    assertClean()
     if (document === null) {
       if (path !== 'CONTEXT.md') throw new Error(t('missing'))
-      setSelection(undefined); setContextAbsent(true)
-      await setActiveDocument(projectId, path)
+      setSelection(undefined)
+      editors.remember(projectId, null)
+      setContextAbsent(true)
+      await setActiveDocument(projectId, null)
       return
     }
-    const buffer = bufferFor(path, document)
-    setSelection({ projectId, path, buffer }); setContextAbsent(false); setForm(undefined)
+    if (editors.hasUnsaved(projectId)) throw new Error(t('flushFailed'))
     await setActiveDocument(projectId, path)
+    if (!isCurrent(current)) return
+    setSelection({ projectId, path, buffer: bufferFor(path, document) })
+    editors.remember(projectId, path)
+    setContextAbsent(false)
+    setForm(undefined)
   }
-  const applyProposal = async (proposal: RequirementProposal) => {
+  /** Reopens the document this project had open before the view was unmounted. */
+  const restore = async (current: number): Promise<void> => {
+    const path = editors.remembered(projectId)
+    if (!path) return
+    const document = await readDocument(path).catch(() => null)
+    if (!isCurrent(current)) return
+    if (document === null) { editors.remember(projectId, null); return }
+    await setActiveDocument(projectId, path).catch(() => undefined)
+    if (!isCurrent(current)) return
+    setSelection({ projectId, path, buffer: bufferFor(path, document) })
+  }
+  const run = (operation: (current: number) => Promise<void>) => {
+    if (unavailable) return
+    setBusy(true); setError('')
+    const current = epoch.current
+    void operation(current)
+      .catch(reason => { if (isCurrent(current)) reportError(reason) })
+      .finally(() => { if (isCurrent(current)) setBusy(false) })
+  }
+  const open = (path: string) => run(async current => {
+    await flush(current)
+    if (!isCurrent(current)) return
+    await activate(path, current)
+  })
+  const begin = (next: FormState) => {
+    if (unavailable) return
+    setError('')
+    setForm(next)
+    setPathInput(next.kind === 'rename' ? next.path : next.kind === 'folder' ? '需求/新目录' : '需求/新需求.md')
+  }
+  const createContext = () => run(async current => {
+    await flush(current)
+    if (!isCurrent(current)) return
+    await api.saveContext(projectId, '', null)
+    if (!isCurrent(current)) return
+    setContextPresent(true)
+    await activate('CONTEXT.md', current)
+  })
+  const submit = () => {
+    if (!form || unavailable) return
+    run(async current => {
+      await flush(current)
+      if (!isCurrent(current)) return
+      if (form.kind === 'create') {
+        const document = await api.create(projectId, pathInput)
+        if (!isCurrent(current)) return
+        await refresh(current)
+        if (!isCurrent(current)) return
+        await activate(document.relativePath, current)
+        return
+      }
+      if (form.kind === 'folder') {
+        await api.createDirectory(projectId, pathInput)
+        if (!isCurrent(current)) return
+        await refresh(current)
+        if (isCurrent(current)) setForm(undefined)
+        return
+      }
+      if (form.kind === 'rename') {
+        const oldPath = form.path
+        const renamedPath = await api.rename(projectId, oldPath, pathInput)
+        if (!isCurrent(current)) return
+        const wasOpen = selected?.path === oldPath
+        try {
+          await refresh(current)
+          if (!isCurrent(current)) return
+          if (wasOpen) await activate(renamedPath, current)
+        } catch (reason) {
+          /* The old path no longer exists; never leave the selection on its disposed buffer. */
+          if (isCurrent(current)) {
+            editors.forget(projectId, oldPath)
+            if (wasOpen) {
+              setSelection(undefined)
+              editors.remember(projectId, null)
+              await setActiveDocument(projectId, null).catch(reportError)
+            }
+          }
+          throw reason
+        }
+        if (isCurrent(current)) {
+          editors.forget(projectId, oldPath)
+          setForm(undefined)
+        }
+        return
+      }
+      const removedPath = form.path
+      let removed = false
+      try {
+        await api.remove(projectId, removedPath)
+        removed = true
+      } finally {
+        if (isCurrent(current)) {
+          if (removed && selected?.path === removedPath) {
+            /* Clear the native active-document hint before dropping the buffer it names. */
+            await setActiveDocument(projectId, null).catch(reportError)
+            if (isCurrent(current)) {
+              setSelection(undefined)
+              editors.remember(projectId, null)
+              editors.forget(projectId, removedPath)
+            }
+          } else if (removed) editors.forget(projectId, removedPath)
+          await refresh(current).catch(reason => { if (isCurrent(current)) reportError(reason) })
+        }
+      }
+      if (isCurrent(current)) setForm(undefined)
+    })
+  }
+  const discardMissing = () => run(async current => {
+    if (!selected) return
+    const path = selected.path
+    await setActiveDocument(projectId, null)
+    if (!isCurrent(current)) return
+    editors.forget(projectId, path)
+    editors.remember(projectId, null)
+    setSelection(undefined)
+    setContextAbsent(false)
+    await refresh(current)
+  })
+  const recreated = async (): Promise<void> => {
+    const current = epoch.current
+    await refresh(current).catch(reason => { if (isCurrent(current)) reportError(reason) })
+    if (!isCurrent(current) || !selected) return
+    await setActiveDocument(projectId, selected.path).catch(reason => { if (isCurrent(current)) reportError(reason) })
+  }
+  const applyProposal = async (proposal: RequirementProposal): Promise<void> => {
     if (unavailable) throw new Error(t('prepareFailed'))
+    setApplying(true); setError('')
     const current = epoch.current
     let buffer: DraftBuffer | undefined
     let prepared = false
-    setApplying(true)
     try {
-      const document = await readDocument(proposal.relativePath)
-      if (!isCurrent(current)) return
-      buffer = bufferFor(proposal.relativePath, document)
+      buffer = editors.get(projectId, proposal.relativePath)
+      if (!buffer) {
+        /* The target has no in-memory buffer: the Host applies atomically against the proposal's base version. */
+        await api.applyProposal(projectId, proposal.proposalId, proposal.baseVersion)
+        if (isCurrent(current)) await refresh(current)
+        return
+      }
       const input = await buffer.prepareWrite()
       if (!input) throw new Error(t('prepareFailed'))
       prepared = true
       if (!isCurrent(current)) return
-      if (!buffer.matchesPrepared(input) || editors.hasUnsavedExcept(buffer)) throw new Error(t('prepareFailed'))
+      if (!buffer.matchesPrepared(input) || editors.hasUnsavedExcept(projectId, buffer)) throw new Error(t('prepareFailed'))
       const accepted = await api.applyProposal(projectId, proposal.proposalId, input.version)
       buffer.acknowledgeWrite(accepted, input)
-      if (!isCurrent(current)) return
-      // Editing a different document during application keeps that document visible.
-      if (!editors.hasUnsavedExcept(buffer)) {
-        setSelection({ projectId, path: accepted.relativePath, buffer }); setContextAbsent(false); setForm(undefined)
-        await setActiveDocument(projectId, accepted.relativePath)
-        if (!isCurrent(current)) return
-      }
-      await refresh(current)
     } finally {
       if (prepared) buffer?.finishWrite()
       if (isCurrent(current)) setApplying(false)
     }
   }
-  const begin = async (kind: 'create' | 'folder' | 'rename' | 'remove') => {
-    const current = epoch.current
-    await flush()
-    if (!isCurrent(current)) return
-    setPathInput(kind === 'rename' ? selected?.path ?? '' : kind === 'folder' ? '需求/新目录' : '需求/新需求.md')
-    setForm(kind)
-  }
-  const submit = async () => {
-    const current = epoch.current
-    await flush()
-    if (!isCurrent(current)) return
-    if (form === 'create') {
-      const document = await api.create(projectId, pathInput)
-      if (!isCurrent(current)) return
-      await refresh(current)
-      if (!isCurrent(current)) return
-      await open(document.relativePath, current)
-      if (!isCurrent(current)) return
-    } else if (form === 'folder') await api.createDirectory(projectId, pathInput)
-    else if (form === 'rename' && selected) {
-      assertClean()
-      const renamedPath = await api.rename(projectId, selected.path, pathInput)
-      if (!isCurrent(current)) return
-      assertClean()
-      editors.forget(key(selected.path))
-      await refresh(current)
-      if (!isCurrent(current)) return
-      await open(renamedPath, current)
-      if (!isCurrent(current)) return
-    } else if (form === 'remove' && selected) {
-      assertClean()
-      await api.remove(projectId, selected.path)
-      if (!isCurrent(current)) return
-      assertClean()
-      editors.forget(key(selected.path)); setSelection(undefined)
-      await setActiveDocument(projectId, null)
-      if (!isCurrent(current)) return
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return
+      event.preventDefault()
+      void editors.flushActive(projectId).then(result => {
+        /* The open document renders its own conflict or failure notice; avoid a second alert. */
+        if (!result.ok && !selected) setError(flushMessage(result))
+      })
     }
-    if (isCurrent(current)) { setForm(undefined); await refresh(current) }
-  }
-  const createContext = async () => {
-    const current = epoch.current
-    await flush()
-    if (!isCurrent(current)) return
-    await api.saveContext(projectId, '', null)
-    if (isCurrent(current)) await open('CONTEXT.md', current)
-  }
-  const discardDeleted = () => {
-    if (!selected) return
-    const current = epoch.current
-    run(async () => {
-      if (!isCurrent(current)) return
-      editors.forget(key(selected.path)); setSelection(undefined); setContextAbsent(false)
-      await setActiveDocument(projectId, null)
-      if (!isCurrent(current)) return
-      await refresh(current)
-    })
-  }
-  if (!active) return null
-  return <section className={css.workbench} aria-label={t('title')}>
-    <aside className={css.tree}><h2>{t('title')}</h2><div className={css.actions}>
-      <button disabled={unavailable} onClick={() => run(() => begin('create'))}>{t('create')}</button><button disabled={unavailable} onClick={() => run(() => begin('folder'))}>{t('folder')}</button><button disabled={unavailable} onClick={() => run(() => refresh())}>{t('refresh')}</button>
-    </div><button disabled={unavailable} onClick={() => run(() => open('CONTEXT.md'))}>{t('context')}</button>
-      {loading ? <p>{t('loading')}</p> : entries.length === 0 ? <p>{t('empty')}</p> : <ul className={css.entries}>{entries.map(entry => <li key={entry.relativePath}>{entry.type === 'directory' ? <div className={css.directory}>{entry.relativePath}/</div> : <button disabled={unavailable} aria-current={selected?.path === entry.relativePath} title={entry.relativePath} onClick={() => run(() => open(entry.relativePath))}>{entry.relativePath.replace(/^需求\//u, '')}</button>}</li>)}</ul>}
-    </aside>
-    <main className={css.main}>
-      {error && <p role="alert" className={css.error}>{error}</p>}
-      {selected && selected.path !== 'CONTEXT.md' && <div className={css.editorHeader}><button disabled={unavailable} onClick={() => run(() => begin('rename'))}>{t('rename')}</button><button disabled={unavailable} onClick={() => run(() => begin('remove'))}>{t('remove')}</button></div>}
-      {form && <FormDialog title={t(form === 'create' ? 'create' : form === 'folder' ? 'folder' : form === 'rename' ? 'rename' : 'remove')} busy={unavailable} close={() => setForm(undefined)}><form className={css.form} onSubmit={event => { event.preventDefault(); run(submit) }}>{error && <p role="alert" className={css.error}>{error}</p>}{form === 'remove' ? <p>{t('confirmRemove')}</p> : <label>{t('name')} <input autoFocus required disabled={unavailable} value={pathInput} onChange={event => setPathInput(event.target.value)} /></label>}<button disabled={unavailable}>{t('confirm')}</button><button type="button" disabled={unavailable} onClick={() => setForm(undefined)}>{t('cancel')}</button></form></FormDialog>}
-      {selected ? <RequirementEditor key={`${projectId}:${selected.path}`} selection={selected} api={api} t={t} locked={busy} discardMissing={discardDeleted} /> : <div className={css.empty}>{contextAbsent ? <><p>{t('contextAbsent')}</p><button disabled={unavailable} onClick={() => run(createContext)}>{t('createContext')}</button></> : <p>{t('select')}</p>}</div>}
-      <RequirementProposals projectId={projectId} api={api} apply={applyProposal} disabled={unavailable} t={t} />
-    </main>
-  </section>
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [editors, projectId, flushMessage, selected])
+  const dialogTitle = form === undefined ? '' : form.kind === 'create' ? t('create') : form.kind === 'folder' ? t('folder') : form.kind === 'rename' ? t('rename') : t('remove')
+  return <Surface className={css.surface}>
+    <div className={css.workbench}>
+      <MaterialTree
+        entries={entries}
+        selectedPath={selected?.path}
+        contextPresent={contextPresent}
+        loading={loading}
+        disabled={unavailable}
+        onOpen={open}
+        onCreate={() => begin({ kind: 'create' })}
+        onCreateFolder={() => begin({ kind: 'folder' })}
+        onRefresh={() => run(async current => { await refresh(current) })}
+        onRename={path => begin({ kind: 'rename', path })}
+        onRemove={path => begin({ kind: 'remove', path })}
+        t={t} />
+      <section className={css.documentArea} aria-label={t('title')}>
+        {error ? <div className={css.panelError}><Notice tone="danger" title={t('operationFailed')}>{error}</Notice></div> : null}
+        {selected
+          ? <MaterialEditor
+            projectId={projectId}
+            path={selected.path}
+            buffer={selected.buffer}
+            api={api}
+            locked={busy}
+            onRecreated={recreated}
+            onDiscardMissing={discardMissing}
+            t={t} />
+          : <div className={css.emptyDocument}>
+            <EmptyState
+              icon={<IconFile />}
+              title={contextAbsent ? t('contextAbsent') : t('select')}
+              action={contextAbsent
+                ? <Button size="sm" variant="primary" disabled={unavailable} onClick={createContext}>{t('createContext')}</Button>
+                : undefined} />
+          </div>}
+        <RequirementProposals projectId={projectId} api={api} disabled={unavailable} apply={applyProposal} t={t} />
+      </section>
+    </div>
+    {form ? <Dialog
+      title={dialogTitle}
+      busy={busy}
+      closeLabel={t('close')}
+      description={form.kind === 'remove' ? t('confirmRemove') : undefined}
+      onClose={() => { if (!busy) setForm(undefined) }}
+      footer={<>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setForm(undefined)}>{t('cancel')}</Button>
+        <Button
+          size="sm"
+          variant={form.kind === 'remove' ? 'danger' : 'primary'}
+          loading={busy}
+          disabled={form.kind !== 'remove' && pathInput.trim().length === 0}
+          onClick={submit}>{t('confirm')}</Button>
+      </>}>
+      {form.kind === 'remove' ? null : <Field label={t('name')} htmlFor="eadp-requirements-path" hint={t('nameHint')}>
+        <Input
+          id="eadp-requirements-path"
+          autoFocus
+          value={pathInput}
+          disabled={busy}
+          onChange={event => setPathInput(event.target.value)}
+          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); submit() } }} />
+      </Field>}
+    </Dialog> : null}
+  </Surface>
 }

@@ -5,10 +5,12 @@ export const EADP_SLOTS = { requirements: 'eadp.requirements.view', prototype: '
 export interface EadpRequirementsSlotProps { projectId: ProjectId; active: boolean }
 export interface EadpPrototypeSlotProps { projectId: ProjectId; active: boolean }
 export interface EadpKnowledgeSlotProps { active: boolean }
-/** Coordinates unsaved editor input before navigation within the workbench. */
+/** Coordinates unsaved editor input of one project before navigation leaves it. */
 export interface EadpRequirementsClient {
-  flushActive(): Promise<{ ok: boolean; message?: string }>
-  hasUnsaved(): boolean
+  /** Save pending input of `projectId`; another project's draft never blocks this navigation. */
+  flushActive(projectId: ProjectId): Promise<{ ok: boolean; message?: string }>
+  /** Whether `projectId` still holds input or a conflict that navigation must not drop. */
+  hasUnsaved(projectId: ProjectId): boolean
 }
 export const EADP_ERRORS = { projectNotFound: 'PROJECT_NOT_FOUND', invalidPath: 'INVALID_PATH', outsideProject: 'OUTSIDE_PROJECT', staleVersion: 'STALE_VERSION', unavailable: 'UNAVAILABLE' } as const
 

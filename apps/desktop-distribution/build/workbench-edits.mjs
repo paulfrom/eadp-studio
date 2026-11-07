@@ -1,4 +1,5 @@
 import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
+import { DESKTOP_PROFILE_EDITS, DESKTOP_PROFILE_FILES, EADP_PROFILE_SOURCE } from './desktop-profile-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_MODEL_SELECTION_EDITS } from './model-selection-edits.mjs'
@@ -14,18 +15,17 @@ function replace(source, before, after, file) {
 }
 
 export const WORKBENCH_BUNDLES = ['@eadp/shell', '@eadp/requirements', '@eadp/prototype', '@eadp/knowledge']
-export const WORKBENCH_ADDITIONS = [...WORKBENCH_RUNTIME_FILES, ...PROTOTYPE_TEMPLATE_FILES]
+/** The deployed app profile lists exactly the bundles the CLI dependency edit installs. */
+for (const name of WORKBENCH_BUNDLES) {
+  if (!EADP_PROFILE_SOURCE.includes(`'${name}'`)) throw new Error(`EADP profile deployment disagrees with the CLI dependency edit: ${name}`)
+}
+
+export const WORKBENCH_ADDITIONS = [...DESKTOP_PROFILE_FILES, ...WORKBENCH_RUNTIME_FILES, ...PROTOTYPE_TEMPLATE_FILES]
 export const WORKBENCH_EDITS = [
   ...DESKTOP_BRAND_EDITS,
   DESKTOP_STARTUP_EDIT,
   STUDIO_TYPERT_EDIT,
-  {
-    file: 'apps/desktop/src/project-manager.ts',
-    apply(source) {
-      return replace(source, 'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
-        `const SHIPPED_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate\nconst WEB_PROFILE: ProfileTemplate = { ...SHIPPED_PROFILE, bundles: [...SHIPPED_PROFILE.bundles, ...${JSON.stringify(WORKBENCH_BUNDLES)}] }`, this.file)
-    },
-  },
+  ...DESKTOP_PROFILE_EDITS,
   {
     file: 'apps/cli/package.json',
     apply(source) {

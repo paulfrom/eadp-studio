@@ -1,0 +1,66 @@
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--eadp-control-md);
+  height: var(--eadp-control-md);
+  padding: 0;
+  border: 0;
+  border-radius: var(--eadp-radius-sm);
+  background: transparent;
+  color: var(--eadp-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.iconButton[data-size='sm'] {
+  width: var(--eadp-control-sm);
+  height: var(--eadp-control-sm);
+}
+
+.iconButton:hover:not(:disabled) {
+  background: var(--eadp-hover);
+  color: var(--eadp-text);
+}
+
+.iconButton[data-variant='primary'] {
+  background: var(--eadp-accent);
+  color: var(--eadp-on-accent);
+}
+
+.iconButton[data-variant='primary']:hover:not(:disabled) {
+  background: var(--eadp-accent-hover);
+  color: var(--eadp-on-accent);
+}
+
+.iconButton[data-variant='secondary'] {
+  border: 1px solid var(--eadp-line-strong);
+  background: var(--eadp-raised);
+  color: var(--eadp-text);
+}
+
+.iconButton[data-variant='danger'] {
+  color: var(--eadp-danger);
+}
+
+.iconButton[data-variant='danger']:hover:not(:disabled) {
+  background: var(--eadp-danger-soft);
+  color: var(--eadp-danger);
+}
+
+.iconButton:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.iconButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton {
+    transition: none;
+  }
+}

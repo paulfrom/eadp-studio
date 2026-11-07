@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { RequirementProposal } from '@eadp/contracts'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import {
+  Badge,
+  Button,
+  EmptyState,
+  IconButton,
+  IconChevronDown,
+  IconChevronRight,
+  IconRefresh,
+  IconSparkles,
+  Notice,
+} from '@eadp/shell/client/ui'
 import type { RequirementsApi } from './api.ts'
+import { failureCode, versionTail } from './material/document-state.ts'
 import { NS } from './locales.ts'
-import css from './requirements.module.css'
+import css from './material-editor.module.css'
+
+/** How often the Host proposal list is re-read while the panel is open. */
+const POLL_INTERVAL_MS = 2000
 
 interface ProposalProps extends PropsLocale<typeof NS> {
   projectId: string
@@ -11,25 +27,33 @@ interface ProposalProps extends PropsLocale<typeof NS> {
   disabled: boolean
   apply(proposal: RequirementProposal): Promise<void>
 }
-/** Only Host-generated proposals are reviewable; conversation text is never interpreted. */
+
+/** Collapsible Host proposal review area; conversation text is never a write authority. */
 export function RequirementProposals({ projectId, api, apply, disabled, t }: ProposalProps) {
   const [proposals, setProposals] = useState<RequirementProposal[]>([])
   const [error, setError] = useState('')
-  const [stale, setStale] = useState<Set<string>>(new Set())
+  const [stale, setStale] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [working, setWorking] = useState(false)
+  const [open, setOpen] = useState(true)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const [candidateOpen, setCandidateOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const listId = useId()
   const generation = useRef(0)
+  const request = useRef(0)
   const currentProject = useRef(projectId)
   currentProject.current = projectId
   const current = useCallback((value: number) => value === generation.current && currentProject.current === projectId, [projectId])
   const reload = useCallback(async (value = generation.current) => {
+    const sequence = ++request.current
     const result = await api.listProposals(projectId)
-    if (current(value)) setProposals(result)
+    /* The newest response owns the list; a slower earlier request must not overwrite it. */
+    if (current(value) && sequence === request.current) setProposals(result)
   }, [api, projectId, current])
   useEffect(() => {
     generation.current += 1
     const value = generation.current
     let reading = false
-    setProposals([]); setError(''); setStale(new Set()); setWorking(false)
+    setProposals([]); setError(''); setStale(new Set<string>()); setWorking(false); setExpanded(new Set<string>()); setCandidateOpen(new Set<string>())
     const refresh = async () => {
       if (reading) return
       reading = true
@@ -37,10 +61,14 @@ export function RequirementProposals({ projectId, api, apply, disabled, t }: Pro
       finally { reading = false }
     }
     void refresh()
-    const interval = setInterval(() => { void refresh() }, 2000)
+    const timer = window.setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
     const focus = () => { void refresh() }
     window.addEventListener('focus', focus)
-    return () => { generation.current += 1; clearInterval(interval); window.removeEventListener('focus', focus) }
+    return () => {
+      generation.current += 1
+      window.clearInterval(timer)
+      window.removeEventListener('focus', focus)
+    }
   }, [reload, current])
   const act = (proposal: RequirementProposal, discard: boolean) => {
     if (disabled || working) return
@@ -50,20 +78,67 @@ export function RequirementProposals({ projectId, api, apply, disabled, t }: Pro
       if (current(value)) await reload(value)
     }).catch((reason: unknown) => {
       if (!current(value)) return
-      const failure = reason as { details?: { code?: string } }
-      if (failure.details?.code === 'STALE_VERSION') setStale(previous => new Set([...previous, proposal.proposalId]))
+      if (failureCode(reason) === 'STALE_VERSION') setStale(previous => new Set([...previous, proposal.proposalId]))
       setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => { if (current(value)) setWorking(false) })
   }
+  /* Disclosure state replaces native disclosure elements so hidden content keeps no layout box. */
+  const toggle = (setter: Dispatch<SetStateAction<ReadonlySet<string>>>, proposalId: string): void => {
+    setter(previous => {
+      const next = new Set(previous)
+      if (next.has(proposalId)) next.delete(proposalId)
+      else next.add(proposalId)
+      return next
+    })
+  }
   return <section className={css.proposals} aria-label={t('proposals')}>
-    <header className={css.editorHeader}><strong>{t('proposals')}</strong><span>{t('proposalMemory')}</span></header>
-    {error && <p role="alert" className={css.error}>{error}</p>}
-    {proposals.length === 0 ? <p>{t('noProposals')}</p> : proposals.map(proposal => <article key={proposal.proposalId} className={css.proposal}>
-      <header><strong>{proposal.relativePath}</strong>{stale.has(proposal.proposalId) && <span role="status"> {t('staleProposal')}</span>}</header>
-      <p>{proposal.summary}</p><p className={css.version}>{t('basedOn')} {proposal.baseVersion ?? t('newFile')}</p>
-      <details><summary>{t('reviewDiff')}</summary><pre className={css.diff}>{proposal.diff.map((line, index) => <span className={line.kind === 'added' ? css.added : line.kind === 'removed' ? css.removed : undefined} key={index}>{line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '- ' : '  '}{line.text}{'\n'}</span>)}</pre>{proposal.diffTruncated && <p>{t('diffTruncated')}</p>}</details>
-      <details><summary>{t('candidateText')}</summary><pre className={css.diff}>{proposal.text}</pre></details>
-      <div className={css.actions}><button disabled={disabled || working} onClick={() => act(proposal, false)}>{t('applyProposal')}</button><button disabled={disabled || working} onClick={() => act(proposal, true)}>{t('discardProposal')}</button></div>
-    </article>)}
+    <header className={css.proposalsHeader}>
+      <IconButton label={open ? t('collapse') : t('expand')} size="sm" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        {open ? <IconChevronDown /> : <IconChevronRight />}
+      </IconButton>
+      <strong className={css.proposalsTitle}>{t('proposals')}</strong>
+      {proposals.length > 0 ? <Badge tone="accent">{proposals.length}</Badge> : null}
+      <span className={css.proposalsMemory} title={t('proposalMemory')}>{t('proposalMemory')}</span>
+      <IconButton label={t('refresh')} size="sm" disabled={working} onClick={() => { void reload().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))) }}><IconRefresh /></IconButton>
+    </header>
+    {open ? <div className={css.proposalsBody}>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+      {proposals.length === 0 ? <EmptyState icon={<IconSparkles />} title={t('noProposals')} /> : proposals.map((proposal, index) => {
+        const isStale = stale.has(proposal.proposalId)
+        const isExpanded = expanded.has(proposal.proposalId)
+        const isCandidateOpen = candidateOpen.has(proposal.proposalId)
+        const diffId = `${listId}-diff-${index}`
+        const candidateId = `${listId}-candidate-${index}`
+        return <article key={proposal.proposalId} className={css.proposalCard} data-stale={isStale || undefined}>
+          <header className={css.proposalHeader}>
+            <strong className={css.proposalPath} title={proposal.relativePath}>{proposal.relativePath}</strong>
+            <Badge tone={isStale ? 'danger' : proposal.baseVersion ? 'neutral' : 'accent'}>
+              {isStale ? t('staleProposal') : proposal.baseVersion ? `${t('basedOn')} ${versionTail(proposal.baseVersion)}` : t('newFile')}
+            </Badge>
+            <div className={css.proposalActions}>
+              <Button size="sm" variant="primary" disabled={disabled || working} onClick={() => act(proposal, false)}>{t('applyProposal')}</Button>
+              <Button size="sm" variant="ghost" disabled={disabled || working} onClick={() => act(proposal, true)}>{t('discardProposal')}</Button>
+            </div>
+          </header>
+          <p className={css.proposalSummary}>{proposal.summary}</p>
+          <button type="button" className={css.diffToggle} aria-expanded={isExpanded} aria-controls={diffId} onClick={() => toggle(setExpanded, proposal.proposalId)}>
+            {isExpanded ? <IconChevronDown /> : <IconChevronRight />}{t('reviewDiff')}
+          </button>
+          {isExpanded ? <>
+            <div id={diffId} className={css.diff} role="group" aria-label={t('reviewDiff')}>
+              {proposal.diff.map((line, index) => <div key={index} className={css.diffLine} data-kind={line.kind}>
+                <span className={css.diffSign} aria-hidden="true">{line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' '}</span>
+                <span>{line.text || ' '}</span>
+              </div>)}
+            </div>
+            {proposal.diffTruncated ? <p className={css.diffNote}>{t('diffTruncated')}</p> : null}
+          </> : null}
+          <button type="button" className={css.diffToggle} aria-expanded={isCandidateOpen} aria-controls={candidateId} onClick={() => toggle(setCandidateOpen, proposal.proposalId)}>
+            {isCandidateOpen ? <IconChevronDown /> : <IconChevronRight />}{t('candidateText')}
+          </button>
+          {isCandidateOpen ? <pre id={candidateId} className={css.diff}>{proposal.text || ' '}</pre> : null}
+        </article>
+      })}
+    </div> : null}
   </section>
 }

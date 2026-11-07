@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { PropsRenderFactories, SessionProviderComponent } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
+import { Notice } from './ui.ts'
 import type { ShellFace } from './types.ts'
+import css from './shell.module.css'
 
 interface ConversationProps extends Pick<ShellFace, 'restoreSession' | 'retainSession'>, PropsRenderFactories {
   projectId: string
@@ -33,9 +35,9 @@ export function Conversation(props: ConversationProps) {
     })
     return () => { active = false; retained?.release(); retained = undefined }
   }, [props.projectId, props.sessionId, props.restoreSession, props.retainSession])
-  if (error) return <p role="alert">{error}</p>
-  if (!props.sessionId) return <p>{props.empty}</p>
-  if (!reference || reference.projectId !== props.projectId || reference.sessionId !== props.sessionId) return <p>{props.loading}</p>
+  if (error) return <div className={css.chatNotice}><Notice tone="danger">{error}</Notice></div>
+  if (!props.sessionId) return <p className={css.chatMessage}>{props.empty}</p>
+  if (!reference || reference.projectId !== props.projectId || reference.sessionId !== props.sessionId) return <p className={css.chatMessage}>{props.loading}</p>
   const Provider = props.SessionProvider
   return <Provider session={reference.value}>{props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })}</Provider>
 }

@@ -1,0 +1,27 @@
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: var(--eadp-icon);
+  height: var(--eadp-icon);
+  border: 1.5px solid var(--eadp-line-strong);
+  border-top-color: var(--eadp-accent);
+  border-radius: var(--eadp-radius-pill);
+  animation: eadp-spin 700ms linear infinite;
+}
+
+.spinner[data-size='sm'] {
+  width: 12px;
+  height: 12px;
+}
+
+@keyframes eadp-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

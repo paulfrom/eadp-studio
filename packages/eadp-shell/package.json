@@ -50,5 +50,8 @@
   ],
   "dependencies": {
     "@eadp/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@radix-ui/react-dropdown-menu": "^2.2.1"
   }
 }
