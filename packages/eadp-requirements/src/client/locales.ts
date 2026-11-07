@@ -2,8 +2,8 @@
 export const zh = {
   title: '材料', context: '项目背景', create: '新建需求', folder: '新建目录', refresh: '刷新', empty: '暂无需求文件', loading: '正在读取…',
   select: '选择需求或项目背景开始编辑。', contextAbsent: '项目尚无 CONTEXT.md。', createContext: '创建项目背景',
-  name: '相对路径', nameHint: '保存时自动追加 .md 后缀。', cancel: '取消', confirm: '确定', rename: '改名', remove: '删除', confirmRemove: '删除后不可恢复。确定删除？',
-  moreActions: '更多操作', fileActions: '文件操作', operationFailed: '操作失败',
+  name: '相对路径', nameHint: '未写需求目录时自动归入，文件自动追加 .md 后缀。', cancel: '取消', confirm: '确定', rename: '改名', remove: '删除', confirmRemove: '删除后不可恢复。确定删除？',
+  moreActions: '更多操作', fileActions: '文件操作', directoryActions: '目录操作', operationFailed: '操作失败',
   composing: '正在组字', applyingProposal: '正在应用提案', saving: '正在保存', dirty: '未保存', saved: '已保存', save: '立即保存', placeholder: '开始撰写材料…',
   find: '查找', findPrevious: '上一处', findNext: '下一处', close: '关闭',
   flushComposing: '正在组字，结束组字后再继续。', flushConflict: '文件已在磁盘上变化，请先处理冲突。', flushSaving: '正在保存，请稍后再试。', flushFailed: '输入尚未保存，请处理后重试。',
@@ -17,8 +17,8 @@ export const zh = {
 export const en: Record<keyof typeof zh, string> = {
   title: 'Materials', context: 'Project context', create: 'New requirement', folder: 'New folder', refresh: 'Refresh', empty: 'No requirement files yet', loading: 'Loading…',
   select: 'Select a requirement or the project context to start editing.', contextAbsent: 'This project has no CONTEXT.md.', createContext: 'Create project context',
-  name: 'Relative path', nameHint: 'A .md suffix is appended on save.', cancel: 'Cancel', confirm: 'Confirm', rename: 'Rename', remove: 'Delete', confirmRemove: 'This cannot be undone. Delete it?',
-  moreActions: 'More actions', fileActions: 'File actions', operationFailed: 'The operation failed',
+  name: 'Relative path', nameHint: 'Bare names are placed in the requirement directory; files get a .md suffix.', cancel: 'Cancel', confirm: 'Confirm', rename: 'Rename', remove: 'Delete', confirmRemove: 'This cannot be undone. Delete it?',
+  moreActions: 'More actions', fileActions: 'File actions', directoryActions: 'Directory actions', operationFailed: 'The operation failed',
   composing: 'Composing', applyingProposal: 'Applying proposal', saving: 'Saving', dirty: 'Unsaved', saved: 'Saved', save: 'Save now', placeholder: 'Start writing…',
   find: 'Find', findPrevious: 'Previous match', findNext: 'Next match', close: 'Close',
   flushComposing: 'Finish composing before continuing.', flushConflict: 'The file changed on disk. Resolve the conflict first.', flushSaving: 'Saving; try again shortly.', flushFailed: 'Your input is not saved yet; resolve the failure and retry.',

@@ -163,10 +163,8 @@ export function MaterialTree(props: MaterialTreeProps) {
         }
         break
       case 'Delete':
-        if (row.node.kind === 'file') {
-          event.preventDefault()
-          props.onRemove(row.node.path)
-        }
+        event.preventDefault()
+        props.onRemove(row.node.path)
         break
       default:
         break
@@ -207,6 +205,15 @@ export function MaterialTree(props: MaterialTreeProps) {
             <span className={css.treeChevron}>{collapsed.has(row.node.path) ? <IconChevronRight /> : <IconChevronDown />}</span>
             <span className={css.treeIcon}>{collapsed.has(row.node.path) ? <IconFolder /> : <IconFolderOpen />}</span>
             <span className={css.treeLabel} title={row.node.path}>{row.node.name}</span>
+            <span className={css.treeMore} onClick={event => event.stopPropagation()}>
+              <Menu
+                label={t('directoryActions')}
+                align="end"
+                trigger={<IconButton label={t('moreActions')} size="sm" disabled={disabled}><IconMore /></IconButton>}
+                items={[
+                  { id: 'remove', label: t('remove'), icon: <IconTrash />, danger: true, onSelect: () => props.onRemove(row.node.path) },
+                ]} />
+            </span>
           </li>
           : <li
             key={row.node.path}

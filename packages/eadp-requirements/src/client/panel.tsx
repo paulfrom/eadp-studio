@@ -21,6 +21,24 @@ export type RequirementsProps = EadpRequirementsSlotProps & PropsLocale<typeof N
 interface Selection { projectId: string; path: string; buffer: DraftBuffer }
 type FormState = { kind: 'create' } | { kind: 'folder' } | { kind: 'rename' | 'remove'; path: string }
 
+/**
+ * Map a name typed in the material dialog onto its requirement path.
+ * Bare names land in the requirement directory (or the renamed document's directory);
+ * explicit paths stay relative to the project. Files always carry the markdown suffix.
+ * @param raw - the dialog input.
+ * @param options - `directory` keeps a folder name; `base` places a bare rename next to its old document.
+ * @returns the project-relative requirement path, or an empty string for empty input.
+ */
+function requirementInput(raw: string, options: { directory?: boolean; base?: string } = {}): string {
+  let value = raw.trim().replace(/^(?:\.\/)+/, '').replace(/^\/+/, '')
+  if (value === '') return ''
+  if (value === '需求') value = '需求/需求'
+  else if (!value.startsWith('需求/')) {
+    value = options.base && !value.includes('/') ? `${options.base}/${value}` : `需求/${value}`
+  }
+  return !options.directory && !value.toLowerCase().endsWith('.md') ? `${value}.md` : value
+}
+
 /** File navigation changes only after the editor has acknowledged all current input. */
 export function RequirementsPanel({ projectId, api, editors, setActiveDocument, t }: RequirementsProps) {
   const [entries, setEntries] = useState<RequirementEntry[]>([])
@@ -139,7 +157,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
     if (unavailable) return
     setError('')
     setForm(next)
-    setPathInput(next.kind === 'rename' ? next.path : next.kind === 'folder' ? '需求/新目录' : '需求/新需求.md')
+    setPathInput(next.kind === 'rename' ? next.path : next.kind === 'folder' ? '新目录' : '新需求')
   }
   const createContext = () => run(async current => {
     await flush(current)
@@ -155,7 +173,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
       await flush(current)
       if (!isCurrent(current)) return
       if (form.kind === 'create') {
-        const document = await api.create(projectId, pathInput)
+        const document = await api.create(projectId, requirementInput(pathInput))
         if (!isCurrent(current)) return
         await refresh(current)
         if (!isCurrent(current)) return
@@ -163,7 +181,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
         return
       }
       if (form.kind === 'folder') {
-        await api.createDirectory(projectId, pathInput)
+        await api.createDirectory(projectId, requirementInput(pathInput, { directory: true }))
         if (!isCurrent(current)) return
         await refresh(current)
         if (isCurrent(current)) setForm(undefined)
@@ -171,7 +189,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
       }
       if (form.kind === 'rename') {
         const oldPath = form.path
-        const renamedPath = await api.rename(projectId, oldPath, pathInput)
+        const renamedPath = await api.rename(projectId, oldPath, requirementInput(pathInput, { base: oldPath.slice(0, oldPath.lastIndexOf('/')) }))
         if (!isCurrent(current)) return
         const wasOpen = selected?.path === oldPath
         try {
