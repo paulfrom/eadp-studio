@@ -56,7 +56,7 @@ export class RequirementsService extends TypertRemoteService {
   }
 
   @Remote
-  async remove(projectId: string, relativePath: string): Promise<void> {
+  async removeEntry(projectId: string, relativePath: string): Promise<void> {
     await this.run(() => this.files.mutate(projectId, () => this.files.remove(projectId, relativePath)))
   }
 

@@ -26,6 +26,9 @@
     },
     {
       "path": "../eadp-contracts"
+    },
+    {
+      "path": "../eadp-shell/tsconfig.client.json"
     }
   ]
 }

@@ -20,3 +20,12 @@
 .chatHeader { display:flex; gap:8px; padding:12px; border-bottom:1px solid var(--border); }
 .chatBody { flex:1; min-height:0; overflow:hidden; }
 @media(max-width:900px) { .body { flex-direction:column; overflow:auto; } .chat { flex:1; min-height:420px; border-left:0; border-top:1px solid var(--border); } }
+
+.dialog { color:var(--foreground); background:var(--background); border:1px solid var(--border); border-radius:12px; padding:24px; width:min(480px, calc(100vw - 64px)); max-height:calc(100vh - 64px); overflow:auto; box-shadow:0 24px 80px #0004; }
+.dialog::backdrop { background:#0006; }
+.dialog h2 { margin:0 0 20px; font-size:18px; font-weight:600; }
+.dialog form { display:flex; flex-wrap:wrap; gap:12px; margin:0; padding:0; border:0; background:transparent; }
+.dialog label { display:flex; flex-direction:column; gap:8px; width:100%; font-size:13px; }
+.dialog input { box-sizing:border-box; width:100%; }
+.dialog form > span { width:100%; }
+.dialog form > button:first-of-type { margin-left:auto; background:var(--primary); color:var(--primary-foreground); }

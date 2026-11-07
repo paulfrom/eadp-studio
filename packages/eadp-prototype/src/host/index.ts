@@ -39,7 +39,7 @@ export class PrototypeService extends TypertRemoteService {
     }))
   }
   @Remote
-  async install(projectId: string): Promise<PrototypeRunState> { return this.run(async () => { await this.boundary.target(projectId, ''); return this.supervisor.install(projectId) }) }
+  async installDependencies(projectId: string): Promise<PrototypeRunState> { return this.run(async () => { await this.boundary.target(projectId, ''); return this.supervisor.install(projectId) }) }
   @Remote
   async start(projectId: string): Promise<PrototypeRunState> { return this.run(async () => { await this.boundary.target(projectId, ''); return this.supervisor.start(projectId) }) }
   @Remote

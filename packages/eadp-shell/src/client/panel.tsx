@@ -1,10 +1,11 @@
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { EADP_SLOTS } from '@eadp/contracts'
 import type {} from '@eadp/contracts/client'
 import type { ShellFace, WorkspaceView } from './types.ts'
 import { Conversation } from './conversation.tsx'
 import css from './shell.module.css'
+import { FormDialog } from './form-dialog.tsx'
 
 type Tab = 'requirements' | 'prototype' | 'knowledge'
 type ChildSlot = typeof EADP_SLOTS[keyof typeof EADP_SLOTS] | 'eadp.shell.session'
@@ -12,7 +13,12 @@ export type PanelProps = PropsRuntime<'main'> & PropsRenderFactories & PropsRend
 
 /** Project navigation owns only local selection; Workspace remains authoritative. */
 export function ShellPanel(props: PanelProps) {
-  const snapshot = useSyncExternalStore(props.workspaces.list.subscribe, props.workspaces.list.getSnapshot)
+  const list = props.workspaces.list
+  const store = useMemo(() => ({
+    subscribe: (listener: () => void) => list.subscribe(listener),
+    getSnapshot: () => list.getSnapshot(),
+  }), [list])
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const [projectId, setProjectId] = useState<string>()
   const project = snapshot.items.find(item => item.workspaceId === projectId)
   const [tab, setTab] = useState<Tab>('requirements')
@@ -113,10 +119,10 @@ export function ShellPanel(props: PanelProps) {
         <button disabled={busy} title={t('moved')} onClick={() => run(() => relocate(item))}>{t('relocate')}</button>
         <button disabled={busy} title={t('removeNote')} onClick={() => run(() => remove(item))}>{t('remove')}</button>
       </li>)}</ul>}
-      {form && <form className={css.form} onSubmit={event => { event.preventDefault(); run(saveName) }}>
-        <label>{t('name')} <input required value={name} onChange={event => setName(event.target.value)} /></label>
+      {form && <FormDialog title={t(form.kind === 'create' ? 'create' : 'rename')} busy={busy} close={() => setForm(undefined)}><form className={css.form} onSubmit={event => { event.preventDefault(); run(saveName) }}>
+        {error && <p role="alert" className={css.notice}>{error}</p>}<label>{t('name')} <input autoFocus required disabled={busy} value={name} onChange={event => setName(event.target.value)} /></label>
         <span className={css.path}>{form.path}</span><button disabled={busy || !name.trim()}>{t('save')}</button><button type="button" disabled={busy} onClick={() => setForm(undefined)}>{t('cancel')}</button>
-      </form>}
+      </form></FormDialog>}
     </main> : <div className={css.body}>
       <main className={css.content}>
         {tab === 'requirements' && props.renderSlot(EADP_SLOTS.requirements, { projectId: project.workspaceId, active: true }, { fallback: <p>{t('unavailable')}</p> })}

@@ -108,7 +108,8 @@ export async function stageWorkbench() {
     const packageName = name === 'eadp-contracts' ? '@eadp/contracts' : `@eadp/${name.slice(5)}`
     const entry = name === 'eadp-contracts' ? 'src/index.ts' : 'src/host/index.ts'
     return [JSON.stringify(packageName) + ': ' + JSON.stringify([`./packages/eadp/${name}/${entry}`]) + ',',
-      ...(name === 'eadp-contracts' ? ['"@eadp/contracts/*": ["./packages/eadp/eadp-contracts/src/*"],'] : [])]
+      ...(name === 'eadp-contracts' ? ['"@eadp/contracts/*": ["./packages/eadp/eadp-contracts/src/*"],'] : []),
+      ...(name === 'eadp-shell' ? ['"@eadp/shell/client/ui": ["./packages/eadp/eadp-shell/src/client/ui.ts"],'] : [])]
   }).join('\n')
   if (base.split('"paths": {').length !== 2) throw new Error('Source paths anchor mismatch')
   await writeFile(path.join(workbenchTree, 'tsconfig.base.json'), base.replace('"paths": {', '"paths": {\n' + aliases))
@@ -184,7 +185,8 @@ export const workbenchStagingPaths = [...new Set([
     ...(name === 'eadp-contracts'
       ? [`packages/eadp/${name}/tsconfig.json`, `packages/eadp/${name}/tsconfig.client.json`, `packages/eadp/${name}/tsdown.config.ts`]
       : [`packages/eadp/${name}/cordis.patch.yml`, `packages/eadp/${name}/tsconfig.json`, `packages/eadp/${name}/tsconfig.host.json`, `packages/eadp/${name}/tsconfig.client.json`, `packages/eadp/${name}/tsdown.config.ts`]),
-    ...(name === 'eadp-prototype' ? [`packages/eadp/${name}/assets`] : []),
+    // The archive is a build output, while staging owns only the verified template inputs.
+    ...(name === 'eadp-prototype' ? [`packages/eadp/${name}/assets/prototype-template`, `packages/eadp/${name}/assets/prototype-template.manifest.json`] : []),
     ...(name === 'eadp-knowledge' ? [`packages/eadp/${name}/resources`] : []),
   ]),
 ])]

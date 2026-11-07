@@ -50,7 +50,7 @@ pnpm build:desktop
 | `workbench-edits.mjs` | `prepare-package-set.ts` 的 path 导入和默认 inputs 锚点 | 接收内部设置的 `DSH_DESKTOP_PACKED_EXTRA` 五包 tarball 目录 |
 | `studio-typert-edits.mjs` | `packages/typert/generator/src/workspace.ts` 的 WorkspaceAnalyzer `.analyze()` 锚点 | 使用固定上游已有的 `analyzeInBatches()` 限制反射内存 |
 | `model-selection-edits.mjs` | `agent/src/model-selection.ts`、`agent/src/runtime-types.ts`、`agent-loop/src/agent.ts` 的模型通知与 pre-step 类型/调用锚点 | 共享模型切换通知监听，并把最终 prompt assembly 传到通知处理 |
-| `primary-runtime-edits.mjs` | `scripts/primary-runtime/prepare.ts` 的导入、staging、资源准备和函数注释锚点 | 对完整 primary-runtime 负载做哈希后复用；缺失或损坏仍从锁定归档重建 |
+| `primary-runtime-edits.mjs` | `scripts/primary-runtime/prepare.ts` 的导入、staging、资源准备和函数注释锚点 | 对 primary-runtime 源码和二进制负载做哈希后复用，排除 Python 执行生成的 `__pycache__`、`.pyc`、`.pyo`，避免运行检查使缓存失效；缺失或损坏仍从锁定归档重建 |
 
 `prototype-template-archive.mjs` 与 `prototype-template-transform.mjs` 是上述模板编辑的新增维护源码；`workbench-runtime-edits.mjs` 同时登记其三个新增运行时文件。任何新增文件不再存在于维护目录都会使装配失败。
 

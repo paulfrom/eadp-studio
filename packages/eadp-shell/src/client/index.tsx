@@ -52,7 +52,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       workspaces: scope.workspaces,
       pickDirectory: () => scope.uiWorkspace.pickDirectory(),
       createDirectory: (parent, name) => scope.uiWorkspace.createDirectory(parent, name),
-      checkDirectory: async path => { await scope.uiWorkspace.listDirectory(path) },
+      checkDirectory: async path => unwrap(await scope.remote.eadpShell.checkDirectory(path)),
       requirements: scope.eadpRequirementsClient,
       stopProject: async projectId => {
         if (!prototype) throw new Error(scope.locale.bind('eadpShell')('unavailable'))
@@ -77,3 +77,4 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   // the dependency fiber pending without blocking the Client loader.
   return async () => { await ui.dispose(); await prototypeScope.dispose(); await disposeRemote() }
 }
+

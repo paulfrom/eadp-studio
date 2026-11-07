@@ -1,3 +1,4 @@
+import { FormDialog } from '@eadp/shell/client/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EadpRequirementsSlotProps, RequirementDocument, RequirementEntry, RequirementProposal } from '@eadp/contracts'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
@@ -194,7 +195,7 @@ export function RequirementsPanel({ projectId, active, api, editors, setActiveDo
     <main className={css.main}>
       {error && <p role="alert" className={css.error}>{error}</p>}
       {selected && selected.path !== 'CONTEXT.md' && <div className={css.editorHeader}><button disabled={unavailable} onClick={() => run(() => begin('rename'))}>{t('rename')}</button><button disabled={unavailable} onClick={() => run(() => begin('remove'))}>{t('remove')}</button></div>}
-      {form && <form className={css.form} onSubmit={event => { event.preventDefault(); run(submit) }}>{form === 'remove' ? <p>{t('confirmRemove')}</p> : <label>{t('name')} <input required value={pathInput} onChange={event => setPathInput(event.target.value)} /></label>}<button disabled={unavailable}>{t('confirm')}</button><button type="button" disabled={unavailable} onClick={() => setForm(undefined)}>{t('cancel')}</button></form>}
+      {form && <FormDialog title={t(form === 'create' ? 'create' : form === 'folder' ? 'folder' : form === 'rename' ? 'rename' : 'remove')} busy={unavailable} close={() => setForm(undefined)}><form className={css.form} onSubmit={event => { event.preventDefault(); run(submit) }}>{error && <p role="alert" className={css.error}>{error}</p>}{form === 'remove' ? <p>{t('confirmRemove')}</p> : <label>{t('name')} <input autoFocus required disabled={unavailable} value={pathInput} onChange={event => setPathInput(event.target.value)} /></label>}<button disabled={unavailable}>{t('confirm')}</button><button type="button" disabled={unavailable} onClick={() => setForm(undefined)}>{t('cancel')}</button></form></FormDialog>}
       {selected ? <RequirementEditor key={`${projectId}:${selected.path}`} selection={selected} api={api} t={t} locked={busy} discardMissing={discardDeleted} /> : <div className={css.empty}>{contextAbsent ? <><p>{t('contextAbsent')}</p><button disabled={unavailable} onClick={() => run(createContext)}>{t('createContext')}</button></> : <p>{t('select')}</p>}</div>}
       <RequirementProposals projectId={projectId} api={api} apply={applyProposal} disabled={unavailable} t={t} />
     </main>

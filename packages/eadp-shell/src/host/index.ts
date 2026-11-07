@@ -59,9 +59,7 @@ export class ShellService extends TypertRemoteService {
   /** Verify a user-picked replacement has recognizable project content without modifying it. */
   @Remote
   async validateRelocation(directory: string): Promise<void> {
-    if (!path.isAbsolute(directory)) throw new Error('项目目录必须是绝对路径。')
-    const root = await stat(directory)
-    if (!root.isDirectory()) throw new Error('所选路径不是目录。')
+    await this.checkDirectory(directory)
     for (const [name, isDirectory] of [['需求', true], ['原型', true], ['CONTEXT.md', false]] as const) {
       try {
         const entry = await stat(path.join(directory, name))
@@ -71,6 +69,14 @@ export class ShellService extends TypertRemoteService {
       }
     }
     throw new Error('所选目录没有需求、原型或 CONTEXT.md，请核对项目位置。')
+  }
+
+  /** Verify a local project directory without requiring a directory-picker browse backend. */
+  @Remote
+  async checkDirectory(directory: string): Promise<void> {
+    if (!path.isAbsolute(directory)) throw new Error('项目目录必须是绝对路径。')
+    const root = await stat(directory)
+    if (!root.isDirectory()) throw new Error('所选路径不是目录。')
   }
 
   /** Refuse removal while the official Session activity providers report unfinished work. */

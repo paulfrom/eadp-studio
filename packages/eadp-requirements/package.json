@@ -50,7 +50,8 @@
     "lib/typert.remote-client.d.ts"
   ],
   "dependencies": {
-    "@eadp/contracts": "workspace:*"
+    "@eadp/contracts": "workspace:*",
+    "@eadp/shell": "workspace:*"
   },
   "devDependencies": {
     "react": "^18.2.0",

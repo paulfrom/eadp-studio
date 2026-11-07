@@ -33,7 +33,7 @@ export const PRIMARY_RUNTIME_EDIT = {
   },
 }
 
-export const PREPARED_DIGEST = `/** Hash every payload entry, including internal symbolic-link targets. */
+export const PREPARED_DIGEST = `/** Hash maintained payload entries; Python generates bytecode caches during execution. */
 function preparedPayloadDigest(root: string): string {
   const hash = createHash('sha256')
   const visit = (relative: string): void => {
@@ -43,7 +43,10 @@ function preparedPayloadDigest(root: string): string {
     if (entry.isSymbolicLink()) hash.update('link').update(readlinkSync(filename))
     else if (entry.isDirectory()) {
       hash.update('directory')
-      for (const child of readdirSync(filename).sort()) visit(relative ? relative + '/' + child : child)
+      for (const child of readdirSync(filename).sort()) {
+        if (child === '__pycache__' || child.endsWith('.pyc') || child.endsWith('.pyo')) continue
+        visit(relative ? relative + '/' + child : child)
+      }
     } else if (entry.isFile()) hash.update('file').update(readFileSync(filename))
     else throw new Error('Unsupported primary runtime payload entry: ' + relative)
     hash.update('\\0')

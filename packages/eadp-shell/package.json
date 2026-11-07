@@ -23,7 +23,11 @@
       "types": "./lib/typert.remote-client.d.ts",
       "default": "./lib/typert.remote-client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client/ui": {
+      "types": "./lib/types/client/ui.d.ts",
+      "default": "./lib/types/client/ui.js"
+    }
   },
   "dsh": {
     "bundle": {
