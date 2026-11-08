@@ -1,7 +1,7 @@
-# Host services: typert, agents, tools.
+# Host services: typert, agents, tools, llm, agentDefaultModel.
 # Client services: slots, locale, remote.
 # Target slot: eadp.knowledge.view (single, root), declared by eadp-shell.
 - insert:
     - id: eadp-knowledge
       name: '@eadp/knowledge'
-      inject: [typert, agents, tools]
+      inject: [typert, agents, tools, llm, agentDefaultModel]

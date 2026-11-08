@@ -3,7 +3,7 @@ import type { EadpRequirementsClient } from '@eadp/contracts'
 import type { DraftBuffer } from './DraftBuffer.ts'
 
 /** Why a project's pending input blocks navigation; the panel localizes the reason. */
-export type FlushFailure = 'composing' | 'conflict' | 'saving' | 'failed'
+export type FlushFailure = 'composing' | 'conflict' | 'missing' | 'saving' | 'failed'
 
 export interface FlushResult {
   ok: boolean
@@ -53,6 +53,7 @@ export class RequirementsClientService extends Service implements EadpRequiremen
       const snapshot = buffer.getSnapshot()
       if (snapshot.error?.code === 'failed') return { ok: false, reason: 'failed', message: snapshot.error.message }
       if (snapshot.composing) return { ok: false, reason: 'composing' }
+      if (snapshot.external === null) return { ok: false, reason: 'missing' }
       if (snapshot.external !== undefined) return { ok: false, reason: 'conflict' }
       return { ok: false, reason: 'saving' }
     }

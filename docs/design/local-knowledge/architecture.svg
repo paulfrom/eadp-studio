@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1320" viewBox="0 0 1200 1320" role="img" aria-labelledby="title desc">
+  <title id="title">本地知识库目标架构</title>
+  <desc id="desc">用户文件不限扩展名接收，原件与统一 Markdown 分离保存；SQLite 承载衍生索引；需求会话通过官方 pre-step 自动获得已核验的知识原文候选。</desc>
+  <defs>
+    <marker id="blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#2563eb"/></marker>
+    <marker id="green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#16a34a"/></marker>
+    <marker id="gray" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8Z" fill="#64748b"/></marker>
+  </defs>
+  <rect width="1200" height="1320" fill="white"/>
+  <g font-family="Microsoft YaHei, sans-serif" fill="#172033">
+    <text x="40" y="48" font-size="26" font-weight="600">本地知识库 · 目标架构</text>
+    <text x="40" y="78" font-size="14" fill="#64748b">独立客户端，未实施。绿色：资料处理；蓝色：需求读取与引用；虚线：算法参考。</text>
+
+    <text x="40" y="122" font-size="15" font-weight="600">01 资料来源与管理</text>
+    <rect x="40" y="145" width="250" height="104" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="58" y="177" font-size="17" font-weight="600">内置知识包</text>
+    <text x="58" y="205" font-size="13" fill="#526174">只读 Markdown · 真实出处</text>
+    <text x="58" y="227" font-size="13" fill="#526174">可复制为我的知识</text>
+    <rect x="330" y="145" width="250" height="104" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="348" y="177" font-size="17" font-weight="600">用户文件</text>
+    <text x="348" y="205" font-size="13" fill="#526174">多选 / 拖放 · 不限扩展名</text>
+    <text x="348" y="227" font-size="13" fill="#526174">先保存原件，再识别转换</text>
+    <rect x="620" y="145" width="250" height="104" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="638" y="177" font-size="17" font-weight="600">手工 Markdown</text>
+    <text x="638" y="205" font-size="13" fill="#526174">直接新建与编辑</text>
+    <text x="638" y="227" font-size="13" fill="#526174">转换失败时的整理出口</text>
+    <rect x="910" y="145" width="250" height="104" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="928" y="177" font-size="17" font-weight="600">知识工作台 Client</text>
+    <text x="928" y="205" font-size="13" fill="#526174">资料 / 导入队列</text>
+    <text x="928" y="227" font-size="13" fill="#526174">阅读 · 校对 · 分类 · 来源</text>
+
+    <path d="M455 249 L455 315" stroke="#16a34a" stroke-width="2" marker-end="url(#green)"/>
+    <path d="M745 249 L745 315 L930 315 L930 350" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#green)"/>
+    <path d="M165 249 L165 315 L930 315 L930 350" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#green)"/>
+    <rect x="330" y="350" width="300" height="112" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="348" y="382" font-size="17" font-weight="600">本机内容转换</text>
+    <text x="348" y="410" font-size="13" fill="#526174">内容识别 → 结构化块 → Markdown</text>
+    <text x="348" y="432" font-size="13" fill="#526174">保留页码 / 表格 / 幻灯片等定位</text>
+    <text x="40" y="386" font-size="13" fill="#526174">转换失败：</text>
+    <text x="40" y="410" font-size="13" fill="#526174">原件与队列项保留；可重试或手工整理。</text>
+    <text x="40" y="432" font-size="13" fill="#526174">不按扩展名拒绝，也不伪造空正文。</text>
+    <path d="M630 406 L700 406" stroke="#16a34a" stroke-width="2" marker-end="url(#green)"/>
+    <rect x="700" y="350" width="460" height="140" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="718" y="382" font-size="17" font-weight="600">知识事实源 · 本机应用数据</text>
+    <text x="718" y="410" font-size="13" fill="#526174">manifest：目录、标签、适用范围、资料版本</text>
+    <text x="718" y="432" font-size="13" fill="#526174">cards/*.md：统一可编辑正文</text>
+    <text x="718" y="454" font-size="13" fill="#526174">sources / imports / assets / source-maps：持久记录</text>
+    <text x="718" y="476" font-size="13" fill="#526174">先保存正文；标注与索引异步，不阻断阅读</text>
+    <path d="M1035 249 L1035 350" stroke="#16a34a" stroke-width="2" marker-end="url(#green)"/>
+
+    <text x="40" y="545" font-size="15" font-weight="600">02 衍生索引 · 可重建，不是第二份知识正文</text>
+    <path d="M930 490 L930 585" stroke="#16a34a" stroke-width="2" marker-end="url(#green)"/>
+    <rect x="300" y="585" width="660" height="154" rx="10" fill="#f0fdf4" stroke="#86b795"/>
+    <text x="320" y="617" font-size="17" font-weight="600">Host 任务编排 + 本机 worker + index.sqlite</text>
+    <text x="320" y="645" font-size="13" fill="#526174">结构片段 / 中文词项 FTS5 / 定长向量 / 有来源实体关系</text>
+    <text x="320" y="667" font-size="13" fill="#526174">单写者事务发布资料代次；向量在 worker 精确计算余弦</text>
+    <text x="320" y="689" font-size="13" fill="#526174">片段保存 Markdown 真实范围；增强召回文本不冒充原文</text>
+    <text x="320" y="711" font-size="13" fill="#526174">图扩展须回到证据片段；是否保留由对照样本决定</text>
+    <path d="M960 650 L1010 650 L1010 490" stroke="#64748b" stroke-width="1.5" stroke-dasharray="6 5" fill="none" marker-end="url(#gray)"/>
+    <text x="984" y="565" font-size="12" fill="#64748b" text-anchor="middle">算法参考</text>
+    <text x="1010" y="608" font-size="13" fill="#526174">LightRAG</text>
+    <text x="1010" y="630" font-size="12" fill="#526174">不引入其服务</text>
+    <text x="1010" y="650" font-size="12" fill="#526174">Python 或图存储</text>
+
+    <text x="40" y="800" font-size="15" font-weight="600">03 需求沟通 · 自动带入候选，但仍须判断适用性</text>
+    <rect x="40" y="825" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="58" y="857" font-size="17" font-weight="600">原生需求会话</text>
+    <text x="58" y="885" font-size="13" fill="#526174">本轮问题 + 当前需求</text>
+    <text x="58" y="907" font-size="13" fill="#526174">必要的近期对话上下文</text>
+    <rect x="330" y="825" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="348" y="857" font-size="17" font-weight="600">官方 agent/pre-step</text>
+    <text x="348" y="885" font-size="13" fill="#526174">每个需求 user turn 首次触发</text>
+    <text x="348" y="907" font-size="13" fill="#526174">不依赖模型记得主动搜索</text>
+    <rect x="620" y="825" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="638" y="857" font-size="17" font-weight="600">混合检索与证据核验</text>
+    <text x="638" y="885" font-size="13" fill="#526174">词项 + 向量 + 可选关系扩展</text>
+    <text x="638" y="907" font-size="13" fill="#526174">RRF 融合 · 原文 hash / 范围复核</text>
+    <rect x="910" y="825" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="928" y="857" font-size="17" font-weight="600">本轮知识上下文</text>
+    <text x="928" y="885" font-size="13" fill="#526174">真实片段 + 出处 + evidenceId</text>
+    <text x="928" y="907" font-size="13" fill="#526174">进入原生请求日志 · 有总预算</text>
+    <path d="M290 879 L330 879" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M580 879 L620 879" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M870 879 L910 879" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M745 825 L745 760 L630 760 L630 739" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#blue)"/>
+    <path d="M745 760 L930 760 L930 490" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#blue)"/>
+
+    <text x="40" y="995" font-size="15" font-weight="600">04 需求成果 · 候选不等于采用，引用固定实际依据</text>
+    <rect x="40" y="1020" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="58" y="1052" font-size="17" font-weight="600">需求 Agent 判断</text>
+    <text x="58" y="1080" font-size="13" fill="#526174">读取必要前后文</text>
+    <text x="58" y="1102" font-size="13" fill="#526174">核对适用范围与冲突</text>
+    <rect x="330" y="1020" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="348" y="1052" font-size="17" font-weight="600">需求修改提案</text>
+    <text x="348" y="1080" font-size="13" fill="#526174">只提交实际采用 evidenceId</text>
+    <text x="348" y="1102" font-size="13" fill="#526174">Host 校验会话与读取范围</text>
+    <rect x="620" y="1020" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="638" y="1052" font-size="17" font-weight="600">项目依据快照</text>
+    <text x="638" y="1080" font-size="13" fill="#526174">Markdown + 引用资源 + 来源映射</text>
+    <text x="638" y="1102" font-size="13" fill="#526174">原件副本 · hash 去重 · 不随删除</text>
+    <rect x="910" y="1020" width="250" height="108" rx="10" fill="#eff6ff" stroke="#8aa9cf"/>
+    <text x="928" y="1052" font-size="17" font-weight="600">需求 Markdown</text>
+    <text x="928" y="1080" font-size="13" fill="#526174">正文与可读引用同次保存</text>
+    <text x="928" y="1102" font-size="13" fill="#526174">更新知识不改写既有需求</text>
+    <path d="M290 1074 L330 1074" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M580 1074 L620 1074" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M870 1074 L910 1074" stroke="#2563eb" stroke-width="2" marker-end="url(#blue)"/>
+    <path d="M1035 933 L1035 970 L165 970 L165 1020" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#blue)"/>
+
+    <rect x="40" y="1180" width="1120" height="84" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="58" y="1212" font-size="13" fill="#526174">不变量：正文保存不依赖模型或索引；检索失败不冒充无结果；图关系与摘要不代替原文；模型不能伪造证据。</text>
+    <text x="58" y="1238" font-size="13" fill="#526174">SQLite、模型接口、解析器及自动注入均须在当前交付桌面版本完成真实闭环验收；本图不代表已实现。</text>
+  </g>
+</svg>

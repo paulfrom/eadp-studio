@@ -62,6 +62,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
     switch (result.reason) {
       case 'composing': return t('flushComposing')
       case 'conflict': return t('flushConflict')
+      case 'missing': return t('flushMissing')
       case 'failed': return result.message ?? t('flushFailed')
       default: return t('flushSaving')
     }
@@ -189,9 +190,13 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
       }
       if (form.kind === 'rename') {
         const oldPath = form.path
+        const wasOpen = selected?.path === oldPath
         const renamedPath = await api.rename(projectId, oldPath, requirementInput(pathInput, { base: oldPath.slice(0, oldPath.lastIndexOf('/')) }))
         if (!isCurrent(current)) return
-        const wasOpen = selected?.path === oldPath
+        /* The old path is gone after the rename; retire its draft and its editor, so the
+           renamed document opens instead of being blocked by the vanished path. */
+        editors.forget(projectId, oldPath)
+        if (wasOpen) setSelection(undefined)
         try {
           await refresh(current)
           if (!isCurrent(current)) return
@@ -208,10 +213,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
           }
           throw reason
         }
-        if (isCurrent(current)) {
-          editors.forget(projectId, oldPath)
-          setForm(undefined)
-        }
+        if (isCurrent(current)) setForm(undefined)
         return
       }
       const removedPath = form.path

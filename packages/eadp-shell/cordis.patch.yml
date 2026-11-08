@@ -37,6 +37,8 @@
             id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             inject: [tools, systemPrompt, subprocess, workingDirectory]
+            config:
+              sampleOverCapGlobResults: false
           - &eadp-skills
             id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'

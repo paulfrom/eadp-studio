@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="dsh-design" content="web">
+  <title>EADP · 知识导入与需求依据</title>
+  <style>
+    :root {
+      --nav: #122d46;
+      --primary: #1f64ae;
+      --primary-hover: #184f8c;
+      --primary-soft: #eaf2fa;
+      --bg: #f3f6f8;
+      --surface: #ffffff;
+      --surface-subtle: #f7f9fb;
+      --text: #1d3245;
+      --muted: #607386;
+      --line: #d8e1e9;
+      --line-strong: #b8c8d6;
+      --success: #246b4b;
+      --success-soft: #eaf5ee;
+      --warning: #805614;
+      --warning-soft: #fff5df;
+      --danger: #a33a3a;
+      --danger-soft: #fff0ee;
+      --focus: #75a9df;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --shadow: 0 12px 36px rgba(18, 45, 70, .12);
+      --fs-small: 14px;
+      --fs-body: 16px;
+      --fs-heading: 20px;
+      --fs-title: 24px;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: var(--fs-body)/1.65 "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, .button {
+      min-height: 44px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      padding: 8px 16px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+    }
+    button:hover, .button:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+    button:disabled { cursor: not-allowed; opacity: .5; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible, [contenteditable]:focus-visible, a:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .primary { background: var(--primary); border-color: var(--primary); color: var(--surface); }
+    .primary:hover { background: var(--primary-hover); color: var(--surface); }
+    .quiet { border-color: transparent; background: transparent; color: var(--primary); }
+    .danger { color: var(--danger); }
+    .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    header {
+      min-height: 72px;
+      padding: 16px 32px;
+      background: var(--nav);
+      color: var(--surface);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .brand { font: 600 var(--fs-title)/1.2 Georgia, serif; letter-spacing: 3px; }
+    .product { margin-left: 16px; color: #dbe7f1; }
+    .header-meta { color: #dbe7f1; font-size: var(--fs-small); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .header-meta a, .foot a { color: inherit; text-underline-offset: 4px; display: inline-flex; align-items: center; min-height: 44px; }
+    .notice {
+      padding: 10px 32px;
+      background: var(--warning-soft);
+      color: var(--warning);
+      border-bottom: 1px solid #ead7ad;
+      font-size: var(--fs-small);
+    }
+    .topnav { display: flex; gap: 8px; padding: 12px 32px; background: var(--surface); border-bottom: 1px solid var(--line); }
+    .topnav button { border-color: transparent; }
+    .topnav button.active { color: var(--primary); background: var(--primary-soft); border-color: #bfd2e5; }
+    main { max-width: 1440px; margin: 0 auto; padding: 28px 32px 40px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: var(--fs-title); line-height: 1.3; margin-bottom: 8px; text-wrap: balance; }
+    h2 { font-size: var(--fs-heading); line-height: 1.4; margin-bottom: 12px; }
+    h3 { font-size: var(--fs-body); line-height: 1.45; margin-bottom: 8px; }
+    p { margin-bottom: 16px; }
+    small, .small { font-size: var(--fs-small); }
+    .muted { color: var(--muted); }
+    .eyebrow { color: var(--primary); font-size: var(--fs-small); font-weight: 600; letter-spacing: 1px; margin-bottom: 8px; }
+    .section-tabs { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+    .section-tabs button, .detail-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; }
+    .section-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); background: var(--primary-soft); }
+    .heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+    .heading p { margin-bottom: 0; color: var(--muted); }
+    .heading-actions { display: flex; gap: 8px; flex-wrap: wrap; flex: 0 0 auto; }
+    .heading-actions button { white-space: nowrap; }
+    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 20px; min-width: 0; }
+    .workspace { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .directory { margin: 16px -8px 24px; }
+    .directory button { width: 100%; border-color: transparent; justify-content: space-between; background: transparent; }
+    .directory button.active { color: var(--primary); background: var(--primary-soft); }
+    .field { display: grid; gap: 8px; margin-bottom: 16px; }
+    .field > span, .field-label { font-weight: 600; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text);
+      padding: 10px 12px;
+    }
+    input, select { min-height: 44px; }
+    textarea { resize: vertical; min-height: 160px; line-height: 1.65; }
+    .search-wrap { position: relative; }
+    .search-wrap .icon { position: absolute; left: 12px; top: 12px; color: var(--muted); pointer-events: none; }
+    .search-wrap input { padding-left: 40px; }
+    .list-meta { margin: 12px 0 8px; color: var(--muted); font-size: var(--fs-small); }
+    .knowledge-card { border-top: 1px solid var(--line); padding: 16px 0; }
+    .knowledge-card:first-child { border-top: 0; }
+    .knowledge-card .title {
+      width: 100%;
+      min-height: 44px;
+      padding: 8px;
+      justify-content: flex-start;
+      text-align: left;
+      border-color: transparent;
+      background: transparent;
+      font-weight: 600;
+    }
+    .knowledge-card .title:hover { background: var(--primary-soft); }
+    .card-body { padding: 0 8px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .tag, .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      background: var(--primary-soft);
+      color: var(--primary);
+      font-size: var(--fs-small);
+    }
+    .badge.readonly { background: var(--surface-subtle); color: var(--muted); border: 1px solid var(--line); }
+    .badge.success { background: var(--success-soft); color: var(--success); }
+    .badge.warning { background: var(--warning-soft); color: var(--warning); }
+    .badge.danger { background: var(--danger-soft); color: var(--danger); }
+    .inline-status { margin-top: 8px; color: var(--warning); font-size: var(--fs-small); }
+    .back-row { margin-bottom: 16px; }
+    .detail-shell, .editor-shell { max-width: 960px; margin: 0 auto; }
+    .detail-panel { padding: 32px; }
+    .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 20px 0; }
+    .detail-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin: 20px 0; }
+    .detail-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .document-content { max-width: 42em; overflow-wrap: anywhere; line-height: 1.75; }
+    .document-content h2 { margin-top: 28px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    .document-content h2:first-child { margin-top: 0; }
+    .document-content h3 { margin-top: 24px; }
+    .document-content blockquote { margin: 16px 0; padding: 12px 16px; background: var(--surface-subtle); border-left: 3px solid var(--primary); }
+    .document-content blockquote p { margin: 0; }
+    .document-content li { margin: 6px 0; }
+    .document-content p:last-child { margin-bottom: 0; }
+    .callout { padding: 12px 16px; border-radius: var(--radius-sm); background: var(--primary-soft); color: var(--text); margin: 16px 0; }
+    .callout.warning { background: var(--warning-soft); color: var(--warning); }
+    .callout.danger { background: var(--danger-soft); color: var(--danger); }
+    .callout p:last-child { margin-bottom: 0; }
+    .source-list { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px 16px; margin: 16px 0; }
+    .source-list dt { color: var(--muted); }
+    .source-list dd { margin: 0; overflow-wrap: anywhere; }
+    .empty { padding: 32px 16px; color: var(--muted); text-align: center; }
+    .dropzone {
+      border: 2px dashed var(--line-strong);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 32px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      cursor: pointer;
+      transition: border-color 160ms ease, background-color 160ms ease;
+    }
+    .dropzone:hover, .dropzone.dragging { border-color: var(--primary); background: var(--primary-soft); }
+    .drop-icon { width: 56px; height: 56px; border-radius: var(--radius-md); display: grid; place-items: center; background: var(--primary-soft); color: var(--primary); flex: 0 0 auto; }
+    .drop-icon .icon { width: 28px; height: 28px; }
+    .dropzone h2 { margin-bottom: 4px; }
+    .dropzone p { margin-bottom: 0; color: var(--muted); }
+    .queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 24px 0 12px; }
+    .queue-toolbar h2 { margin: 0; }
+    .queue-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .queue-list { display: grid; gap: 12px; }
+    .queue-item { display: grid; grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) auto; gap: 16px; align-items: center; padding: 16px 20px; }
+    .file-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .file-name > div { min-width: 0; }
+    .file-name strong { display: block; overflow-wrap: anywhere; }
+    .queue-message { color: var(--muted); font-size: var(--fs-small); }
+    .queue-message strong { display: block; color: var(--text); font-size: var(--fs-body); }
+    .queue-item.failed .queue-message strong { color: var(--danger); }
+    .queue-item.saved .queue-message strong { color: var(--success); }
+    .item-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .item-actions button { padding: 8px 12px; }
+    .requirement-layout { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(400px, 1.1fr); gap: 16px; align-items: start; }
+    .context-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+    .auto-status { display: flex; gap: 12px; align-items: flex-start; padding: 16px; background: var(--nav); color: var(--surface); border-radius: var(--radius-md); margin-bottom: 20px; }
+    .auto-status p { margin: 0; color: #dbe7f1; }
+    .auto-status strong { display: block; color: var(--surface); margin-bottom: 4px; }
+    .candidate { padding: 20px 0; border-top: 1px solid var(--line); }
+    .candidate:first-child { border-top: 0; padding-top: 0; }
+    .candidate-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .candidate p { max-width: 42em; }
+    details { margin: 12px 0; }
+    details:not([open]) > :not(summary) { display: none !important; }
+    summary { min-height: 44px; cursor: pointer; color: var(--primary); padding: 8px 0; }
+    .citation { padding: 16px 0; border-top: 1px solid var(--line); }
+    .citation:first-child { border-top: 0; }
+    .citation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .citation-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .switch { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: var(--fs-small); color: var(--muted); }
+    .switch input { width: 24px; min-height: 24px; height: 24px; margin: 0; }
+    .metadata-grid { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 16px; }
+    .format-toolbar { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+    .format-toolbar button { min-width: 48px; padding: 8px 12px; }
+    .editing {
+      min-height: 420px;
+      max-width: none;
+      padding: 20px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      cursor: text;
+    }
+    .editing:empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+    .editor-note { color: var(--muted); font-size: var(--fs-small); margin: 12px 0 0; }
+    .editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+    .form-error { color: var(--danger); min-height: 26px; margin: 8px 0 0; }
+    dialog {
+      width: min(720px, calc(100% - 32px));
+      max-height: calc(100vh - 48px);
+      border: 0;
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      color: var(--text);
+      box-shadow: var(--shadow);
+      overflow: auto;
+    }
+    dialog::backdrop { background: rgba(18, 45, 70, .46); }
+    .dialog-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .foot { max-width: 1440px; margin: 0 auto; padding: 0 32px 32px; color: var(--muted); font-size: var(--fs-small); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    #toast { position: fixed; right: 24px; bottom: 24px; z-index: 10; max-width: min(420px, calc(100% - 48px)); padding: 12px 16px; border-radius: var(--radius-md); background: var(--nav); color: var(--surface); box-shadow: var(--shadow); }
+    @media (max-width: 1080px) {
+      .queue-item { grid-template-columns: minmax(220px, 1fr) minmax(200px, 1fr); }
+      .item-actions { grid-column: 1 / -1; justify-content: flex-start; }
+    }
+    @media (max-width: 760px) {
+      header { padding: 16px 20px; align-items: flex-start; flex-direction: column; gap: 8px; }
+      .product { display: block; margin: 4px 0 0; }
+      .notice, .topnav { padding-left: 20px; padding-right: 20px; }
+      main { padding: 24px 20px 32px; }
+      .heading, .context-bar, .queue-toolbar { flex-direction: column; align-items: stretch; }
+      .heading-actions button { flex: 1; }
+      .workspace, .requirement-layout, .metadata-grid { grid-template-columns: 1fr; }
+      .queue-item { grid-template-columns: 1fr; }
+      .item-actions { grid-column: auto; }
+      .dropzone { padding: 24px; flex-direction: column; align-items: flex-start; }
+      .candidate-head, .citation-head, .detail-head { flex-direction: column; }
+      .source-list { grid-template-columns: 1fr; gap: 4px; }
+      .source-list dd { margin-bottom: 12px; }
+      .detail-panel { padding: 20px; }
+      .editing { padding: 16px; min-height: 360px; }
+      .foot { padding: 0 20px 24px; }
+      #toast { right: 16px; bottom: 16px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5M5 14v5h14v-5"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="m4 20 4-1 11-11-3-3L5 16zM14 7l3 3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 8a7 7 0 0 1 12-1l2 5M18 16a7 7 0 0 1-12 1l-2-5"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H4zM20 4h-4a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h4z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></symbol>
+  </svg>
+
+  <header>
+    <div><span class="brand">EADP</span><span class="product">知识与需求</span></div>
+    <div class="header-meta"><span>产品方案 · 2026.11</span><a href="README.md">完整评审文档 ↗</a></div>
+  </header>
+  <div class="notice">离线交互演示 · 文件整理、图片文字识别和自动查找均为模拟 · 不读写真实文件，不证明实际效果，刷新后演示操作丢失</div>
+  <nav class="topnav" aria-label="主导航">
+    <button type="button" class="active" data-view="library"><svg class="icon"><use href="#i-book"/></svg>知识工作台</button>
+    <button type="button" data-view="requirement"><svg class="icon"><use href="#i-file"/></svg>需求沟通</button>
+  </nav>
+
+  <main>
+    <div class="section-tabs" id="knowledgeTabs" aria-label="知识工作台视图">
+      <button type="button" class="active" data-library-target="library">资料</button>
+      <button type="button" data-library-target="imports">导入记录 <span class="small" id="queueNavCount"></span></button>
+    </div>
+
+    <section id="library">
+      <div class="heading">
+        <div>
+          <div class="eyebrow">资料管理</div>
+          <h1>资料有出处，需求有依据</h1>
+          <p>任意文件都可先接收并保留原件；可读内容统一整理成易读、可编辑的文档。</p>
+        </div>
+        <div class="heading-actions">
+          <button type="button" class="primary" id="openImport"><svg class="icon"><use href="#i-upload"/></svg>导入文件</button>
+          <button type="button" id="newDocument"><svg class="icon"><use href="#i-plus"/></svg>新建文档</button>
+        </div>
+      </div>
+      <div class="callout">接收不限类型，不代表任何文件都能自动整理。失败时会保留原件，可重试或手工整理。</div>
+      <div class="workspace">
+        <aside class="panel">
+          <h2>知识目录</h2>
+          <div class="small muted">分类组织资料，标签辅助发现。</div>
+          <div class="directory" id="categories"></div>
+          <label class="field"><span>知识来源</span><select id="sourceFilter"><option>全部知识</option><option>内置知识</option><option>我的知识</option></select></label>
+          <p class="small muted">内置知识只读，可复制为我的知识；你的资料与原件在本机管理。</p>
+        </aside>
+        <section class="panel" aria-label="资料列表">
+          <div class="search-wrap"><svg class="icon"><use href="#i-search"/></svg><input id="search" aria-label="搜索资料" placeholder="搜索标题、正文或标签"></div>
+          <div class="list-meta" id="count"></div>
+          <div id="list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="imports" hidden>
+      <div class="heading">
+        <div><div class="eyebrow">文件导入</div><h1>导入记录</h1><p>每份文件独立处理；已加入资料的内容不受同批失败项影响。</p></div>
+        <button type="button" class="primary" id="chooseMore"><svg class="icon"><use href="#i-plus"/></svg>添加文件</button>
+      </div>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="拖放或选择任意类型文件，可多选">
+        <div class="drop-icon"><svg class="icon"><use href="#i-upload"/></svg></div>
+        <div><h2>拖放文件到这里，或从本机选择</h2><p>不限扩展名，支持多选。本原型只读取文件名、类型和大小用于演示，不读取文件内容。</p></div>
+      </div>
+      <input id="fileInput" type="file" multiple hidden>
+      <div class="callout warning"><strong>处理原则</strong><br>先保留原件，再整理成可编辑文档。能自动整理的文件会直接加入资料列表；无法自动整理时，可查看原件、重试或手工整理。</div>
+      <div class="queue-toolbar">
+        <h2>本机导入项 <span class="muted small" id="queueCount"></span></h2>
+        <div class="queue-actions"><button type="button" id="retryFailed"><svg class="icon"><use href="#i-refresh"/></svg>重试需处理项</button><button type="button" id="clearCompleted">清除已结束记录</button></div>
+      </div>
+      <div class="queue-list" id="queueList"></div>
+    </section>
+
+    <section id="detail" class="detail-shell" hidden>
+      <div class="back-row"><button type="button" class="quiet" id="backToLibrary"><svg class="icon"><use href="#i-back"/></svg>返回资料列表</button></div>
+      <article class="panel detail-panel" id="detailContent" aria-label="资料明细"></article>
+    </section>
+
+    <section id="editor" class="editor-shell" hidden>
+      <div class="back-row"><button type="button" class="quiet" id="cancelEditorTop"><svg class="icon"><use href="#i-back"/></svg>返回</button></div>
+      <div class="heading"><div><div class="eyebrow">文档编辑</div><h1 id="editorTitle">新建文档</h1><p id="editorDescription">直接在文档中编辑，保存后的阅读样式与编辑时一致。</p></div></div>
+      <form id="editorForm">
+        <div class="panel">
+          <div class="metadata-grid">
+            <label class="field"><span>文档标题</span><input id="editorName" required></label>
+            <label class="field"><span>知识分类</span><select id="editorCategory"><option>未分类</option><option>业务知识</option><option>需求方法</option><option>产品规范</option></select></label>
+          </div>
+          <div class="field"><span class="field-label">正文</span>
+            <div class="format-toolbar" role="toolbar" aria-label="文档格式">
+              <button type="button" data-format="formatBlock" data-value="p">正文</button>
+              <button type="button" data-format="formatBlock" data-value="h2">标题</button>
+              <button type="button" data-format="formatBlock" data-value="h3">小标题</button>
+              <button type="button" data-format="bold"><strong>加粗</strong></button>
+              <button type="button" data-format="insertUnorderedList">列表</button>
+              <button type="button" data-format="formatBlock" data-value="blockquote">引用</button>
+            </div>
+            <div id="editorSurface" class="document-content editing" contenteditable="true" role="textbox" aria-multiline="true" aria-label="文档正文" data-placeholder="点击这里开始撰写正文"></div>
+          </div>
+          <p class="editor-note">无需学习任何标记语法，也没有额外的校对或审核步骤。</p>
+          <p class="form-error" id="editorError" role="alert"></p>
+          <div class="editor-actions"><button type="button" id="cancelEditor">取消</button><button type="submit" class="primary" id="editorSave">保存文档</button></div>
+        </div>
+      </form>
+    </section>
+
+    <section id="requirement" hidden>
+      <div class="heading">
+        <div><div class="eyebrow">需求沟通</div><h1>每个新问题自动提供本次参考</h1><p>助手结合当前需求、项目背景和你的问题找出相关资料；只有实际采用的内容才成为需求依据。</p></div>
+        <label class="switch"><input type="checkbox" id="offline">模拟查找异常</label>
+      </div>
+      <div class="requirement-layout">
+        <section class="panel">
+          <span class="badge">REQ-001 · 虚构演示需求</span>
+          <h2 style="margin-top:16px">保函申请与额度管理</h2>
+          <label class="field"><span>当前需求与本次问题</span><textarea id="requirementText">申请人提交保函申请，审批通过后占用授信额度，到期后释放。需要补全审批异常与额度不足时的处理。</textarea></label>
+          <div class="auto-status"><svg class="icon"><use href="#i-refresh"/></svg><p><strong>本次参考自动更新</strong>修改问题后会自动查找并阅读相关资料；演示使用预置内容，不代表真实查找效果。</p></div>
+          <h2>需求依据</h2>
+          <p class="small muted">只有实际采用的内容会列入。资料后来更新或删除，仍可查看当时内容。</p>
+          <div id="citations" class="muted">尚未添加需求依据。</div>
+        </section>
+        <section class="panel">
+          <div class="context-bar"><div><h2>本次参考</h2><div class="small muted" id="candidateMeta">自动查找并阅读相关资料</div></div><span class="badge readonly">参考 ≠ 依据</span></div>
+          <div id="matches"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot"><span>离线演示 · 所有内容和操作仅用于展示，不代表实际处理结果</span></footer>
+
+  <dialog id="originalDialog">
+    <div class="dialog-head"><div><div class="eyebrow">来源信息</div><h2>原件与出处</h2></div><button type="button" class="quiet" data-close="originalDialog">关闭</button></div>
+    <div id="originalContent"></div>
+    <div class="callout">正式产品可在此预览原件，或使用系统应用打开；本离线原型不读取真实文件内容。</div>
+    <div class="dialog-actions"><button type="button" class="primary" data-close="originalDialog">知道了</button></div>
+  </dialog>
+  <div id="toast" role="status" hidden></div>
+
+  <script>
+    const $ = id => document.getElementById(id)
+    const esc = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+    const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`
+    const docs = [
+      {
+        id: 'K-001', title: '保函申请与审批', cat: '业务知识', sourceKind: '内置知识', tags: ['保函', '审批', '异常处理'],
+        version: '2026.11.1', readOnly: true, source: 'EADP 内置业务方法包 · 虚构流程示例', conversion: '产品内置的整理内容；不替代外部来源原文',
+        body: '<h2>申请信息</h2><p>申请应包含申请人、受益人、金额和到期日。</p><h2>审批异常</h2><p>审批驳回时保留原申请内容，并记录原因。再次提交前由申请人修订。</p><blockquote><p>本资料为虚构演示规则，不构成真实业务依据。</p></blockquote>'
+      },
+      {
+        id: 'K-002', title: '授信额度占用与释放', cat: '业务知识', sourceKind: '我的知识', tags: ['额度', '占用', '到期释放'],
+        version: 'v1.0', readOnly: false, source: '用户导入 · 授信管理办法.pdf', sourceName: '授信管理办法.pdf', sourceMeta: 'PDF · 2.4 MB · 12 页', assetKey: '授信管理办法.pdf:2457600',
+        conversion: '已整理为可编辑文档 · 保留原件与页码对应关系', mapping: '“占用”对应原件第 4 页；“到期释放”对应原件第 7 页', organize: 'ready',
+        body: '<h2>占用</h2><p>审批通过后检查可用额度，额度不足时提示缺口，不直接形成占用。</p><h2>到期释放</h2><p>到期释放应保留处理记录，并防止重复释放。</p><blockquote><p>本资料为虚构演示规则，不构成真实业务依据。</p></blockquote>'
+      },
+      {
+        id: 'K-003', title: '异常分支的需求描述', cat: '需求方法', sourceKind: '内置知识', tags: ['异常', '验收条件'],
+        version: '2026.11.1', readOnly: true, source: 'EADP 内置需求方法包 · 整理正文', conversion: '内置知识随产品更新；你的副本不会被自动覆盖',
+        body: '<h2>描述异常分支</h2><p>描述触发条件、用户可见结果及恢复方式。</p><ul><li>重复提交</li><li>操作中断</li><li>部分完成</li></ul><p>示例：额度不足时展示缺口，保留申请，用户可修订后重试。</p>'
+      },
+      {
+        id: 'K-004', title: '表单反馈与输入保留', cat: '产品规范', sourceKind: '我的知识', tags: ['表单', '反馈'],
+        version: 'v1.2', readOnly: false, source: '用户导入 · 表单规范.docx', sourceName: '表单规范.docx', sourceMeta: 'DOCX · 860 KB', assetKey: '表单规范.docx:880640',
+        conversion: '已整理标题和表格结构', mapping: '“反馈与输入保留”对应原件“反馈”章节', organize: 'failed',
+        body: '<h2>反馈与输入保留</h2><p>操作失败时保留用户输入。区分实际已保存的内容与尚未完成的部分，并提供清晰的继续入口。</p>'
+      }
+    ]
+    const queue = [
+      { id: 'Q-001', name: '授信管理办法.pdf', meta: 'PDF · 2.4 MB · 12 页', size: 2457600, assetKey: '授信管理办法.pdf:2457600', status: 'saved', stage: '已加入资料', message: '文档已自动生成 · 原件与页码对应关系已保留', documentId: 'K-002' },
+      { id: 'Q-002', name: '审批流程扫描件.png', meta: 'PNG · 1.8 MB', size: 1887436, assetKey: '审批流程扫描件.png:1887436', status: 'processing', stage: '正在识别图片文字', message: '正在整理文字与版面；原件已保留' },
+      { id: 'Q-003', name: '历史流程.custom', meta: 'CUSTOM · 640 KB', size: 655360, assetKey: '历史流程.custom:655360', status: 'failed', stage: '需要处理', message: '已接收并保留原件；暂时无法自动整理为文档' }
+    ]
+    let currentView = 'library'
+    let category = '全部知识'
+    let selected = 'K-001'
+    let detailTab = 'body'
+    let editorContext = null
+    let editorReturnView = 'library'
+    let used = []
+    let toastTimer
+    let candidateTimer
+    let idCounter = 5
+
+    function toast(message) {
+      clearTimeout(toastTimer)
+      $('toast').textContent = message
+      $('toast').hidden = false
+      toastTimer = setTimeout(() => { $('toast').hidden = true }, 4200)
+    }
+
+    function plainText(html) {
+      const element = document.createElement('div')
+      element.innerHTML = html
+      return element.textContent || ''
+    }
+
+    function showView(view) {
+      currentView = view
+      $('library').hidden = view !== 'library'
+      $('imports').hidden = view !== 'imports'
+      $('detail').hidden = view !== 'detail'
+      $('editor').hidden = view !== 'editor'
+      $('requirement').hidden = view !== 'requirement'
+      $('knowledgeTabs').hidden = !['library', 'imports'].includes(view)
+      if (view === 'imports') renderQueue()
+      if (view === 'detail') renderDetail()
+      if (view === 'requirement') renderCandidates()
+      document.querySelectorAll('[data-library-target]').forEach(button => {
+        button.classList.toggle('active', button.dataset.libraryTarget === view)
+      })
+      document.querySelectorAll('[data-view]').forEach(button => {
+        const knowledgeActive = ['library', 'imports', 'detail', 'editor'].includes(view)
+        const active = button.dataset.view === (knowledgeActive ? 'library' : 'requirement')
+        button.classList.toggle('active', active)
+        button.setAttribute('aria-current', active ? 'page' : 'false')
+      })
+      window.scrollTo(0, 0)
+    }
+
+    function renderCategories() {
+      const cats = ['全部知识', '业务知识', '需求方法', '产品规范', '未分类']
+      $('categories').innerHTML = cats.map(item => {
+        const count = docs.filter(doc => item === '全部知识' || doc.cat === item).length
+        return `<button type="button" class="${category === item ? 'active' : ''}" data-category="${esc(item)}"><span>${esc(item)}</span><span>${count}</span></button>`
+      }).join('')
+    }
+
+    function filteredDocs() {
+      const query = $('search').value.trim().toLocaleLowerCase()
+      return docs.filter(doc => {
+        const inCategory = category === '全部知识' || doc.cat === category
+        const inSource = $('sourceFilter').value === '全部知识' || doc.sourceKind === $('sourceFilter').value
+        const inQuery = !query || [doc.title, plainText(doc.body), ...doc.tags].join(' ').toLocaleLowerCase().includes(query)
+        return inCategory && inSource && inQuery
+      })
+    }
+
+    function renderList() {
+      const list = filteredDocs()
+      $('count').textContent = `${list.length} 份资料 · 保存后即可阅读、编辑和查找`
+      $('list').innerHTML = list.map(doc => `
+        <article class="knowledge-card">
+          <button type="button" class="title" data-open="${esc(doc.id)}">${esc(doc.title)}</button>
+          <div class="card-body">
+            <div class="small muted">${esc(doc.sourceKind)} · ${esc(doc.version)}</div>
+            <div class="tags">${doc.tags.length ? doc.tags.map(tag => `<span class="tag">${esc(tag)}</span>`).join('') : '<span class="small muted">标签待自动整理</span>'}</div>
+            ${doc.organize === 'failed' ? '<div class="inline-status">自动整理未完成 · 可正常阅读和编辑</div>' : doc.organize === 'pending' ? '<div class="inline-status">正在后台整理 · 可正常用于需求沟通</div>' : ''}
+          </div>
+        </article>`).join('') || '<div class="empty">未找到资料，请调整搜索词、分类或来源。</div>'
+      renderCategories()
+    }
+
+    function renderDetail() {
+      const doc = docs.find(item => item.id === selected)
+      if (!doc) { showView('library'); return }
+      const actions = doc.readOnly
+        ? `<button type="button" data-copy="${esc(doc.id)}">${icon('copy')}复制为我的知识</button>`
+        : `<button type="button" class="primary" data-edit="${esc(doc.id)}">${icon('edit')}编辑文档</button><button type="button" class="danger" data-delete="${esc(doc.id)}">${icon('trash')}删除资料</button>`
+      const notice = doc.organize === 'failed'
+        ? `<div class="callout warning"><strong>自动整理未完成</strong><br>仍可阅读、编辑和用于需求沟通。<button type="button" class="quiet" data-organize="${esc(doc.id)}">重新整理</button></div>`
+        : doc.organize === 'pending'
+          ? '<div class="callout">正在后台整理；阅读、编辑和需求沟通都不必等待。</div>'
+          : ''
+      const bodyContent = `${notice}<div class="document-content">${doc.body}</div>`
+      const sourceContent = `
+        <dl class="source-list">
+          <dt>资料来源</dt><dd>${esc(doc.source)}</dd>
+          <dt>当前版本</dt><dd>${esc(doc.version)}</dd>
+          <dt>原始文件</dt><dd>${esc(doc.sourceName || '无随附原始文件')}</dd>
+          <dt>文件信息</dt><dd>${esc(doc.sourceMeta || '内置整理内容')}</dd>
+          <dt>整理方式</dt><dd>${esc(doc.conversion)}</dd>
+          <dt>对应位置</dt><dd>${esc(doc.mapping || '内置资料保留出处说明；没有虚构的页码对应关系')}</dd>
+        </dl>
+        ${doc.sourceName ? `<button type="button" data-original-doc="${esc(doc.id)}">${icon('file')}查看原件信息</button>` : ''}
+        <div class="callout">正文用于阅读、查找和需求沟通；原件用于核对来源。你的修改不会改动原始文件。</div>`
+      $('detailContent').innerHTML = `
+        <div class="detail-head"><div><div class="eyebrow">资料明细</div><h1>${esc(doc.title)}</h1></div><span class="badge ${doc.readOnly ? 'readonly' : 'success'}">${doc.readOnly ? '内置 · 只读' : '我的知识'}</span></div>
+        <div class="small muted">${esc(doc.cat)} · ${esc(doc.version)}</div>
+        <div class="detail-actions">${actions}<label class="switch"><input type="checkbox" data-auto="${esc(doc.id)}" ${doc.auto === false ? '' : 'checked'}>参与需求沟通</label></div>
+        <div class="detail-tabs" aria-label="明细视图"><button type="button" class="${detailTab === 'body' ? 'active' : ''}" data-detail="body">正文</button><button type="button" class="${detailTab === 'source' ? 'active' : ''}" data-detail="source">来源与原件</button></div>
+        ${detailTab === 'body' ? bodyContent : sourceContent}`
+    }
+
+    function openDocument(id) {
+      if (!docs.some(doc => doc.id === id)) return
+      selected = id
+      detailTab = 'body'
+      showView('detail')
+    }
+
+    function statusBadge(item) {
+      if (item.status === 'saved') return '<span class="badge success">已加入资料</span>'
+      if (item.status === 'failed') return '<span class="badge danger">需要处理</span>'
+      if (item.status === 'duplicate') return '<span class="badge warning">已有相同文件</span>'
+      if (item.status === 'cancelled') return '<span class="badge readonly">已取消</span>'
+      return '<span class="badge">处理中</span>'
+    }
+
+    function statusLabel(item) {
+      if (item.status === 'saved') return '已加入资料'
+      if (item.status === 'failed') return '需要处理'
+      if (item.status === 'duplicate') return '已有相同文件'
+      if (item.status === 'cancelled') return '已取消'
+      return '处理中'
+    }
+
+    function queueActions(item) {
+      const actions = []
+      if (item.documentId) actions.push(`<button type="button" data-queue-open="${esc(item.documentId)}">查看资料</button>`)
+      if (item.status === 'failed') {
+        actions.push(`<button type="button" data-original-queue="${esc(item.id)}">${icon('file')}查看原件</button>`)
+        actions.push(`<button type="button" data-retry="${esc(item.id)}">${icon('refresh')}重试</button>`)
+        actions.push(`<button type="button" data-manual="${esc(item.id)}">${icon('edit')}手工整理</button>`)
+      } else if (item.status === 'processing') {
+        actions.push(`<button type="button" data-cancel="${esc(item.id)}">取消</button>`)
+      } else if (item.status === 'saved') {
+        actions.push(`<button type="button" data-original-queue="${esc(item.id)}">${icon('file')}查看原件</button>`)
+      }
+      return actions.join('')
+    }
+
+    function renderQueue() {
+      $('queueCount').textContent = `· ${queue.length} 项`
+      const activeCount = queue.filter(item => ['processing', 'failed'].includes(item.status)).length
+      $('queueNavCount').textContent = activeCount ? `· ${activeCount} 项待处理` : ''
+      $('queueList').innerHTML = queue.map(item => `
+        <article class="panel queue-item ${esc(item.status)}">
+          <div class="file-name">${icon('file')}<div><strong>${esc(item.name)}</strong><span class="small muted">${esc(item.meta)}</span><div>${statusBadge(item)}</div></div></div>
+          <div class="queue-message">${item.stage === statusLabel(item) ? '' : `<strong>${esc(item.stage)}</strong>`}${esc(item.message)}</div>
+          <div class="item-actions">${queueActions(item)}</div>
+        </article>`).join('') || '<div class="panel empty">暂无导入记录。拖放或选择任意类型文件开始。</div>'
+      $('retryFailed').disabled = !queue.some(item => item.status === 'failed')
+      $('clearCompleted').disabled = !queue.some(item => ['saved', 'duplicate', 'cancelled'].includes(item.status))
+    }
+
+    function baseName(name) { return name.replace(/\.[^.]*$/, '') || name }
+    function canSimulateConversion(name) { return /\.(md|markdown|txt|pdf|docx?|pptx?|xlsx?|csv|html?|png|jpe?g|tiff?|bmp)$/i.test(name) }
+    function conversionLabel(name) {
+      if (/\.(png|jpe?g|tiff?|bmp)$/i.test(name)) return '模拟识别图片文字 · 保留原件与页面对应关系'
+      if (/\.pdf$/i.test(name)) return '模拟整理 PDF · 保留原件与页码对应关系'
+      if (/\.xlsx?$/i.test(name)) return '模拟整理表格 · 保留工作表与单元格对应关系'
+      if (/\.pptx?$/i.test(name)) return '模拟整理幻灯片 · 保留页面对应关系'
+      return '模拟整理文字结构 · 保留原始文件'
+    }
+
+    function handleFiles(fileList) {
+      const files = Array.from(fileList)
+      if (!files.length) return
+      for (const file of files) {
+        const assetKey = `${file.name}:${file.size}`
+        const existingDoc = docs.find(doc => doc.assetKey === assetKey)
+        const existingQueue = queue.find(item => item.assetKey === assetKey && !['cancelled', 'duplicate'].includes(item.status))
+        const item = {
+          id: `Q-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          name: file.name,
+          meta: `${file.type || '类型待识别'} · ${formatSize(file.size)}`,
+          size: file.size,
+          assetKey,
+          status: 'processing',
+          stage: '正在识别与整理',
+          message: '已接收文件；正式产品会先保存原件'
+        }
+        queue.unshift(item)
+        if (existingDoc || existingQueue) {
+          item.status = 'duplicate'
+          item.stage = '发现相同原件'
+          item.message = '未重复整理或新建资料；演示按文件名与大小判断，正式产品会核对文件内容'
+          item.documentId = existingDoc?.id || existingQueue?.documentId || null
+        } else {
+          setTimeout(() => simulateConversion(item), 900)
+        }
+      }
+      renderQueue()
+      toast(`已接收 ${files.length} 份文件；本页仅模拟后续整理`)
+    }
+
+    function formatSize(size) {
+      if (size < 1024) return `${size} B`
+      if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`
+      return `${(size / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    function simulateConversion(item) {
+      if (item.status !== 'processing') return
+      if (!canSimulateConversion(item.name)) {
+        item.status = 'failed'
+        item.stage = '需要处理'
+        item.message = '原件已保留；暂时无法自动整理，可重试或手工整理'
+        renderQueue()
+        return
+      }
+      const id = `K-${String(idCounter++).padStart(3, '0')}`
+      const doc = {
+        id, title: baseName(item.name), cat: '未分类', sourceKind: '我的知识', tags: [], version: 'v1.0', readOnly: false,
+        source: `用户导入 · ${item.name}`, sourceName: item.name, sourceMeta: item.meta, assetKey: item.assetKey,
+        conversion: conversionLabel(item.name), mapping: '演示对应关系：文档章节与原件位置；不代表实际整理结果', organize: 'pending',
+        body: `<blockquote><p>离线交互演示：以下内容为模拟，未读取或整理所选文件。</p></blockquote><h2>业务内容</h2><p>演示文档已自动加入资料，可直接修改标题、段落与列表。</p><h2>来源说明</h2><p>原始文件与整理信息保留在“来源与原件”中。</p>`
+      }
+      docs.push(doc)
+      item.status = 'saved'
+      item.stage = '已自动加入资料'
+      item.message = '文档可立即阅读和修改；后台整理会继续进行'
+      item.documentId = id
+      renderQueue()
+      renderList()
+      toast(`演示：${item.name} 已生成模拟文档并加入资料`)
+    }
+
+    function retryItem(item) {
+      if (!item || item.status !== 'failed') return
+      item.status = 'processing'
+      item.stage = '正在重新整理'
+      item.message = '保留原件和已有输入，仅重试未完成的处理'
+      renderQueue()
+      setTimeout(() => simulateConversion(item), 900)
+    }
+
+    function openOriginal({ name, meta, source, conversion, mapping }) {
+      $('originalContent').innerHTML = `
+        <dl class="source-list">
+          <dt>原始文件</dt><dd>${esc(name || '无随附原始文件')}</dd>
+          <dt>文件信息</dt><dd>${esc(meta || '内置整理内容')}</dd>
+          <dt>资料出处</dt><dd>${esc(source || '用户导入')}</dd>
+          <dt>整理方式</dt><dd>${esc(conversion || '尚未整理')}</dd>
+          <dt>对应位置</dt><dd>${esc(mapping || '整理为文档后保留可用的位置对应关系')}</dd>
+        </dl>`
+      $('originalDialog').showModal()
+    }
+
+    function openEditor({ doc = null, queueItem = null } = {}) {
+      editorReturnView = currentView === 'detail' ? 'detail' : currentView === 'imports' ? 'imports' : 'library'
+      editorContext = { docId: doc?.id || null, queueId: queueItem?.id || null }
+      $('editorTitle').textContent = doc ? '编辑文档' : queueItem ? '手工整理文档' : '新建文档'
+      $('editorDescription').textContent = queueItem ? `根据“${queueItem.name}”直接整理内容，保存后会关联原件。` : '直接在文档中编辑，保存后的阅读样式与编辑时一致。'
+      $('editorName').value = doc?.title || (queueItem ? baseName(queueItem.name) : '')
+      $('editorCategory').value = doc?.cat || '未分类'
+      $('editorSurface').innerHTML = doc?.body || ''
+      $('editorError').textContent = ''
+      $('editorSave').textContent = doc ? '保存修改' : '保存文档'
+      showView('editor')
+      $('editorName').focus()
+    }
+
+    function cleanNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) return esc(node.textContent)
+      if (node.nodeType !== Node.ELEMENT_NODE) return ''
+      if (node.tagName === 'BR') return '<br>'
+      const content = Array.from(node.childNodes).map(cleanNode).join('')
+      const tags = { H2: 'h2', H3: 'h3', P: 'p', DIV: 'p', UL: 'ul', OL: 'ol', LI: 'li', STRONG: 'strong', B: 'strong', EM: 'em', BLOCKQUOTE: 'blockquote' }
+      const tag = tags[node.tagName]
+      return tag ? `<${tag}>${content || (['p', 'h2', 'h3'].includes(tag) ? '<br>' : '')}</${tag}>` : content
+    }
+
+    function saveEditor(event) {
+      event.preventDefault()
+      const title = $('editorName').value.trim()
+      const body = Array.from($('editorSurface').childNodes).map(cleanNode).join('').trim()
+      if (!title || !$('editorSurface').textContent.trim()) {
+        $('editorError').textContent = '请填写文档标题和正文；已输入的内容会继续保留。'
+        return
+      }
+      const existing = docs.find(doc => doc.id === editorContext?.docId)
+      if (existing) {
+        existing.title = title
+        existing.cat = $('editorCategory').value
+        existing.body = body
+        const match = /^v(\d+)\.(\d+)$/.exec(existing.version)
+        existing.version = match ? `v${match[1]}.${Number(match[2]) + 1}` : 'v1.0'
+        existing.organize = 'pending'
+        selected = existing.id
+        detailTab = 'body'
+        toast('修改已保存；已有需求依据仍保留当时内容')
+      } else {
+        const queueItem = queue.find(item => item.id === editorContext?.queueId)
+        const id = `K-${String(idCounter++).padStart(3, '0')}`
+        const doc = {
+          id, title, body, cat: $('editorCategory').value, sourceKind: '我的知识', tags: [], version: 'v1.0', readOnly: false,
+          source: queueItem ? `用户导入 · ${queueItem.name}` : '用户直接撰写', sourceName: queueItem?.name || '',
+          sourceMeta: queueItem?.meta || '直接撰写', assetKey: queueItem?.assetKey || '',
+          conversion: queueItem ? '手工整理 · 已关联原件' : '直接撰写',
+          mapping: queueItem ? '手工整理内容；未自动生成对应位置' : '无原始文件', organize: 'pending'
+        }
+        docs.push(doc)
+        if (queueItem) {
+          queueItem.status = 'saved'
+          queueItem.stage = '手工整理后加入资料'
+          queueItem.message = '文档已保存并关联原件'
+          queueItem.documentId = id
+        }
+        selected = id
+        detailTab = 'body'
+        toast('文档已保存；后台整理会继续进行')
+      }
+      editorContext = null
+      renderList()
+      renderQueue()
+      showView('detail')
+    }
+
+    function copyDocument(doc) {
+      const id = `K-${String(idCounter++).padStart(3, '0')}`
+      docs.push({
+        ...doc, id, title: `${doc.title}（我的副本）`, tags: [...doc.tags], sourceKind: '我的知识', readOnly: false, version: 'v1.0',
+        source: `复制自内置知识 ${doc.id} · ${doc.version}`, conversion: '副本可独立修改；内置资料更新时不会自动覆盖', organize: 'pending', assetKey: ''
+      })
+      selected = id
+      detailTab = 'body'
+      renderList()
+      renderDetail()
+      toast('已复制为我的知识；原内置资料保持只读')
+    }
+
+    function deleteDocument(doc) {
+      if (!window.confirm(`删除“${doc.title}”？\n\n删除后，资料将不再参与需求沟通；已有需求依据和当时内容会保留。`)) return
+      const position = docs.findIndex(item => item.id === doc.id)
+      docs.splice(position, 1)
+      selected = docs[0]?.id || ''
+      renderList()
+      renderCitations()
+      showView('library')
+      toast('资料已移除；已有需求依据仍可查看当时内容')
+    }
+
+    function renderCandidates() {
+      clearTimeout(candidateTimer)
+      if ($('offline').checked) {
+        $('candidateMeta').textContent = '查找失败不等于没有相关资料'
+        $('matches').innerHTML = '<div class="callout danger"><strong>暂时无法查找资料</strong><br>你的问题和已有需求依据都已保留。仍可打开资料，手工选择内容作为需求依据。</div>'
+        return
+      }
+      const text = $('requirementText').value.trim()
+      if (!text) {
+        $('candidateMeta').textContent = '等待本次问题'
+        $('matches').innerHTML = '<div class="empty">输入问题后会自动更新本次参考，无需额外点击。</div>'
+        return
+      }
+      const candidates = docs.filter(doc => doc.auto !== false).slice(0, 3)
+      $('candidateMeta').textContent = `已自动阅读 ${candidates.length} 份资料 · 预置演示`
+      $('matches').innerHTML = candidates.map(doc => {
+        const adopted = used.some(citation => citation.documentId === doc.id && citation.version === doc.version)
+        const source = document.createElement('div')
+        source.innerHTML = doc.body
+        const excerpt = (source.querySelector('p')?.textContent || plainText(doc.body)).slice(0, 100)
+        return `
+          <article class="candidate">
+            <div class="candidate-head"><div><h3>${esc(doc.title)}</h3><div class="small muted">${esc(doc.version)} · ${esc(doc.sourceKind)}</div></div><span class="badge readonly">本次参考</span></div>
+            <p>${esc(excerpt)}</p>
+            <details><summary>查看相关内容与适用范围</summary><div class="document-content">${doc.body}</div><p class="small muted">适用范围：虚构流程示例，实际项目仍需核对业务规则。</p></details>
+            <button type="button" data-use="${esc(doc.id)}" ${adopted ? 'disabled' : ''}>${adopted ? '已作为需求依据' : '作为需求依据'}</button>
+          </article>`
+      }).join('') || '<div class="empty">暂未找到可参考的资料。你仍可继续需求沟通，这不表示查找过程发生异常。</div>'
+    }
+
+    function scheduleCandidates() {
+      clearTimeout(candidateTimer)
+      $('candidateMeta').textContent = '正在根据本次问题更新参考…'
+      candidateTimer = setTimeout(renderCandidates, 450)
+    }
+
+    function adoptDocument(doc) {
+      if (used.some(citation => citation.documentId === doc.id && citation.version === doc.version)) return
+      used.push({
+        documentId: doc.id, title: doc.title, version: doc.version, source: doc.source, body: doc.body,
+        range: '采用时阅读的相关内容', application: '用于补全审批异常与额度不足分支；不构成需求确认'
+      })
+      renderCitations()
+      renderCandidates()
+      toast('已将本次阅读的内容保存为需求依据')
+    }
+
+    function renderCitations() {
+      if (!used.length) {
+        $('citations').className = 'muted'
+        $('citations').textContent = '尚未添加需求依据。查看本次参考不会自动添加。'
+        return
+      }
+      $('citations').className = ''
+      $('citations').innerHTML = used.map((citation, position) => {
+        const current = docs.find(doc => doc.id === citation.documentId)
+        const changed = current && current.version !== citation.version
+        const missing = !current
+        return `
+          <article class="citation">
+            <div class="citation-head"><div><h3>${esc(citation.title)}</h3><div class="small muted">采用于 ${esc(citation.version)} · ${esc(citation.range)}</div></div><span class="badge success">需求依据</span></div>
+            <p class="small">${esc(citation.application)}</p>
+            ${changed ? '<div class="inline-status">资料已有更新；这里仍保留采用时的内容，不会自动改写需求。</div>' : ''}
+            ${missing ? '<div class="inline-status">资料已从知识库删除；仍可查看当时内容。</div>' : ''}
+            <details><summary>查看当时内容</summary><div class="document-content">${citation.body}</div><p class="small muted">${esc(citation.source)}</p></details>
+            <div class="citation-actions"><button type="button" class="quiet" data-remove-citation="${position}">移除此依据</button></div>
+          </article>`
+      }).join('')
+    }
+
+    function cancelEditor() { showView(editorReturnView) }
+
+    document.querySelectorAll('[data-library-target]').forEach(button => button.addEventListener('click', () => showView(button.dataset.libraryTarget)))
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)))
+    document.querySelectorAll('[data-format]').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault())
+      button.addEventListener('click', () => {
+        $('editorSurface').focus()
+        document.execCommand(button.dataset.format, false, button.dataset.value || null)
+      })
+    })
+
+    document.addEventListener('click', event => {
+      const button = event.target.closest('button')
+      if (!button) return
+      if (button.dataset.close) $(button.dataset.close).close()
+      if (button.dataset.category) { category = button.dataset.category; renderList() }
+      if (button.dataset.open) openDocument(button.dataset.open)
+      if (button.dataset.detail) { detailTab = button.dataset.detail; renderDetail() }
+      if (button.dataset.copy) copyDocument(docs.find(doc => doc.id === button.dataset.copy))
+      if (button.dataset.edit) openEditor({ doc: docs.find(doc => doc.id === button.dataset.edit) })
+      if (button.dataset.delete) deleteDocument(docs.find(doc => doc.id === button.dataset.delete))
+      if (button.dataset.organize) {
+        const doc = docs.find(item => item.id === button.dataset.organize)
+        doc.organize = 'pending'
+        renderList()
+        renderDetail()
+        toast('已重新安排整理；文档内容未变化')
+      }
+      if (button.dataset.originalDoc) {
+        const doc = docs.find(item => item.id === button.dataset.originalDoc)
+        openOriginal({ name: doc.sourceName, meta: doc.sourceMeta, source: doc.source, conversion: doc.conversion, mapping: doc.mapping })
+      }
+      if (button.dataset.originalQueue) {
+        const item = queue.find(entry => entry.id === button.dataset.originalQueue)
+        const doc = docs.find(entry => entry.id === item.documentId)
+        openOriginal({ name: item.name, meta: item.meta, source: doc?.source, conversion: doc?.conversion, mapping: doc?.mapping })
+      }
+      if (button.dataset.retry) retryItem(queue.find(item => item.id === button.dataset.retry))
+      if (button.dataset.manual) openEditor({ queueItem: queue.find(item => item.id === button.dataset.manual) })
+      if (button.dataset.cancel) {
+        const item = queue.find(entry => entry.id === button.dataset.cancel)
+        item.status = 'cancelled'
+        item.stage = '已取消'
+        item.message = '未生成资料；不会影响已有文档和需求依据'
+        renderQueue()
+      }
+      if (button.dataset.queueOpen) openDocument(button.dataset.queueOpen)
+      if (button.dataset.use) adoptDocument(docs.find(doc => doc.id === button.dataset.use))
+      if (button.dataset.removeCitation !== undefined) {
+        used.splice(Number(button.dataset.removeCitation), 1)
+        renderCitations()
+        renderCandidates()
+        toast('已移除此依据；其他需求和知识库资料不受影响')
+      }
+    })
+
+    document.addEventListener('change', event => {
+      const input = event.target.closest('input[data-auto]')
+      if (!input) return
+      const doc = docs.find(item => item.id === input.dataset.auto)
+      if (!doc) return
+      doc.auto = input.checked
+      renderCandidates()
+      toast(input.checked ? '此后可在需求沟通时自动提供此资料；已有需求依据不变' : '此后不再自动提供此资料；已有需求依据不变')
+    })
+
+    $('search').addEventListener('input', renderList)
+    $('sourceFilter').addEventListener('change', renderList)
+    $('openImport').addEventListener('click', () => showView('imports'))
+    $('newDocument').addEventListener('click', () => openEditor())
+    $('backToLibrary').addEventListener('click', () => showView('library'))
+    $('chooseMore').addEventListener('click', () => $('fileInput').click())
+    $('dropzone').addEventListener('click', () => $('fileInput').click())
+    $('dropzone').addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('fileInput').click() }
+    })
+    $('fileInput').addEventListener('change', event => { handleFiles(event.target.files); event.target.value = '' })
+    for (const name of ['dragenter', 'dragover']) $('dropzone').addEventListener(name, event => { event.preventDefault(); $('dropzone').classList.add('dragging') })
+    for (const name of ['dragleave', 'drop']) $('dropzone').addEventListener(name, event => { event.preventDefault(); $('dropzone').classList.remove('dragging') })
+    $('dropzone').addEventListener('drop', event => handleFiles(event.dataTransfer.files))
+    $('retryFailed').addEventListener('click', () => queue.filter(item => item.status === 'failed').forEach(retryItem))
+    $('clearCompleted').addEventListener('click', () => {
+      for (let position = queue.length - 1; position >= 0; position--) {
+        if (['saved', 'duplicate', 'cancelled'].includes(queue[position].status)) queue.splice(position, 1)
+      }
+      renderQueue()
+      toast('只清除了导入记录，没有删除资料或原件')
+    })
+    $('editorForm').addEventListener('submit', saveEditor)
+    $('cancelEditor').addEventListener('click', cancelEditor)
+    $('cancelEditorTop').addEventListener('click', cancelEditor)
+    $('editorSurface').addEventListener('paste', event => {
+      event.preventDefault()
+      document.execCommand('insertText', false, event.clipboardData.getData('text/plain'))
+    })
+    $('requirementText').addEventListener('input', scheduleCandidates)
+    $('offline').addEventListener('change', renderCandidates)
+
+    renderList()
+    renderQueue()
+    renderCitations()
+    renderCandidates()
+    showView('library')
+  </script>
+</body>
+</html>

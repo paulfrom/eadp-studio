@@ -113,7 +113,7 @@ export async function recordWorkbenchBuild(tree, repo) {
     const files = []
     const libraryFiles = (await inventory(path.join(packageRoot, 'lib'))).filter(file => {
       if (name === 'eadp-contracts') return file.path === 'index.js' || /^types\/.*\.(?:d\.ts|js)(?:\.map)?$/.test(file.path)
-      return ['index.js', 'client.js', 'typert.host.js', 'typert.host.d.ts', 'typert.remote-client.js', 'typert.remote-client.d.ts'].includes(file.path) || /^types\/.*\.(?:d\.ts|js)$/.test(file.path)
+      return ['index.js', 'client.js', 'convert-worker.js', 'typert.host.js', 'typert.host.d.ts', 'typert.remote-client.js', 'typert.remote-client.d.ts'].includes(file.path) || /^types\/.*\.(?:d\.ts|js)$/.test(file.path)
     })
     files.push(...libraryFiles.map(file => ({ ...file, path: `lib/${file.path}` })))
     for (const directory of ['assets', 'resources']) {

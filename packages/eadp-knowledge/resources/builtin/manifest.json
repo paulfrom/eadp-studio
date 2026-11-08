@@ -15,7 +15,8 @@
         "方法参考"
       ],
       "path": "cards/requirements-clarity.md",
-      "sha256": "bb2bbf52e5a4b9ec080e00b7a7ff3c608575e04e0a378d78cea2a7a4ebf7caca"
+      "sha256": "bb2bbf52e5a4b9ec080e00b7a7ff3c608575e04e0a378d78cea2a7a4ebf7caca",
+      "category": "需求方法"
     },
     {
       "id": "prototype-learning",
@@ -29,7 +30,8 @@
         "方法参考"
       ],
       "path": "cards/prototype-learning.md",
-      "sha256": "b84e547a2cf67d9394dc2a5423eea55efbcaef9772ccd963912a8abde2d8db60"
+      "sha256": "b84e547a2cf67d9394dc2a5423eea55efbcaef9772ccd963912a8abde2d8db60",
+      "category": "产品规范"
     }
   ]
 }

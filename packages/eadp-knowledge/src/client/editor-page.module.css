@@ -1,0 +1,53 @@
+/* Document editor page: metadata header, body surface, save actions. */
+
+.shell {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.form {
+  display: grid;
+  gap: var(--eadp-space-3);
+}
+
+.panel {
+  display: grid;
+  gap: var(--eadp-space-4);
+  padding: var(--eadp-space-4);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-lg);
+  background: var(--eadp-raised);
+}
+
+.metadata {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: var(--eadp-space-3);
+}
+
+.sourceLine {
+  margin: 0;
+  color: var(--eadp-muted);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+  overflow-wrap: anywhere;
+}
+
+.editorSurface {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--eadp-space-2);
+}
+
+@media (max-width: 640px) {
+  .metadata {
+    grid-template-columns: 1fr;
+  }
+}

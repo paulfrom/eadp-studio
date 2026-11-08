@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -77,6 +77,30 @@ export class ShellService extends TypertRemoteService {
     if (!path.isAbsolute(directory)) throw new Error('项目目录必须是绝对路径。')
     const root = await stat(directory)
     if (!root.isDirectory()) throw new Error('所选路径不是目录。')
+  }
+
+  /**
+   * Create one new project directory under an existing parent.
+   * The composed directory picker serves only the native picker on desktop, so the
+   * workbench owns this step instead of the picker's unavailable create capability.
+   * @param parent - existing directory that receives the new project.
+   * @param name - single directory name typed by the user.
+   * @returns the absolute path of the created project directory.
+   */
+  @Remote
+  async createProjectDirectory(parent: string, name: string): Promise<string> {
+    await this.checkDirectory(parent)
+    if (name.trim() === '' || name === '.' || name === '..' || /[\\/]/.test(name)) throw new Error('项目名称必须是单个目录名。')
+    const created = path.join(parent, name)
+    try {
+      await mkdir(created)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') throw new Error('同名目录已存在，请另选名称。')
+      if (code === 'EINVAL') throw new Error('项目名称包含无效字符。')
+      throw error
+    }
+    return created
   }
 
   /** Refuse removal while the official Session activity providers report unfinished work. */

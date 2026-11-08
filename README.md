@@ -2,9 +2,14 @@
 
 人与 AI Agent 协作整理业务材料和演示成果的桌面工作台。
 
+## 本地知识库方案评审
+
+[本地知识库与需求引用方案](docs/design/local-knowledge/README.md)（V0.3）已评审。阶段一「统一资料与导入」已按方案实现：任意扩展名文件接收并先保存原件、独立导入记录、结构块到 Markdown 的受控转换、资料列表到整页明细的两级阅读与所见即所得编辑；阶段二、三尚未开始，embedding 公开接口缺口登记在 [固定宿主接口缺口](docs/blocked-upstream.md)。实现事实与未验证项见 [知识库插件说明](packages/eadp-knowledge/README.md)。
+
 ## 当前实现
 
 - `packages/studio-plugin/`：DSH Host/client 插件。Host 通过 Typert Remote 暴露 Studio 命令服务；client 注册满窗工作台面板，覆盖登录、项目、场景/需求/交接材料、AI 辅助评审、原型协作任务与开发占用/检查/预览/确认、复用资格与采用、交接收悉、发布/撤回和主题设置。发布与撤回的代码路径已就绪，发布目标与独立授权属部署期配置，随包桌面未提供该配置通道。
+- `packages/eadp-knowledge/`：本机资料库插件。任意扩展名文件先保存原件并生成独立导入记录；可识别内容转换为统一结构块后渲染为可编辑文档，无法转换时保留“需要处理”，可查看原件、重试或手工整理。资料采用列表到整页明细的两级阅读，编辑与阅读共用同一排版。
 - `apps/collaboration-api/`：Fastify + PostgreSQL 协同后端。实现协同会话、GitLab 账号绑定与成员权限校验、项目建仓/初始化、固定 Git 正文读取校验、持久占用、集成、复用记录、发布授权和桌面更新检查。
 - `packages/asset-domain/`、`packages/contracts/`：资产领域模型与跨端契约。
 - `packages/studio-plugin/assets/prototype-template/`：React / Umi / SUID 合成 Mock 原型模板，带路由校验、资源围栏和模板清单。

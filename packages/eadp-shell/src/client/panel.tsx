@@ -1,6 +1,7 @@
 import { useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { EADP_SLOTS } from '@eadp/contracts'
+import type { SessionRole } from '@eadp/contracts'
 import type {} from '@eadp/contracts/client'
 import type { ShellFace, WorkspaceView } from './types.ts'
 import { Conversation } from './conversation.tsx'
@@ -65,7 +66,10 @@ export function ShellPanel(props: PanelProps) {
     if (!form || !name.trim()) return
     if (form.kind === 'create') {
       const path = await props.createDirectory(form.path, name.trim())
-      await select(await props.workspaces.create({ path }))
+      const created = await props.workspaces.create({ path })
+      await select(created)
+      setTab('requirements')
+      await attachSession(created.workspaceId, 'requirements')
     } else {
       const item = snapshot.items.find(row => row.workspaceId === form.id)
       if (!item) throw new Error('PROJECT_NOT_FOUND')
@@ -99,12 +103,21 @@ export function ShellPanel(props: PanelProps) {
     await flush(projectId)
     setSessionId(id || undefined)
   }
+  /**
+   * Create the project's next session and select it while that project is still current.
+   * A project switched mid-creation keeps the session in its history but not in the view.
+   * @param workspaceId - project that owns the new session.
+   * @param role - native preset the session runs under.
+   */
+  const attachSession = async (workspaceId: string, role: SessionRole) => {
+    const currentEpoch = epoch.current
+    const id = await props.createSession(workspaceId, role)
+    if (currentEpoch === epoch.current) setSessionId(id)
+  }
   const createSession = async () => {
     if (!project) return
     await flush(project.workspaceId)
-    const currentEpoch = epoch.current
-    const id = await props.createSession(project.workspaceId, tab === 'prototype' ? 'prototype' : 'requirements')
-    if (currentEpoch === epoch.current) setSessionId(id)
+    await attachSession(project.workspaceId, tab === 'prototype' ? 'prototype' : 'requirements')
   }
   return <Surface className={css.scope}>
     <section className={css.shell}>

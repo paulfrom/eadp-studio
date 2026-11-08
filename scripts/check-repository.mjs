@@ -55,6 +55,7 @@ try {
   for (const card of knowledge.documents) {
     if (typeof card.id !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/.test(card.id) || knowledgeIds.has(card.id) || typeof card.path !== 'string' || !/^cards\/[a-z0-9][a-z0-9_-]*\.md$/.test(card.path) || knowledgeFiles.has(card.path)) throw new Error('Invalid or duplicate built-in knowledge entry');
     if (![card.title, card.source, card.scope].every(value => typeof value === 'string' && value.trim()) || !Array.isArray(card.tags) || !card.tags.every(tag => typeof tag === 'string')) throw new Error('Missing knowledge provenance or scope');
+    if (!['业务知识', '需求方法', '产品规范', '未分类'].includes(card.category)) throw new Error(`Invalid built-in knowledge category: ${card.id}`);
     knowledgeIds.add(card.id); knowledgeFiles.add(card.path);
     const target = resolve(knowledgeRoot, card.path);
     if (!(await lstat(target)).isFile() || sha256(await readFile(target)) !== card.sha256) throw new Error(`Knowledge hash mismatch: ${card.path}`);

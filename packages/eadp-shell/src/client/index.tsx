@@ -55,7 +55,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     const face: ShellFace = {
       workspaces: scope.workspaces,
       pickDirectory: () => scope.uiWorkspace.pickDirectory(),
-      createDirectory: (parent, name) => scope.uiWorkspace.createDirectory(parent, name),
+      createDirectory: async (parent, name) => unwrap(await scope.remote.eadpShell.createProjectDirectory(parent, name)),
       checkDirectory: async path => unwrap(await scope.remote.eadpShell.checkDirectory(path)),
       requirements: scope.eadpRequirementsClient,
       stopProject: async projectId => {

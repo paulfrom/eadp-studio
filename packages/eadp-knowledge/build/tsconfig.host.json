@@ -9,6 +9,8 @@
     "src/host"
   ],
   "references": [
+    { "path": "../../llm/llm" },
+    { "path": "../../core/agent-default-model" },
     {
       "path": "../../../vendor/cordis"
     },

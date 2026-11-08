@@ -1,0 +1,271 @@
+/**
+ * 知识正文编辑器：工具栏、纸面与正文排版。
+ * 阅读态与编辑态共用 `.document` 里的全部正文样式，只有纸面外框和工具栏随状态变化。
+ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-2);
+  min-height: 0;
+  color: var(--eadp-text);
+}
+
+/* ── 工具栏 ───────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  padding: var(--eadp-space-1) var(--eadp-space-2);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-raised);
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolGroup + .toolGroup {
+  margin-left: var(--eadp-space-1);
+  padding-left: var(--eadp-space-2);
+  border-left: 1px solid var(--eadp-line);
+}
+
+.toolButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 var(--eadp-space-2);
+  border: 0;
+  border-radius: var(--eadp-radius-sm);
+  background: transparent;
+  color: var(--eadp-text);
+  font: inherit;
+  font-size: var(--eadp-text-md);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolButton:hover:not(:disabled) {
+  background: var(--eadp-hover);
+}
+
+.toolButton:focus-visible {
+  outline: none;
+  box-shadow: var(--eadp-focus-ring);
+}
+
+.toolButton[aria-pressed='true'] {
+  background: var(--eadp-selected);
+  color: var(--eadp-accent);
+}
+
+.toolButton:disabled {
+  color: var(--eadp-faint);
+  cursor: default;
+}
+
+.toolButton[data-format='bold'] {
+  font-weight: 650;
+}
+
+.toolButton[data-format='italic'] {
+  font-style: italic;
+}
+
+.toolbarProblem {
+  margin: 0;
+  color: var(--eadp-danger);
+  font-size: var(--eadp-text-sm);
+}
+
+.fileInput {
+  display: none;
+}
+
+/* ── 纸面 ─────────────────────────────────────────────────────────── */
+
+.paper {
+  min-height: 320px;
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-raised);
+  box-shadow: var(--eadp-elevation-soft);
+}
+
+.paper:focus-within {
+  border-color: var(--eadp-accent-border);
+}
+
+/* 阅读态只保留正文列，不画纸面外框，阅读与编辑的正文排版完全一致。 */
+.paper[data-read-only='true'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.document {
+  max-width: 42em;
+  min-height: 320px;
+  margin: 0 auto;
+  padding: var(--eadp-space-6) var(--eadp-space-6) var(--eadp-space-4);
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-doc);
+  font-size: 15px;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+  caret-color: var(--eadp-accent);
+}
+
+.document:focus {
+  outline: none;
+}
+
+/* ── 正文结构 ─────────────────────────────────────────────────────── */
+
+.document > :first-child {
+  margin-top: 0;
+}
+
+.document p {
+  margin: 0 0 0.85em;
+}
+
+.document h1,
+.document h2,
+.document h3,
+.document h4,
+.document h5,
+.document h6 {
+  color: var(--eadp-text);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.document h1 {
+  margin: 1.4em 0 0.7em;
+  font-size: 1.6em;
+}
+
+.document h2 {
+  margin: 1.4em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--eadp-line);
+  font-size: 1.3em;
+}
+
+.document h3 {
+  margin: 1.2em 0 0.5em;
+  font-size: 1.1em;
+}
+
+.document ul,
+.document ol {
+  margin: 0 0 0.85em;
+  padding-left: 1.6em;
+}
+
+.document li {
+  margin: 0.2em 0;
+}
+
+.document li > ul,
+.document li > ol {
+  margin: 0.2em 0;
+}
+
+.document blockquote {
+  margin: 0 0 0.85em;
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 3px solid var(--eadp-line-strong);
+  color: var(--eadp-muted);
+}
+
+.document a {
+  color: var(--eadp-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.document hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: 1px solid var(--eadp-line-strong);
+}
+
+/* ── 表格 ─────────────────────────────────────────────────────────── */
+
+.document table {
+  width: 100%;
+  margin: 0 0 0.85em;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.document th,
+.document td {
+  padding: 6px 10px;
+  border: 1px solid var(--eadp-line-strong);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.document th {
+  background: var(--eadp-surface);
+  font-weight: 600;
+}
+
+.document tr:nth-child(even) td {
+  background: var(--eadp-hover);
+}
+
+.document th p,
+.document td p {
+  margin: 0;
+}
+
+/* ── 代码与图片 ───────────────────────────────────────────────────── */
+
+.document code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--eadp-radius-sm);
+  background: var(--eadp-hover);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+/* 代码块的节点直接挂在正文根下，与段落里的行内代码区分开。 */
+.document > code {
+  display: block;
+  margin: 0 0 0.85em;
+  padding: var(--eadp-space-3) var(--eadp-space-4);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-surface);
+  font-size: 0.9em;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  tab-size: 2;
+}
+
+.imageBlock {
+  margin: 0 0 0.85em;
+}
+
+.image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--eadp-radius-md);
+}
