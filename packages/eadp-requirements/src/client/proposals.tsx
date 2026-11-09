@@ -98,7 +98,7 @@ export function RequirementProposals({ projectId, api, apply, disabled, t }: Pro
       </IconButton>
       <strong className={css.proposalsTitle}>{t('proposals')}</strong>
       {proposals.length > 0 ? <Badge tone="accent">{proposals.length}</Badge> : null}
-      <span className={css.proposalsMemory} title={t('proposalMemory')}>{t('proposalMemory')}</span>
+      <span className={css.proposalsMemory} title={t('proposalStorage')}>{t('proposalStorage')}</span>
       <IconButton label={t('refresh')} size="sm" disabled={working} onClick={() => { void reload().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))) }}><IconRefresh /></IconButton>
     </header>
     {open ? <div className={css.proposalsBody}>
@@ -115,6 +115,8 @@ export function RequirementProposals({ projectId, api, apply, disabled, t }: Pro
             <Badge tone={isStale ? 'danger' : proposal.baseVersion ? 'neutral' : 'accent'}>
               {isStale ? t('staleProposal') : proposal.baseVersion ? `${t('basedOn')} ${versionTail(proposal.baseVersion)}` : t('newFile')}
             </Badge>
+            {proposal.citations.length > 0 ? <Badge tone="neutral">{`${t('basis')} ${proposal.citations.length}`}</Badge> : null}
+            {proposal.persisted ? null : <Badge tone="warning">{t('proposalEphemeral')}</Badge>}
             <div className={css.proposalActions}>
               <Button size="sm" variant="primary" disabled={disabled || working} onClick={() => act(proposal, false)}>{t('applyProposal')}</Button>
               <Button size="sm" variant="ghost" disabled={disabled || working} onClick={() => act(proposal, true)}>{t('discardProposal')}</Button>

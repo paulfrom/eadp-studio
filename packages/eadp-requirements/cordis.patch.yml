@@ -1,7 +1,8 @@
-# Host services: typert, workspaceRegistry, fs, agents, tools.
+# Host services: typert, workspaceRegistry, fs, agents, tools,
+# eadpKnowledgeReference (知识插件提供的证据核验与自动参考开关).
 # Client services: slots, locale, remote.
 # Child slot: eadp.requirements.view (single, root), declared by eadp-shell.
 - insert:
     - id: eadp-requirements
       name: '@eadp/requirements'
-      inject: [typert, workspaceRegistry, fs, agents, tools]
+      inject: [typert, workspaceRegistry, fs, agents, tools, eadpKnowledgeReference]

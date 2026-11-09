@@ -5,7 +5,7 @@ import { readFile, readdir, lstat, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createPrototypeTemplateArchive } from './prototype-template-archive.mjs'
 
-export const WORKBENCH_PACKAGES = ['eadp-contracts', 'eadp-shell', 'eadp-requirements', 'eadp-prototype', 'eadp-knowledge']
+export const WORKBENCH_PACKAGES = ['eadp-contracts', 'eadp-shell', 'eadp-knowledge', 'eadp-requirements', 'eadp-prototype']
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = async filename => JSON.parse(await readFile(filename, 'utf8'))
 const exists = async filename => stat(filename).then(() => true, error => {
@@ -82,6 +82,8 @@ async function verifyWorkbenchPackageFiles(packageRoot, name) {
   const artifacts = name === 'eadp-contracts'
     ? ['lib/index.js']
     : ['lib/index.js', 'lib/client.js', 'lib/typert.host.js', 'lib/typert.remote-client.js']
+  // 本地查找索引在工作线程内运行，入口必须随包发行，否则插件启动即失去索引能力。
+  if (name === 'eadp-knowledge') artifacts.push('lib/index-worker.js')
   for (const filename of artifacts) {
     if ((await readFile(path.join(packageRoot, filename))).length === 0) throw new Error(`Empty Workbench payload: ${name}/${filename}`)
   }
@@ -113,7 +115,7 @@ export async function recordWorkbenchBuild(tree, repo) {
     const files = []
     const libraryFiles = (await inventory(path.join(packageRoot, 'lib'))).filter(file => {
       if (name === 'eadp-contracts') return file.path === 'index.js' || /^types\/.*\.(?:d\.ts|js)(?:\.map)?$/.test(file.path)
-      return ['index.js', 'client.js', 'convert-worker.js', 'typert.host.js', 'typert.host.d.ts', 'typert.remote-client.js', 'typert.remote-client.d.ts'].includes(file.path) || /^types\/.*\.(?:d\.ts|js)$/.test(file.path)
+      return ['index.js', 'client.js', 'convert-worker.js', 'index-worker.js', 'typert.host.js', 'typert.host.d.ts', 'typert.remote-client.js', 'typert.remote-client.d.ts'].includes(file.path) || /^types\/.*\.(?:d\.ts|js)$/.test(file.path)
     })
     files.push(...libraryFiles.map(file => ({ ...file, path: `lib/${file.path}` })))
     for (const directory of ['assets', 'resources']) {

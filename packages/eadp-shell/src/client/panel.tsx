@@ -151,7 +151,7 @@ export function ShellPanel(props: PanelProps) {
             </li>)}</ul>}
       </main> : <div className={css.body}>
         <main className={css.content}>
-          {tab === 'requirements' && props.renderSlot(EADP_SLOTS.requirements, { projectId: project.workspaceId, active: true }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
+          {tab === 'requirements' && props.renderSlot(EADP_SLOTS.requirements, { projectId: project.workspaceId, active: true, sessionId: sessionId ?? null }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
           {tab === 'prototype' && props.renderSlot(EADP_SLOTS.prototype, { projectId: project.workspaceId, active: true }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
           {tab === 'knowledge' && props.renderSlot(EADP_SLOTS.knowledge, { active: true }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
         </main>

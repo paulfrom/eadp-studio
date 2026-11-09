@@ -23,7 +23,24 @@ const convertWorker = {
   },
 }
 
+/** 本地查找索引 worker 的独立入口：切片、SQLite 与词项计算都在工作线程内完成。 */
+const indexWorker = {
+  name: '@eadp/knowledge/index-worker',
+  entry: { 'index-worker': 'lib/types/host/index/worker.js' },
+  outDir: 'lib',
+  format: ['esm'],
+  platform: 'node',
+  target: 'es2024',
+  fixedExtension: false,
+  dts: false,
+  clean: false,
+  deps: {
+    neverBundle: isBareSpecifier,
+    alwaysBundle: (specifier: string) => !isBareSpecifier(specifier),
+  },
+}
+
 export default clientBundle(import.meta.dirname, ['lib/types/host/index.js'], {
   hostPhase: true,
-  companions: [convertWorker],
+  companions: [convertWorker, indexWorker],
 })

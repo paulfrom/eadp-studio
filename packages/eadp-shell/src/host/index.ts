@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { ActiveDocuments } from './active-document.ts'
+import { ProjectContexts } from './project-context.ts'
 import { SessionPolicies } from './session-policy.ts'
 
 export const name = 'eadp-shell'
@@ -21,6 +22,8 @@ export class ShellService extends TypertRemoteService {
 
   constructor(ctx: Context) {
     super(ctx, 'eadpShell', { namespace: 'eadpShell' })
+    // 只读上下文服务与 Shell 自己的活动文档提示共享同一实例，不复制状态。
+    new ProjectContexts(ctx, this.documents)
     this.policies = new SessionPolicies(ctx, this.documents)
     ctx.on('agent/created', async ({ agent }) => { await this.policies.install(agent) })
     for (const agent of ctx.agents.list()) {
@@ -121,3 +124,6 @@ export class ShellService extends TypertRemoteService {
 }
 
 export function apply(ctx: Context): void { ctx.plugin(ShellService) }
+
+/** 导出服务实现类型，使依赖方读到 `Context.eadpProjectContext` 的服务声明。 */
+export { ProjectContexts } from './project-context.ts'

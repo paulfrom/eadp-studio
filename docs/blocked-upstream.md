@@ -10,6 +10,12 @@
 - 影响：阶段三「向量混合」无法在公开接口上交付，因此不启动阶段三；阶段一与阶段二的词项、精确通道照常实施。
 - 当前绕过：无。不得由插件自建 HTTP 客户端冒充官方接入，也不得修改 `.local/upstream/` 或新增未登记的锚定编辑。需要上游提供：embedding 调用方法、向量结果类型（Float32/维度/usage）、embedding 模型能力与维度元数据、embedding 专用模型选择与凭据解析。
 - 若后续评审决定走 `apps/desktop-distribution/build/` 锚定编辑，须按该目录 README 的 fail-closed 锚点、登记与真实桌面验证要求执行，并重新核对源码事实。
+- 复核（2026-11-08，阶段三开工前）：固定 `0.2.1-rc.2` 的交付装配树 `.local/build/local-workbench-dsh` 中 `packages/llm/llm/src/index.ts`、`types.ts`、`llm-pi-ai/src/adapter.ts`、`llm-deepseek/src/models.ts` 与只读缓存逐字节一致（sha256 相同）；`LlmAdapter` 仅 `abstract stream`（`llm/src/index.ts:302`），`LlmRuntime` 无 embedding 方法或结果类型；`ModelModalityMap` 只有 `text`/`image`（`llm/src/types.ts:231-233`）；官方工具目录无 embedding/向量工具；全仓 embedding 模型 API token 命中 0（上游 `packages`/`apps`/`python` 源码树；23 处 `embedding` 均为 iframe/框架嵌入等无关注释）。配置事实：隔离验证环境 `settings.yaml.imported` 与真实 `.dsh/settings.yaml` 字节一致，唯一供应商 `llm-pi-ai/magpie`（`openai-completions`）共 26 个模型且全部 `input: [text, image]`，无 embedding 模型、维度或专用模型选择。证据：`.local/verification/knowledge-phase3/logs/s4-embedding-evidence.txt`。
+- 决定（2026-11-08，Lead）：按 S4 失败处理，**阶段三不启动**；不采用插件自建 HTTP/直连供应商，也未授权锚定编辑新增 embedding 接入。重新进入条件见 `.local/verification/knowledge-phase3/REPORT.md` §9。
+
+### 已知交付缺口（非上游，按决定后置）
+
+- 阶段二：`docs/design/local-knowledge/README.md:193` 的“从资料页或本次参考选择‘作为需求依据’”未实现（“本次参考”没有条目清单，也没有采用入口）。2026-11-08 Lead 决定登记后置，不纳入阶段三；入口仍为 `.local/verification/knowledge-phase2/REPORT.md` §7.1-1。
 
 ### 阶段二开工前必须由本仓补齐的插件间接口（非上游缺口）
 

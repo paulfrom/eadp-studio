@@ -4,38 +4,104 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { FsError } from '@deepseek-ai/dsh-fs'
-import { diffWithCap, isValidSummary, ReadTracker } from '@eadp/contracts'
+import { diffWithCap, failureMessage, isValidSummary, ReadTracker } from '@eadp/contracts'
 import type { RequirementDocument } from '@eadp/contracts/files'
-import type { RequirementProposal } from '@eadp/contracts/requirements'
+import type { KnowledgeEvidenceResolution, KnowledgeSourceMap } from '@eadp/contracts/knowledge'
+import type { RequirementKnowledgeAdoption, RequirementKnowledgeCitation, RequirementProposal } from '@eadp/contracts/requirements'
+import { citationFromSnapshot, parseKnowledgeAdoptions } from './adoption.ts'
+import { renderBasisSection } from './citation-format.ts'
 import { RequirementFiles } from './files.ts'
+import { RequirementKnowledgeError } from './knowledge-error.ts'
+import type { PersistedProposal, ProposalStore } from './proposal-store.ts'
+import type { KnowledgeSnapshots } from './snapshot.ts'
 
 const nullableVersion = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
+const MAX_TEXT_CHARACTERS = 1_000_000
 
-/** Keeps AI candidates in Host memory; only trusted UI application mutates files. */
+/** 已解析的提案：内存中的待审提案或项目内的持久记录，状态决定可用操作。 */
+interface ResolvedProposal {
+  proposal: RequirementProposal
+  status: PersistedProposal['status']
+  persisted: boolean
+}
+
+/** 知识采用项写入正文所需的一份快照内容，用于把范围转成可读定位。 */
+interface SnapshotText {
+  body: string
+  sourceMap: KnowledgeSourceMap | null
+}
+
+/**
+ * 需求提案：把模型给出的整篇候选与显式关联的资料依据一起固定到项目，
+ * 用户应用前不改变需求正文；应用时只按版本整篇写入。
+ */
 export class RequirementProposals {
   private readonly proposals = new Map<string, RequirementProposal>()
   private readonly reads = new ReadTracker<string>()
   private readonly installed = new WeakSet<Agent>()
-  constructor(private readonly ctx: Context, private readonly files: RequirementFiles) {}
+  constructor(
+    private readonly ctx: Context,
+    private readonly files: RequirementFiles,
+    private readonly store: ProposalStore,
+    private readonly snapshots: KnowledgeSnapshots,
+    private readonly diagnostic: (message: string) => void,
+  ) {}
 
-  list(projectId: string): RequirementProposal[] { return [...this.proposals.values()].filter(value => value.projectId === projectId) }
-  discard(projectId: string, proposalId: string): void {
-    this.get(projectId, proposalId)
-    this.proposals.delete(proposalId)
+  /** 待审提案：内存中的本次运行提案与项目内仍待审的持久提案合并返回。 */
+  async list(projectId: string): Promise<RequirementProposal[]> {
+    const merged = new Map<string, RequirementProposal>()
+    for (const record of await this.store.list(projectId)) {
+      if (record.status === 'pending') merged.set(record.proposal.proposalId, record.proposal)
+    }
+    for (const proposal of this.proposals.values()) if (proposal.projectId === projectId) merged.set(proposal.proposalId, proposal)
+    return [...merged.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
   }
-  private get(projectId: string, proposalId: string): RequirementProposal {
-    const proposal = this.proposals.get(proposalId)
-    if (!proposal || proposal.projectId !== projectId) throw new FsError('提案不存在或不属于当前项目。', 'FS_NOT_FOUND')
-    return proposal
+
+  /** 丢弃提案并清理不再被任何待审或已应用提案引用的快照。 */
+  async discard(projectId: string, proposalId: string): Promise<void> {
+    await this.files.mutate(projectId, async () => {
+      const resolved = await this.resolve(projectId, proposalId)
+      if (resolved.status === 'applied') throw new FsError('该提案已应用，不能丢弃。', 'FS_NOT_OBSERVED')
+      this.proposals.delete(proposalId)
+      if (resolved.persisted) await this.store.update(projectId, proposalId, record => { record.status = 'discarded' })
+      await this.cleanupSnapshots(projectId)
+    })
   }
+
+  /**
+   * 应用提案：同一文件事务内校验基线版本，再整篇写入已含依据条目的正文。
+   * 重复应用不会重复追加依据；文件已是候选正文时只补记提案状态。
+   */
   async apply(projectId: string, proposalId: string, expectedVersion: string | null): Promise<RequirementDocument> {
     return this.files.mutate(projectId, async () => {
-      const proposal = this.get(projectId, proposalId)
-      if (expectedVersion !== proposal.baseVersion || await this.files.statVersion(projectId, proposal.relativePath) !== proposal.baseVersion) throw new FsError('提案基于旧版本，请重新读取并生成。', 'FS_STALE_VERSION')
+      const resolved = await this.resolve(projectId, proposalId)
+      const proposal = resolved.proposal
+      if (resolved.status === 'applied') return this.readDocument(projectId, proposal.relativePath)
+      if (resolved.status === 'discarded') throw new FsError('该提案已被丢弃。', 'FS_NOT_FOUND')
+      const current = await this.currentDocument(projectId, proposal.relativePath)
+      if (current.version !== null && current.text === proposal.text) {
+        this.proposals.delete(proposalId)
+        await this.markApplied(projectId, resolved, current.version)
+        return { relativePath: current.relativePath, text: current.text, version: current.version }
+      }
+      if (expectedVersion !== proposal.baseVersion || current.version !== proposal.baseVersion) throw new FsError('提案基于旧版本，请重新读取并生成。', 'FS_STALE_VERSION')
+      await this.verifyCitations(projectId, proposal.citations)
       const document = await this.files.write(projectId, proposal.relativePath, proposal.text, expectedVersion, proposal.relativePath === 'CONTEXT.md')
       this.proposals.delete(proposalId)
+      await this.markApplied(projectId, resolved, document.version)
       return document
     })
+  }
+
+  /** 启动核对：清理无任何待审/已应用提案引用的快照目录；失败只写诊断。 */
+  async reconcile(): Promise<void> {
+    for (const workspace of this.ctx.workspaceRegistry.list()) {
+      try {
+        await this.files.mutate(workspace.id, () => this.cleanupSnapshots(workspace.id))
+      } catch (error) {
+        this.diagnostic(`项目需求依据启动核对失败：${workspace.path} ${String(error)}`)
+      }
+    }
   }
 
   /** Execution scope comes from the identity-protected Agent, never model arguments. */
@@ -62,24 +128,154 @@ export class RequirementProposals {
     return { ...document, text: characters.slice(start, end).join(''), offset: start, truncated: end < characters.length, nextOffset: end < characters.length ? end : null }
   }
 
-  private async propose(agent: Agent, relativePath: string, baseVersion: string | null, text: string, summary: string, signal: AbortSignal) {
+  /**
+   * 生成提案并把依据固定到项目；有依据时快照和提案文件必须先写成功才返回。
+   * 无依据的提案沿用原行为：持久化失败只标记 `persisted=false`。
+   */
+  private async propose(agent: Agent, relativePath: string, baseVersion: string | null, text: string, summary: string, citations: unknown, signal: AbortSignal) {
     signal.throwIfAborted()
     const projectId = await this.project(agent)
     const key = projectId + '/' + relativePath
     if (this.reads.get(agent, key) !== baseVersion) throw new FsError('必须先读取目标及当前版本，再生成提案。', 'FS_NOT_OBSERVED')
-    if (text.length > 1_000_000 || Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024 || text.includes('\0')) throw new FsError('提案正文过大或不是有效文本。', 'FS_TOO_LARGE')
+    if (text.length > MAX_TEXT_CHARACTERS || Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024 || text.includes('\0')) throw new FsError('提案正文过大或不是有效文本。', 'FS_TOO_LARGE')
     if (!isValidSummary(summary)) throw new FsError('提案摘要不能为空且不能超过 2000 字符。', 'FS_NOT_TEXT')
-    const current = relativePath === 'CONTEXT.md' && await this.files.statVersion(projectId, relativePath) === null
-      ? { relativePath, text: '', version: null }
-      : await this.files.read(projectId, relativePath, relativePath === 'CONTEXT.md')
+    const adoptions = parseKnowledgeAdoptions(citations)
     signal.throwIfAborted()
-    if (current.version !== baseVersion) throw new FsError('文件已变化，请重新生成提案。', 'FS_STALE_VERSION')
-    if (current.text === text) throw new FsError('提案与当前正文相同。', 'FS_NOT_TEXT')
-    const { diff, truncated: diffTruncated } = diffWithCap(current.text, text)
-    const proposal: RequirementProposal = { proposalId: randomUUID(), projectId, relativePath, baseVersion, text, baseText: current.text, summary, diff, diffTruncated, target: relativePath === 'CONTEXT.md' ? 'context' : 'requirement', createdAt: new Date().toISOString(), sessionId: agent.session.id }
-    signal.throwIfAborted()
-    this.proposals.set(proposal.proposalId, proposal)
-    return { proposalId: proposal.proposalId, relativePath, summary }
+    return this.files.mutate(projectId, async () => {
+      const current = await this.currentDocument(projectId, relativePath)
+      signal.throwIfAborted()
+      if (current.version !== baseVersion) throw new FsError('文件已变化，请重新生成提案。', 'FS_STALE_VERSION')
+      const fixed = await this.fixCitations(agent, projectId, adoptions, text)
+      signal.throwIfAborted()
+      if (current.text === fixed.text) throw new FsError('提案与当前正文相同。', 'FS_NOT_TEXT')
+      const { diff, truncated: diffTruncated } = diffWithCap(current.text, fixed.text)
+      const proposal: RequirementProposal = {
+        proposalId: randomUUID(),
+        projectId,
+        relativePath,
+        baseVersion,
+        text: fixed.text,
+        baseText: current.text,
+        summary,
+        diff,
+        diffTruncated,
+        citations: fixed.citations,
+        persisted: false,
+        target: relativePath === 'CONTEXT.md' ? 'context' : 'requirement',
+        createdAt: new Date().toISOString(),
+        sessionId: agent.session.id,
+      }
+      proposal.persisted = await this.persist(projectId, proposal, fixed.citations.length > 0)
+      this.proposals.set(proposal.proposalId, proposal)
+      return { proposalId: proposal.proposalId, relativePath, summary }
+    })
+  }
+
+  /** 持久化提案文件；有依据时失败必须阻断，避免返回未固定的依据。 */
+  private async persist(projectId: string, proposal: RequirementProposal, required: boolean): Promise<boolean> {
+    const record: PersistedProposal = {
+      schemaVersion: 1,
+      proposal: { ...proposal, persisted: true },
+      target: proposal.target,
+      baseVersion: proposal.baseVersion,
+      createdAt: proposal.createdAt,
+      sessionId: proposal.sessionId,
+      status: 'pending',
+    }
+    try {
+      await this.store.save(projectId, record)
+      return true
+    } catch (error) {
+      this.diagnostic(`需求提案持久化失败：${String(error)}`)
+      if (required) throw new RequirementKnowledgeError('提案或需求依据未能保存到项目，请重试。', 'SNAPSHOT_FAILED')
+      return false
+    }
+  }
+
+  /** 固定每份资料的当时内容，并把可读的「需求依据」章节渲染进候选正文。 */
+  private async fixCitations(agent: Agent, projectId: string, adoptions: RequirementKnowledgeAdoption[], text: string): Promise<{ citations: RequirementKnowledgeCitation[]; text: string }> {
+    if (adoptions.length === 0) return { citations: [], text }
+    const resolutions = await this.resolveEvidence(agent, projectId, adoptions)
+    const citations: RequirementKnowledgeCitation[] = []
+    const snapshots = new Map<string, SnapshotText>()
+    for (const [index, adoption] of adoptions.entries()) {
+      const resolution = resolutions[index]
+      if (resolution === undefined) throw new RequirementKnowledgeError('用于关联的知识内容已失效，请重新读取后再关联。', 'EVIDENCE_INVALID')
+      const fixed = await this.snapshots.ensure(projectId, resolution)
+      citations.push(citationFromSnapshot(fixed.manifest, adoption.note))
+      snapshots.set(fixed.snapshotId, { body: resolution.text, sourceMap: resolution.sourceMap })
+    }
+    return { citations, text: renderBasisSection(text, citations, snapshots) }
+  }
+
+  /** 调用知识服务核验本次读取的标识与范围；失败信息保持业务语言。 */
+  private async resolveEvidence(agent: Agent, projectId: string, adoptions: RequirementKnowledgeAdoption[]): Promise<KnowledgeEvidenceResolution[]> {
+    try {
+      const resolutions = await this.ctx.eadpKnowledgeReference.resolveEvidence({
+        sessionId: agent.session.id,
+        projectId,
+        items: adoptions.map(adoption => ({ evidenceId: adoption.evidenceId, ranges: adoption.ranges })),
+      })
+      if (resolutions.length !== adoptions.length) throw new Error('用于关联的知识内容已失效，请重新读取后再关联。')
+      return resolutions
+    } catch (error) {
+      throw new RequirementKnowledgeError(failureMessage(error, '用于关联的知识内容已失效，请重新读取后再关联。'), 'EVIDENCE_INVALID')
+    }
+  }
+
+  /** 应用前核对全部固定内容仍完整；缺失时要求重新生成提案。 */
+  private async verifyCitations(projectId: string, citations: readonly RequirementKnowledgeCitation[]): Promise<void> {
+    for (const citation of citations) {
+      try {
+        await this.snapshots.read(projectId, citation.snapshotId)
+      } catch {
+        throw new RequirementKnowledgeError(`提案关联的《${citation.title}》当时内容不完整，请重新生成提案。`, 'SNAPSHOT_FAILED')
+      }
+    }
+  }
+
+  private async markApplied(projectId: string, resolved: ResolvedProposal, appliedVersion: string): Promise<void> {
+    if (!resolved.persisted) return
+    await this.store.update(projectId, resolved.proposal.proposalId, record => {
+      record.status = 'applied'
+      record.appliedAt = new Date().toISOString()
+      record.appliedVersion = appliedVersion
+    })
+  }
+
+  /** 解析提案：优先本次运行的待审内存提案，否则读取项目持久记录。 */
+  private async resolve(projectId: string, proposalId: string): Promise<ResolvedProposal> {
+    const memory = this.proposals.get(proposalId)
+    if (memory !== undefined) {
+      if (memory.projectId !== projectId) throw new FsError('提案不存在或不属于当前项目。', 'FS_NOT_FOUND')
+      return { proposal: memory, status: 'pending', persisted: memory.persisted }
+    }
+    const record = await this.store.read(projectId, proposalId)
+    if (record === null) throw new FsError('提案不存在或不属于当前项目。', 'FS_NOT_FOUND')
+    return { proposal: record.proposal, status: record.status, persisted: true }
+  }
+
+  /** 当前正文；不存在的 CONTEXT.md 视为空正文与 null 版本。 */
+  private async currentDocument(projectId: string, relativePath: string): Promise<{ relativePath: string; text: string; version: string | null }> {
+    if (relativePath === 'CONTEXT.md' && await this.files.statVersion(projectId, relativePath) === null) {
+      return { relativePath, text: '', version: null }
+    }
+    return this.files.read(projectId, relativePath, relativePath === 'CONTEXT.md')
+  }
+
+  /** 读取已应用提案的目标正文；CONTEXT.md 由文件层读取。 */
+  private async readDocument(projectId: string, relativePath: string): Promise<RequirementDocument> {
+    return this.files.read(projectId, relativePath, relativePath === 'CONTEXT.md')
+  }
+
+  /** 只保留仍被待审或已应用提案引用的快照。 */
+  private async cleanupSnapshots(projectId: string): Promise<void> {
+    const referenced = new Set<string>()
+    for (const record of await this.store.list(projectId)) {
+      if (record.status !== 'pending' && record.status !== 'applied') continue
+      for (const citation of record.proposal.citations) referenced.add(citation.snapshotId)
+    }
+    await this.snapshots.cleanup(projectId, referenced)
   }
 
   install(agent: Agent): void {
@@ -99,10 +295,33 @@ export class RequirementProposals {
       execute: async (args, exec) => { exec.signal.throwIfAborted(); if (exec.agent !== agent) throw new FsError('工具会话身份不匹配。', 'FS_SANDBOX_DENIED'); return this.read(agent, args.relativePath, exec.signal, args.offset, args.length) },
     })))
     this.ctx.effect(() => scope.tools.register(defineTool({
-      name: 'eadp_requirement_propose', description: '提出单文件整篇需求/项目背景修改；只生成待用户审阅的内存提案，不写文件。baseVersion必须来自本会话先前读取。',
-      parameters: { relativePath: { type: 'string', required: true }, baseVersion: { ...nullableVersion, required: true }, text: { type: 'string', required: true }, summary: { type: 'string', required: true } },
+      name: 'eadp_requirement_propose',
+      description: '提出单文件整篇需求/项目背景修改；只生成待用户审阅的提案，不写需求正文。baseVersion必须来自本会话先前读取。要把知识作为需求依据时，先在本次会话读取知识，再在 citations 中为每份资料给出本次实际读取的范围（Unicode 字符偏移）和非空的采用说明；范围必须来自本次读取，采用说明说明为什么把它作为需求依据。不关联知识时省略 citations。',
+      parameters: {
+        relativePath: { type: 'string', required: true },
+        baseVersion: { ...nullableVersion, required: true },
+        text: { type: 'string', required: true },
+        summary: { type: 'string', required: true },
+        citations: {
+          type: 'array',
+          description: '显式关联的知识采用项；省略表示本次提案不关联依据。',
+          items: {
+            type: 'object',
+            properties: {
+              evidenceId: { type: 'string', required: true, description: '本次会话读取知识时返回的标识。' },
+              ranges: {
+                type: 'array', required: true,
+                items: { type: 'object', properties: { start: { type: 'integer', required: true }, end: { type: 'integer', required: true } }, additionalProperties: false },
+                description: '本次实际读取到的 Unicode 字符范围。',
+              },
+              note: { type: 'string', required: true, description: '采用说明，非空且不超过 500 字。' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
       output: { schema: { type: 'object', properties: { proposalId: { type: 'string', required: true }, relativePath: { type: 'string', required: true }, summary: { type: 'string', required: true } }, additionalProperties: false }, render: (_args, value) => [{ type: 'text', text: `提案已生成，等待用户审阅：${value.summary}（${value.proposalId}）` }] },
-      execute: async (args, exec) => { exec.signal.throwIfAborted(); if (exec.agent !== agent) throw new FsError('工具会话身份不匹配。', 'FS_SANDBOX_DENIED'); return this.propose(agent, args.relativePath, args.baseVersion, args.text, args.summary, exec.signal) },
+      execute: async (args, exec) => { exec.signal.throwIfAborted(); if (exec.agent !== agent) throw new FsError('工具会话身份不匹配。', 'FS_SANDBOX_DENIED'); return this.propose(agent, args.relativePath, args.baseVersion, args.text, args.summary, args.citations, exec.signal) },
     })))
   }
   dispose(): void { this.proposals.clear() }

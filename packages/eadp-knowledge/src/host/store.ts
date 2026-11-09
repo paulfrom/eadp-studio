@@ -31,14 +31,13 @@ import type {
   KnowledgeDraft,
   KnowledgeDraftResource,
   KnowledgeErrorCode,
-  KnowledgeHit,
   KnowledgeIssue,
   KnowledgeOrganizeState,
   KnowledgePack,
   KnowledgePackId,
   KnowledgeRead,
   KnowledgeResourceRef,
-  KnowledgeSearchResult,
+  KnowledgeSourceMap,
   KnowledgeSourceSummary,
 } from '@eadp/contracts/knowledge'
 import { KNOWLEDGE_CATEGORIES, isKnowledgeCategory } from '@eadp/contracts/knowledge'
@@ -59,6 +58,9 @@ export const fail = (code: KnowledgeErrorCode, message: string): never => {
 
 /** 内容 hash：sha256 十六进制小写；字符串按 UTF-8 计。 */
 export const hash = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
+
+/** 空内容的 hash；没有图片或来源映射时用作内容身份的一部分。 */
+const EMPTY_HASH = hash(new Uint8Array())
 
 /** 来源映射中的一条定位；偏移按正文 Unicode code-point 计。 */
 export interface SourceMapEntry {
@@ -98,6 +100,44 @@ export interface NewDocumentInput {
   sourceMap: SourceMapFile | null
   warnings: string[]
   resources: KnowledgeDraftResource[]
+}
+
+/** 索引输入：一份资料的正文与内容身份。 */
+export interface IndexedDocument {
+  packId: KnowledgePackId
+  documentId: string
+  contentRevisionId: string
+  bodyHash: string
+  metadataHash: string
+  assetsHash: string
+  sourceMapHash: string
+  title: string
+  category: KnowledgeCategory
+  scope: string
+  tags: string[]
+  autoReference: boolean
+  sourceLabel: string
+  locations: string[]
+  warnings: string[]
+  text: string
+}
+
+/** 证据核验来源：完整 canonical 正文与项目可固定的来源资产。 */
+export interface KnowledgeEvidenceSource {
+  packId: KnowledgePackId
+  documentId: string
+  contentRevisionId: string
+  title: string
+  category: KnowledgeCategory
+  scope: string
+  tags: string[]
+  source: KnowledgeSourceSummary
+  warnings: string[]
+  locations: string[]
+  text: string
+  resources: KnowledgeResourceRef[]
+  sourceMap: KnowledgeSourceMap | null
+  sourceHash: string | null
 }
 
 interface ManifestDocument {
@@ -166,18 +206,6 @@ interface BuiltinLoad {
   problem: string | null
 }
 
-interface SearchableDocument {
-  packId: KnowledgePackId
-  documentId: string
-  contentRevisionId: string
-  title: string
-  category: KnowledgeCategory
-  tags: string[]
-  sourceLabel: string
-  locations: string[]
-  text: string
-}
-
 interface ContentWrite {
   path: string
   bytes: Uint8Array
@@ -232,10 +260,7 @@ const MAX_FILE_NAME_CHARS = 255
 const MAX_FILE_TYPE_CHARS = 100
 const MAX_LOCATIONS = 12
 const EXCERPT_CHARS = 160
-const SEARCH_CONTEXT_CHARS = 100
 const MAX_PAGE_CHARS = 16_000
-const MAX_SEARCH_QUERY_CHARS = 500
-const MAX_SEARCH_LIMIT = 20
 const MAX_ASSET_BASE64_CHARS = Math.ceil(MAX_ASSET_BYTES / 3) * 4 + 4
 const MANUAL_REVISION_WARNING = '正文已人工修订，不再显示原文件位置'
 const BUILTIN_LABEL = '产品内置整理内容'
@@ -342,62 +367,6 @@ const plainText = (markdown: string): string => {
 }
 
 const excerptOf = (text: string): string => Array.from(plainText(text)).slice(0, EXCERPT_CHARS).join('')
-
-/** 查找副本的规范化：逐 code-point 的 NFKC 与小写，保证命中位置能映射回正文。 */
-const normalizeSearch = (value: string): string =>
-  Array.from(value).map(character => character.normalize('NFKC').toLowerCase()).join('')
-
-const searchTerms = (query: string): string[] => {
-  const terms: string[] = []
-  for (const word of query.match(/[\p{L}\p{N}]+/gu) ?? []) if (!terms.includes(word)) terms.push(word)
-  for (const run of query.match(/\p{Script=Han}+/gu) ?? []) {
-    const characters = Array.from(run)
-    for (let index = 0; index + 1 < characters.length; index += 1) {
-      const bigram = (characters[index] ?? '') + (characters[index + 1] ?? '')
-      if (bigram !== '' && !terms.includes(bigram)) terms.push(bigram)
-    }
-  }
-  return terms
-}
-
-const scoreDocument = (query: string, terms: readonly string[], title: string, tags: string, body: string): number => {
-  let score = 0
-  if (title.includes(query)) score += 1000
-  if (tags.includes(query)) score += 200
-  if (body.includes(query)) score += 400
-  for (const term of terms) {
-    if (title.includes(term)) score += 30
-    if (tags.includes(term)) score += 20
-    if (body.includes(term)) score += 5
-  }
-  return score
-}
-
-const snippetMatch = (query: string, terms: readonly string[], body: string): { index: number; length: number } | null => {
-  if (body.includes(query)) return { index: body.indexOf(query), length: query.length }
-  let best: string | null = null
-  for (const term of terms) if (body.includes(term) && (best === null || term.length > best.length)) best = term
-  return best === null ? null : { index: body.indexOf(best), length: best.length }
-}
-
-/** 规范化副本中的命中范围换算回正文 code-point 下标。 */
-const normalizedRange = (text: string, start: number, length: number): { start: number; end: number } => {
-  const characters = Array.from(text)
-  let consumed = 0
-  let from = -1
-  let to = -1
-  for (let index = 0; index < characters.length; index += 1) {
-    if (from < 0 && consumed >= start) from = index
-    if (to < 0 && consumed >= start + length) {
-      to = index
-      break
-    }
-    consumed += normalizeSearch(characters[index] ?? '').length
-  }
-  if (from < 0) from = characters.length
-  if (to < 0) to = characters.length
-  return { start: from, end: to }
-}
 
 const decodeText = (bytes: Uint8Array): string => {
   try {
@@ -585,54 +554,6 @@ export class KnowledgeStore {
     }
   }
 
-  /** 按正文实际命中位置查找；返回真实片段而非正文开头。 */
-  async search(query: string, limit: number, pack: 'all' | KnowledgePackId): Promise<KnowledgeSearchResult> {
-    if (typeof query !== 'string' || query.length > MAX_SEARCH_QUERY_CHARS || !/[\p{L}\p{N}]/u.test(query))
-      return fail('INVALID_ARGUMENT', '请输入要查找的字词。')
-    const normalizedQuery = normalizeSearch(query.trim())
-    if (normalizedQuery === '') return fail('INVALID_ARGUMENT', '请输入要查找的字词。')
-    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_LIMIT) return fail('INVALID_ARGUMENT', '查找数量无效。')
-    if (pack !== 'all' && pack !== 'builtin' && pack !== 'user') return fail('INVALID_ARGUMENT', '查找范围无效。')
-    const terms = searchTerms(normalizedQuery)
-    const collection = await this.searchableDocuments(pack)
-    const scored: { score: number; document: SearchableDocument; normalizedBody: string }[] = []
-    for (const document of collection.documents) {
-      const normalizedBody = normalizeSearch(document.text)
-      const score = scoreDocument(
-        normalizedQuery,
-        terms,
-        normalizeSearch(document.title),
-        normalizeSearch(document.tags.join(' ')),
-        normalizedBody,
-      )
-      if (score > 0) scored.push({ score, document, normalizedBody })
-    }
-    scored.sort((left, right) =>
-      right.score - left.score
-      || (left.document.packId === right.document.packId ? 0 : left.document.packId === 'user' ? -1 : 1)
-      || left.document.documentId.localeCompare(right.document.documentId))
-    const hits: KnowledgeHit[] = []
-    for (const item of scored.slice(0, limit)) {
-      const document = item.document
-      const match = snippetMatch(normalizedQuery, terms, item.normalizedBody)
-      hits.push({
-        reference: {
-          packId: document.packId,
-          documentId: document.documentId,
-          contentRevisionId: document.contentRevisionId,
-        },
-        title: document.title,
-        category: document.category,
-        excerpt: match === null
-          ? excerptOf(document.text)
-          : this.snippetAround(document.text, match.index, match.length),
-        source: document.sourceLabel,
-        locations: document.locations,
-      })
-    }
-    return { hits, issues: collection.issues }
-  }
-
   /** 分页读取正文；从权威正文文件重读，偏移按 Unicode code-point 计。 */
   async readPage(packId: KnowledgePackId, documentId: string, expectedRevisionId: string | null, offset: number, length: number): Promise<KnowledgeRead> {
     if (packId !== 'builtin' && packId !== 'user') return fail('INVALID_ARGUMENT', '资料范围无效。')
@@ -648,6 +569,11 @@ export class KnowledgeStore {
         tags: [...document.tags],
         ...page,
         offset,
+        range: { start: offset, end: offset + page.length },
+        source: BUILTIN_LABEL,
+        locations: [],
+        warnings: [],
+        evidenceId: null,
       }
     }
     if (!isDocumentId(documentId)) return fail('INVALID_ARGUMENT', '资料编号无效。')
@@ -662,6 +588,209 @@ export class KnowledgeStore {
       tags: [...document.tags],
       ...page,
       offset,
+      range: { start: offset, end: offset + page.length },
+      source: document.source.label,
+      locations: await this.readSourceMapLabels(document),
+      warnings: [...document.warnings],
+      evidenceId: null,
+    }
+  }
+
+  /**
+   * 索引输入：全部可参与查找的资料正文与内容身份；供后台索引与查询核验使用。
+   * 读取失败的资料通过 `issues` 如实报告，不静默当作不存在。
+   */
+  async indexInputs(): Promise<{ documents: IndexedDocument[]; issues: KnowledgeIssue[] }> {
+    const documents: IndexedDocument[] = []
+    const issues: KnowledgeIssue[] = []
+    const builtin = await this.loadBuiltin()
+    if (builtin.problem !== null) {
+      this.diagnostic(`内置资料读取失败：${builtin.problem}`)
+      issues.push({ packId: 'builtin', code: 'UNAVAILABLE', message: '内置资料暂时无法读取。' })
+    }
+    const builtinPreferences = await this.readBuiltinPreferences()
+    for (const document of builtin.documents)
+      documents.push(this.indexInputOfBuiltin(document, builtinPreferences.get(document.id) ?? true))
+    try {
+      const loaded = await this.loadUserPack()
+      for (const document of loaded.manifest.documents) {
+        try {
+          documents.push(await this.indexInputOfUser(document))
+        } catch (error) {
+          this.diagnostic(`索引前读取资料失败：${document.documentId}：${this.errorText(error)}`)
+          issues.push({ packId: 'user', code: 'RESOURCE_INVALID', message: '部分资料内容不完整，暂不能参与查找。', documentId: document.documentId })
+        }
+      }
+    } catch (error) {
+      this.diagnostic(`我的知识清单读取失败：${this.errorText(error)}`)
+      issues.push({ packId: 'user', code: error instanceof KnowledgeError ? error.code : 'UNAVAILABLE', message: '我的知识暂时无法读取。' })
+    }
+    return { documents, issues }
+  }
+
+  /**
+   * 单份资料的索引输入；资料不存在或正文不可读时返回 null。
+   * 索引任务在发布前用它重新核验内容身份，避免迟到版本被发布。
+   */
+  async indexDocument(packId: KnowledgePackId, documentId: string): Promise<IndexedDocument | null> {
+    if (packId === 'builtin') {
+      if (typeof documentId !== 'string' || !BUILTIN_ID.test(documentId)) return null
+      const builtin = await this.loadBuiltin()
+      if (builtin.problem !== null) {
+        this.diagnostic(`索引前读取内置资料失败：${builtin.problem}`)
+        return null
+      }
+      const document = builtin.documents.find(candidate => candidate.id === documentId)
+      if (document === undefined) return null
+      const preferences = await this.readBuiltinPreferences()
+      return this.indexInputOfBuiltin(document, preferences.get(documentId) ?? true)
+    }
+    if (packId !== 'user' || !isDocumentId(documentId)) return null
+    let loaded: LoadedUserPack
+    try {
+      loaded = await this.loadUserPack()
+    } catch (error) {
+      this.diagnostic(`索引前读取资料清单失败：${this.errorText(error)}`)
+      return null
+    }
+    const document = loaded.manifest.documents.find(candidate => candidate.documentId === documentId)
+    if (document === undefined) return null
+    try {
+      return await this.indexInputOfUser(document)
+    } catch (error) {
+      this.diagnostic(`索引前读取资料失败：${documentId}：${this.errorText(error)}`)
+      return null
+    }
+  }
+
+  /** 只读清单的当前内容身份；资料不存在或清单不可读时返回 null。 */
+  async currentRevision(packId: KnowledgePackId, documentId: string): Promise<string | null> {
+    try {
+      if (packId === 'builtin') {
+        if (typeof documentId !== 'string' || !BUILTIN_ID.test(documentId)) return null
+        const builtin = await this.loadBuiltin()
+        if (builtin.problem !== null) return null
+        return builtin.documents.find(candidate => candidate.id === documentId)?.contentRevisionId ?? null
+      }
+      if (packId !== 'user' || !isDocumentId(documentId)) return null
+      const loaded = await this.loadUserPack()
+      return loaded.manifest.documents.find(candidate => candidate.documentId === documentId)?.contentRevisionId ?? null
+    } catch (error) {
+      this.diagnostic(`读取资料版本失败：${documentId}：${this.errorText(error)}`)
+      return null
+    }
+  }
+
+  private indexInputOfBuiltin(document: BuiltinDocument, autoReference: boolean): IndexedDocument {
+    return {
+      packId: 'builtin',
+      documentId: document.id,
+      contentRevisionId: document.contentRevisionId,
+      bodyHash: document.bodyHash,
+      metadataHash: document.metadataHash,
+      assetsHash: EMPTY_HASH,
+      sourceMapHash: EMPTY_HASH,
+      title: document.title,
+      category: document.category,
+      scope: document.scope,
+      tags: [...document.tags],
+      autoReference,
+      sourceLabel: BUILTIN_LABEL,
+      locations: [],
+      warnings: [],
+      text: document.text,
+    }
+  }
+
+  private async indexInputOfUser(document: ManifestDocument): Promise<IndexedDocument> {
+    const text = await this.readBody(document)
+    return {
+      packId: 'user',
+      documentId: document.documentId,
+      contentRevisionId: document.contentRevisionId,
+      bodyHash: document.bodyHash,
+      metadataHash: document.metadataHash,
+      assetsHash: document.assetsHash,
+      sourceMapHash: document.sourceMapHash,
+      title: document.title,
+      category: document.category,
+      scope: document.scope,
+      tags: [...document.tags],
+      autoReference: document.autoReference,
+      sourceLabel: this.sourceSummary(document.source).label,
+      locations: await this.readSourceMapLabels(document),
+      warnings: [...document.warnings],
+      text,
+    }
+  }
+
+  /** 按 manifest 计算查找准入集合；`${packId}:${documentId}`。 */
+  async admittedDocumentKeys(admission: 'auto-reference' | 'all'): Promise<Set<string>> {
+    const keys = new Set<string>()
+    const builtin = await this.loadBuiltin()
+    const builtinPreferences = await this.readBuiltinPreferences()
+    for (const document of builtin.documents) {
+      if (admission === 'auto-reference' && !(builtinPreferences.get(document.id) ?? true)) continue
+      keys.add(`builtin:${document.id}`)
+    }
+    try {
+      const loaded = await this.loadUserPack()
+      for (const document of loaded.manifest.documents) {
+        if (admission === 'auto-reference' && !document.autoReference) continue
+        keys.add(`user:${document.documentId}`)
+      }
+    } catch (error) {
+      this.diagnostic(`查找准入计算失败：${this.errorText(error)}`)
+    }
+    return keys
+  }
+
+  /**
+   * 证据核验来源：完整 canonical 正文与可固定到项目的来源资产。
+   * 只读取，不签发证据；证据由知识插件按会话登记。
+   */
+  async evidenceSource(packId: KnowledgePackId, documentId: string, expectedRevisionId: string): Promise<KnowledgeEvidenceSource> {
+    if (packId !== 'builtin' && packId !== 'user') return fail('INVALID_ARGUMENT', '资料范围无效。')
+    if (packId === 'builtin') {
+      if (typeof documentId !== 'string' || !BUILTIN_ID.test(documentId)) return fail('INVALID_ARGUMENT', '资料编号无效。')
+      const document = this.requireBuiltinDocument(await this.loadBuiltin(), documentId)
+      this.assertRevision(document.contentRevisionId, expectedRevisionId)
+      return {
+        packId: 'builtin',
+        documentId: document.id,
+        contentRevisionId: document.contentRevisionId,
+        title: document.title,
+        category: document.category,
+        scope: document.scope,
+        tags: [...document.tags],
+        source: { kind: 'builtin', label: BUILTIN_LABEL, detail: document.detail, hasOriginal: false },
+        warnings: [],
+        locations: [],
+        text: document.text,
+        resources: [],
+        sourceMap: null,
+        sourceHash: null,
+      }
+    }
+    if (!isDocumentId(documentId)) return fail('INVALID_ARGUMENT', '资料编号无效。')
+    const document = this.requireDocument((await this.loadUserPack()).manifest, documentId)
+    this.assertRevision(document.contentRevisionId, expectedRevisionId)
+    const text = await this.readBody(document)
+    return {
+      packId: 'user',
+      documentId: document.documentId,
+      contentRevisionId: document.contentRevisionId,
+      title: document.title,
+      category: document.category,
+      scope: document.scope,
+      tags: [...document.tags],
+      source: this.sourceSummary(document.source),
+      warnings: [...document.warnings],
+      locations: await this.readSourceMapLabels(document),
+      text,
+      resources: document.resources.map(resource => ({ path: resource.path, fileName: resource.fileName })),
+      sourceMap: await this.readSourceMap(document),
+      sourceHash: document.source.kind === 'imported' && document.source.sourceHash !== undefined && this.hasSource(document.source.sourceHash) ? document.source.sourceHash : null,
     }
   }
 
@@ -1281,17 +1410,22 @@ export class KnowledgeStore {
   }
 
   private async readSourceMapLabels(document: ManifestDocument): Promise<string[]> {
-    if (document.sourceMapPath === null) return []
+    const map = await this.readSourceMap(document)
+    return map === null ? [] : locationsOf(map)
+  }
+
+  private async readSourceMap(document: ManifestDocument): Promise<SourceMapFile | null> {
+    if (document.sourceMapPath === null) return null
     try {
       const bytes = await this.readUserFile(document.sourceMapPath, MAX_SOURCE_MAP_BYTES)
       if (hash(bytes) !== document.sourceMapHash) {
         this.diagnostic(`来源位置文件与记录不符：${document.documentId}`)
-        return []
+        return null
       }
-      return locationsOf(this.validateSourceMap(JSON.parse(decodeText(bytes))))
+      return this.validateSourceMap(JSON.parse(decodeText(bytes)))
     } catch (error) {
       this.diagnostic(`读取来源位置失败：${document.documentId}：${this.errorText(error)}`)
-      return []
+      return null
     }
   }
 
@@ -1363,74 +1497,6 @@ export class KnowledgeStore {
       truncated: end < characters.length,
       nextOffset: end < characters.length ? end : null,
     }
-  }
-
-  private snippetAround(text: string, index: number, length: number): string {
-    const range = normalizedRange(text, index, length)
-    const characters = Array.from(text)
-    const start = Math.max(0, range.start - SEARCH_CONTEXT_CHARS)
-    const end = Math.min(characters.length, range.end + SEARCH_CONTEXT_CHARS)
-    const fragment = plainText(characters.slice(start, end).join(''))
-    return `${start > 0 ? '…' : ''}${fragment}${end < characters.length ? '…' : ''}`
-  }
-
-  private async searchableDocuments(pack: 'all' | KnowledgePackId): Promise<{ documents: SearchableDocument[]; issues: KnowledgeIssue[] }> {
-    const documents: SearchableDocument[] = []
-    const issues: KnowledgeIssue[] = []
-    if (pack === 'all' || pack === 'builtin') {
-      const builtin = await this.loadBuiltin()
-      if (builtin.problem !== null) {
-        this.diagnostic(`内置资料读取失败：${builtin.problem}`)
-        issues.push({ packId: 'builtin', code: 'UNAVAILABLE', message: '内置资料暂时无法读取。' })
-      }
-      for (const document of builtin.documents) {
-        documents.push({
-          packId: 'builtin',
-          documentId: document.id,
-          contentRevisionId: document.contentRevisionId,
-          title: document.title,
-          category: document.category,
-          tags: document.tags,
-          sourceLabel: BUILTIN_LABEL,
-          locations: [],
-          text: document.text,
-        })
-      }
-    }
-    if (pack === 'all' || pack === 'user') {
-      try {
-        const loaded = await this.loadUserPack()
-        for (const document of loaded.manifest.documents) {
-          try {
-            const text = await this.readBody(document)
-            const locations = await this.readSourceMapLabels(document)
-            documents.push({
-              packId: 'user',
-              documentId: document.documentId,
-              contentRevisionId: document.contentRevisionId,
-              title: document.title,
-              category: document.category,
-              tags: document.tags,
-              sourceLabel: document.source.label,
-              locations,
-              text,
-            })
-          } catch (error) {
-            this.diagnostic(`查找时读取资料失败：${document.documentId}：${this.errorText(error)}`)
-            issues.push({
-              packId: 'user',
-              code: 'RESOURCE_INVALID',
-              message: '部分资料内容不完整，暂不能参与查找。',
-              documentId: document.documentId,
-            })
-          }
-        }
-      } catch (error) {
-        this.diagnostic(`我的知识清单读取失败：${this.errorText(error)}`)
-        issues.push({ packId: 'user', code: error instanceof KnowledgeError ? error.code : 'UNAVAILABLE', message: '我的知识暂时无法读取。' })
-      }
-    }
-    return { documents, issues }
   }
 
   // ---------- 内置包 ----------

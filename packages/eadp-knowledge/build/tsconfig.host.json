@@ -28,6 +28,12 @@
     },
     {
       "path": "../../util/home-paths"
+    },
+    {
+      "path": "../../session/session-projection"
+    },
+    {
+      "path": "../eadp-shell/tsconfig.host.json"
     }
   ]
 }

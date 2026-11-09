@@ -5,6 +5,7 @@ import { Button, Dialog, EmptyState, Field, IconFile, Input, Notice, Surface } f
 import { DraftBuffer } from './DraftBuffer.ts'
 import { MaterialTree } from './material/tree.tsx'
 import { MaterialEditor } from './material/material-editor.tsx'
+import { RequirementKnowledge } from './knowledge.tsx'
 import { RequirementProposals } from './proposals.tsx'
 import type { FlushResult, RequirementsClientService } from './service.ts'
 import type { RequirementsApi } from './api.ts'
@@ -40,7 +41,7 @@ function requirementInput(raw: string, options: { directory?: boolean; base?: st
 }
 
 /** File navigation changes only after the editor has acknowledged all current input. */
-export function RequirementsPanel({ projectId, api, editors, setActiveDocument, t }: RequirementsProps) {
+export function RequirementsPanel({ projectId, sessionId, api, editors, setActiveDocument, t }: RequirementsProps) {
   const [entries, setEntries] = useState<RequirementEntry[]>([])
   const [selection, setSelection] = useState<Selection>()
   const selected = selection?.projectId === projectId ? selection : undefined
@@ -53,6 +54,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
   const [error, setError] = useState('')
   const [form, setForm] = useState<FormState>()
   const [pathInput, setPathInput] = useState('')
+  const [knowledgeEpoch, setKnowledgeEpoch] = useState(0)
   const epoch = useRef(0)
   const currentProject = useRef(projectId)
   currentProject.current = projectId
@@ -266,7 +268,10 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
       if (!buffer) {
         /* The target has no in-memory buffer: the Host applies atomically against the proposal's base version. */
         await api.applyProposal(projectId, proposal.proposalId, proposal.baseVersion)
-        if (isCurrent(current)) await refresh(current)
+        if (isCurrent(current)) {
+          await refresh(current)
+          setKnowledgeEpoch(value => value + 1)
+        }
         return
       }
       const input = await buffer.prepareWrite()
@@ -276,6 +281,7 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
       if (!buffer.matchesPrepared(input) || editors.hasUnsavedExcept(projectId, buffer)) throw new Error(t('prepareFailed'))
       const accepted = await api.applyProposal(projectId, proposal.proposalId, input.version)
       buffer.acknowledgeWrite(accepted, input)
+      if (isCurrent(current)) setKnowledgeEpoch(value => value + 1)
     } finally {
       if (prepared) buffer?.finishWrite()
       if (isCurrent(current)) setApplying(false)
@@ -311,6 +317,14 @@ export function RequirementsPanel({ projectId, api, editors, setActiveDocument, 
         t={t} />
       <section className={css.documentArea} aria-label={t('title')}>
         {error ? <div className={css.panelError}><Notice tone="danger" title={t('operationFailed')}>{error}</Notice></div> : null}
+        <RequirementKnowledge
+          projectId={projectId}
+          sessionId={sessionId}
+          relativePath={selected?.path ?? null}
+          api={api}
+          disabled={unavailable}
+          refreshKey={knowledgeEpoch}
+          t={t} />
         {selected
           ? <MaterialEditor
             projectId={projectId}

@@ -19,6 +19,12 @@ export function requirementsApi(ctx: Context) {
     applyProposal: async (projectId: string, id: string, version: string | null) => unwrapRemoteResult(await remote.applyProposal(projectId, id, version)),
     discardProposal: async (projectId: string, id: string) => unwrapRemoteResult(await remote.discardProposal(projectId, id)),
     statVersion: async (projectId: string, path: string) => unwrapRemoteResult(await remote.statVersion(projectId, path)),
+    /** 已应用需求依据的回读；资料更新或删除后仍返回当时内容。 */
+    knowledgeBasis: async (projectId: string, path: string) => unwrapRemoteResult(await remote.knowledgeBasis(projectId, path)),
+    knowledgeAutoReference: async (sessionId: string) => unwrapRemoteResult(await remote.knowledgeAutoReference(sessionId)),
+    setKnowledgeAutoReference: async (sessionId: string, enabled: boolean): Promise<void> => {
+      unwrapRemoteResult(await remote.setKnowledgeAutoReference(sessionId, enabled))
+    },
   }
 }
 export type RequirementsApi = ReturnType<typeof requirementsApi>

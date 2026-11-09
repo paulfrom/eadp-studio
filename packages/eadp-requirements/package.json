@@ -51,6 +51,7 @@
   ],
   "dependencies": {
     "@eadp/contracts": "workspace:*",
+    "@eadp/knowledge": "workspace:*",
     "@eadp/shell": "workspace:*"
   },
   "devDependencies": {

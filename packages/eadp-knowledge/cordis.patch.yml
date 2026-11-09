@@ -1,7 +1,8 @@
-# Host services: typert, agents, tools, llm, agentDefaultModel.
+# Host services: typert, agents, tools, llm, agentDefaultModel, sessionProjections,
+# eadpProjectContext (Shell 提供的只读当前项目与需求).
 # Client services: slots, locale, remote.
 # Target slot: eadp.knowledge.view (single, root), declared by eadp-shell.
 - insert:
     - id: eadp-knowledge
       name: '@eadp/knowledge'
-      inject: [typert, agents, tools, llm, agentDefaultModel]
+      inject: [typert, agents, tools, llm, agentDefaultModel, sessionProjections, eadpProjectContext]

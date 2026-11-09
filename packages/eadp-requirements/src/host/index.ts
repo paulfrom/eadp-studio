@@ -3,27 +3,39 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { FileErrorCode, RequirementDocument, RequirementEntry, ContextDocument } from '@eadp/contracts/files'
+import type { RequirementKnowledgeBasis, RequirementProposal } from '@eadp/contracts/requirements'
 import { failureMessage, isRemoteCancellation, mapFailureCode } from '@eadp/contracts'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
-import type { RequirementProposal } from '@eadp/contracts/requirements'
+import { FsError } from '@deepseek-ai/dsh-fs'
+import type {} from '@eadp/knowledge'
 import { RequirementProposals } from './proposals.ts'
 import { RequirementFiles } from './files.ts'
+import { ProposalStore } from './proposal-store.ts'
+import { KnowledgeSnapshots } from './snapshot.ts'
+import { RequirementKnowledgeBasis as KnowledgeBasisReader } from './knowledge-basis.ts'
 
 export const name = 'eadp-requirements'
-export const inject = ['typert', 'workspaceRegistry', 'fs', 'agents', 'tools']
+export const inject = ['typert', 'workspaceRegistry', 'fs', 'agents', 'tools', 'eadpKnowledgeReference']
 
 /** Trusted user editing API; none of these methods is registered as an Agent tool. */
 export class RequirementsService extends TypertRemoteService {
   private readonly files: RequirementFiles
   private readonly proposals: RequirementProposals
+  private readonly basis: KnowledgeBasisReader
   constructor(ctx: Context) {
     super(ctx, 'eadpRequirements', { namespace: 'eadpRequirements' })
+    const diagnostic = (message: string) => ctx.logger.warn(message)
     this.files = new RequirementFiles(ctx)
-    this.proposals = new RequirementProposals(ctx, this.files)
+    const store = new ProposalStore(this.files, diagnostic)
+    const snapshots = new KnowledgeSnapshots(this.files, diagnostic)
+    this.proposals = new RequirementProposals(ctx, this.files, store, snapshots, diagnostic)
+    this.basis = new KnowledgeBasisReader(ctx, this.files, store, snapshots)
     ctx.on('agent/created', ({ agent }) => { this.proposals.install(agent) })
     for (const agent of ctx.agents.list()) this.proposals.install(agent)
     ctx.effect(() => () => this.proposals.dispose())
+    // 启动核对只清理无任何提案引用的当时内容；失败只写诊断，不阻断界面。
+    void this.proposals.reconcile().catch(error => ctx.logger.error(`需求依据启动核对失败：${String(error)}`))
   }
 
   @Remote
@@ -90,7 +102,28 @@ export class RequirementsService extends TypertRemoteService {
 
   @Remote
   async discardProposal(projectId: string, proposalId: string): Promise<void> {
-    await this.run(async () => { await this.files.root(projectId); this.proposals.discard(projectId, proposalId) })
+    await this.run(() => this.proposals.discard(projectId, proposalId))
+  }
+
+  /** 已应用需求依据的回读：资料更新或删除后仍返回当时内容。 */
+  @Remote
+  async knowledgeBasis(projectId: string, relativePath: string): Promise<RequirementKnowledgeBasis> {
+    return this.run(() => this.basis.read(projectId, relativePath))
+  }
+
+  /** 需求会话的「自动参考知识」偏好；委托知识服务持久化，默认开启。 */
+  @Remote
+  async knowledgeAutoReference(sessionId: string): Promise<boolean> {
+    return this.run(() => { this.checkSession(sessionId); return this.ctx.eadpKnowledgeReference.autoReferenceFor(sessionId) })
+  }
+
+  @Remote
+  async setKnowledgeAutoReference(sessionId: string, enabled: boolean): Promise<void> {
+    await this.run(() => { this.checkSession(sessionId); return this.ctx.eadpKnowledgeReference.setAutoReferenceFor(sessionId, enabled) })
+  }
+
+  private checkSession(sessionId: string): void {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > 200) throw new FsError('需求会话标识无效。', 'FS_NOT_TEXT')
   }
 
   /** Keep filesystem failures machine-readable across the official Remote transport. */
@@ -102,6 +135,7 @@ export class RequirementsService extends TypertRemoteService {
         FS_STALE_VERSION: 'STALE_VERSION', FS_SANDBOX_DENIED: 'OUTSIDE_PROJECT', FS_PERMISSION_DENIED: 'PERMISSION_DENIED',
         EACCES: 'PERMISSION_DENIED', EPERM: 'PERMISSION_DENIED', FS_TOO_LARGE: 'TOO_LARGE', FS_NOT_TEXT: 'NOT_TEXT',
         FS_NOT_DIRECTORY: 'INVALID_PATH', FS_NOT_REGULAR_FILE: 'INVALID_PATH', ENOTDIR: 'INVALID_PATH', EINVAL: 'INVALID_PATH',
+        EVIDENCE_INVALID: 'EVIDENCE_INVALID', SNAPSHOT_FAILED: 'SNAPSHOT_FAILED',
       }
       throw new RemoteError('eadp/file', failureMessage(error, '文件操作失败。'), { code: mapFailureCode(error, codes, 'IO_ERROR') })
     }
