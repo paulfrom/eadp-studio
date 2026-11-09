@@ -26,6 +26,10 @@ export function ShellPanel(props: PanelProps) {
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const [projectId, setProjectId] = useState<string>()
   const project = snapshot.items.find(item => item.workspaceId === projectId)
+  /* The knowledge view acts on the requirement the user is editing, owned by the Shell. */
+  const activeDocuments = props.activeDocuments
+  const subscribeActive = useMemo(() => (listener: () => void) => activeDocuments.subscribe(listener), [activeDocuments])
+  const requirementPath = useSyncExternalStore(subscribeActive, () => projectId === undefined ? null : activeDocuments.get(projectId))
   const [tab, setTab] = useState<Tab>('requirements')
   const [chat, setChat] = useState(true)
   const [sessionId, setSessionId] = useState<string>()
@@ -49,6 +53,8 @@ export function ShellPanel(props: PanelProps) {
   const select = async (item?: WorkspaceView) => {
     await flush(projectId)
     if (item) await props.checkDirectory(item.path)
+    /* A requirement path belongs to the project that opened it; never carry it across projects. */
+    if (projectId !== undefined && projectId !== item?.workspaceId) activeDocuments.forget(projectId)
     epoch.current += 1
     setProjectId(item?.workspaceId); setSessionId(undefined)
   }
@@ -82,6 +88,7 @@ export function ShellPanel(props: PanelProps) {
     await props.stopProject(item.workspaceId)
     await props.assertRemovable(item.workspaceId)
     await props.workspaces.delete(item.workspaceId)
+    activeDocuments.forget(item.workspaceId)
     if (projectId === item.workspaceId) await select()
   }
   const relocate = async (item: WorkspaceView) => {
@@ -153,7 +160,7 @@ export function ShellPanel(props: PanelProps) {
         <main className={css.content}>
           {tab === 'requirements' && props.renderSlot(EADP_SLOTS.requirements, { projectId: project.workspaceId, active: true, sessionId: sessionId ?? null }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
           {tab === 'prototype' && props.renderSlot(EADP_SLOTS.prototype, { projectId: project.workspaceId, active: true }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
-          {tab === 'knowledge' && props.renderSlot(EADP_SLOTS.knowledge, { active: true }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
+          {tab === 'knowledge' && props.renderSlot(EADP_SLOTS.knowledge, { active: true, projectId: project.workspaceId, sessionId: sessionId ?? null, requirementPath }, { fallback: <div className={css.fallback}><EmptyState title={t('unavailable')} /></div> })}
         </main>
         {chat && <aside className={css.chat} aria-label={t('chat')}>
           <div className={css.chatHeader}>

@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ProjectContext } from '@eadp/contracts'
+import type {} from '@eadp/shell'
 import type {
+  KnowledgeBasisAcquisition,
   KnowledgeCategory,
   KnowledgeEvidenceRange,
   KnowledgeEvidenceResolution,
@@ -11,10 +14,12 @@ import type {
   KnowledgeResourceRef,
   KnowledgeSourceMap,
   KnowledgeSourceSummary,
+  KnowledgeTurnReferenceView,
 } from '@eadp/contracts/knowledge'
 import { KnowledgeError, fail, hash } from './store.ts'
 import type { KnowledgeEvidenceSource, KnowledgeStore } from './store.ts'
 import type { SessionPreferences } from './preferences.ts'
+import type { TurnReferences } from './turn-references.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -59,6 +64,7 @@ interface EvidenceRecord extends EvidenceContent {
 
 const MAX_ITEMS = 8
 const MAX_RANGES = 32
+const MAX_SESSION_ID = 200
 const EVIDENCE_TTL_MS = 12 * 60 * 60 * 1000
 /** 片段单侧保留的上下文长度；不足以承担整篇正文。 */
 export const EXCERPT_CONTEXT_CHARS = 120
@@ -207,7 +213,12 @@ export function evidenceContent(
 export class KnowledgeReference extends Service implements KnowledgeReferenceService {
   private readonly records = new Map<string, EvidenceRecord>()
 
-  constructor(ctx: Context, private readonly store: KnowledgeStore, private readonly preferences: SessionPreferences) {
+  constructor(
+    ctx: Context,
+    private readonly store: KnowledgeStore,
+    private readonly preferences: SessionPreferences,
+    private readonly turns: TurnReferences,
+  ) {
     super(ctx, 'eadpKnowledgeReference')
   }
 
@@ -225,6 +236,72 @@ export class KnowledgeReference extends Service implements KnowledgeReferenceSer
 
   setAutoReferenceFor(sessionId: string, enabled: boolean): Promise<void> {
     return this.preferences.setAutoReference(sessionId, enabled)
+  }
+
+  /**
+   * 最近一轮自动参考的实际注入结果；会话所属项目与调用方项目不一致或没有记录时为空。
+   * 项目身份取自 Shell 的项目上下文，不信任调用方传入的归属。
+   */
+  async lastTurnReferences(input: { sessionId: string; projectId: string }): Promise<KnowledgeTurnReferenceView | null> {
+    const project = await this.projectOf(input.sessionId)
+    if (project === null || project.projectId !== input.projectId) return null
+    const view = this.turns.last(input.sessionId)
+    if (view === null || view.projectId !== project.projectId) return null
+    return view
+  }
+
+  /**
+   * 为资料页选定的已保存版本与真实范围重新读取 canonical 正文并签发证据。
+   * 版本已更新、资料不可读或范围越界时失败，调用方必须重新选择。
+   */
+  async acquireBasis(input: {
+    sessionId: string
+    projectId: string
+    packId: KnowledgePackId
+    documentId: string
+    contentRevisionId: string
+    ranges: KnowledgeRange[]
+  }): Promise<KnowledgeBasisAcquisition> {
+    const project = await this.projectOf(input.sessionId)
+    if (project === null) throw new KnowledgeError('EVIDENCE_INVALID', '当前会话与项目不匹配，无法把该内容作为需求依据。')
+    const projectId = project.projectId
+    if (projectId !== input.projectId) fail('EVIDENCE_INVALID', '当前会话与项目不匹配，无法把该内容作为需求依据。')
+    if (input.packId !== 'builtin' && input.packId !== 'user') fail('INVALID_ARGUMENT', '资料范围无效。')
+    if (typeof input.documentId !== 'string' || input.documentId === '' || input.documentId.includes('\0')) fail('INVALID_ARGUMENT', '资料编号无效。')
+    if (typeof input.contentRevisionId !== 'string' || input.contentRevisionId === '') fail('INVALID_ARGUMENT', '资料版本无效，请重新选择。')
+    if (!Array.isArray(input.ranges) || input.ranges.length === 0 || input.ranges.length > MAX_RANGES) fail('INVALID_ARGUMENT', '请选择要作为依据的内容范围。')
+    const current = await this.currentContentRevision(input.packId, input.documentId)
+    if (current === null) fail('EVIDENCE_INVALID', '该资料已删除或暂时不可读，请重新选择。')
+    if (current !== input.contentRevisionId) fail('EVIDENCE_INVALID', '该资料已更新，请重新选择。')
+    let source: KnowledgeEvidenceSource
+    try {
+      source = await this.store.evidenceSource(input.packId, input.documentId, input.contentRevisionId)
+    } catch (error) {
+      // 版本核对与正文读取之间资料被更新或删除时，同样要求重新选择。
+      if (error instanceof KnowledgeError) fail('EVIDENCE_INVALID', '该资料已更新，请重新选择。')
+      throw error
+    }
+    const characters = Array.from(source.text)
+    for (const range of input.ranges) {
+      if (typeof range !== 'object' || range === null) fail('INVALID_ARGUMENT', '采用范围无效。')
+      if (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end <= range.start || range.end > characters.length) {
+        fail('EVIDENCE_INVALID', '采用范围超出资料内容，请重新选择。')
+      }
+    }
+    const ranges = verifyRanges(input.ranges, characters)
+    if (ranges.length === 0) fail('EVIDENCE_INVALID', '采用范围超出资料内容，请重新选择。')
+    return { evidenceId: this.issue(evidenceContent(source, input.sessionId, projectId, ranges)), ranges }
+  }
+
+  /** 当前会话绑定的项目；会话无效或项目不可解析时为空。 */
+  private async projectOf(sessionId: string): Promise<ProjectContext | null> {
+    if (typeof sessionId !== 'string' || sessionId.trim() === '' || sessionId.length > MAX_SESSION_ID) return null
+    try {
+      return await this.ctx.eadpProjectContext.forSession(sessionId)
+    } catch (error) {
+      this.ctx.logger.warn(`知识参考无法解析当前项目：${String(error)}`)
+      return null
+    }
   }
 
   /** 当前 canonical 内容身份；资料不存在、已删除或暂时不可读时为空，不向调用方抛错。 */

@@ -14,7 +14,16 @@ import type { IndexedDocument } from '../store.ts'
 import type { BuiltChunk } from './build.ts'
 import { buildChunks } from './build.ts'
 import { documentKey, tagsHashOf } from './identity.ts'
-import type { DocumentState, JobIdentity, JobState, OpenResult, SearchQuery, SearchResult } from './protocol.ts'
+import type {
+  DocumentState,
+  JobIdentity,
+  JobState,
+  OpenResult,
+  QueryRanking,
+  SearchGroup,
+  SearchQuery,
+  SearchResult,
+} from './protocol.ts'
 import type { KnowledgeCandidate } from './search.ts'
 import { matchExpression, normalize, queryTerms, tokenizeText } from './tokenizer.ts'
 
@@ -24,6 +33,8 @@ const SCHEMA_VERSION = '1'
 const RRF_K = 60
 const CHANNEL_DEPTH = 24
 const CHANNEL_FETCH = CHANNEL_DEPTH * 5
+/** 单查询排名深度下限：分组融合需要足够深的查询排名，不能只按最终返回条数截断。 */
+const QUERY_DEPTH_MIN = CHANNEL_DEPTH
 /** 精确通道每个词项的取数上限。 */
 const EXACT_FETCH = 120
 /** 暂存的构建结果保留数量；主线程按顺序发布，保留少量便于失败恢复。 */
@@ -201,6 +212,11 @@ export class IndexDatabase {
   private readonly db: DatabaseSync
   private readonly statements = new Map<string, Statement>()
   private readonly staged = new Map<string, StagedBuild>()
+  /**
+   * 发布围栏：进程内单调递增。发布、刷新或删除提交后变化，查询响应带回当前值；
+   * 扩展查询携带基础查询的围栏，围栏变化时不在新旧代次之间拼接候选。
+   */
+  private fence = 0
 
   constructor(path: string, private readonly processingSignature: string) {
     mkdirSync(dirname(path), { recursive: true })
@@ -226,9 +242,9 @@ export class IndexDatabase {
     this.db.close()
   }
 
-  /** 打开结果：已发布资料状态与未完成任务，供 Host 启动核对。 */
+  /** 打开结果：已发布资料状态、未完成任务与当前发布围栏，供 Host 启动核对。 */
   openResult(): OpenResult {
-    return { documents: this.documentStates(), jobs: this.unfinishedJobs() }
+    return { documents: this.documentStates(), jobs: this.unfinishedJobs(), fence: this.fence }
   }
 
   /** 单份资料的已发布状态；不存在时为 null。 */
@@ -332,6 +348,7 @@ export class IndexDatabase {
       if (existing !== null) this.deleteGeneration(existing.generationId)
       this.recordJob(job, document.packId, document.documentId, 'done', null)
     })
+    this.fence += 1
   }
 
   /**
@@ -356,6 +373,7 @@ export class IndexDatabase {
       ).run(ftsColumnText(document.title), ftsColumnText(document.tags.join(' ')), state.generationId)
       this.recordJob(job, document.packId, document.documentId, 'done', null)
     })
+    this.fence += 1
   }
 
   /** 资料删除：清理代次、片段、FTS 与任务；资料指针先移除，避免查询看到残留。 */
@@ -375,6 +393,7 @@ export class IndexDatabase {
     for (const [buildId, staged] of this.staged) {
       if (staged.document.packId === packId && staged.document.documentId === documentId) this.staged.delete(buildId)
     }
+    this.fence += 1
   }
 
   /** 记录失败任务；错误只保留文本，便于下次启动核对。 */
@@ -383,39 +402,54 @@ export class IndexDatabase {
   }
 
   /**
-   * 查询：词项（words／Han bigram 两个 FTS 列表）与精确通道分别取候选，按 RRF 融合。
-   * 全部在短读事务内完成；返回的候选都来自已发布的当前代次。
+   * 查询：按请求中的查询组逐条计算词项／精确通道融合排名，并返回当前发布围栏。
+   * 全部查询在同一个短读事务内完成，因此同一次请求内的排名来自同一索引代次；
+   * 期望围栏不一致时不执行查询，避免在发布变化后拼接新旧代次。
    */
   search(query: SearchQuery): SearchResult {
+    if (query.expectedFence !== null && query.expectedFence !== this.fence) {
+      return { groups: [], fence: this.fence, changed: true }
+    }
     const admitted = new Set(query.admittedKeys)
-    if (admitted.size === 0) return { candidates: [] }
-    const scores = new Map<number, { score: number; channels: Set<'词项' | '精确'>; row: SqlRow }>()
+    const groups: SearchGroup[] = []
+    if (admitted.size === 0) {
+      for (const group of query.groups)
+        groups.push({ key: group.key, queries: group.queries.map(value => ({ query: value, candidates: [] })) })
+      return { groups, fence: this.fence, changed: false }
+    }
+    const depth = Math.max(query.limit, QUERY_DEPTH_MIN)
     this.read(() => {
-      for (const value of query.queries) {
-        const terms = queryTerms(value)
-        const lists: { channel: '词项' | '精确'; rows: SqlRow[] }[] = []
-        const wordExpression = matchExpression(terms.words)
-        if (wordExpression !== null) lists.push({ channel: '词项', rows: this.ftsRows(wordExpression, query, admitted) })
-        const bigramExpression = matchExpression(terms.bigrams)
-        if (bigramExpression !== null) lists.push({ channel: '词项', rows: this.ftsRows(bigramExpression, query, admitted) })
-        if (terms.exacts.length > 0) lists.push({ channel: '精确', rows: this.exactRows(terms.exacts, query, admitted) })
-        for (const list of lists) {
-          list.rows.forEach((row, index) => {
-            const chunkId = number(row['chunk_id'])
-            const entry = scores.get(chunkId) ?? { score: 0, channels: new Set<'词项' | '精确'>(), row }
-            entry.score += 1 / (RRF_K + index + 1)
-            entry.channels.add(list.channel)
-            scores.set(chunkId, entry)
-          })
-        }
+      for (const group of query.groups) {
+        groups.push({ key: group.key, queries: group.queries.map(value => this.rankQuery(value, query, admitted, depth)) })
       }
     })
-    const ranked = [...scores.values()].sort(
-      (left, right) => right.score - left.score || textOf(left.row['chunk_key']).localeCompare(textOf(right.row['chunk_key']), 'en'),
-    )
-    const candidates: KnowledgeCandidate[] = []
-    for (const entry of ranked.slice(0, query.limit)) candidates.push(candidateOf(entry.row, entry.channels))
-    return { candidates }
+    return { groups, fence: this.fence, changed: false }
+  }
+
+  /** 单个查询内的通道融合：词项两个 FTS 列表与精确通道各按 RRF 累加。 */
+  private rankQuery(value: string, query: SearchQuery, admitted: Set<string>, depth: number): QueryRanking {
+    const terms = queryTerms(value)
+    const lists: { channel: '词项' | '精确'; rows: SqlRow[] }[] = []
+    const wordExpression = matchExpression(terms.words)
+    if (wordExpression !== null) lists.push({ channel: '词项', rows: this.ftsRows(wordExpression, query, admitted) })
+    const bigramExpression = matchExpression(terms.bigrams)
+    if (bigramExpression !== null) lists.push({ channel: '词项', rows: this.ftsRows(bigramExpression, query, admitted) })
+    if (terms.exacts.length > 0) lists.push({ channel: '精确', rows: this.exactRows(terms.exacts, query, admitted) })
+    const scores = new Map<number, { score: number; channels: Set<'词项' | '精确'>; row: SqlRow }>()
+    for (const list of lists) {
+      list.rows.forEach((row, index) => {
+        const chunkId = number(row['chunk_id'])
+        const entry = scores.get(chunkId) ?? { score: 0, channels: new Set<'词项' | '精确'>(), row }
+        entry.score += 1 / (RRF_K + index + 1)
+        entry.channels.add(list.channel)
+        scores.set(chunkId, entry)
+      })
+    }
+    const candidates = [...scores.values()]
+      .sort((left, right) => right.score - left.score || textOf(left.row['chunk_key']).localeCompare(textOf(right.row['chunk_key']), 'en'))
+      .slice(0, depth)
+      .map(entry => candidateOf(entry.row, entry.channels))
+    return { query: value, candidates }
   }
 
   /** 词项通道：FTS BM25 排序，按准入集合与资料范围过滤。 */

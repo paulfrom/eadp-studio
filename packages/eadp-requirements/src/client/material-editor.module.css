@@ -691,3 +691,115 @@
 .basisNotice[data-state='removed'] {
   color: var(--eadp-danger);
 }
+
+/* ── 本次参考清单与采用说明对话框 ─────────────────────────────────── */
+
+.referenceStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-2);
+}
+
+.referenceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-2);
+}
+
+.referenceItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-1);
+  padding: var(--eadp-space-2);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-sm);
+  background: var(--eadp-bg);
+}
+
+.referenceHead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--eadp-space-2);
+}
+
+.referenceTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-md);
+  font-weight: 600;
+  line-height: var(--eadp-leading);
+  overflow-wrap: anywhere;
+}
+
+.referenceExcerpt {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.referenceExcerpt[data-expanded] {
+  display: block;
+  max-height: 240px;
+  overflow: auto;
+  -webkit-line-clamp: unset;
+}
+
+.referenceWarning {
+  margin: 0;
+  color: var(--eadp-warning);
+  font-size: var(--eadp-text-xs);
+  line-height: var(--eadp-leading);
+  overflow-wrap: anywhere;
+}
+
+.adoptSummary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eadp-space-1);
+}
+
+.adoptExcerpt {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--eadp-space-2);
+  border-radius: var(--eadp-radius-sm);
+  background: var(--eadp-surface);
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.adoptTextarea {
+  width: 100%;
+  min-height: calc(var(--eadp-control-md) * 2);
+  resize: vertical;
+  padding: var(--eadp-space-2);
+  border: 1px solid var(--eadp-line-strong);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-raised);
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-ui);
+  font-size: var(--eadp-text-md);
+  line-height: var(--eadp-leading);
+}
+
+.adoptTextarea:focus-visible {
+  outline: none;
+  border-color: var(--eadp-accent-border);
+  box-shadow: var(--eadp-focus-ring);
+}

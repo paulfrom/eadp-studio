@@ -18,6 +18,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }))
   const ui = ctx.inject(['remote.eadpRequirements', 'eadpShellClient'], (scope: Context) => {
     const api = requirementsApi(scope)
+    editors.attach(api)
     return scope.slots.inject(EADP_SLOTS.requirements, () => scope.slots.register({
       name: EADP_SLOTS.requirements, locale: NS,
       inject: () => ({ api, editors, setActiveDocument: (projectId: string, path: string | null) => scope.eadpShellClient.setActiveDocument(projectId, path) }),

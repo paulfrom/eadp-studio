@@ -189,6 +189,91 @@
   font-size: var(--eadp-text-sm);
 }
 
+/* ── "作为需求依据" range picker ───────────────────────────────────── */
+
+.adoptSections {
+  display: grid;
+  gap: var(--eadp-space-1);
+  min-width: 0;
+}
+
+.segments {
+  list-style: none;
+  margin: var(--eadp-space-1) 0;
+  padding: var(--eadp-space-1);
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  gap: var(--eadp-space-1);
+  border: 1px solid var(--eadp-line);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-surface);
+}
+
+.segment {
+  display: grid;
+  gap: var(--eadp-space-1);
+  padding: var(--eadp-space-1);
+  border-radius: var(--eadp-radius-sm);
+}
+
+.segment:hover {
+  background: var(--eadp-hover);
+}
+
+.segmentCheck {
+  display: flex;
+  align-items: center;
+  gap: var(--eadp-space-1);
+  color: var(--eadp-muted);
+  font-size: var(--eadp-text-xs);
+  cursor: pointer;
+}
+
+.segmentCheck input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--eadp-accent);
+}
+
+.segmentTag {
+  overflow-wrap: anywhere;
+}
+
+.segmentText {
+  margin: 0;
+  color: var(--eadp-text);
+  font-size: var(--eadp-text-sm);
+  line-height: var(--eadp-leading);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.segmentText[data-heading] {
+  font-weight: 600;
+}
+
+.adoptTextarea {
+  width: 100%;
+  min-height: calc(var(--eadp-control-md) * 2);
+  resize: vertical;
+  padding: var(--eadp-space-2);
+  border: 1px solid var(--eadp-line-strong);
+  border-radius: var(--eadp-radius-md);
+  background: var(--eadp-raised);
+  color: var(--eadp-text);
+  font-family: var(--eadp-font-ui);
+  font-size: var(--eadp-text-md);
+  line-height: var(--eadp-leading);
+}
+
+.adoptTextarea:focus-visible {
+  outline: none;
+  border-color: var(--eadp-accent-border);
+  box-shadow: var(--eadp-focus-ring);
+}
+
 @media (max-width: 640px) {
   .head {
     flex-direction: column;

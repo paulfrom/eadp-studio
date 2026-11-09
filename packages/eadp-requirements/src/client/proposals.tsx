@@ -25,11 +25,13 @@ interface ProposalProps extends PropsLocale<typeof NS> {
   projectId: string
   api: RequirementsApi
   disabled: boolean
+  /** 采用资料后递增，立即重新读取待审提案，而非等待下一次轮询。 */
+  refreshKey: number
   apply(proposal: RequirementProposal): Promise<void>
 }
 
 /** Collapsible Host proposal review area; conversation text is never a write authority. */
-export function RequirementProposals({ projectId, api, apply, disabled, t }: ProposalProps) {
+export function RequirementProposals({ projectId, api, apply, disabled, refreshKey, t }: ProposalProps) {
   const [proposals, setProposals] = useState<RequirementProposal[]>([])
   const [error, setError] = useState('')
   const [stale, setStale] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -70,6 +72,15 @@ export function RequirementProposals({ projectId, api, apply, disabled, t }: Pro
       window.removeEventListener('focus', focus)
     }
   }, [reload, current])
+  /* An adoption already asked the Host for a proposal; read it without waiting for the poll. */
+  const adoptedRefresh = useRef(refreshKey)
+  useEffect(() => {
+    if (refreshKey === adoptedRefresh.current) return
+    adoptedRefresh.current = refreshKey
+    void reload().catch((reason: unknown) => {
+      if (current(generation.current)) setError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }, [refreshKey, reload, current])
   const act = (proposal: RequirementProposal, discard: boolean) => {
     if (disabled || working) return
     const value = generation.current

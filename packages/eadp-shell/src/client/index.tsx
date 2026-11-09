@@ -16,7 +16,7 @@ import type { EadpPrototypeClient } from '@eadp/contracts/prototype'
 import shellRemote from '@eadp/shell/remote'
 import { ShellPanel } from './panel.tsx'
 import { zh, en } from './locales.ts'
-import type { ShellFace } from './types.ts'
+import type { ActiveDocuments, ShellFace } from './types.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface SlotMap { 'eadp.shell.session': { kind: 'single'; scope: 'session' } } }
 declare module '@deepseek-ai/dsh-api-session-controller/client' { interface SessionReferenceSourceMap { eadpShell: unknown } }
@@ -29,22 +29,53 @@ function unwrap<T>(result: RemoteResult<T>): T {
 }
 
 /** Exposes document context without sharing the Shell component or internal state. */
-function provideShellClient(ctx: Context): () => void {
+function provideShellClient(ctx: Context, active: ActiveDocumentsWriter): () => void {
   const scope = ctx.inject(['remote', 'remote.eadpShell'], (inner: Context) => {
     inner.provide('eadpShellClient')
     inner.set('eadpShellClient', {
       setActiveDocument: async (projectId: string, relativePath: string | null): Promise<void> => {
         unwrap(await inner.remote.eadpShell.setActiveDocument(projectId, relativePath))
+        /* Publish only after the Host accepted the hint; a failed call leaves the old value. */
+        active.set(projectId, relativePath)
       },
     })
   })
   return () => { void scope.dispose() }
 }
 
+/** Write side of the Shell-owned active requirement paths; the panel sees the read side only. */
+interface ActiveDocumentsWriter extends ActiveDocuments {
+  set(projectId: string, path: string | null): void
+}
+
+/** Per-plugin-instance records of the requirement each project is editing; no module singleton. */
+function createActiveDocuments(): ActiveDocumentsWriter {
+  const paths = new Map<string, string>()
+  const listeners = new Set<() => void>()
+  const publish = (): void => { for (const listener of listeners) listener() }
+  return {
+    get: (projectId: string): string | null => paths.get(projectId) ?? null,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    forget: (projectId: string): void => {
+      if (paths.delete(projectId)) publish()
+    },
+    set: (projectId: string, path: string | null): void => {
+      if (path === null ? !paths.has(projectId) : paths.get(projectId) === path) return
+      if (path === null) paths.delete(projectId)
+      else paths.set(projectId, path)
+      publish()
+    },
+  }
+}
+
 /** Mount the generated Remote contract before injecting its namespace. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(shellRemote)
-  const shellClient = provideShellClient(ctx)
+  const activeDocuments = createActiveDocuments()
+  const shellClient = provideShellClient(ctx, activeDocuments)
   let prototype: EadpPrototypeClient | undefined
   const prototypeScope = ctx.inject(['eadpPrototypeClient'], (scope: Context) => {
     prototype = scope.eadpPrototypeClient
@@ -58,6 +89,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       createDirectory: async (parent, name) => unwrap(await scope.remote.eadpShell.createProjectDirectory(parent, name)),
       checkDirectory: async path => unwrap(await scope.remote.eadpShell.checkDirectory(path)),
       requirements: scope.eadpRequirementsClient,
+      activeDocuments,
       stopProject: async projectId => {
         if (!prototype) throw new Error(scope.locale.bind('eadpShell')('unavailable'))
         await prototype.stopProject(projectId)

@@ -34,10 +34,12 @@ export interface JobState {
   error: string | null
 }
 
-/** 打开索引库的结果：已发布资料状态与未完成任务。 */
+/** 打开索引库的结果：已发布资料状态、未完成任务与当前发布围栏。 */
 export interface OpenResult {
   documents: DocumentState[]
   jobs: JobState[]
+  /** 发布围栏：worker 进程内单调递增，每次发布、刷新或删除后变化；用于识别代次切换。 */
+  fence: number
 }
 
 /** 一次构建的暂存结果；发布前 Host 还要重新核验正文身份。 */
@@ -46,19 +48,48 @@ export interface BuildResult {
   chunkCount: number
 }
 
-/** 查找请求：准入集合由 Host 按 manifest 计算，worker 只做过滤与排序。 */
-export interface SearchQuery {
-  /** 独立查询文本；原始问题与需求上下文各占一项，互不替换。 */
+/** 一个查询内词项／精确通道融合后的排名；两个查询组共享同一索引代次与准入集合。 */
+export interface QueryRanking {
+  /** 该排名的查询文本；原问题与上下文各自独立，不被扩展替换。 */
+  query: string
+  /** 按该查询内通道 RRF 排序的候选；只含真实命中的 chunk。 */
+  candidates: KnowledgeCandidate[]
+}
+
+/** 基础查询组或扩展查询组；组内每个查询一票，组间再按组排名融合。 */
+export interface SearchGroup {
+  key: 'base' | 'expansion'
+  queries: QueryRanking[]
+}
+
+/** 查找请求中的分组查询文本；结果按同一分组返回排名。 */
+export interface SearchQueryGroup {
+  key: 'base' | 'expansion'
   queries: string[]
+}
+
+/** 查找请求：准入集合由 Host 按 manifest 计算，worker 只做过滤、排序与围栏核对。 */
+export interface SearchQuery {
+  /** 基础组先执行，扩展组随后执行；两组使用同一准入集合与资料范围。 */
+  groups: SearchQueryGroup[]
   /** 允许参与查找的资料键 `${packId}:${documentId}`。 */
   admittedKeys: string[]
   packId: KnowledgePackId | null
   limit: number
+  /**
+   * 扩展组要求的发布围栏；与当前围栏不一致时不执行查询，
+   * 由 Host 按剩余预算统一重查，避免拼接新旧代次。
+   */
+  expectedFence: number | null
 }
 
-/** 查找结果；候选已按 RRF 融合，只含真实命中的 chunk。 */
+/** 查找结果：按查询返回组内排名；Host 再完成两组融合与最终候选约束。 */
 export interface SearchResult {
-  candidates: KnowledgeCandidate[]
+  groups: SearchGroup[]
+  /** 本次读取时的发布围栏。 */
+  fence: number
+  /** 期望围栏已变化：本次没有执行查询，调用方不得把本次结果与旧结果拼接。 */
+  changed: boolean
 }
 
 /** 工作线程启动参数。 */

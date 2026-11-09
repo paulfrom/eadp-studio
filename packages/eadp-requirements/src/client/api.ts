@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { unwrapRemoteResult } from '@eadp/contracts'
+import type { RequirementKnowledgeAdoptionInput } from '@eadp/contracts'
 import type {} from '@eadp/requirements/remote'
 
 /** Exposes only the generated Remote's UI operations to React components. */
@@ -25,6 +26,12 @@ export function requirementsApi(ctx: Context) {
     setKnowledgeAutoReference: async (sessionId: string, enabled: boolean): Promise<void> => {
       unwrapRemoteResult(await remote.setKnowledgeAutoReference(sessionId, enabled))
     },
+    /** 最近一轮自动参考的实际注入结果；归该会话所有。 */
+    turnReferences: async (projectId: string, sessionId: string) =>
+      unwrapRemoteResult(await remote.turnReferences(projectId, sessionId)),
+    /** 把选定的知识内容加入待审提案；不直接改写需求正文。 */
+    adoptKnowledge: async (projectId: string, sessionId: string, adoption: RequirementKnowledgeAdoptionInput) =>
+      unwrapRemoteResult(await remote.adoptKnowledge(projectId, sessionId, adoption)),
   }
 }
 export type RequirementsApi = ReturnType<typeof requirementsApi>

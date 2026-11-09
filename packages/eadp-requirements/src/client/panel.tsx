@@ -322,8 +322,10 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
           sessionId={sessionId}
           relativePath={selected?.path ?? null}
           api={api}
+          editors={editors}
           disabled={unavailable}
           refreshKey={knowledgeEpoch}
+          onAdopted={() => setKnowledgeEpoch(value => value + 1)}
           t={t} />
         {selected
           ? <MaterialEditor
@@ -343,7 +345,7 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
                 ? <Button size="sm" variant="primary" disabled={unavailable} onClick={createContext}>{t('createContext')}</Button>
                 : undefined} />
           </div>}
-        <RequirementProposals projectId={projectId} api={api} disabled={unavailable} apply={applyProposal} t={t} />
+        <RequirementProposals projectId={projectId} api={api} disabled={unavailable} refreshKey={knowledgeEpoch} apply={applyProposal} t={t} />
       </section>
     </div>
     {form ? <Dialog

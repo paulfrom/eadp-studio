@@ -3,7 +3,8 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type { FileErrorCode, RequirementDocument, RequirementEntry, ContextDocument } from '@eadp/contracts/files'
-import type { RequirementKnowledgeBasis, RequirementProposal } from '@eadp/contracts/requirements'
+import type { KnowledgeTurnReferenceView } from '@eadp/contracts/knowledge'
+import type { RequirementKnowledgeAdoptionInput, RequirementKnowledgeBasis, RequirementProposal } from '@eadp/contracts/requirements'
 import { failureMessage, isRemoteCancellation, mapFailureCode } from '@eadp/contracts'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -14,6 +15,8 @@ import { RequirementFiles } from './files.ts'
 import { ProposalStore } from './proposal-store.ts'
 import { KnowledgeSnapshots } from './snapshot.ts'
 import { RequirementKnowledgeBasis as KnowledgeBasisReader } from './knowledge-basis.ts'
+import { KnowledgeBasis } from './basis.ts'
+import { RequirementAdoption } from './adopt.ts'
 
 export const name = 'eadp-requirements'
 export const inject = ['typert', 'workspaceRegistry', 'fs', 'agents', 'tools', 'eadpKnowledgeReference']
@@ -23,14 +26,17 @@ export class RequirementsService extends TypertRemoteService {
   private readonly files: RequirementFiles
   private readonly proposals: RequirementProposals
   private readonly basis: KnowledgeBasisReader
+  private readonly adoption: RequirementAdoption
   constructor(ctx: Context) {
     super(ctx, 'eadpRequirements', { namespace: 'eadpRequirements' })
     const diagnostic = (message: string) => ctx.logger.warn(message)
     this.files = new RequirementFiles(ctx)
     const store = new ProposalStore(this.files, diagnostic)
     const snapshots = new KnowledgeSnapshots(this.files, diagnostic)
-    this.proposals = new RequirementProposals(ctx, this.files, store, snapshots, diagnostic)
+    const basis = new KnowledgeBasis(ctx, snapshots)
+    this.proposals = new RequirementProposals(ctx, this.files, store, snapshots, basis, diagnostic)
     this.basis = new KnowledgeBasisReader(ctx, this.files, store, snapshots)
+    this.adoption = new RequirementAdoption(ctx, this.files, this.proposals, basis)
     ctx.on('agent/created', ({ agent }) => { this.proposals.install(agent) })
     for (const agent of ctx.agents.list()) this.proposals.install(agent)
     ctx.effect(() => () => this.proposals.dispose())
@@ -109,6 +115,31 @@ export class RequirementsService extends TypertRemoteService {
   @Remote
   async knowledgeBasis(projectId: string, relativePath: string): Promise<RequirementKnowledgeBasis> {
     return this.run(() => this.basis.read(projectId, relativePath))
+  }
+
+  /**
+   * 最近一轮自动参考的实际注入结果；没有会话时为空。
+   * 项目归属由知识 Host 按会话核对，界面传入的项目不参与信任判断。
+   */
+  @Remote
+  async turnReferences(projectId: string, sessionId: string | null): Promise<KnowledgeTurnReferenceView | null> {
+    if (sessionId === null) return null
+    try {
+      this.checkSession(sessionId)
+      return await this.ctx.eadpKnowledgeReference.lastTurnReferences({ sessionId, projectId })
+    } catch (error) {
+      if (isRemoteCancellation(error)) throw new RemoteError('gateway/cancelled', '本次参考查询已取消。', {})
+      if (error instanceof FsError && error.code === 'FS_NOT_TEXT') {
+        throw new RemoteError('eadp/knowledge', failureMessage(error, '需求会话标识无效。'), { code: 'EVIDENCE_INVALID' })
+      }
+      throw new RemoteError('eadp/knowledge', failureMessage(error, '本次参考暂时无法读取，请稍后重试。'), { code: 'UNAVAILABLE' })
+    }
+  }
+
+  /** 把界面选定的知识内容加入待审提案；不直接写入需求正文。 */
+  @Remote
+  async adoptKnowledge(projectId: string, sessionId: string, input: RequirementKnowledgeAdoptionInput): Promise<RequirementProposal> {
+    return this.run(() => this.adoption.adopt(projectId, sessionId, input))
   }
 
   /** 需求会话的「自动参考知识」偏好；委托知识服务持久化，默认开启。 */

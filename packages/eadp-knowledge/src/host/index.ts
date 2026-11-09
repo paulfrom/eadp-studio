@@ -20,6 +20,7 @@ import { KnowledgeImports } from './imports.ts'
 import { KnowledgeProposals } from './proposals.ts'
 import { SessionPreferences } from './preferences.ts'
 import { KnowledgeReference } from './reference.ts'
+import { TurnReferences } from './turn-references.ts'
 import { KnowledgeInjection } from './injection.ts'
 import { KnowledgeIndex } from './index/indexer.ts'
 import { requestKnowledgeTags } from './tagger.ts'
@@ -45,10 +46,11 @@ export class KnowledgeService extends TypertRemoteService {
     this.importQueue = new KnowledgeImports(ctx, this.store, diagnostic)
     const preferences = new SessionPreferences(this.store.userRoot, diagnostic)
     // 参考服务先于索引与建议服务创建：后两者只依赖已声明的服务实例。
-    this.reference = new KnowledgeReference(ctx, this.store, preferences)
+    const turns = new TurnReferences()
+    this.reference = new KnowledgeReference(ctx, this.store, preferences, turns)
     this.index = new KnowledgeIndex(ctx, this.store, diagnostic)
     this.proposals = new KnowledgeProposals(ctx, this.store, this.reference, this.index)
-    const injection = new KnowledgeInjection(ctx, this.store, this.reference, this.index)
+    const injection = new KnowledgeInjection(ctx, this.store, this.reference, this.index, turns)
     injection.install()
     ctx.on('agent/created', ({ agent }) => {
       this.proposals.install(agent)

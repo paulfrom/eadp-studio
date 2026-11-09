@@ -229,12 +229,21 @@ export interface KnowledgeHit {
  */
 export type KnowledgeIndexState = 'ready' | 'partial' | 'unavailable'
 
+/** 补充查找（不同说法扩展）在本轮的实际状态；失败不得冒充成功或空结果。 */
+export interface KnowledgeSupplementState {
+  status: 'completed' | 'failed' | 'skipped'
+  /** 可直接展示的说明；只有失败时给出，且不得解释为知识库没有相关内容。 */
+  message: string | null
+}
+
 export interface KnowledgeSearchResult {
   hits: KnowledgeHit[]
   issues: KnowledgeIssue[]
   indexState: KnowledgeIndexState
   /** 可直接展示的能力说明；为空表示无需说明。 */
   message: string | null
+  /** 补充查找状态；失败时基础结果仍然有效。 */
+  supplement: KnowledgeSupplementState
 }
 
 /** 分页读取结果；offset/length 与 range 按 Unicode code-point 计。 */
@@ -307,8 +316,58 @@ export interface KnowledgeEvidenceResolution {
 }
 
 /**
+ * 自动参考轮次的业务状态：关闭、正在查找、未找到、部分完成、未完成与已有参考
+ * 不得互相冒充；同一轮只对应一个状态。
+ */
+export type KnowledgeTurnReferenceState = 'disabled' | 'searching' | 'ready' | 'empty' | 'partial' | 'failed'
+
+/** 本轮实际注入的一条参考片段；由 Host 从注入结果复制，不是 Client 重新查找。 */
+export interface KnowledgeTurnReference {
+  evidenceId: string
+  packId: KnowledgePackId
+  documentId: string
+  contentRevisionId: string
+  title: string
+  category: KnowledgeCategory
+  scope: string
+  source: KnowledgeSourceSummary
+  /** 实际注入对话的片段原文。 */
+  excerpt: string
+  /** 片段原文在完整正文中的真实范围。 */
+  ranges: KnowledgeRange[]
+  headingPath: string[]
+  channels: KnowledgeHitChannel[]
+  warnings: string[]
+  locations: string[]
+}
+
+/** 最近一轮自动参考的实际注入结果；绑定项目、需求、会话与 turn。 */
+export interface KnowledgeTurnReferenceView {
+  projectId: string
+  /** 该轮查找时正在编辑的需求；未在需求上时为空。 */
+  requirementPath: string | null
+  sessionId: string
+  turn: number
+  turnStartSeq: number
+  /** 判定时间；正在查找时为开始时间。 */
+  at: string
+  state: KnowledgeTurnReferenceState
+  /** 可直接展示的说明；已有参考时为空。 */
+  message: string | null
+  supplement: KnowledgeSupplementState
+  references: KnowledgeTurnReference[]
+}
+
+/** 资料页选择内容作为需求依据时，Host 重读并签发的证据范围。 */
+export interface KnowledgeBasisAcquisition {
+  evidenceId: string
+  /** 已核验的实际采用范围。 */
+  ranges: KnowledgeEvidenceRange[]
+}
+
+/**
  * 知识插件向需求插件提供的只读核验接口。证据只在当前运行且所属会话／项目内有效；
- * 需求提案据此生成项目固定快照，不信任模型自报内容。
+ * 需求提案据此生成项目固定快照，不信任模型或界面自报内容。
  */
 export interface KnowledgeReferenceService {
   /** 按当前会话与项目核验证据，返回 canonical 内容与来源资产。 */
@@ -319,6 +378,20 @@ export interface KnowledgeReferenceService {
   autoReferenceFor(sessionId: string): Promise<boolean>
   /** 保存该需求会话的自动参考开关；关闭后仍可手工查找与引用。 */
   setAutoReferenceFor(sessionId: string, enabled: boolean): Promise<void>
+  /** 最近一轮自动参考的实际注入结果；该会话没有轮次时为空。 */
+  lastTurnReferences(input: { sessionId: string; projectId: string }): Promise<KnowledgeTurnReferenceView | null>
+  /**
+   * 为资料页选定的已保存版本与真实范围重新读取 canonical 正文并签发证据；
+   * 版本已更新或范围无效时失败，由界面要求重新选择。
+   */
+  acquireBasis(input: {
+    sessionId: string
+    projectId: string
+    packId: KnowledgePackId
+    documentId: string
+    contentRevisionId: string
+    ranges: KnowledgeRange[]
+  }): Promise<KnowledgeBasisAcquisition>
 }
 
 /** 固定快照中的一个已核验范围。 */

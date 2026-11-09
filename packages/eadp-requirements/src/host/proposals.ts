@@ -4,12 +4,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { FsError } from '@deepseek-ai/dsh-fs'
-import { diffWithCap, failureMessage, isValidSummary, ReadTracker } from '@eadp/contracts'
+import { diffWithCap, isValidSummary, ReadTracker } from '@eadp/contracts'
 import type { RequirementDocument } from '@eadp/contracts/files'
-import type { KnowledgeEvidenceResolution, KnowledgeSourceMap } from '@eadp/contracts/knowledge'
 import type { RequirementKnowledgeAdoption, RequirementKnowledgeCitation, RequirementProposal } from '@eadp/contracts/requirements'
-import { citationFromSnapshot, parseKnowledgeAdoptions } from './adoption.ts'
-import { renderBasisSection } from './citation-format.ts'
+import { parseKnowledgeAdoptions } from './adoption.ts'
+import type { KnowledgeBasis } from './basis.ts'
 import { RequirementFiles } from './files.ts'
 import { RequirementKnowledgeError } from './knowledge-error.ts'
 import type { PersistedProposal, ProposalStore } from './proposal-store.ts'
@@ -25,12 +24,6 @@ interface ResolvedProposal {
   persisted: boolean
 }
 
-/** 知识采用项写入正文所需的一份快照内容，用于把范围转成可读定位。 */
-interface SnapshotText {
-  body: string
-  sourceMap: KnowledgeSourceMap | null
-}
-
 /**
  * 需求提案：把模型给出的整篇候选与显式关联的资料依据一起固定到项目，
  * 用户应用前不改变需求正文；应用时只按版本整篇写入。
@@ -44,6 +37,7 @@ export class RequirementProposals {
     private readonly files: RequirementFiles,
     private readonly store: ProposalStore,
     private readonly snapshots: KnowledgeSnapshots,
+    private readonly basis: KnowledgeBasis,
     private readonly diagnostic: (message: string) => void,
   ) {}
 
@@ -55,6 +49,20 @@ export class RequirementProposals {
     }
     for (const proposal of this.proposals.values()) if (proposal.projectId === projectId) merged.set(proposal.proposalId, proposal)
     return [...merged.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  }
+
+  /** 该文件最近的待审提案；内存与项目记录合并后取最新，没有时为空。 */
+  async pending(projectId: string, relativePath: string): Promise<RequirementProposal | null> {
+    const matches = (await this.list(projectId)).filter(proposal => proposal.relativePath === relativePath)
+    return matches[matches.length - 1] ?? null
+  }
+
+  /** 新增或更新一份待审提案并持久化；依据未能保存到项目时必须阻断。 */
+  async savePending(projectId: string, proposal: RequirementProposal): Promise<RequirementProposal> {
+    const persisted = await this.persist(projectId, { ...proposal, persisted: false }, true)
+    const saved: RequirementProposal = { ...proposal, persisted }
+    this.proposals.set(saved.proposalId, saved)
+    return saved
   }
 
   /** 丢弃提案并清理不再被任何待审或已应用提案引用的快照。 */
@@ -145,7 +153,7 @@ export class RequirementProposals {
       const current = await this.currentDocument(projectId, relativePath)
       signal.throwIfAborted()
       if (current.version !== baseVersion) throw new FsError('文件已变化，请重新生成提案。', 'FS_STALE_VERSION')
-      const fixed = await this.fixCitations(agent, projectId, adoptions, text)
+      const fixed = await this.fixCitations(projectId, agent.session.id, adoptions, text)
       signal.throwIfAborted()
       if (current.text === fixed.text) throw new FsError('提案与当前正文相同。', 'FS_NOT_TEXT')
       const { diff, truncated: diffTruncated } = diffWithCap(current.text, fixed.text)
@@ -193,34 +201,11 @@ export class RequirementProposals {
   }
 
   /** 固定每份资料的当时内容，并把可读的「需求依据」章节渲染进候选正文。 */
-  private async fixCitations(agent: Agent, projectId: string, adoptions: RequirementKnowledgeAdoption[], text: string): Promise<{ citations: RequirementKnowledgeCitation[]; text: string }> {
+  private async fixCitations(projectId: string, sessionId: string, adoptions: RequirementKnowledgeAdoption[], text: string): Promise<{ citations: RequirementKnowledgeCitation[]; text: string }> {
     if (adoptions.length === 0) return { citations: [], text }
-    const resolutions = await this.resolveEvidence(agent, projectId, adoptions)
-    const citations: RequirementKnowledgeCitation[] = []
-    const snapshots = new Map<string, SnapshotText>()
-    for (const [index, adoption] of adoptions.entries()) {
-      const resolution = resolutions[index]
-      if (resolution === undefined) throw new RequirementKnowledgeError('用于关联的知识内容已失效，请重新读取后再关联。', 'EVIDENCE_INVALID')
-      const fixed = await this.snapshots.ensure(projectId, resolution)
-      citations.push(citationFromSnapshot(fixed.manifest, adoption.note))
-      snapshots.set(fixed.snapshotId, { body: resolution.text, sourceMap: resolution.sourceMap })
-    }
-    return { citations, text: renderBasisSection(text, citations, snapshots) }
-  }
-
-  /** 调用知识服务核验本次读取的标识与范围；失败信息保持业务语言。 */
-  private async resolveEvidence(agent: Agent, projectId: string, adoptions: RequirementKnowledgeAdoption[]): Promise<KnowledgeEvidenceResolution[]> {
-    try {
-      const resolutions = await this.ctx.eadpKnowledgeReference.resolveEvidence({
-        sessionId: agent.session.id,
-        projectId,
-        items: adoptions.map(adoption => ({ evidenceId: adoption.evidenceId, ranges: adoption.ranges })),
-      })
-      if (resolutions.length !== adoptions.length) throw new Error('用于关联的知识内容已失效，请重新读取后再关联。')
-      return resolutions
-    } catch (error) {
-      throw new RequirementKnowledgeError(failureMessage(error, '用于关联的知识内容已失效，请重新读取后再关联。'), 'EVIDENCE_INVALID')
-    }
+    const resolutions = await this.basis.resolve(sessionId, projectId, adoptions)
+    const fixed = await this.basis.fix(projectId, adoptions, resolutions)
+    return { citations: fixed.citations, text: this.basis.render(text, fixed) }
   }
 
   /** 应用前核对全部固定内容仍完整；缺失时要求重新生成提案。 */

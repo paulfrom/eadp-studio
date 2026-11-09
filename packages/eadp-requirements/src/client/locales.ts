@@ -1,4 +1,6 @@
 /** Requirement editing copy is supplied through the official locale service. */
+import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+
 export const zh = {
   title: '材料', context: '项目背景', create: '新建需求', folder: '新建目录', refresh: '刷新', empty: '暂无需求文件', loading: '正在读取…',
   select: '选择需求或项目背景开始编辑。', contextAbsent: '项目尚无 CONTEXT.md。', createContext: '创建项目背景',
@@ -14,7 +16,21 @@ export const zh = {
   reviewDiff: '查看行级差异', candidateText: '完整候选正文', diffTruncated: '差异过长，已截断；应用前可查看完整候选正文。', applyProposal: '应用', discardProposal: '丢弃',
   prepareFailed: '请先保存输入、结束组字或处理文件冲突。', expand: '展开', collapse: '收起',
   knowledge: '本次参考与需求依据', referenceNotBasis: '参考 ≠ 依据',
-  thisTurn: '本次参考', thisTurnHint: '本轮对话已自动查找相关资料；参考不等于需求依据，采用后会列入下方需求依据。', thisTurnNoSession: '开始需求会话后，本轮会自动查找相关资料供参考。',
+  thisTurn: '本次参考', thisTurnHint: '本轮对话查找的资料仅供参考；参考不等于需求依据，采用后会列入下方需求依据。', thisTurnNoSession: '开始需求会话后，本轮会自动查找相关资料供参考。',
+  turnLoading: '正在读取本次参考…', turnNoTurn: '还没有已完成的查找；发送一条消息后，这里会显示本轮参考。', turnDisabled: '自动参考已关闭；重新打开开关后，新一轮对话会再次查找资料。',
+  turnSearching: '正在查找相关资料…', turnEmpty: '本轮未找到可参考的资料；这不表示资料不存在，你可以继续需求沟通。',
+  turnPartial: '部分资料可能暂时找不到；本轮已有参考仍按实际内容显示。', turnFailed: '本轮查找未完成；你的问题和已有需求依据都已保留。',
+  turnSupplementFailed: '本轮未完成补充查找，已有参考仍然有效。', turnOutdated: '这条参考不属于当前项目或会话，不再提供采用入口。',
+  turnOtherRequirement: '本轮参考对应另一份需求，将在下一轮更新；这里不提供采用。', turnRefresh: '重新读取本次参考',
+  turnAdoptNoFile: '选择一份需求后，可将相关资料作为需求依据。',
+  referenceLocation: '位置', referenceSection: '章节', referenceWarnings: '整理提示',
+  referenceExpand: '展开片段', referenceCollapse: '收起片段',
+  adoptAction: '作为需求依据', adoptTitle: '作为需求依据', adoptIntro: '采用后加入待审提案，不会直接改写需求正文。',
+  adoptExcerpt: '将采用的片段', adoptRanges: '采用范围', adoptNoteLabel: '采用说明',
+  adoptNoteHint: '说明为什么把这段内容作为需求依据（必填，最多 500 字）。', adoptNoteRequired: '请填写采用说明。', adoptNoteTooLong: '采用说明不能超过 500 字。',
+  adoptSubmit: '加入待审提案', adoptSuccess: '已加入待审提案，请在提案审阅中应用。', adoptFailed: '未能加入待审提案，请稍后重试。',
+  adoptNeedsSaved: '当前需求还有未保存的输入，请先保存后再采用。', adoptMissingRequirement: '当前需求文件不存在，请在材料中重新打开后再采用。',
+  adoptStale: '需求或资料已有变化，请重新打开后再采用。',
   basis: '需求依据', basisHint: '只有实际采用的内容会列入；资料后来更新或删除，仍可查看当时内容。',
   basisEmpty: '这份需求还没有需求依据。应用包含资料关联的提案后会显示在这里。', basisNoFile: '选择一份需求后可查看需求依据。',
   basisLoading: '正在读取需求依据…', basisLoadFailed: '需求依据暂时无法读取，可稍后重试。', basisRetry: '重试',
@@ -38,7 +54,21 @@ export const en: Record<keyof typeof zh, string> = {
   reviewDiff: 'Review line changes', candidateText: 'Full candidate text', diffTruncated: 'The diff is truncated. Review the full candidate before applying.', applyProposal: 'Apply', discardProposal: 'Discard',
   prepareFailed: 'Save your input, finish composing, or resolve the file conflict first.', expand: 'Expand', collapse: 'Collapse',
   knowledge: 'This turn and requirement grounds', referenceNotBasis: 'Reference ≠ grounds',
-  thisTurn: 'This turn', thisTurnHint: 'This turn automatically searched your documents for reference. A reference is not a requirement ground; adopted content is listed under requirement grounds.', thisTurnNoSession: 'After a requirement conversation starts, each turn automatically searches your documents for reference.',
+  thisTurn: 'This turn', thisTurnHint: 'Documents found for this turn are for reference only. A reference is not a requirement ground; adopted content is listed under requirement grounds.', thisTurnNoSession: 'After a requirement conversation starts, each turn automatically searches your documents for reference.',
+  turnLoading: 'Reading this turn\'s references…', turnNoTurn: 'No search has finished yet. Send a message and this turn\'s references appear here.', turnDisabled: 'Automatic reference is off. Turn it back on to search documents again in the next turn.',
+  turnSearching: 'Searching documents…', turnEmpty: 'No document was found for this turn. That does not mean none exists; you can continue the requirement discussion.',
+  turnPartial: 'Some documents may not be searchable right now; the references already found are shown as they are.', turnFailed: 'Searching did not finish this turn. Your question and existing requirement grounds are kept.',
+  turnSupplementFailed: 'The additional search did not finish this turn; existing references remain valid.', turnOutdated: 'This reference belongs to another project or conversation, so adopting it is no longer offered.',
+  turnOtherRequirement: 'This turn\'s references belong to another requirement and will update next turn; adopting them is not offered here.', turnRefresh: 'Read this turn\'s references again',
+  turnAdoptNoFile: 'Select a requirement to adopt a document as its ground.',
+  referenceLocation: 'Location', referenceSection: 'Section', referenceWarnings: 'Organization notes',
+  referenceExpand: 'Expand excerpt', referenceCollapse: 'Collapse excerpt',
+  adoptAction: 'Adopt as ground', adoptTitle: 'Adopt as requirement ground', adoptIntro: 'Adopting adds this to the pending proposal; the requirement text itself is not changed.',
+  adoptExcerpt: 'Content to adopt', adoptRanges: 'Adopted ranges', adoptNoteLabel: 'Why adopt',
+  adoptNoteHint: 'Explain why this content is a requirement ground (required, up to 500 characters).', adoptNoteRequired: 'Enter why this content is adopted.', adoptNoteTooLong: 'The explanation cannot exceed 500 characters.',
+  adoptSubmit: 'Add to pending proposal', adoptSuccess: 'Added to the pending proposal. Apply it in the proposal review.', adoptFailed: 'The content could not be added to the pending proposal; try again later.',
+  adoptNeedsSaved: 'The current requirement has unsaved input. Save it before adopting.', adoptMissingRequirement: 'The requirement file no longer exists. Reopen it in Materials before adopting.',
+  adoptStale: 'The requirement or the document has changed. Reopen it and try again.',
   basis: 'Requirement grounds', basisHint: 'Only what was actually adopted is listed. If a document is later updated or deleted, its content at that time stays viewable.',
   basisEmpty: 'This requirement has no grounds yet. They appear here after you apply a proposal that adopts documents.', basisNoFile: 'Select a requirement to view its grounds.',
   basisLoading: 'Loading requirement grounds…', basisLoadFailed: 'Requirement grounds are temporarily unavailable; try again later.', basisRetry: 'Retry',
@@ -49,3 +79,6 @@ export const en: Record<keyof typeof zh, string> = {
 }
 export const NS = 'eadp.requirements'
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface LocaleNamespaceMap { 'eadp.requirements': keyof typeof zh } }
+
+/** Translate function bound to this namespace; components accept it as the `t` seat. */
+export type RequirementsTranslate = PropsLocale<typeof NS>['t']

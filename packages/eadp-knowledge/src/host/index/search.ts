@@ -1,4 +1,4 @@
-import type { KnowledgePackId } from '@eadp/contracts/knowledge'
+import type { KnowledgePackId, KnowledgeSupplementState } from '@eadp/contracts/knowledge'
 
 /** 查找候选：由索引返回，尚未回到正文核验。 */
 export interface KnowledgeCandidate {
@@ -28,13 +28,18 @@ export interface KnowledgeSearchRequest {
   signal: AbortSignal
 }
 
-/** 查找结果；能力状态与候选分开，禁止把不完整索引冒充成空结果。 */
+/** 查找结果；能力状态、补充查找状态与候选分开，禁止把不完整结果冒充成空结果。 */
 export interface KnowledgeSearchResponse {
   candidates: KnowledgeCandidate[]
   indexState: 'ready' | 'partial' | 'unavailable'
   message: string | null
   /** 索引尚未跟上正文的资料；返回前如实报告。 */
   lagging: { packId: KnowledgePackId; documentId: string; reason: string }[]
+  /**
+   * 不同说法补充查找的实际状态；失败不改变已找到的基础结果，也不得解释成知识库没有内容。
+   * `failed` 时 message 给出业务说明，`completed`／`skipped` 时为 null。
+   */
+  supplement: KnowledgeSupplementState
 }
 
 /** 索引器对 Host 暴露的最小面：Host 只编排，切片、SQL 与词项在 worker 内。 */

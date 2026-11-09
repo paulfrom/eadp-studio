@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { EadpKnowledgeSlotProps } from '@eadp/contracts'
+import type { EadpKnowledgeSlotProps, EadpRequirementsClient } from '@eadp/contracts'
 import type {
   KnowledgeCatalog,
   KnowledgeDocument,
@@ -23,7 +23,11 @@ import { LibraryView, type LibraryFilters } from './library.tsx'
 import { NS, type KnowledgeTranslate } from './locales.ts'
 import css from './panel.module.css'
 
-type Props = EadpKnowledgeSlotProps & PropsLocale<typeof NS> & { api: KnowledgeApi }
+type Props = EadpKnowledgeSlotProps & PropsLocale<typeof NS> & {
+  api: KnowledgeApi
+  /** Requirement client service call; the only way this view writes a pending proposal. */
+  adoptKnowledge: EadpRequirementsClient['adoptKnowledge']
+}
 type View = 'library' | 'imports' | 'detail' | 'editor'
 type DetailTab = 'body' | 'source'
 
@@ -102,7 +106,7 @@ function OriginalDetails({ view, t }: { view: KnowledgeSourceView; t: KnowledgeT
  * data plus callbacks down to the four pure views. Refreshes replace catalog
  * data only; an unsaved editor draft is never rebuilt from it.
  */
-export function KnowledgePanel({ active, api, t }: Props) {
+export function KnowledgePanel({ active, projectId, sessionId, requirementPath, api, adoptKnowledge, t }: Props) {
   const [view, setView] = useState<View>('library')
   const [catalog, setCatalog] = useState<KnowledgeCatalog | null>(null)
   const [imports, setImports] = useState<KnowledgeImports | null>(null)
@@ -689,6 +693,10 @@ export function KnowledgePanel({ active, api, t }: Props) {
             sourceView={sourceView}
             sourceLoading={sourceLoading}
             busy={busy}
+            projectId={projectId}
+            sessionId={sessionId}
+            requirementPath={requirementPath}
+            adoptKnowledge={adoptKnowledge}
             onBack={backToLibrary}
             onTab={changeDetailTab}
             onEdit={startEdit}
