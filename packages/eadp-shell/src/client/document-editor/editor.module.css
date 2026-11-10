@@ -11,6 +11,11 @@
   color: var(--eadp-text);
 }
 
+.search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; background: var(--eadp-raised); border-bottom: 1px solid var(--eadp-line); }
+.search input { flex: 1; min-width: 100px; color: var(--eadp-text); background: var(--eadp-surface); border: 1px solid var(--eadp-line); padding: 6px 8px; }
+.search button { color: var(--eadp-text); background: var(--eadp-surface); border: 1px solid var(--eadp-line); border-radius: var(--eadp-radius-sm); padding: 6px 8px; cursor: pointer; }
+.search :focus-visible { outline: 2px solid var(--eadp-accent); outline-offset: 2px; }
+
 /* ── 工具栏 ───────────────────────────────────────────────────────── */
 
 .toolbar {

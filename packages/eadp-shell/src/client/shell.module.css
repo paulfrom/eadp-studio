@@ -244,6 +244,9 @@
 }
 
 .chatBody {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -266,6 +269,7 @@
 }
 
 @media (max-width: 900px) {
+
   .body {
     flex-direction: column;
     overflow: auto;
@@ -279,3 +283,12 @@
     border-left: 0;
   }
 }
+
+/* The native blank session intentionally omits its transcript view. */
+.conversationViews {
+  flex: 1 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+

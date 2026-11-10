@@ -12,6 +12,8 @@ import { FsError } from '@deepseek-ai/dsh-fs'
 import type {} from '@eadp/knowledge'
 import { RequirementProposals } from './proposals.ts'
 import { RequirementFiles } from './files.ts'
+import { RequirementDrafts } from './drafts.ts'
+import type { RequirementDraft } from '@eadp/contracts/files'
 import { ProposalStore } from './proposal-store.ts'
 import { KnowledgeSnapshots } from './snapshot.ts'
 import { RequirementKnowledgeBasis as KnowledgeBasisReader } from './knowledge-basis.ts'
@@ -23,6 +25,7 @@ export const inject = ['typert', 'workspaceRegistry', 'fs', 'agents', 'tools', '
 
 /** Trusted user editing API; none of these methods is registered as an Agent tool. */
 export class RequirementsService extends TypertRemoteService {
+  private readonly drafts: RequirementDrafts
   private readonly files: RequirementFiles
   private readonly proposals: RequirementProposals
   private readonly basis: KnowledgeBasisReader
@@ -31,6 +34,7 @@ export class RequirementsService extends TypertRemoteService {
     super(ctx, 'eadpRequirements', { namespace: 'eadpRequirements' })
     const diagnostic = (message: string) => ctx.logger.warn(message)
     this.files = new RequirementFiles(ctx)
+    this.drafts = new RequirementDrafts(this.files)
     const store = new ProposalStore(this.files, diagnostic)
     const snapshots = new KnowledgeSnapshots(this.files, diagnostic)
     const basis = new KnowledgeBasis(ctx, snapshots)
@@ -43,6 +47,12 @@ export class RequirementsService extends TypertRemoteService {
     // 启动核对只清理无任何提案引用的当时内容；失败只写诊断，不阻断界面。
     void this.proposals.reconcile().catch(error => ctx.logger.error(`需求依据启动核对失败：${String(error)}`))
   }
+
+  @Remote
+  async readDraft(projectId: string, relativePath: string): Promise<RequirementDraft | null> { return this.run(() => this.drafts.access(projectId, relativePath)) }
+
+  @Remote
+  async saveDraft(projectId: string, relativePath: string, draft: RequirementDraft | null): Promise<void> { await this.run(() => this.drafts.access(projectId, relativePath, draft)) }
 
   @Remote
   async list(projectId: string): Promise<RequirementEntry[]> { return this.run(() => this.files.list(projectId)) }

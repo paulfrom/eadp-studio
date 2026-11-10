@@ -1,5 +1,5 @@
 import type { IWorkspaces, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionReference, ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { EadpRequirementsClient, SessionRole } from '@eadp/contracts'
 
 /**
@@ -18,6 +18,7 @@ export interface ActiveDocuments {
 
 /** Narrow capabilities used by the panel; no Renderer filesystem access. */
 export interface ShellFace {
+  sessions: ISessions
   workspaces: IWorkspaces
   pickDirectory(): Promise<string | null>
   createDirectory(parent: string, name: string): Promise<string>

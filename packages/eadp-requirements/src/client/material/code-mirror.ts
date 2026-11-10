@@ -36,6 +36,22 @@ const markdownLanguage = new Language(
 )
 const markdownSupport: Extension = new LanguageSupport(markdownLanguage)
 
+/** Markdown heading positions from the same parser used by source highlighting. */
+export function documentHeadings(text: string): { title: string; line: number; depth: number }[] {
+  const document = EditorState.create({ doc: text }).doc
+  const headings: { title: string; line: number; depth: number }[] = []
+  lezerMarkdownParser.configure([GFM]).parse(text).iterate({
+    enter(node) {
+      const heading = /^(ATX|Setext)Heading([1-6])$/.exec(node.name)
+      if (!heading) return
+      const line = document.lineAt(node.from)
+      const title = heading[1] === 'ATX' ? line.text.replace(/^#{1,6}\s+/, '').replace(/\s+#+\s*$/, '') : line.text
+      headings.push({ title, line: line.number, depth: Number(heading[2]) })
+    },
+  })
+  return headings
+}
+
 /** Marks full-document replacements pushed from React so the listener skips them. */
 export const externalSync = Annotation.define<boolean>()
 
@@ -228,6 +244,7 @@ function findPanel(labels: SearchLabels) {
 
 /** Everything the mount needs to create one view. */
 export interface EditorOptions {
+  sessionKey: object
   parent: HTMLElement
   text: string
   readOnly: boolean
@@ -254,17 +271,22 @@ export interface EditorMount {
   destroy(): void
 }
 
+/** Source sessions live only as long as their owning document buffer. */
+const sourceSessions = new WeakMap<object, { state: EditorState; scrollTop: number; history: Compartment; editability: Compartment; attributes: Compartment; callbacks: Pick<EditorOptions, 'onEdit' | 'onCompose' | 'onSave' | 'onBlur'> }>()
+
 /** Mount one editor view; the caller keeps the returned mount for the component lifetime. */
 export function createEditor(options: EditorOptions): EditorMount {
-  const historyCompartment = new Compartment()
-  const editability = new Compartment()
-  const attributes = new Compartment()
-  const callbacks = {
+  const retained = sourceSessions.get(options.sessionKey)
+  const historyCompartment = retained?.history ?? new Compartment()
+  const editability = retained?.editability ?? new Compartment()
+  const attributes = retained?.attributes ?? new Compartment()
+  const callbacks = retained?.callbacks ?? {
     onEdit: options.onEdit,
     onCompose: options.onCompose,
     onSave: options.onSave,
     onBlur: options.onBlur,
   }
+  Object.assign(callbacks, { onEdit: options.onEdit, onCompose: options.onCompose, onSave: options.onSave, onBlur: options.onBlur })
   const view = new EditorView({
     parent: options.parent,
     state: EditorState.create({
@@ -303,6 +325,15 @@ export function createEditor(options: EditorOptions): EditorMount {
       ],
     }),
   })
+  if (retained?.state.doc.toString() === options.text) {
+    view.setState(retained.state)
+    // Restored state keeps history; mutable callback dispatch belongs to the current mount.
+    view.dispatch({ effects: [
+      editability.reconfigure([EditorState.readOnly.of(options.readOnly), EditorView.editable.of(!options.readOnly)]),
+      attributes.reconfigure(EditorView.contentAttributes.of({ 'aria-label': options.ariaLabel })),
+    ] })
+    requestAnimationFrame(() => { if (view.dom.isConnected) view.scrollDOM.scrollTop = retained.scrollTop })
+  }
   return {
     view,
     syncDocument(text) {
@@ -334,6 +365,7 @@ export function createEditor(options: EditorOptions): EditorMount {
       view.focus()
     },
     destroy() {
+      sourceSessions.set(options.sessionKey, { state: view.state, scrollTop: view.scrollDOM.scrollTop, history: historyCompartment, editability, attributes, callbacks })
       if (view.composing) callbacks.onCompose(false)
       view.destroy()
     },

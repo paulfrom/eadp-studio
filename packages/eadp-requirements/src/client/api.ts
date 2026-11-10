@@ -7,6 +7,8 @@ import type {} from '@eadp/requirements/remote'
 export function requirementsApi(ctx: Context) {
   const remote = ctx.remote.eadpRequirements
   return {
+    readDraft: async (projectId: string, path: string) => unwrapRemoteResult(await remote.readDraft(projectId, path)),
+    saveDraft: async (projectId: string, path: string, draft: { text: string; baseVersion: string | null } | null) => unwrapRemoteResult(await remote.saveDraft(projectId, path, draft)),
     list: async (projectId: string) => unwrapRemoteResult(await remote.list(projectId)),
     read: async (projectId: string, path: string) => unwrapRemoteResult(await remote.read(projectId, path)),
     readContext: async (projectId: string) => unwrapRemoteResult(await remote.readContext(projectId)),

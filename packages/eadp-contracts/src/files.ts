@@ -8,3 +8,5 @@ export type ContextDocument = { kind: 'absent' } | ({ kind: 'present' } & Requir
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap { 'eadp/file': { code: FileErrorCode } }
 }
+/** 未提交正文与其加载时的文件版本；恢复时仍需执行条件保存。 */
+export interface RequirementDraft { text: string; baseVersion: string | null }

@@ -14,8 +14,14 @@ export interface DraftSnapshot {
   composing: boolean
   applying: boolean
   error: DraftError | null
+  recovery: PersistedDraft | null
+  recoveryLoading: boolean
+  persistenceError: string | null
   external: RequirementDocument | null | undefined
 }
+/** Durable input is separate from the acknowledged file. */
+export interface PersistedDraft { text: string; baseVersion: string | null }
+export interface DraftPersistence { read(): Promise<PersistedDraft | null>; save(draft: PersistedDraft | null): Promise<void> }
 export interface PreparedWrite { text: string; version: string | null; revision: number }
 export type SaveDraft = (text: string, version: string | null) => Promise<RequirementDocument>
 
@@ -30,24 +36,63 @@ export class DraftBuffer {
   private savedText: string
   private timer: ReturnType<typeof setTimeout> | undefined
   private pending: Promise<boolean> | undefined
+  private persistenceQueue: Promise<void> = Promise.resolve()
+  private recoveryReadFailed = false
   private readonly listeners = new Set<() => void>()
 
-  constructor(document: RequirementDocument | null, private readonly save: SaveDraft, private readonly read: () => Promise<RequirementDocument | null>, private readonly delay = 800) {
+  constructor(document: RequirementDocument | null, private readonly save: SaveDraft, private readonly read: () => Promise<RequirementDocument | null>, private readonly delay = 800, private readonly persistence?: DraftPersistence) {
     this.savedText = document?.text ?? ''
-    this.snapshot = { text: this.savedText, version: document?.version ?? null, dirty: false, saving: false, composing: false, applying: false, error: null, external: undefined }
+    this.snapshot = { text: this.savedText, version: document?.version ?? null, dirty: false, saving: false, composing: false, applying: false, error: null, external: undefined, recovery: null, recoveryLoading: !!persistence, persistenceError: null }
+    if (persistence) void this.loadRecovery()
   }
   getSnapshot = (): DraftSnapshot => this.snapshot
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private publish(next: DraftSnapshot): void { this.snapshot = next; for (const listener of this.listeners) listener() }
+  private async loadRecovery(): Promise<void> {
+    try {
+      const recovery = await this.persistence!.read()
+      this.publish({ ...this.snapshot, recoveryLoading: false, recovery: recovery && recovery.text !== this.savedText ? recovery : null })
+      // A crash may occur after the file write but before clearing its draft.
+      // Remove only a record already equal to the acknowledged file content.
+      if (!this.snapshot.recovery) this.persist()
+    } catch (error) { this.recoveryReadFailed = true; this.publish({ ...this.snapshot, recoveryLoading: false, persistenceError: String(error) }) }
+  }
+  /** Serialize draft writes and clears so an acknowledgement cannot delete later input. */
+  private persist(): void {
+    if (!this.persistence || this.recoveryReadFailed || this.snapshot.recoveryLoading || this.snapshot.recovery) return
+    const draft = this.snapshot.dirty ? { text: this.snapshot.text, baseVersion: this.snapshot.version } : null
+    this.persistenceQueue = this.persistenceQueue.catch(() => undefined).then(async () => { await this.persistence!.save(draft); this.publish({ ...this.snapshot, persistenceError: null }) }).catch(error => { this.publish({ ...this.snapshot, persistenceError: String(error) }) })
+  }
+  recoverDraft(): void {
+    if (!this.snapshot.recovery || this.snapshot.saving || this.snapshot.applying || this.snapshot.composing) return
+    this.cancelTimer()
+    const recovery = this.snapshot.recovery
+    this.revision += 1
+    this.publish({ ...this.snapshot, text: recovery.text, version: recovery.baseVersion, dirty: recovery.text !== this.savedText, recovery: null, error: null })
+    this.persist()
+  }
+  discardRecovery(): void {
+    if (!this.snapshot.recovery) return
+    this.publish({ ...this.snapshot, recovery: null })
+    this.persist()
+    this.schedule()
+  }
+  /** Explicit abandonment clears durable input after all queued writes settle. */
+  async discardPersisted(): Promise<void> {
+    this.cancelTimer()
+    await this.persistenceQueue
+    await this.persistence?.save(null)
+  }
   private cancelTimer(): void { if (this.timer !== undefined) clearTimeout(this.timer); this.timer = undefined }
   private schedule(): void {
     this.cancelTimer()
-    if (this.snapshot.dirty && !this.snapshot.applying && !this.snapshot.composing && this.snapshot.external === undefined) this.timer = setTimeout(() => { void this.flush() }, this.delay)
+    if (this.snapshot.dirty && !this.snapshot.recoveryLoading && !this.snapshot.recovery && !this.snapshot.applying && !this.snapshot.composing && this.snapshot.external === undefined) this.timer = setTimeout(() => { void this.flush() }, this.delay)
   }
   reportError(message: string): void { this.publish({ ...this.snapshot, error: { code: 'failed', message } }) }
   edit(text: string): void {
     this.revision += 1
     this.publish({ ...this.snapshot, text, dirty: text !== this.savedText, error: null })
+    this.persist()
     this.schedule()
   }
   compose(composing: boolean): void {
@@ -72,6 +117,7 @@ export class DraftBuffer {
   loadExternal(): void {
     if (this.snapshot.external === undefined || this.snapshot.applying || this.snapshot.composing || this.snapshot.saving) return
     this.accept(this.snapshot.external)
+    this.persist()
   }
   /** Keep input against the observed version; a later save still checks that version. */
   keepDraft(): void {
@@ -81,12 +127,15 @@ export class DraftBuffer {
     if (!external) return
     this.savedText = external.text
     this.publish({ ...this.snapshot, version: external.version, dirty: this.snapshot.text !== external.text, external: undefined, error: null })
+    this.persist()
     this.schedule()
   }
   /** Save now; joins an in-flight write and debounces the retry when input arrives mid-write. */
   flush = async (): Promise<boolean> => {
     this.cancelTimer()
-    if (this.snapshot.applying || this.snapshot.composing || this.snapshot.external !== undefined) return false
+    // Unchosen recovered input remains durable; browsing another file does not discard it.
+    if (this.snapshot.recovery && !this.snapshot.dirty) return true
+    if (this.snapshot.recoveryLoading || this.snapshot.recovery || this.snapshot.applying || this.snapshot.composing || this.snapshot.external !== undefined) return false
     if (this.pending) return this.pending
     if (!this.snapshot.dirty) return true
     this.pending = this.write().then(ok => {
@@ -100,7 +149,7 @@ export class DraftBuffer {
   }
   /** Pause automatic writes before waiting, then require unchanged clean input. */
   async prepareWrite(): Promise<PreparedWrite | undefined> {
-    if (this.snapshot.applying) return undefined
+    if (this.snapshot.recoveryLoading || this.snapshot.recovery || this.snapshot.applying) return undefined
     const revision = this.revision
     this.cancelTimer()
     this.publish({ ...this.snapshot, applying: true })
@@ -123,6 +172,7 @@ export class DraftBuffer {
     this.publish({ ...this.snapshot, text, version: document.version, dirty: text !== document.text,
       external: external?.version === document.version ? undefined : external,
       error: changed ? { code: 'retained' } : null })
+    this.persist()
   }
   /** Resume automatic saving only after the explicit write has settled. */
   finishWrite(): void {
@@ -161,6 +211,7 @@ export class DraftBuffer {
       }
       this.savedText = saved.text
       this.publish({ ...this.snapshot, version: saved.version, dirty: this.snapshot.text !== saved.text, saving: false, error: null, external: undefined })
+      this.persist()
       return true
     } catch (error) {
       this.publish({ ...this.snapshot, saving: false, error: failure(error) })

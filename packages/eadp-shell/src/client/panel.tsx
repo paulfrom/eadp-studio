@@ -24,6 +24,8 @@ export function ShellPanel(props: PanelProps) {
     getSnapshot: () => list.getSnapshot(),
   }), [list])
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const sessionList = props.sessions.list
+  const sessionCatalog = useSyncExternalStore(sessionList.subscribe, sessionList.getSnapshot)
   const [projectId, setProjectId] = useState<string>()
   const project = snapshot.items.find(item => item.workspaceId === projectId)
   /* The knowledge view acts on the requirement the user is editing, owned by the Shell. */
@@ -57,6 +59,11 @@ export function ShellPanel(props: PanelProps) {
     if (projectId !== undefined && projectId !== item?.workspaceId) activeDocuments.forget(projectId)
     epoch.current += 1
     setProjectId(item?.workspaceId); setSessionId(undefined)
+    if (item) {
+      const existing = item.sessionIds[0]
+      if (existing) setSessionId(existing)
+      else await attachSession(item.workspaceId, 'requirements')
+    }
   }
   const open = async () => {
     await flush(projectId)
@@ -75,7 +82,6 @@ export function ShellPanel(props: PanelProps) {
       const created = await props.workspaces.create({ path })
       await select(created)
       setTab('requirements')
-      await attachSession(created.workspaceId, 'requirements')
     } else {
       const item = snapshot.items.find(row => row.workspaceId === form.id)
       if (!item) throw new Error('PROJECT_NOT_FOUND')
@@ -164,7 +170,7 @@ export function ShellPanel(props: PanelProps) {
         </main>
         {chat && <aside className={css.chat} aria-label={t('chat')}>
           <div className={css.chatHeader}>
-            <select className={css.select} aria-label={t('selectSession')} value={sessionId ?? ''} disabled={busy} onChange={event => run(() => chooseSession(event.target.value))}><option value="">{t('selectSession')}</option>{project.sessionIds.map(id => <option key={id} value={id}>{id}</option>)}</select>
+            <select className={css.select} aria-label={t('selectSession')} value={sessionId ?? ''} disabled={busy} onChange={event => run(() => chooseSession(event.target.value))}><option value="">{t('selectSession')}</option>{project.sessionIds.map(id => <option key={id} value={id}>{sessionCatalog.byId[id as keyof typeof sessionCatalog.byId]?.displayTitle ?? t('newSession')}</option>)}</select>
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(createSession)}>{t('newSession')}</Button>
           </div>
           <div className={css.chatBody}><Conversation projectId={project.workspaceId} sessionId={sessionId} restoreSession={props.restoreSession} retainSession={props.retainSession} SessionProvider={props.SessionProvider} renderFactorySlot={props.renderFactorySlot} loading={t('sessionLoading')} empty={t('noSession')} /></div>

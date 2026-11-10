@@ -14,7 +14,7 @@ export interface DialogProps {
   onClose(): void
   footer?: ReactNode
   children?: ReactNode
-  width?: 'sm' | 'md' | undefined
+  width?: 'sm' | 'md' | 'lg' | undefined
 }
 
 /**

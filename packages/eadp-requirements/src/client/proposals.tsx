@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Dialog,
   IconButton,
   IconChevronDown,
   IconChevronRight,
@@ -21,7 +22,21 @@ import css from './material-editor.module.css'
 /** How often the Host proposal list is re-read while the panel is open. */
 const POLL_INTERVAL_MS = 2000
 
+/** Jump between contiguous changes rather than through unchanged context lines. */
+function DiffNavigation({ id, previous, next }: { id: string; previous: string; next: string }) {
+  const cursor = useRef(-1)
+  const jump = (direction: number) => {
+    const lines = Array.from(document.getElementById(id)?.children ?? [])
+    const changes = lines.filter((line, index) => line.getAttribute('data-kind') !== 'context' && (index === 0 || lines[index - 1]?.getAttribute('data-kind') === 'context'))
+    if (!changes.length) return
+    cursor.current = cursor.current < 0 ? (direction < 0 ? changes.length - 1 : 0) : (cursor.current + direction + changes.length) % changes.length
+    changes[cursor.current]?.scrollIntoView({ block: 'center' })
+  }
+  return <div className={css.proposalActions}><Button size="sm" variant="ghost" onClick={() => jump(-1)}>{previous}</Button><Button size="sm" variant="ghost" onClick={() => jump(1)}>{next}</Button></div>
+}
+
 interface ProposalProps extends PropsLocale<typeof NS> {
+  relativePath: string | null
   projectId: string
   api: RequirementsApi
   disabled: boolean
@@ -31,12 +46,13 @@ interface ProposalProps extends PropsLocale<typeof NS> {
 }
 
 /** Collapsible Host proposal review area; conversation text is never a write authority. */
-export function RequirementProposals({ projectId, api, apply, disabled, refreshKey, t }: ProposalProps) {
+export function RequirementProposals({ relativePath, projectId, api, apply, disabled, refreshKey, t }: ProposalProps) {
   const [proposals, setProposals] = useState<RequirementProposal[]>([])
   const [error, setError] = useState('')
   const [stale, setStale] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [working, setWorking] = useState(false)
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
+  const [showAll, setShowAll] = useState(false)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>())
   const [candidateOpen, setCandidateOpen] = useState<ReadonlySet<string>>(() => new Set<string>())
   const listId = useId()
@@ -55,7 +71,7 @@ export function RequirementProposals({ projectId, api, apply, disabled, refreshK
     generation.current += 1
     const value = generation.current
     let reading = false
-    setProposals([]); setError(''); setStale(new Set<string>()); setWorking(false); setExpanded(new Set<string>()); setCandidateOpen(new Set<string>())
+    setOpen(false); setProposals([]); setError(''); setStale(new Set<string>()); setWorking(false); setExpanded(new Set<string>()); setCandidateOpen(new Set<string>())
     const refresh = async () => {
       if (reading) return
       reading = true
@@ -81,6 +97,7 @@ export function RequirementProposals({ projectId, api, apply, disabled, refreshK
       if (current(generation.current)) setError(reason instanceof Error ? reason.message : String(reason))
     })
   }, [refreshKey, reload, current])
+  useEffect(() => { setOpen(false) }, [relativePath])
   const act = (proposal: RequirementProposal, discard: boolean) => {
     if (disabled || working) return
     const value = generation.current
@@ -102,21 +119,23 @@ export function RequirementProposals({ projectId, api, apply, disabled, refreshK
       return next
     })
   }
+  const visible = proposals.filter(p => showAll || relativePath === null || p.relativePath === relativePath)
   return <section className={css.proposals} aria-label={t('proposals')}>
     <header className={css.proposalsHeader}>
       <IconButton label={open ? t('collapse') : t('expand')} size="sm" aria-expanded={open} onClick={() => setOpen(value => !value)}>
         {open ? <IconChevronDown /> : <IconChevronRight />}
       </IconButton>
       <strong className={css.proposalsTitle}>{t('proposals')}</strong>
-      {proposals.length > 0 ? <Badge tone="accent">{proposals.length}</Badge> : null}
+      <Button size="sm" variant="ghost" onClick={() => { setShowAll(value => !value); setOpen(true) }}>{t(showAll ? 'currentDocumentProposals' : 'allProposals')}</Button>
+      {visible.length > 0 ? <Badge tone="accent">{visible.length}</Badge> : null}
       <span className={css.proposalsMemory} title={t('proposalStorage')}>{t('proposalStorage')}</span>
       <IconButton label={t('refresh')} size="sm" disabled={working} onClick={() => { void reload().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))) }}><IconRefresh /></IconButton>
     </header>
-    {open ? <div className={css.proposalsBody}>
+    {open ? <Dialog width="lg" title={t("proposals")} closeLabel={t("close")} busy={working} onClose={() => { if (!working) setOpen(false) }} footer={<Button size="sm" variant="secondary" disabled={working} onClick={() => setOpen(false)}>{t("returnToEditing")}</Button>}><div className={css.reviewBody}>
       {error ? <Notice tone="danger">{error}</Notice> : null}
-      {proposals.length === 0 ? <EmptyState icon={<IconSparkles />} title={t('noProposals')} /> : proposals.map((proposal, index) => {
+      {visible.length === 0 ? <EmptyState icon={<IconSparkles />} title={t('noProposals')} /> : visible.map((proposal, index) => {
         const isStale = stale.has(proposal.proposalId)
-        const isExpanded = expanded.has(proposal.proposalId)
+        const isExpanded = !expanded.has(proposal.proposalId)
         const isCandidateOpen = candidateOpen.has(proposal.proposalId)
         const diffId = `${listId}-diff-${index}`
         const candidateId = `${listId}-candidate-${index}`
@@ -128,16 +147,15 @@ export function RequirementProposals({ projectId, api, apply, disabled, refreshK
             </Badge>
             {proposal.citations.length > 0 ? <Badge tone="neutral">{`${t('basis')} ${proposal.citations.length}`}</Badge> : null}
             {proposal.persisted ? null : <Badge tone="warning">{t('proposalEphemeral')}</Badge>}
-            <div className={css.proposalActions}>
-              <Button size="sm" variant="primary" disabled={disabled || working} onClick={() => act(proposal, false)}>{t('applyProposal')}</Button>
-              <Button size="sm" variant="ghost" disabled={disabled || working} onClick={() => act(proposal, true)}>{t('discardProposal')}</Button>
-            </div>
+
           </header>
           <p className={css.proposalSummary}>{proposal.summary}</p>
+          {proposal.citations.length ? <details><summary>{t('basis')}</summary>{proposal.citations.map(citation => <section key={citation.snapshotId}><strong>{citation.title}</strong><p>{citation.sourceLabel} · {citation.locations.join(' / ')}</p><p>{citation.note}</p>{citation.warnings.map(warning => <Notice key={warning} tone="warning">{warning}</Notice>)}</section>)}</details> : null}
           <button type="button" className={css.diffToggle} aria-expanded={isExpanded} aria-controls={diffId} onClick={() => toggle(setExpanded, proposal.proposalId)}>
             {isExpanded ? <IconChevronDown /> : <IconChevronRight />}{t('reviewDiff')}
           </button>
           {isExpanded ? <>
+            <DiffNavigation id={diffId} previous={t('previousChange')} next={t('nextChange')} />
             <div id={diffId} className={css.diff} role="group" aria-label={t('reviewDiff')}>
               {proposal.diff.map((line, index) => <div key={index} className={css.diffLine} data-kind={line.kind}>
                 <span className={css.diffSign} aria-hidden="true">{line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' '}</span>
@@ -150,8 +168,12 @@ export function RequirementProposals({ projectId, api, apply, disabled, refreshK
             {isCandidateOpen ? <IconChevronDown /> : <IconChevronRight />}{t('candidateText')}
           </button>
           {isCandidateOpen ? <pre id={candidateId} className={css.diff}>{proposal.text || ' '}</pre> : null}
+            <div className={css.proposalActions}>
+              <Button size="sm" variant="primary" disabled={disabled || working || isStale} onClick={() => act(proposal, false)}>{t('applyProposal')}</Button>
+              <Button size="sm" variant="ghost" disabled={disabled || working} onClick={() => act(proposal, true)}>{t('discardProposal')}</Button>
+            </div>
         </article>
       })}
-    </div> : null}
+    </div></Dialog> : null}
   </section>
 }

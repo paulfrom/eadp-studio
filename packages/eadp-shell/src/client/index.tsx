@@ -84,6 +84,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   ctx.effect(() => ctx.locale.register('eadpShell', { zh, en }), 'eadp-shell: locale')
   const ui = ctx.inject(['remote.eadpShell', 'eadpRequirementsClient'], (scope: Context) => {
     const face: ShellFace = {
+      sessions: scope.sessions,
       workspaces: scope.workspaces,
       pickDirectory: () => scope.uiWorkspace.pickDirectory(),
       createDirectory: async (parent, name) => unwrap(await scope.remote.eadpShell.createProjectDirectory(parent, name)),

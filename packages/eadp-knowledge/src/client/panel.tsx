@@ -15,7 +15,7 @@ import type {
 import { Button, Dialog, Notice, Spinner, Surface } from '@eadp/shell/client/ui'
 import type { KnowledgeApi } from './api.ts'
 import { DetailView } from './detail.tsx'
-import type { MarkdownEditorHandle } from './editor/index.ts'
+import type { MarkdownEditorHandle } from '@eadp/shell/client/document-editor'
 import { EditorPage, type EditorSession } from './editor-page.tsx'
 import { fileNameWithoutExtension, formatDateTime, formatFileSize } from './format.ts'
 import { ImportsView } from './imports.tsx'

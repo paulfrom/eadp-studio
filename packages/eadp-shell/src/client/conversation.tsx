@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { PropsRenderFactories, SessionProviderComponent } from '@deepseek-ai/dsh-client-ui-slots'
+import type { FactoryLocalComponent, PropsRenderFactories, SessionProviderComponent } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import { Notice } from './ui.ts'
 import type { ShellFace } from './types.ts'
@@ -12,6 +12,11 @@ interface ConversationProps extends Pick<ShellFace, 'restoreSession' | 'retainSe
   loading: string
   empty: string
 }
+/** Keeps the transcript seat present even when the native blank view renders no content. */
+const EmbeddedViews: FactoryLocalComponent<'conversation.content', 'views'> = ({ renderSlot }) => (
+  <div className={css.conversationViews}>{renderSlot('conversation.session', {})}</div>
+)
+
 /** Retain and release the official Session reference for the selected project. */
 export function Conversation(props: ConversationProps) {
   const [reference, setReference] = useState<{ projectId: string; sessionId: string; value: SessionReference }>()
@@ -39,5 +44,5 @@ export function Conversation(props: ConversationProps) {
   if (!props.sessionId) return <p className={css.chatMessage}>{props.empty}</p>
   if (!reference || reference.projectId !== props.projectId || reference.sessionId !== props.sessionId) return <p className={css.chatMessage}>{props.loading}</p>
   const Provider = props.SessionProvider
-  return <Provider session={reference.value}>{props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })}</Provider>
+  return <Provider session={reference.value}>{props.renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false }, { slots: { views: EmbeddedViews } })}</Provider>
 }

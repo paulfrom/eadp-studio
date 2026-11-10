@@ -803,3 +803,13 @@
   border-color: var(--eadp-accent-border);
   box-shadow: var(--eadp-focus-ring);
 }
+.treeContainer { display: flex; min-height: 0; }
+.treeContainer[hidden] { display: none; }
+.focusToolbar { display: flex; justify-content: flex-end; flex-shrink: 0; }
+.referenceDisclosure { flex-shrink: 0; border-top: 1px solid var(--eadp-line); }
+.referenceDisclosure > summary { cursor: pointer; padding: 10px 16px; }
+.referenceDisclosure[open] { max-height: 40%; overflow: auto; }
+
+.auxiliaryPanels { flex-shrink: 0; min-height: 0; max-height: 45%; overflow: auto; }
+.auxiliaryPanels[hidden] { display: none; }
+.reviewBody { display: flex; flex-direction: column; gap: 16px; min-height: 0; }

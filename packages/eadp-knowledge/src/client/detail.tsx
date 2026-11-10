@@ -17,7 +17,7 @@ import {
   Notice,
   Spinner,
 } from '@eadp/shell/client/ui'
-import { MarkdownEditor } from './editor/index.ts'
+import { MarkdownEditor } from '@eadp/shell/client/document-editor'
 import { formatDateTime, formatFileSize } from './format.ts'
 import { NS, type KnowledgeTranslate } from './locales.ts'
 import layout from './panel.module.css'

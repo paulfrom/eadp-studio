@@ -1,0 +1,7 @@
+.compare { display:grid; grid-template-columns:1fr 1fr; gap:16px; max-height:320px; overflow:auto; }
+.compare section { min-width:0; }
+.compare pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+@media(max-width:800px) { .compare { grid-template-columns:1fr; } }
+.outline { max-height:240px; overflow:auto; padding:8px 16px; border-bottom:1px solid var(--eadp-line); }
+.outline button { display:block; width:100%; text-align:left; background:transparent; border:0; color:inherit; padding:6px; cursor:pointer; }
+.outline button:hover { background:var(--eadp-hover); }

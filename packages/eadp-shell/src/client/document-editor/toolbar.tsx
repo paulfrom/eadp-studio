@@ -27,7 +27,7 @@ import {
 import { $createHeadingNode, $createQuoteNode, $isHeadingNode, $isQuoteNode } from '@lexical/rich-text'
 import { $insertList, $isListNode, $removeList, type ListType } from '@lexical/list'
 import { $setBlocksType } from '@lexical/selection'
-import { INSERT_TABLE_COMMAND } from '@lexical/table'
+import { INSERT_TABLE_COMMAND, $isTableCellNode, $insertTableRowAtSelection, $insertTableColumnAtSelection, $deleteTableRowAtSelection, $deleteTableColumnAtSelection } from '@lexical/table'
 import { $findMatchingParent, $insertNodeToNearestRoot } from '@lexical/utils'
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
 import { $createImageNode } from './nodes.tsx'
@@ -52,9 +52,10 @@ interface ToolbarState {
   block: BlockStyle
   bold: boolean
   italic: boolean
+  inTable: boolean
 }
 
-const INITIAL_STATE: ToolbarState = { block: 'paragraph', bold: false, italic: false }
+const INITIAL_STATE: ToolbarState = { block: 'paragraph', bold: false, italic: false, inTable: false }
 
 /** 段落样式按钮；标题固定为二级标题，小标题固定为三级标题。 */
 const STYLE_OPTIONS: Array<{ style: BlockStyle; label: string }> = [
@@ -70,6 +71,7 @@ function $readToolbarState(): ToolbarState {
   const highlight = {
     bold: selection.hasFormat('bold'),
     italic: selection.hasFormat('italic'),
+    inTable: $findMatchingParent(selection.anchor.getNode(), $isTableCellNode) !== null,
   }
   const anchor = selection.anchor.getNode()
   const list = $findMatchingParent(anchor, $isListNode)
@@ -159,6 +161,7 @@ function ToolButton(props: ToolButtonProps): ReactElement {
       aria-pressed={pressed}
       data-format={format}
       disabled={disabled}
+      onMouseDown={event => event.preventDefault()}
       onClick={onClick}>
       {children}
     </button>
@@ -166,7 +169,7 @@ function ToolButton(props: ToolButtonProps): ReactElement {
 }
 
 /** 编辑态工具栏；必须渲染在编辑器上下文内。 */
-export function EditorToolbar(): ReactElement {
+export function EditorToolbar({ allowImages = true }: { allowImages?: boolean | undefined }): ReactElement {
   const [editor] = useLexicalComposerContext()
   const [state, setState] = useState<ToolbarState>(INITIAL_STATE)
   const [canUndo, setCanUndo] = useState(false)
@@ -229,6 +232,23 @@ export function EditorToolbar(): ReactElement {
     })
     editor.focus()
   }, [editor])
+
+  /** Table operations use the current cell selection and remain undoable. */
+  const editTable = (action: 'rowBefore' | 'rowAfter' | 'columnBefore' | 'columnAfter' | 'deleteRow' | 'deleteColumn') => {
+    editor.update(() => {
+      const selection = $getSelection()
+      if (!$isRangeSelection(selection) || $findMatchingParent(selection.anchor.getNode(), $isTableCellNode) === null) return
+      switch (action) {
+        case 'rowBefore': $insertTableRowAtSelection(false); break
+        case 'rowAfter': $insertTableRowAtSelection(true); break
+        case 'columnBefore': $insertTableColumnAtSelection(false); break
+        case 'columnAfter': $insertTableColumnAtSelection(true); break
+        case 'deleteRow': $deleteTableRowAtSelection(); break
+        case 'deleteColumn': $deleteTableColumnAtSelection(); break
+      }
+    })
+    editor.focus()
+  }
 
   const undo = useCallback(() => {
     editor.dispatchCommand(UNDO_COMMAND)
@@ -341,10 +361,18 @@ export function EditorToolbar(): ReactElement {
           <ToolButton label="插入表格" onClick={insertTable}>
             表格
           </ToolButton>
-          <ToolButton label="插入图片" onClick={openImagePicker}>
+          {allowImages ? <ToolButton label="插入图片" onClick={openImagePicker}>
             图片
-          </ToolButton>
+          </ToolButton> : null}
         </div>
+        {state.inTable ? <div className={css.toolGroup} role="group" aria-label="表格行列">
+          <ToolButton label="在上方插入行" onClick={() => editTable('rowBefore')}>上方加行</ToolButton>
+          <ToolButton label="在下方插入行" onClick={() => editTable('rowAfter')}>下方加行</ToolButton>
+          <ToolButton label="在左侧插入列" onClick={() => editTable('columnBefore')}>左侧加列</ToolButton>
+          <ToolButton label="在右侧插入列" onClick={() => editTable('columnAfter')}>右侧加列</ToolButton>
+          <ToolButton label="删除当前行" onClick={() => editTable('deleteRow')}>删除行</ToolButton>
+          <ToolButton label="删除当前列" onClick={() => editTable('deleteColumn')}>删除列</ToolButton>
+        </div> : null}
         <div className={css.toolGroup} role="group" aria-label="撤销与重做">
           <ToolButton label="撤销" disabled={!canUndo} onClick={undo}>
             撤销

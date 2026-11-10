@@ -55,6 +55,7 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
   const [form, setForm] = useState<FormState>()
   const [pathInput, setPathInput] = useState('')
   const [knowledgeEpoch, setKnowledgeEpoch] = useState(0)
+  const [focused, setFocused] = useState(false)
   const epoch = useRef(0)
   const currentProject = useRef(projectId)
   currentProject.current = projectId
@@ -107,7 +108,10 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
       if (path === 'CONTEXT.md') return api.saveContext(projectId, text, version)
       if (version === null) throw new Error(t('flushFailed'))
       return api.save(projectId, path, text, version)
-    }, () => readDocument(path))
+    }, () => readDocument(path), 800, {
+      read: () => api.readDraft(projectId, path),
+      save: draft => api.saveDraft(projectId, path, draft),
+    })
     editors.register(projectId, path, buffer)
     return buffer
   }
@@ -243,6 +247,7 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
   const discardMissing = () => run(async current => {
     if (!selected) return
     const path = selected.path
+    await selected.buffer.discardPersisted()
     await setActiveDocument(projectId, null)
     if (!isCurrent(current)) return
     editors.forget(projectId, path)
@@ -302,7 +307,7 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
   const dialogTitle = form === undefined ? '' : form.kind === 'create' ? t('create') : form.kind === 'folder' ? t('folder') : form.kind === 'rename' ? t('rename') : t('remove')
   return <Surface className={css.surface}>
     <div className={css.workbench}>
-      <MaterialTree
+      <div hidden={focused} className={css.treeContainer}><MaterialTree
         entries={entries}
         selectedPath={selected?.path}
         contextPresent={contextPresent}
@@ -314,19 +319,10 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
         onRefresh={() => run(async current => { await refresh(current) })}
         onRename={path => begin({ kind: 'rename', path })}
         onRemove={path => begin({ kind: 'remove', path })}
-        t={t} />
+        t={t} /></div>
       <section className={css.documentArea} aria-label={t('title')}>
+<div className={css.focusToolbar}><Button size="sm" variant="ghost" onClick={() => setFocused(v => !v)}>{t(focused ? "exitFocus" : "focusWriting")}</Button></div>
         {error ? <div className={css.panelError}><Notice tone="danger" title={t('operationFailed')}>{error}</Notice></div> : null}
-        <RequirementKnowledge
-          projectId={projectId}
-          sessionId={sessionId}
-          relativePath={selected?.path ?? null}
-          api={api}
-          editors={editors}
-          disabled={unavailable}
-          refreshKey={knowledgeEpoch}
-          onAdopted={() => setKnowledgeEpoch(value => value + 1)}
-          t={t} />
         {selected
           ? <MaterialEditor
             projectId={projectId}
@@ -345,7 +341,18 @@ export function RequirementsPanel({ projectId, sessionId, api, editors, setActiv
                 ? <Button size="sm" variant="primary" disabled={unavailable} onClick={createContext}>{t('createContext')}</Button>
                 : undefined} />
           </div>}
-        <RequirementProposals projectId={projectId} api={api} disabled={unavailable} refreshKey={knowledgeEpoch} apply={applyProposal} t={t} />
+<div hidden={focused} className={css.auxiliaryPanels}><details className={css.referenceDisclosure}><summary>{t("knowledge")}</summary>        <RequirementKnowledge
+          projectId={projectId}
+          sessionId={sessionId}
+          relativePath={selected?.path ?? null}
+          api={api}
+          editors={editors}
+          disabled={unavailable}
+          refreshKey={knowledgeEpoch}
+          onAdopted={() => setKnowledgeEpoch(value => value + 1)}
+          t={t} />
+</details>
+        <RequirementProposals relativePath={selected?.path ?? null} projectId={projectId} api={api} disabled={unavailable} refreshKey={knowledgeEpoch} apply={applyProposal} t={t} /></div>
       </section>
     </div>
     {form ? <Dialog
