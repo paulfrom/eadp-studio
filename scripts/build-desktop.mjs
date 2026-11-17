@@ -90,10 +90,18 @@ export async function buildDesktop({ root, sharedRoot, check = false, runNode, p
   runNode(path.join(root, 'apps/desktop-distribution/build/prepare-workbench.mjs'), [], root)
   const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
   await mkdir(builderCache, { recursive: true })
+  // electron-builder executes CommonJS helper tools extracted into this cache; without its own
+  // package scope Node loads them as ESM because the repository package is "type": "module".
+  await writeFile(path.join(builderCache, 'package.json'), '{"type": "commonjs"}\n')
+  const electronArchives = path.join(sharedRoot, '.local/cache/electron-archives')
+  await mkdir(electronArchives, { recursive: true })
   const environment = {
     ...process.env,
     DSH_DESKTOP_PACKED_EXTRA: path.join(sharedRoot, '.local/build/packed-workbench'),
     ELECTRON_BUILDER_CACHE: builderCache,
+    // The pinned Electron archive lives outside the generated assembly tree so a rebuild
+    // reuses it instead of requiring the release host again.
+    EADP_ELECTRON_ARCHIVE_CACHE: electronArchives,
   }
   pnpm('packageWindows', tree, environment)
   const manifest = JSON.parse(await readFile(path.join(desktop, 'package.json'), 'utf8'))

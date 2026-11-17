@@ -52,6 +52,28 @@ async function verifyFiles(root, files) {
   return seen
 }
 
+/**
+ * Package code files the Desktop runtime omission policy drops: declarations and source maps under `lib/`.
+ * The policy itself lives in `apps/desktop/scripts/runtime-file-policy.ts`; templates and knowledge
+ * resources are release payload and stay verified byte for byte.
+ */
+const runtimeOmittedFile = filename => filename.startsWith('lib/')
+  && (/\.d\.[cm]?ts$/u.test(filename) || /\.(?:[cm]?[jt]s|css)\.map$/u.test(filename))
+
+/**
+ * Verify a receipt against the installed runtime tree, where declarations and source maps are dropped.
+ * Any other absent or altered file still fails, and an omitted file that survived fails as well.
+ */
+async function verifyInstalledFiles(root, files) {
+  const shipped = []
+  for (const file of files) {
+    if (runtimeOmittedFile(file.path)) {
+      if (await exists(path.join(root, file.path))) throw new Error(`Installed runtime kept an omitted payload file: ${file.path}`)
+    } else shipped.push(file)
+  }
+  return verifyFiles(root, shipped)
+}
+
 async function templateEntries(repo) {
   const root = path.join(repo, 'packages/eadp-prototype/assets')
   const manifest = await json(path.join(root, 'prototype-template.manifest.json'))
@@ -162,7 +184,7 @@ export async function verifyWorkbenchDistribution(dshRoot, runtimeRoot, repo) {
     await verifyWorkbenchPackageFiles(packageRoot, name)
     const receipt = await json(path.join(packageRoot, 'workbench-build.json'))
     if (receipt.schemaVersion !== 1 || receipt.sourceDigest !== sourceDigest) throw new Error(`${name} distribution was built from different product source.`)
-    await verifyFiles(packageRoot, receipt.files)
+    await verifyInstalledFiles(packageRoot, receipt.files)
     if (name !== 'eadp-contracts') {
       const require = createRequire(path.join(packageRoot, 'package.json'))
       const contracts = require.resolve('@eadp/contracts')

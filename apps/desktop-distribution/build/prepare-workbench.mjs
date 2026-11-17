@@ -45,10 +45,14 @@ export async function stageWorkbench() {
     await mkdir(path.dirname(target), { recursive: true })
     await writeFile(target, addition.source)
   }
+  // Several maintained modules edit the same upstream file; compose them in registration order
+  // instead of letting the last writer replace the others' anchored changes.
+  const edited = new Map()
   for (const edit of WORKBENCH_EDITS) {
-    const source = await readFile(path.join(upstream, edit.file), 'utf8')
-    await writeFile(path.join(workbenchTree, edit.file), edit.apply(source))
+    const source = edited.get(edit.file) ?? await readFile(path.join(upstream, edit.file), 'utf8')
+    edited.set(edit.file, edit.apply(source))
   }
+  for (const [file, source] of edited) await writeFile(path.join(workbenchTree, file), source)
   const eadp = path.join(workbenchTree, 'packages/eadp')
   await mkdir(eadp, { recursive: true })
   for (const name of packages) {

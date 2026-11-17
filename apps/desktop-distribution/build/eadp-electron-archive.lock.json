@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "version": "44.7.0",
+  "archives": {
+    "win32-x64": {
+      "file": "electron-v44.7.0-win32-x64.zip",
+      "url": "https://github.com/electron/electron/releases/download/v44.7.0/electron-v44.7.0-win32-x64.zip",
+      "bytes": 158293649,
+      "sha256": "eee30dc8fa1f5ea95490e59f44e46ea68dd24c6e93d22facf70fe5c2d4c2665c",
+      "license": "MIT"
+    }
+  }
+}

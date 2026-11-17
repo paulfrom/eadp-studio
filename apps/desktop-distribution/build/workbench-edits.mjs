@@ -1,5 +1,6 @@
 import { DESKTOP_BRAND_EDITS } from './desktop-brand-edits.mjs'
 import { DESKTOP_PROFILE_EDITS, DESKTOP_PROFILE_FILES, EADP_PROFILE_SOURCE } from './desktop-profile-edits.mjs'
+import { DESKTOP_POLICY_EDITS } from './desktop-policy-edits.mjs'
 import { DESKTOP_STARTUP_EDIT } from './desktop-startup-edits.mjs'
 import { STUDIO_PACKAGING_EDIT, STUDIO_PACKAGED_COMMIT_EDIT, STUDIO_PACK_CONCURRENCY_EDIT, STUDIO_PACKAGE_SET_TAR_EDIT } from './studio-packaging-edits.mjs'
 import { STUDIO_MODEL_SELECTION_EDITS } from './model-selection-edits.mjs'
@@ -23,6 +24,7 @@ for (const name of WORKBENCH_BUNDLES) {
 export const WORKBENCH_ADDITIONS = [...DESKTOP_PROFILE_FILES, ...WORKBENCH_RUNTIME_FILES, ...PROTOTYPE_TEMPLATE_FILES]
 export const WORKBENCH_EDITS = [
   ...DESKTOP_BRAND_EDITS,
+  ...DESKTOP_POLICY_EDITS,
   DESKTOP_STARTUP_EDIT,
   STUDIO_TYPERT_EDIT,
   ...DESKTOP_PROFILE_EDITS,

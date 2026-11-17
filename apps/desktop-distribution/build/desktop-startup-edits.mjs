@@ -53,6 +53,19 @@ export const DESKTOP_STARTUP_EDIT = {
   file: 'apps/desktop/src/main.ts',
   apply(source) {
     source = replaceAnchor(source, before, after)
+    source = replaceAnchor(source,
+      "import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'",
+      "import { DesktopMandatoryUpdateWindow, type MandatoryUpdateView } from './mandatory-update-window.ts'\nimport { MANDATORY_IPC } from './mandatory-update-ipc.ts'")
+    source = replaceAnchor(source,
+      '  automaticCheck()\n  await reconcileBackend().catch(() => undefined)',
+      `  // The shared preload also requests status when this build has no update policy.
+  if (policyConfig === undefined) {
+    ipcMain.handle(MANDATORY_IPC.status, () => ({
+      locale, policy: { blocking: false, checking: false }, update: updates.state, deferred: false,
+    } satisfies MandatoryUpdateView))
+  }
+  automaticCheck();
+  await reconcileBackend().catch(() => undefined)`)
     source = replaceAnchor(source, welcomeBefore, welcomeAfter)
     return replaceAnchor(source, '  nativeTheme,\n  net,\n  protocol,', '  nativeTheme,\n  protocol,')
   },

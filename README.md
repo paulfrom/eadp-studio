@@ -89,10 +89,10 @@ pnpm dev:desktop
 ./build-desktop.ps1
 ```
 
-也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包命名为 `artifacts/windows/eadp-studio-<manifest.version>-win-x64-unsigned.exe`（版本取自装配后的桌面 `package.json`，见 `scripts/build-desktop.mjs:100`；当前发布锁记录的样本为 `eadp-studio-0.2.1-alpha.4-win-x64-unsigned.exe`），同时输出绝对路径、SHA256 和同名 `.json` 记录。
+也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包命名为 `artifacts/windows/eadp-studio-<manifest.version>-win-x64-unsigned.exe`（版本取自装配后的桌面 `package.json`，见 `scripts/build-desktop.mjs:100`；当前样本为 `eadp-studio-0.2.1-rc.2-win-x64-unsigned.exe`），同时输出绝对路径、SHA256 和同名 `.json` 记录。
 
 构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
 
-Electron-builder 工具缓存固定在主 checkout 的 `.local/cache/electron-builder`，由入口创建并通过其官方 `ELECTRON_BUILDER_CACHE` 变量传给打包进程，避免其他应用留下的全局缓存状态干扰本仓库构建。
+Electron-builder 工具缓存固定在主 checkout 的 `.local/cache/electron-builder`，由入口创建并通过其官方 `ELECTRON_BUILDER_CACHE` 变量传给打包进程，避免其他应用留下的全局缓存状态干扰本仓库构建。锁定的 Electron 归档同理由入口放在 `.local/cache/electron-archives` 并通过 `EADP_ELECTRON_ARCHIVE_CACHE` 传入：字节与 SHA-256 校验通过后复用，重建不再依赖发布主机。
 
 当前入口生成未签名的开发安装包；签名、升级发布及干净机发行验收仍遵循独立门槛。产品使用稳定 App ID `io.github.paulfrom.eadp.studio`、`eadp-studio://` 协议和 `%USERPROFILE%\.eadp-studio` 数据根，Electron 数据位于 `%APPDATA%\eadp studio`。旧 DSH 数据不迁移。配置及验证细节见 [桌面构建说明](apps/desktop-distribution/build/README.md)。

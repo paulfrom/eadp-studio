@@ -2,7 +2,7 @@
 
 本目录维护固定 DSH 源码之上的产品装配脚本和唯一授权的上游锚定编辑。`../release.lock.json` 固定上游提交、包版本与归档校验；`.local/upstream/dsh/` 是只读取证缓存，`.local/build/local-workbench-dsh/` 是可重建装配树，二者都不是维护源码位置。
 
-所有编辑只写入装配树。每个编辑都要求精确锚点唯一存在；锚点缺失、重复或部分应用都会抛错并中止，不得在缓存或装配树中手工修补。宿主缺口与编辑的对应关系见 [`docs/blocked-upstream.md`](../../../docs/blocked-upstream.md)。
+所有编辑只写入装配树。每个编辑都要求精确锚点唯一存在；锚点缺失、重复或部分应用都会抛错并中止，不得在缓存或装配树中手工修补。同一上游文件的多个编辑按注册顺序组合应用，不允许后者覆盖前者的结果。宿主缺口与编辑的对应关系见 [`docs/blocked-upstream.md`](../../../docs/blocked-upstream.md)。
 
 ## 入口与静态检查
 
@@ -43,11 +43,14 @@ pnpm build:desktop
 | --- | --- | --- |
 | `desktop-brand-edits.mjs` | `scripts/client-build-environment.ts` 的 `DSH_CLIENT_TITLE`；桌面品牌、协议、安装器与 smoke 文件中的固定 DeepSeek Harness 文案和 `dsh` 协议锚点 | 设置 `eadp studio` 产品身份、`eadp-studio://`、独立用户数据与 DSH_HOME |
 | `desktop-startup-edits.mjs` | `apps/desktop/src/main.ts` 的完整 `openInitialWindow`、welcome Host 连接块及 `nativeTheme/net/protocol` 导入锚点 | 直接进入本地工作台；保留原生 welcome 请求的同源 Host cookie 约束 |
+| `desktop-policy-edits.mjs` | `apps/desktop/scripts/desktop-policy-environment.mjs` 的 `resolveDesktopPolicyEnvironment` 函数入口与 `@returns`；同名 `.d.mts` 的返回类型与 `@returns` | 未签名安装包不要求、也不内嵌强制更新策略；签名包仍按上游要求配置部署 origin |
 | `desktop-profile-edits.mjs` | `apps/desktop/src/project-manager.ts` 的 `@deepseek-ai/dsh-app-boot` 导入块、`applyRelease` 内 `createPluginProfile` 之后、`disableAllPlugins` 的 `sanitizeProfile(...)` 调用；并新增 `apps/desktop/src/eadp-profile.ts` | 每次 Host 启动前幂等部署 EADP 组合；recovery 重置 bundle 列表后仍保留四个 `@eadp/*` bundle |
 | `workbench-edits.mjs` | `apps/cli/package.json` 的 `@deepseek-ai/dsh` 生产 dependencies，四个依赖必须原先不存在 | 将四个新插件纳入 CLI 生产依赖闭包 |
 | `workbench-runtime-edits.mjs` | `apps/desktop/scripts/prepare-runtime.ts` 的 `prepareCommandLink` 导入和 `readPrimaryRuntime` 前锚点 | 在官方运行时准备阶段生成固定 `eadp-tools` |
+| `workbench-runtime-edits.mjs` | `apps/desktop/scripts/runtime-patch-policy.ts` 的 `exceljs@4.4.0` 分类锚点 | 知识库插件的 Host 转换 worker 随运行时携带 exceljs，补丁须按 shared 随桌面运行时安装 |
 | `workbench-runtime-edits.mjs` | `packages/subprocess/subprocess-local/src/index.ts` 的 `windows-job` 返回锚点 | Windows Job 不可用时拒绝运行，不退化为无进程树约束的执行 |
 | `prepare-eadp-tools.mjs`、`eadp-runtime.lock.json` | 新增 `apps/desktop/scripts/prepare-eadp-tools.{mjs,d.mts}` 与锁文件 | 只交付锁定 Node 22.22.3 和 pnpm 11.28.5；下载字节、展开文件和工具入口全部校验，不含 Git/SSH |
+| `prepare-electron-archive.mjs`、`eadp-electron-archive.lock.json` | 新增 `apps/desktop/scripts/prepare-electron-archive.{mjs,d.mts}` 与锁文件；`apps/desktop/scripts/prepare-runtime.ts` 的 `@electron/get` 导入与 `download:electron` 调用锚点 | Electron 归档按锁定版本、文件名、字节数和 SHA-256 校验，优先复用主 checkout 缓存，离线重建不再要求访问发布主机 |
 | `prototype-template-edits.mjs` | `apps/desktop/scripts/prepare-dsh.ts` 的 `runtime:manifests` 步骤前锚点 | 在运行时清单前校验并展开 `@eadp/prototype` 模板归档 |
 | `prototype-template-edits.mjs` | `prepare-runtime-manifests.ts` 的 fs 导入与 `electron-builder-config.mjs` 的 Office 导入锚点 | 装载模板 file-transformer，避免把模板源文件当已安装依赖清单处理 |
 | `studio-packaging-edits.mjs` | `package-target.ts` 的 `build:official` 与 macOS 并发参数锚点 | 使用官方 artifact 范围构建，并在 Windows 使用有界并发打包 |
@@ -60,8 +63,18 @@ pnpm build:desktop
 
 `eadp-profile.ts` 是 `desktop-profile-edits.mjs` 的新增维护源码；`prototype-template-archive.mjs` 与 `prototype-template-transform.mjs` 是上述模板编辑的新增维护源码；`workbench-runtime-edits.mjs` 同时登记其三个新增运行时文件。任何新增文件不再存在于维护目录都会使装配失败。
 
+## Electron 归档与离线重建
+
+`apps/desktop/scripts/prepare-runtime.ts` 不再直接调用 `@electron/get`。`prepare-electron-archive.mjs` 按 `eadp-electron-archive.lock.json` 校验版本、文件名、字节数和 SHA-256：缓存命中即返回，缓存为空时才下载并写回。缓存目录由入口通过 `EADP_ELECTRON_ARCHIVE_CACHE` 指向主 checkout 的 `.local/cache/electron-archives`，位于可重建装配树之外，因此删除 `.local/build/local-workbench-dsh` 后仍可离线重建。上游升级 Electron 时锁文件不匹配即失败，需维护者显式更新锁文件与字节。
+
 ## 已删除的旧编辑
 
 协同 HTTP 策略、秘密凭据 IPC、旧设置桥/分组、内嵌 Chromium 与画布、原型浏览器 IPC、原生 prompt/control admission、旧 Studio 插件/领域包/模板载荷均已删除。最终装配不引用这些模块，不携带浏览器运行时，也不配置协同更新服务。篡改 shipped profile 常量（`SHIPPED_PROFILE`/`WEB_PROFILE` 替换）的编辑同样已删除，改由 `desktop-profile-edits.mjs` 在每次 Host 启动前部署应用组合。
 
 Windows 公共示例 `windows-package.env.example` 只保留产品 App ID。既有机器本地 `.env.windows` 不会被覆盖；其中如仍有旧部署配置，需要由维护者显式清理，本仓库不读取或迁移其秘密值。
+
+## 开发模式更新状态 IPC
+
+desktop-startup-edits.mjs 在未配置强制更新策略时注册明确的非阻断状态响应，匹配共享 preload 的 status 请求；配置策略时仍由官方窗口控制器注册。精确锚点缺失或重复即失败。本轮真实桌面复验仍待完成。
+
+`desktop-policy-edits.mjs` 让未签名安装包与 macOS 未签名构建保持一致：`DSH_DESKTOP_UNSIGNED=1` 时 `resolveDesktopPolicyEnvironment` 不解析策略，打包预检因此不要求 `DSH_DESKTOP_MANDATORY_UPDATE_*_ORIGIN`，安装包也不写入 `dshMandatoryUpdatePolicy`。本仓库不提供协同更新服务，`.env.windows` 只需产品 App ID；签名发布包仍由上游校验策略 origin。锚点缺失或重复即失败。
