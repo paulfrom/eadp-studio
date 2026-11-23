@@ -64,6 +64,36 @@ export async function ensureWindowsEnvironment(desktop) {
   }
 }
 
+/** Keep electron-builder's extracted CommonJS helpers outside the repository ESM scope. */
+export async function prepareElectronBuilderCache(sharedRoot) {
+  const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
+  await mkdir(builderCache, { recursive: true })
+  await writeFile(path.join(builderCache, 'package.json'), '{"type": "commonjs"}\n')
+  return builderCache
+}
+
+/** Resolve the fixed unsigned installer filename produced for one desktop manifest version. */
+export function windowsInstallerPath(desktop, version) {
+  return path.join(desktop, '.desktop-build/targets/win-x64/unsigned-artifacts', `eadp-studio-${version}-win-x64-unsigned.exe`)
+}
+
+/** Copy one completed installer into the product artifact directory and seal its local receipt. */
+export async function finalizeWindowsInstaller(desktop, root) {
+  const manifest = JSON.parse(await readFile(path.join(desktop, 'package.json'), 'utf8'))
+  const source = windowsInstallerPath(desktop, manifest.version)
+  const name = path.basename(source)
+  if (!(await stat(source)).isFile()) throw new Error(`Installer missing after packaging: ${source}`)
+  const destination = path.join(root, 'artifacts/windows', name)
+  await mkdir(path.dirname(destination), { recursive: true })
+  await copyFile(source, destination)
+  const digest = createHash('sha256')
+  for await (const bytes of createReadStream(destination)) digest.update(bytes)
+  const receipt = { productName: 'eadp studio', target: 'win-x64', unsigned: true, path: destination, bytes: (await stat(destination)).size, sha256: digest.digest('hex') }
+  await writeFile(`${destination}.json`, `${JSON.stringify(receipt, null, 2)}\n`)
+  console.log(`Installer: ${destination}\nSHA256: ${receipt.sha256}\nUnsigned development installer; release qualification remains separate.`)
+  return receipt
+}
+
 async function checkSymlinks(buildRoot) {
   const target = path.join(buildRoot, '.studio-symlink-target')
   const link = path.join(buildRoot, '.studio-symlink-probe')
@@ -88,11 +118,7 @@ export async function buildDesktop({ root, sharedRoot, check = false, runNode, p
   pnpm('checkWindows', tree)
   if (check) return undefined
   runNode(path.join(root, 'apps/desktop-distribution/build/prepare-workbench.mjs'), [], root)
-  const builderCache = path.join(sharedRoot, '.local/cache/electron-builder')
-  await mkdir(builderCache, { recursive: true })
-  // electron-builder executes CommonJS helper tools extracted into this cache; without its own
-  // package scope Node loads them as ESM because the repository package is "type": "module".
-  await writeFile(path.join(builderCache, 'package.json'), '{"type": "commonjs"}\n')
+  const builderCache = await prepareElectronBuilderCache(sharedRoot)
   const electronArchives = path.join(sharedRoot, '.local/cache/electron-archives')
   await mkdir(electronArchives, { recursive: true })
   const environment = {
@@ -104,19 +130,7 @@ export async function buildDesktop({ root, sharedRoot, check = false, runNode, p
     EADP_ELECTRON_ARCHIVE_CACHE: electronArchives,
   }
   pnpm('packageWindows', tree, environment)
-  const manifest = JSON.parse(await readFile(path.join(desktop, 'package.json'), 'utf8'))
-  const name = `eadp-studio-${manifest.version}-win-x64-unsigned.exe`
-  const source = path.join(desktop, '.desktop-build/targets/win-x64/unsigned-artifacts', name)
-  if (!(await stat(source)).isFile()) throw new Error(`Installer missing after packaging: ${source}`)
-  const destination = path.join(root, 'artifacts/windows', name)
-  await mkdir(path.dirname(destination), { recursive: true })
-  await copyFile(source, destination)
-  const digest = createHash('sha256')
-  for await (const bytes of createReadStream(destination)) digest.update(bytes)
-  const receipt = { productName: 'eadp studio', target: 'win-x64', unsigned: true, path: destination, bytes: (await stat(destination)).size, sha256: digest.digest('hex') }
-  await writeFile(`${destination}.json`, `${JSON.stringify(receipt, null, 2)}\n`)
-  console.log(`Installer: ${destination}\nSHA256: ${receipt.sha256}\nUnsigned development installer; release qualification remains separate.`)
-  return receipt
+  return finalizeWindowsInstaller(desktop, root)
 }
 
 async function main(args) {

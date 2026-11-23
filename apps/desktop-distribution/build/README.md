@@ -10,10 +10,12 @@
 pnpm check
 pnpm build:plugins
 pnpm build:desktop
+pnpm package:desktop
 ```
 
 - `pnpm build:plugins` 调用 `prepare-workbench.mjs`：校验固定源码，装配 `eadp-contracts`、`eadp-shell`、`eadp-requirements`、`eadp-prototype`、`eadp-knowledge`，依次完成 Host 编译、官方 Typert 生成、Client 编译、各包 `tsc --noEmit`、插件打包和产物回执校验。五个 tarball 写入 `.local/build/packed-workbench/`。
 - `pnpm build:desktop` 仅支持原生 Windows x64。它复用同一装配入口，运行官方打包预检和 NSIS 流程，将 `packed-workbench` 作为额外包输入，产出未签名安装包及 SHA-256 回执。不安装、不启动桌面，不执行模型或原型验收。
+- `pnpm package:desktop` 只复用上一次完整构建已经准备的桌面、DSH 和运行时，校验载荷后执行 Electron/NSIS、打包后运行时 smoke 和本地回执复制；不执行 `pnpm install`、不重新编译 TypeScript/DSH、不重新准备运行时；官方 NSIS 步骤仍编译其原生 Windows 窗口组件。产品或 DSH 输入变化后必须先执行完整构建，`--check` 只校验现有载荷与环境。
 - `node apps/desktop-distribution/build/verify-workbench-distribution.mjs <dsh-resource-directory> <runtime/eadp-tools-directory>` 校验解包后的五包回执、生产依赖解析、模板/知识资源和完整 Node/pnpm 文件清单。
 - `pnpm dev:desktop --prepare` 是 Windows 开发准备入口；本重构的静态门禁不执行该命令，也不启动 Electron。
 

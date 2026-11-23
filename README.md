@@ -89,7 +89,9 @@ pnpm dev:desktop
 ./build-desktop.ps1
 ```
 
-也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包命名为 `artifacts/windows/eadp-studio-<manifest.version>-win-x64-unsigned.exe`（版本取自装配后的桌面 `package.json`，见 `scripts/build-desktop.mjs:100`；当前样本为 `eadp-studio-0.2.1-rc.2-win-x64-unsigned.exe`），同时输出绝对路径、SHA256 和同名 `.json` 记录。
+也可使用 `pnpm run build:desktop` 或 `node scripts/build-desktop.mjs`。该入口安装本仓库依赖、获取并校验固定 DSH 源码、装配当前 Studio 源码及模板、构建插件和随包运行环境，再调用上游 Electron/NSIS 管线生成可安装文件。应用显示名、可执行文件和快捷方式名称为 `eadp studio`；安装包命名为 `artifacts/windows/eadp-studio-<manifest.version>-win-x64-unsigned.exe`（版本取自装配后的桌面 `package.json`；当前样本为 `eadp-studio-0.2.1-rc.2-win-x64-unsigned.exe`），同时输出绝对路径、SHA256 和同名 `.json` 记录。
+
+只需要把上一次完整构建已准备好的桌面和运行时重新生成安装包时，执行 `./package-desktop.ps1` 或 `pnpm package:desktop`。该入口不执行 `pnpm install`、不获取源码、不重新编译 TypeScript/DSH，也不重新准备运行时，只校验现有载荷，执行 Electron/NSIS 和打包后运行时 smoke，再复制安装包及 SHA-256 回执；官方 NSIS 步骤仍会编译安装器使用的原生 Windows 窗口组件。产品或 DSH 输入发生变化后必须先运行完整构建；`./package-desktop.ps1 --check` 只校验现有载荷与打包环境。
 
 构建要求原生 Windows x64、Node `^22.19.0 || >=24.0.0`、pnpm `11.x`、Git、tar、Visual Studio C++ Build Tools 与 Windows SDK、真实符号链接权限，以及源码/依赖/运行时下载网络。首次运行自动从受维护的无凭证配置创建构建树中的 `.env.windows`；已有文件保留，产品标识冲突或配置不完整会明确报错。`./build-desktop.ps1 --check` 检查主机、装配源码、安装构建依赖并执行上游打包前置校验；`--help` 查看参数。入口不修改校验过的上游源码缓存，也无需手工设置插件打包环境变量。
 
